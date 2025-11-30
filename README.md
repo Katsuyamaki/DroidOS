@@ -1,6 +1,9 @@
 DroidOS 📱🚀
 DroidOS is a suite of advanced system tools designed to give "superpowers" to the standard Android experience.
 It functions as a universal Samsung DeX replacement, a tiling window manager, and an unrestricted app launcher that works on any Android device. Whether you are using a Foldable, a Flip phone, AR Glasses, or a secondary monitor, DroidOS unlocks the full potential of your hardware.
+
+
+
 📂 Project Structure (Monorepo)
 This repository is a Monorepo containing two distinct but complementary Android applications.
 > ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
@@ -82,12 +85,12 @@ Example: 4-Quadrant Layout
 You can ensure an app lands in a specific tile by dragging it to the corresponding position in the App Queue.
 
 ![Screenshot_20251130_125934_Reddit](https://github.com/user-attachments/assets/a4644964-8371-4f39-9a03-df88e4a8524a)
+![Screenshot_20251130_185403_Discord](https://github.com/user-attachments/assets/6a876a1e-67c5-4968-84ff-2ed36411c54a)
+![Screenshot_20251130_185026_Discord](https://github.com/user-attachments/assets/c89110b9-0a0b-47ed-83e9-9d54a150beae)
 ![Screenshot_20251130_130005_Reddit](https://github.com/user-attachments/assets/24ceaf2f-5212-4fe6-b027-e5941164ca93)
 ![Screenshot_20251130_125958_Reddit](https://github.com/user-attachments/assets/3809df01-7d7a-4383-b5f3-f9aa85998685)
-![Screenshot_20251130_125944_Reddit](https://github.com/user-attachments/assets/98ab3819-6204-44b7-9c6e-92c961f3151e)
 ![Screenshot_20251130_125940_Reddit](https://github.com/user-attachments/assets/fd1ab37f-3158-4b01-a342-9c5f82423b89)
 ![Screenshot_20251130_125922_Reddit](https://github.com/user-attachments/assets/2af9a4f6-8dd2-48da-9551-943845a28613)
 ![Screenshot_20251130_125807_One UI Cover Home](https://github.com/user-attachments/assets/eb08e879-6c55-45f6-a175-a19791588337)
-![Screenshot_20251130_130124_Photos](https://github.com/user-attachments/assets/e9449ba4-4ac9-401d-b8b4-74329f948ebf)
 
 Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
