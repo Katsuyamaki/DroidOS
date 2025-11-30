@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.coverscreentester"
+        applicationId = "com.katsuyamaki.DroidOSTrackpadKeyboard"
         minSdk = 30
         targetSdk = 34
         versionCode = 1
@@ -19,10 +19,9 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
-        aidl = true // <--- CRITICAL: Must be enabled
+        aidl = true
     }
 
-    // Fixes "Unresolved Reference" for AIDL classes
     sourceSets {
         getByName("main") {
             aidl.srcDirs(listOf("src/main/aidl"))
@@ -49,7 +48,6 @@ android {
 }
 
 dependencies {
-    // Shizuku
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("dev.rikka.shizuku:aidl:13.1.5")

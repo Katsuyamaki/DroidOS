@@ -69,7 +69,7 @@ class FloatingLauncherService : Service() {
     private lateinit var windowManager: WindowManager
     private var displayContext: Context? = null
     private var currentDisplayId = 0
-    private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY // Track previous physical display for smart toggle
+    private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY 
     
     private var bubbleView: View? = null
     private var drawerView: View? = null
@@ -97,9 +97,8 @@ class FloatingLauncherService : Service() {
     private var resetTrackpad = false
     private var isExtinguished = false
     private var isInstantMode = true 
-    private var showShizukuWarning = true // New Setting
+    private var showShizukuWarning = true 
     
-    // Virtual Display State
     private var isVirtualDisplayActive = false
     
     private var currentDrawerHeightPercent = 70
@@ -111,6 +110,20 @@ class FloatingLauncherService : Service() {
     private var shellService: IShellService? = null
     private var isBound = false
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    // --- SHIZUKU LISTENERS ---
+    // Automatically re-bind when Shizuku connects or permissions are granted
+    private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
+        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+            bindShizuku()
+        }
+    }
+
+    private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+        if (grantResult == PackageManager.PERMISSION_GRANTED) {
+            bindShizuku()
+        }
+    }
 
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -206,14 +219,14 @@ class FloatingLauncherService : Service() {
             shellService = IShellService.Stub.asInterface(binder)
             isBound = true
             updateExecuteButtonColor(true)
-            updateBubbleIcon() // Update icon on connect (remove warning if present)
+            updateBubbleIcon() 
             showToast("Shizuku Connected")
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             shellService = null
             isBound = false
             updateExecuteButtonColor(false)
-            updateBubbleIcon() // Update icon on disconnect (show warning if enabled)
+            updateBubbleIcon()
         }
     }
 
@@ -222,6 +235,13 @@ class FloatingLauncherService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForegroundService()
+        
+        // Register Shizuku Listeners
+        try {
+            Shizuku.addBinderReceivedListener(shizukuBinderListener)
+            Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
+        } catch (e: Exception) {}
+
         val filter = IntentFilter().apply {
             addAction(ACTION_OPEN_DRAWER)
             addAction(ACTION_UPDATE_ICON)
@@ -309,6 +329,12 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Unregister Shizuku Listeners
+        try {
+            Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+            Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
+        } catch (e: Exception) {}
+        
         try { unregisterReceiver(commandReceiver) } catch(e: Exception) {}
         try { if (bubbleView != null) windowManager.removeView(bubbleView) } catch(e: Exception) {}
         try { if (isExpanded) windowManager.removeView(drawerView) } catch(e: Exception) {}
@@ -342,7 +368,7 @@ class FloatingLauncherService : Service() {
             getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel)
             CHANNEL_ID
         } else ""
-        val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.mipmap.ic_launcher_round).setPriority(NotificationCompat.PRIORITY_MIN).build()
+        val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build()
         if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification)
     }
 
@@ -378,10 +404,13 @@ class FloatingLauncherService : Service() {
                         val totalVel = hypot(vX.toDouble(), vY.toDouble()) 
                         if (isDrag && totalVel > 2500) { showToast("Closing..."); stopSelf(); return true }
                         if (!isDrag) {
-                            // --- NEW LOGIC: Shizuku Warning Interceptor ---
                             if (!isBound && showShizukuWarning) {
-                                showToast("Shizuku NOT Connected. Opening Shizuku...")
-                                launchShizuku()
+                                if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                                     bindShizuku() // Retry bind if permission exists
+                                } else {
+                                     showToast("Shizuku NOT Connected. Opening Shizuku...")
+                                     launchShizuku()
+                                }
                             } else {
                                 toggleDrawer()
                             }
@@ -413,7 +442,6 @@ class FloatingLauncherService : Service() {
     private fun updateBubbleIcon() {
         val iconView = bubbleView?.findViewById<ImageView>(R.id.bubble_icon) ?: return
         
-        // --- NEW LOGIC: Red Exclamation if Disconnected & Warning Enabled ---
         if (!isBound && showShizukuWarning) {
             uiHandler.post {
                 iconView.setImageResource(android.R.drawable.ic_dialog_alert)
@@ -423,7 +451,6 @@ class FloatingLauncherService : Service() {
             return
         }
         
-        // Standard Icon Logic
         uiHandler.post {
             try {
                 val uriStr = AppPreferences.getIconUri(this)
@@ -437,17 +464,17 @@ class FloatingLauncherService : Service() {
                         iconView.imageTintList = null
                         iconView.clearColorFilter() 
                     } else { 
-                        iconView.setImageResource(R.mipmap.ic_launcher_round) 
+                        iconView.setImageResource(R.drawable.ic_launcher_bubble) 
                         iconView.imageTintList = null
                         iconView.clearColorFilter()
                     }
                 } else { 
-                    iconView.setImageResource(R.mipmap.ic_launcher_round) 
+                    iconView.setImageResource(R.drawable.ic_launcher_bubble) 
                     iconView.imageTintList = null
                     iconView.clearColorFilter()
                 }
             } catch (e: Exception) { 
-                iconView.setImageResource(R.mipmap.ic_launcher_round) 
+                iconView.setImageResource(R.drawable.ic_launcher_bubble) 
                 iconView.imageTintList = null
                 iconView.clearColorFilter()
             }
@@ -455,13 +482,20 @@ class FloatingLauncherService : Service() {
     }
 
     private fun dismissKeyboardAndRestore() {
-        val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar) ?: return
-        if (searchBar.hasFocus()) {
+        val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
+        if (searchBar != null && searchBar.hasFocus()) {
             searchBar.clearFocus()
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(searchBar.windowToken, 0)
-            updateDrawerHeight(false)
         }
+        // Also check DPI input or other inputs
+        val dpiInput = drawerView?.findViewById<EditText>(R.id.input_dpi_value)
+        if (dpiInput != null && dpiInput.hasFocus()) {
+            dpiInput.clearFocus()
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(dpiInput.windowToken, 0)
+        }
+        updateDrawerHeight(false)
     }
 
     private fun setupDrawer() {
@@ -619,29 +653,20 @@ class FloatingLauncherService : Service() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val displays = dm.displays
         
-        // --- NEW LOGIC: Smart Toggle if Virtual Display is Active ---
         if (isVirtualDisplayActive) {
-            // Find a display that is not Main (0) or Cover (1). Usually the overlay ID is 2+.
             val virtualDisp = displays.firstOrNull { it.displayId >= 2 }
-            
             if (virtualDisp != null) {
-                // Determine Target
                 val targetId = if (currentDisplayId == virtualDisp.displayId) {
-                    // Currently on Virtual -> Switch back to last physical
-                    // Verify lastPhysical still exists, if not default to 0
                     if (displays.any { it.displayId == lastPhysicalDisplayId }) lastPhysicalDisplayId else Display.DEFAULT_DISPLAY
                 } else {
-                    // Currently on Physical -> Save this and switch to Virtual
                     lastPhysicalDisplayId = currentDisplayId
                     virtualDisp.displayId
                 }
-                
                 performDisplayChange(targetId)
                 return
             }
         }
 
-        // Standard Cycle Fallback
         val currentIdx = displays.indexOfFirst { it.displayId == currentDisplayId }
         val nextIdx = if (currentIdx == -1) 0 else (currentIdx + 1) % displays.size
         performDisplayChange(displays[nextIdx].displayId)
@@ -714,20 +739,22 @@ class FloatingLauncherService : Service() {
     }
     
     private fun selectDpi(value: Int) { 
-        // Allow -1 for reset, otherwise clamp to safe limits
         currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600)
         AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
         
-        if (isInstantMode) { 
-            Thread { 
+        // Execute immediately regardless of instant mode as this is a specific tool
+        Thread { 
+            try {
                 if (currentDpiSetting == -1) {
                     shellService?.runCommand("wm density reset -d $currentDisplayId")
                 } else {
                     val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"
                     shellService?.runCommand(dpiCmd)
                 }
-            }.start() 
-        } 
+            } catch(e: Exception) {
+                e.printStackTrace()
+            }
+        }.start() 
     }
     
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
@@ -756,7 +783,6 @@ class FloatingLauncherService : Service() {
                 } 
             }; 
             AppPreferences.saveLastLayout(this, selectedLayoutType); 
-            // FIX: Use per-display methods
             AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); 
             AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); 
             activeProfileName = name; 
@@ -854,7 +880,6 @@ class FloatingLauncherService : Service() {
                 val savedResNames = AppPreferences.getCustomResolutionNames(this).sorted()
                 for (name in savedResNames) {
                     val value = AppPreferences.getCustomResolutionValue(this, name) ?: continue
-                    // Create option. Use 100+ index to signify custom
                     displayList.add(ResolutionOption(name, "wm size  -d $currentDisplayId", 100 + savedResNames.indexOf(name)))
                 }
                 
@@ -865,9 +890,7 @@ class FloatingLauncherService : Service() {
             }
             MODE_DPI -> { 
                 searchBar.hint = "Adjust Density (DPI)"
-                // FIX: Use ActionOption for Reset to call selectDpi(-1) directly
                 displayList.add(ActionOption("Reset Density (Default)") { selectDpi(-1) })
-                
                 var savedDpi = currentDpiSetting
                 if (savedDpi <= 0) { savedDpi = displayContext?.resources?.configuration?.densityDpi ?: 160 }
                 displayList.add(DpiOption(savedDpi)) 
@@ -886,11 +909,10 @@ class FloatingLauncherService : Service() {
                 displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
                 displayList.add(ToggleOption("Display Off (Touch on)", isExtinguished) { if (it) performExtinguish() else wakeUp() })
                 
-                // --- NEW SETTING: Shizuku Warning Toggle ---
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { 
                     showShizukuWarning = it
                     AppPreferences.setShowShizukuWarning(this, it)
-                    updateBubbleIcon() // Reflect immediately
+                    updateBubbleIcon() 
                 })
             }
         }
@@ -913,7 +935,7 @@ class FloatingLauncherService : Service() {
     inner class SelectedAppsAdapter : RecyclerView.Adapter<SelectedAppsAdapter.Holder>() {
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) { val icon: ImageView = v.findViewById(R.id.selected_app_icon) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
-        override fun onBindViewHolder(holder: Holder, position: Int) { val app = selectedAppsQueue[position]; if (app.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.mipmap.ic_launcher_round) }; holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } }
+        override fun onBindViewHolder(holder: Holder, position: Int) { val app = selectedAppsQueue[position]; if (app.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) }; holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } }
         override fun getItemCount() = selectedAppsQueue.size
     }
 
@@ -941,8 +963,8 @@ class FloatingLauncherService : Service() {
             if (holder is LayoutHolder) holder.nameInput.textSize = currentFontSize
             if (holder is ProfileRichHolder) holder.name.textSize = currentFontSize
 
-            if (holder is AppHolder && item is MainActivity.AppInfo) { holder.text.text = item.label; if (item.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline) } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(item.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.mipmap.ic_launcher_round) } }; val isSelected = selectedAppsQueue.any { it.packageName == item.packageName }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.star.visibility = if (item.isFavorite) View.VISIBLE else View.GONE; holder.itemView.setOnClickListener { addToSelection(item) }; holder.itemView.setOnLongClickListener { toggleFavorite(item); refreshSearchList(); true } }
-            else if (holder is ProfileRichHolder && item is ProfileOption) { holder.name.setText(item.name); holder.iconsContainer.removeAllViews(); if (!item.isCurrent) { for (pkg in item.apps.take(5)) { val iv = ImageView(holder.itemView.context); val lp = LinearLayout.LayoutParams(60, 60); lp.marginEnd = 8; iv.layoutParams = lp; if (pkg == PACKAGE_BLANK) { iv.setImageResource(R.drawable.ic_box_outline) } else { try { iv.setImageDrawable(packageManager.getApplicationIcon(pkg)) } catch (e: Exception) { iv.setImageResource(R.mipmap.ic_launcher_round) } }; holder.iconsContainer.addView(iv) }; val info = "${getLayoutName(item.layout)} | ${getRatioName(item.resIndex)} | ${item.dpi}dpi"; holder.details.text = info; holder.details.visibility = View.VISIBLE; holder.btnSave.visibility = View.GONE; if (activeProfileName == item.name) { holder.itemView.setBackgroundResource(R.drawable.bg_item_active) } else { holder.itemView.setBackgroundResource(0) }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); loadProfile(item.name) }; holder.itemView.setOnLongClickListener { startRename(holder.name); true }; val saveProfileName = { val newName = holder.name.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameProfile(holder.itemView.context, item.name, newName)) { showToast("Renamed to $newName"); switchMode(MODE_PROFILES) } }; endRename(holder.name) }; holder.name.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveProfileName(); holder.name.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(holder.name.windowToken, 0); updateDrawerHeight(false); true } else false }; holder.name.setOnFocusChangeListener { v, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) saveProfileName() } } else { holder.iconsContainer.removeAllViews(); holder.details.visibility = View.GONE; holder.btnSave.visibility = View.VISIBLE; holder.itemView.setBackgroundResource(0); holder.name.isEnabled = true; holder.name.isFocusable = true; holder.name.isFocusableInTouchMode = true; holder.itemView.setOnClickListener { saveProfile() }; holder.btnSave.setOnClickListener { saveProfile() } } }
+            if (holder is AppHolder && item is MainActivity.AppInfo) { holder.text.text = item.label; if (item.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline) } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(item.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) } }; val isSelected = selectedAppsQueue.any { it.packageName == item.packageName }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.star.visibility = if (item.isFavorite) View.VISIBLE else View.GONE; holder.itemView.setOnClickListener { addToSelection(item) }; holder.itemView.setOnLongClickListener { toggleFavorite(item); refreshSearchList(); true } }
+            else if (holder is ProfileRichHolder && item is ProfileOption) { holder.name.setText(item.name); holder.iconsContainer.removeAllViews(); if (!item.isCurrent) { for (pkg in item.apps.take(5)) { val iv = ImageView(holder.itemView.context); val lp = LinearLayout.LayoutParams(60, 60); lp.marginEnd = 8; iv.layoutParams = lp; if (pkg == PACKAGE_BLANK) { iv.setImageResource(R.drawable.ic_box_outline) } else { try { iv.setImageDrawable(packageManager.getApplicationIcon(pkg)) } catch (e: Exception) { iv.setImageResource(R.drawable.ic_launcher_bubble) } }; holder.iconsContainer.addView(iv) }; val info = "${getLayoutName(item.layout)} | ${getRatioName(item.resIndex)} | ${item.dpi}dpi"; holder.details.text = info; holder.details.visibility = View.VISIBLE; holder.btnSave.visibility = View.GONE; if (activeProfileName == item.name) { holder.itemView.setBackgroundResource(R.drawable.bg_item_active) } else { holder.itemView.setBackgroundResource(0) }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); loadProfile(item.name) }; holder.itemView.setOnLongClickListener { startRename(holder.name); true }; val saveProfileName = { val newName = holder.name.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameProfile(holder.itemView.context, item.name, newName)) { showToast("Renamed to $newName"); switchMode(MODE_PROFILES) } }; endRename(holder.name) }; holder.name.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveProfileName(); holder.name.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(holder.name.windowToken, 0); updateDrawerHeight(false); true } else false }; holder.name.setOnFocusChangeListener { v, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) saveProfileName() } } else { holder.iconsContainer.removeAllViews(); holder.details.visibility = View.GONE; holder.btnSave.visibility = View.VISIBLE; holder.itemView.setBackgroundResource(0); holder.name.isEnabled = true; holder.name.isFocusable = true; holder.name.isFocusableInTouchMode = true; holder.itemView.setOnClickListener { saveProfile() }; holder.btnSave.setOnClickListener { saveProfile() } } }
             else if (holder is LayoutHolder) {
                 holder.btnSave.visibility = View.GONE; holder.btnExtinguish.visibility = View.GONE
                 if (item is LayoutOption) { holder.nameInput.setText(item.name); val isSelected = if (item.type == LAYOUT_CUSTOM_DYNAMIC) { item.type == selectedLayoutType && item.name == activeCustomLayoutName } else { item.type == selectedLayoutType && activeCustomLayoutName == null }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { selectLayout(item) }; if (item.isCustomSaved) { holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveLayoutName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { showToast("Renamed to $newName"); if (activeCustomLayoutName == item.name) { activeCustomLayoutName = newName; AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName) }; switchMode(MODE_LAYOUTS) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveLayoutName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveLayoutName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) } }
@@ -950,8 +972,7 @@ class FloatingLauncherService : Service() {
                     holder.nameInput.setText(item.name)
                     
                     if (item.index >= 100) {
-                        // Re-enable renaming for Custom Resolutions using LayoutHolder logic
-                        holder.nameInput.isEnabled = false // Disabled by default, enabled on long click
+                        holder.nameInput.isEnabled = false 
                         holder.nameInput.setTextColor(Color.WHITE)
                         holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }
                         
@@ -1011,8 +1032,49 @@ class FloatingLauncherService : Service() {
                 holder.inputW.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }
                 holder.inputH.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }
             }
-            else if (holder is IconSettingHolder && item is IconOption) { try { val uriStr = AppPreferences.getIconUri(holder.itemView.context); if (uriStr != null) { val uri = Uri.parse(uriStr); val input = contentResolver.openInputStream(uri); val bitmap = BitmapFactory.decodeStream(input); input?.close(); holder.preview.setImageBitmap(bitmap) } else { holder.preview.setImageResource(R.mipmap.ic_launcher_round) } } catch(e: Exception) { holder.preview.setImageResource(R.mipmap.ic_launcher_round) }; holder.itemView.setOnClickListener { pickIcon() } }
-            else if (holder is DpiHolder && item is DpiOption) { holder.input.setText(item.currentDpi.toString()); holder.btnMinus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v - 5).coerceAtLeast(100); holder.input.setText(newVal.toString()); selectDpi(newVal) }; holder.btnPlus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v + 5).coerceAtMost(400); holder.input.setText(newVal.toString()); selectDpi(newVal) } }
+            else if (holder is IconSettingHolder && item is IconOption) { try { val uriStr = AppPreferences.getIconUri(holder.itemView.context); if (uriStr != null) { val uri = Uri.parse(uriStr); val input = contentResolver.openInputStream(uri); val bitmap = BitmapFactory.decodeStream(input); input?.close(); holder.preview.setImageBitmap(bitmap) } else { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) } } catch(e: Exception) { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) }; holder.itemView.setOnClickListener { pickIcon() } }
+            
+            else if (holder is DpiHolder && item is DpiOption) { 
+                holder.input.setText(item.currentDpi.toString()); 
+                
+                // Handle Manual Entry (Enter Key)
+                holder.input.setOnEditorActionListener { v, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_DONE) {
+                        val valInt = v.text.toString().toIntOrNull()
+                        if (valInt != null) {
+                            selectDpi(valInt)
+                            showToast("DPI set to $valInt")
+                        }
+                        dismissKeyboardAndRestore()
+                        true
+                    } else false
+                }
+
+                // Handle Manual Entry (Focus Loss)
+                holder.input.setOnFocusChangeListener { _, hasFocus ->
+                    if (autoResizeEnabled) updateDrawerHeight(hasFocus)
+                    if (!hasFocus) {
+                        val valInt = holder.input.text.toString().toIntOrNull()
+                        if (valInt != null && valInt != item.currentDpi) {
+                            selectDpi(valInt)
+                        }
+                    }
+                }
+
+                holder.btnMinus.setOnClickListener { 
+                    val v = holder.input.text.toString().toIntOrNull() ?: 160; 
+                    val newVal = (v - 5).coerceAtLeast(50); 
+                    holder.input.setText(newVal.toString()); 
+                    selectDpi(newVal) 
+                }; 
+                
+                holder.btnPlus.setOnClickListener { 
+                    val v = holder.input.text.toString().toIntOrNull() ?: 160; 
+                    val newVal = (v + 5).coerceAtMost(600); 
+                    holder.input.setText(newVal.toString()); 
+                    selectDpi(newVal) 
+                } 
+            }
             else if (holder is FontSizeHolder && item is FontSizeOption) { holder.textVal.text = item.currentSize.toInt().toString(); holder.btnMinus.setOnClickListener { changeFontSize(item.currentSize - 1) }; holder.btnPlus.setOnClickListener { changeFontSize(item.currentSize + 1) } }
             else if (holder is HeightHolder && item is HeightOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerHeight(-5) }; holder.btnPlus.setOnClickListener { changeDrawerHeight(5) } }
             else if (holder is WidthHolder && item is WidthOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerWidth(-5) }; holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } }

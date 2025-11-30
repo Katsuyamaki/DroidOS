@@ -9,7 +9,6 @@ This repository is a Monorepo containing two distinct but complementary Android 
 |---|---|---|
 | CoverScreen Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /Cover-Screen-Launcher |
 | CoverScreen Trackpad | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /Cover-Screen-Trackpad |
-
 ✨ Core Features
 🖥️ Universal Desktop Mode (DeX Replacement)
 Unlike proprietary solutions locked to specific brands, DroidOS provides a desktop-class experience on any Android phone:
