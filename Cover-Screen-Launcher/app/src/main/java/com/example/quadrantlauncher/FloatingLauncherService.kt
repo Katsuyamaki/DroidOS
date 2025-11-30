@@ -142,6 +142,42 @@ class FloatingLauncherService : Service() {
     }
 
     private val swipeCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+        
+        override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int {
+            val pos = viewHolder.adapterPosition
+            if (pos == RecyclerView.NO_POSITION || pos >= displayList.size) return 0
+            val item = displayList[pos]
+
+            val isSwipeable = when (currentMode) {
+                MODE_LAYOUTS -> {
+                    if (item is LayoutOption) {
+                        // Only swipe Custom Saved layouts
+                        item.type == LAYOUT_CUSTOM_DYNAMIC && item.isCustomSaved
+                    } else false
+                }
+                MODE_RESOLUTION -> {
+                    if (item is ResolutionOption) {
+                        // Only swipe Custom Resolutions (index >= 100)
+                        item.index >= 100
+                    } else false
+                }
+                MODE_PROFILES -> {
+                    if (item is ProfileOption) {
+                        // Only swipe Saved Profiles (not the "Save New" button which has isCurrent=true in the list gen)
+                        !item.isCurrent
+                    } else false
+                }
+                MODE_SEARCH -> true // Allow swiping apps for Favorites
+                else -> false // Settings, DPI, etc are not swipeable
+            }
+
+            return if (isSwipeable) {
+                makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
+            } else {
+                0
+            }
+        }
+
         override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder): Boolean = false
         override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
             val pos = viewHolder.adapterPosition
