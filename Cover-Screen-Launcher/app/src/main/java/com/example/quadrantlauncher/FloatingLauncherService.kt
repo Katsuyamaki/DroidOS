@@ -112,7 +112,6 @@ class FloatingLauncherService : Service() {
     private val uiHandler = Handler(Looper.getMainLooper())
 
     // --- SHIZUKU LISTENERS ---
-    // Automatically re-bind when Shizuku connects or permissions are granted
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
             bindShizuku()
@@ -235,8 +234,6 @@ class FloatingLauncherService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForegroundService()
-        
-        // Register Shizuku Listeners
         try {
             Shizuku.addBinderReceivedListener(shizukuBinderListener)
             Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
@@ -329,7 +326,6 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Unregister Shizuku Listeners
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderListener)
             Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
@@ -488,7 +484,6 @@ class FloatingLauncherService : Service() {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.hideSoftInputFromWindow(searchBar.windowToken, 0)
         }
-        // Also check DPI input or other inputs
         val dpiInput = drawerView?.findViewById<EditText>(R.id.input_dpi_value)
         if (dpiInput != null && dpiInput.hasFocus()) {
             dpiInput.clearFocus()
@@ -742,7 +737,6 @@ class FloatingLauncherService : Service() {
         currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600)
         AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
         
-        // Execute immediately regardless of instant mode as this is a specific tool
         Thread { 
             try {
                 if (currentDpiSetting == -1) {
@@ -800,34 +794,112 @@ class FloatingLauncherService : Service() {
         refreshDisplayId(); 
         val pkgs = selectedAppsQueue.map { it.packageName }; 
         AppPreferences.saveLastQueue(this, pkgs); 
-        val targetDim = getTargetDimensions(selectedResolutionIndex); 
-        val w = targetDim?.first ?: windowManager.maximumWindowMetrics.bounds.width(); 
-        val h = targetDim?.second ?: windowManager.maximumWindowMetrics.bounds.height(); 
-        val rects = mutableListOf<Rect>(); 
         
-        when (layoutType) { 
-            LAYOUT_FULL -> { rects.add(Rect(0, 0, w, h)) }
-            LAYOUT_SIDE_BY_SIDE -> { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) }
-            LAYOUT_TOP_BOTTOM -> { rects.add(Rect(0, 0, w, h/2)); rects.add(Rect(0, h/2, w, h)) }
-            LAYOUT_TRI_EVEN -> { val third = w / 3; rects.add(Rect(0, 0, third, h)); rects.add(Rect(third, 0, third * 2, h)); rects.add(Rect(third * 2, 0, w, h)) }
-            LAYOUT_CORNERS -> { rects.add(Rect(0, 0, w/2, h/2)); rects.add(Rect(w/2, 0, w, h/2)); rects.add(Rect(0, h/2, w/2, h)); rects.add(Rect(w/2, h/2, w, h)) }
-            LAYOUT_TRI_SIDE_MAIN_SIDE -> {
-                val quarter = w / 4
-                rects.add(Rect(0, 0, quarter, h))
-                rects.add(Rect(quarter, 0, quarter * 3, h))
-                rects.add(Rect(quarter * 3, 0, w, h))
-            }
-            LAYOUT_QUAD_ROW_EVEN -> {
-                val quarter = w / 4
-                rects.add(Rect(0, 0, quarter, h))
-                rects.add(Rect(quarter, 0, quarter * 2, h))
-                rects.add(Rect(quarter * 2, 0, quarter * 3, h))
-                rects.add(Rect(quarter * 3, 0, w, h))
-            }
-            LAYOUT_CUSTOM_DYNAMIC -> { if (activeCustomRects != null) { rects.addAll(activeCustomRects!!) } else { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) } } 
-        } 
-        
-        Thread { try { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); if (currentDpiSetting > 0) { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } else { if (currentDpiSetting == -1) shellService?.runCommand("wm density reset -d $currentDisplayId") }; Thread.sleep(600); if (selectedAppsQueue.isNotEmpty()) { val minimizedApps = selectedAppsQueue.filter { it.isMinimized }; for (app in minimizedApps) { if (app.packageName != PACKAGE_BLANK) { try { val tid = shellService?.getTaskId(app.packageName) ?: -1; if (tid != -1) shellService?.moveTaskToBack(tid) } catch (e: Exception) { Log.e(TAG, "Failed to minimize ${app.packageName}", e) } } }; val activeApps = selectedAppsQueue.filter { !it.isMinimized }; if (killAppOnExecute) { for (app in activeApps) { if (app.packageName != PACKAGE_BLANK) { shellService?.forceStop(app.packageName) } }; Thread.sleep(400) } else { Thread.sleep(100) }; val count = Math.min(activeApps.size, rects.size); for (i in 0 until count) { val pkg = activeApps[i].packageName; val bounds = rects[i]; if (pkg == PACKAGE_BLANK) continue; uiHandler.postDelayed({ launchViaApi(pkg, bounds) }, (i * 150).toLong()); uiHandler.postDelayed({ launchViaShell(pkg) }, (i * 150 + 50).toLong()); if (!killAppOnExecute) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 150).toLong()) }; uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 800).toLong()) }; if (closeDrawer) { uiHandler.post { selectedAppsQueue.clear(); updateSelectedAppsDock() } } } } catch (e: Exception) { Log.e(TAG, "Execute Failed", e); showToast("Execute Failed: ${e.message}") } }.start(); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
+        Thread { 
+            try { 
+                val resCmd = getResolutionCommand(selectedResolutionIndex); 
+                shellService?.runCommand(resCmd); 
+                
+                if (currentDpiSetting > 0) { 
+                    val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; 
+                    shellService?.runCommand(dpiCmd) 
+                } else { 
+                    if (currentDpiSetting == -1) shellService?.runCommand("wm density reset -d $currentDisplayId") 
+                }; 
+                
+                Thread.sleep(800);
+
+                // DYNAMICALLY CHECK RESOLUTION AFTER CHANGE
+                val targetDim = getTargetDimensions(selectedResolutionIndex); 
+                var w = 0
+                var h = 0
+
+                if (targetDim != null) {
+                    w = targetDim.first
+                    h = targetDim.second
+                } else {
+                    val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+                    val display = dm.getDisplay(currentDisplayId)
+                    if (display != null) {
+                        val metrics = DisplayMetrics()
+                        display.getRealMetrics(metrics)
+                        w = metrics.widthPixels
+                        h = metrics.heightPixels
+                    } else {
+                         val bounds = windowManager.maximumWindowMetrics.bounds
+                         w = bounds.width()
+                         h = bounds.height()
+                    }
+                }
+                
+                val rects = mutableListOf<Rect>(); 
+                when (layoutType) { 
+                    LAYOUT_FULL -> { rects.add(Rect(0, 0, w, h)) }
+                    LAYOUT_SIDE_BY_SIDE -> { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) }
+                    LAYOUT_TOP_BOTTOM -> { rects.add(Rect(0, 0, w, h/2)); rects.add(Rect(0, h/2, w, h)) }
+                    LAYOUT_TRI_EVEN -> { val third = w / 3; rects.add(Rect(0, 0, third, h)); rects.add(Rect(third, 0, third * 2, h)); rects.add(Rect(third * 2, 0, w, h)) }
+                    LAYOUT_CORNERS -> { rects.add(Rect(0, 0, w/2, h/2)); rects.add(Rect(w/2, 0, w, h/2)); rects.add(Rect(0, h/2, w/2, h)); rects.add(Rect(w/2, h/2, w, h)) }
+                    LAYOUT_TRI_SIDE_MAIN_SIDE -> {
+                        val quarter = w / 4
+                        rects.add(Rect(0, 0, quarter, h))
+                        rects.add(Rect(quarter, 0, quarter * 3, h))
+                        rects.add(Rect(quarter * 3, 0, w, h))
+                    }
+                    LAYOUT_QUAD_ROW_EVEN -> {
+                        val quarter = w / 4
+                        rects.add(Rect(0, 0, quarter, h))
+                        rects.add(Rect(quarter, 0, quarter * 2, h))
+                        rects.add(Rect(quarter * 2, 0, quarter * 3, h))
+                        rects.add(Rect(quarter * 3, 0, w, h))
+                    }
+                    LAYOUT_CUSTOM_DYNAMIC -> { if (activeCustomRects != null) { rects.addAll(activeCustomRects!!) } else { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) } } 
+                } 
+
+                if (selectedAppsQueue.isNotEmpty()) { 
+                    val minimizedApps = selectedAppsQueue.filter { it.isMinimized }; 
+                    for (app in minimizedApps) { 
+                        if (app.packageName != PACKAGE_BLANK) { 
+                            try { 
+                                val tid = shellService?.getTaskId(app.packageName) ?: -1; 
+                                if (tid != -1) shellService?.moveTaskToBack(tid) 
+                            } catch (e: Exception) { 
+                                Log.e(TAG, "Failed to minimize ${app.packageName}", e) 
+                            } 
+                        } 
+                    }; 
+                    val activeApps = selectedAppsQueue.filter { !it.isMinimized }; 
+                    if (killAppOnExecute) { 
+                        for (app in activeApps) { 
+                            if (app.packageName != PACKAGE_BLANK) { 
+                                shellService?.forceStop(app.packageName) 
+                            } 
+                        }; 
+                        Thread.sleep(400) 
+                    } else { 
+                        Thread.sleep(100) 
+                    }; 
+                    val count = Math.min(activeApps.size, rects.size); 
+                    for (i in 0 until count) { 
+                        val pkg = activeApps[i].packageName; 
+                        val bounds = rects[i]; 
+                        if (pkg == PACKAGE_BLANK) continue; 
+                        uiHandler.postDelayed({ launchViaApi(pkg, bounds) }, (i * 150).toLong()); 
+                        uiHandler.postDelayed({ launchViaShell(pkg) }, (i * 150 + 50).toLong()); 
+                        if (!killAppOnExecute) { 
+                            uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 150).toLong()) 
+                        }; 
+                        uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 800).toLong()) 
+                    }; 
+                    if (closeDrawer) { 
+                        uiHandler.post { selectedAppsQueue.clear(); updateSelectedAppsDock() } 
+                    } 
+                } 
+            } catch (e: Exception) { 
+                Log.e(TAG, "Execute Failed", e); 
+                showToast("Execute Failed: ${e.message}") 
+            } 
+        }.start(); 
+        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
     }
     
     private fun calculateGCD(a: Int, b: Int): Int {
