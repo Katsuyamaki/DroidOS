@@ -43,6 +43,10 @@ We welcome contributions! Please note that this is a Monorepo.
  * If you are improving the Trackpad, work within the Cover-Screen-Trackpad directory.
 
 
+
+
+
+
 🚀 DroidOS Launcher Usage Guide
 The DroidOS Launcher is designed to manage multi-window tiling and control display resolutions, primarily using Shizuku for elevated permissions.
 1. The Two Operational Modes
@@ -75,6 +79,57 @@ Example: 4-Quadrant Layout
  * Tile 3 (Bottom-Left): Corresponds to the 3rd app in the queue.
  * Tile 4 (Bottom-Right): Corresponds to the 4th app in the queue.
 You can ensure an app lands in a specific tile by dragging it to the corresponding position in the App Queue.
+
+
+
+
+
+
+🕶️ DroidOS XREAL Virtual Display Setup
+This guide outlines the steps to activate and control a virtual, tiled desktop environment when using AR glasses (such as XREAL) connected to your Android device. This process relies on having Shizuku running with permissions granted to both the CoverScreen Launcher and CoverScreen Trackpad applications.
+Part 1: Create and Switch to Virtual Display (Launcher App)
+The goal of this phase is to create a new virtual screen and move the Launcher's target focus from your physical phone screen to that new screen.
+ * Set Initial Resolution (Optional but Recommended):
+   * Open the CoverScreen Launcher floating bubble.
+   * Navigate to the Resolution Mode (Icon: Rectangle with dots) tab.
+   * Select "Default (Reset)".
+   * Note: The developer often sets a custom resolution (like 1080p) here to ensure the display from the glasses (e.g., Beam Pro) is usable, as the physical screen itself may be too tiny for the mirrored content.
+ * Enable Virtual Display:
+   * Navigate to the Settings Mode (Icon: Gear/Preferences) tab.
+   * Toggle the "Virtual Display (1080p)" option.
+     > Technical: This executes a system command to create the virtual overlay: settings put global overlay_display_devices "1920x1080/320".
+     > 
+ * Switch Launch Target:
+   * Press the "Switch Display (Current [ID])" button immediately below the Virtual Display toggle.
+   * Result: Your physical phone screen should become mostly blank, showing only the Launcher bubble (or the main screen if still open). The virtual screen on the glasses should now show the output.
+Part 2: Gaining Cursor Control (Trackpad App)
+Now that the system is outputting to the glasses, you must redirect your phone's touch input to control the cursor on the remote screen.
+ * Launch Trackpad App:
+   * Open the CoverScreen Trackpad application on your physical phone screen.
+   * Note: The trackpad functions as an overlay on your physical phone screen, allowing you to use your phone's surface to control the larger remote display.
+ * Redirect Input:
+   * Press the "Target: Switch Local/Remote" button.
+   * Result: You should now see a cursor moving on the glasses display corresponding to your touch input on the phone.
+ * Activate Headless/Extinguish Mode (Optional):
+   * Return to the CoverScreen Launcher (Settings Tab).
+   * Toggle "Display Off (Touch on)" to turn off the physical screen entirely.
+🖱️ Trackpad Overlay Controls
+The Trackpad overlay provides dedicated controls accessible through its corners and edges:
+| Control Point | Action | Result | Source |
+|---|---|---|---|
+| Top-Right Corner Handle | Drag finger | Moves (repositions) the trackpad overlay on the physical screen. |  |
+| Bottom-Right Corner Handle | Drag finger | Resizes the trackpad overlay. |  |
+| Bottom-Left Corner | Tap (Click) | Opens the manual adjust menu, allowing you to resize and reposition using a controller instead of dragging. |  |
+| Edges (Top/Bottom) | Finger near edge + Move Up/Down | Performs Vertical Scrolling in the remote screen. |  |
+| Edges (Left/Right) | Finger near edge + Move Left/Right | Performs Horizontal Scrolling in the remote screen. |  |
+Scrolling Note: Ensure the trackpad overlay is not positioned too close to the edges of your phone's physical screen for the scrolling zones to work reliably.
+
+
+
+
+
+
+
 
 Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
 
