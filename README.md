@@ -2,7 +2,7 @@ DroidOS 📱🚀
 DroidOS is a suite of advanced system tools designed to give "superpowers" to the standard Android experience.
 It functions as a universal Samsung DeX replacement, a tiling window manager, and an unrestricted app launcher that works on any Android device. Whether you are using a Foldable, a Flip phone, AR Glasses, or a secondary monitor, DroidOS unlocks the full potential of your hardware.
 
-
+![Screenshot_20251130_185618_Discord](https://github.com/user-attachments/assets/dca14a11-21e6-439c-b653-7ce9f8e73a87)
 
 📂 Project Structure (Monorepo)
 This repository is a Monorepo containing two distinct but complementary Android applications.
