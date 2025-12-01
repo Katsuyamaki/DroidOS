@@ -4,14 +4,6 @@ It functions as a universal Samsung DeX replacement, a tiling window manager, an
 
 ![Screenshot_20251130_185618_Discord](https://github.com/user-attachments/assets/dca14a11-21e6-439c-b653-7ce9f8e73a87)
 
-📂 Project Structure (Monorepo)
-This repository is a Monorepo containing two distinct but complementary Android applications.
-> ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
-> 
-| Project | Description | Path |
-|---|---|---|
-| DroidOS Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /Cover-Screen-Launcher |
-| DroidOS Trackpad Keyboard | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /Cover-Screen-Trackpad |
 
 ✨ Core Features
 🖥️ Universal Desktop Mode (DeX Replacement)
@@ -101,3 +93,12 @@ You can ensure an app lands in a specific tile by dragging it to the correspondi
 ![Screenshot_20251130_125807_One UI Cover Home](https://github.com/user-attachments/assets/eb08e879-6c55-45f6-a175-a19791588337)
 
 Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
+
+📂 Project Structure (Monorepo)
+This repository is a Monorepo containing two distinct but complementary Android applications.
+> ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
+> 
+| Project | Description | Path |
+|---|---|---|
+| DroidOS Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /Cover-Screen-Launcher |
+| DroidOS Trackpad Keyboard | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /Cover-Screen-Trackpad |
