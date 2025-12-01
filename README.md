@@ -76,6 +76,23 @@ Example: 4-Quadrant Layout
  * Tile 4 (Bottom-Right): Corresponds to the 4th app in the queue.
 You can ensure an app lands in a specific tile by dragging it to the corresponding position in the App Queue.
 
+Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
+
+📂 Project Structure (Monorepo)
+This repository is a Monorepo containing two distinct but complementary Android applications.
+> ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
+> 
+| Project | Description | Path |
+|---|---|---|
+| DroidOS Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /Cover-Screen-Launcher |
+| DroidOS Trackpad Keyboard | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /Cover-Screen-Trackpad |
+
+
+📄 License
+This project is licensed under the GNU General Public License v3.0 (GPLv3).
+You are free to use, modify, and distribute this software, but all modifications must remain open source. See the LICENSE file for details.
+
+
 ![Screenshot_20251130_125934_Reddit](https://github.com/user-attachments/assets/a4644964-8371-4f39-9a03-df88e4a8524a)
 
 ![Screenshot_20251130_185403_Discord](https://github.com/user-attachments/assets/6a876a1e-67c5-4968-84ff-2ed36411c54a)
@@ -94,18 +111,3 @@ You can ensure an app lands in a specific tile by dragging it to the correspondi
 
 
 
-Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
-
-📂 Project Structure (Monorepo)
-This repository is a Monorepo containing two distinct but complementary Android applications.
-> ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
-> 
-| Project | Description | Path |
-|---|---|---|
-| DroidOS Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /Cover-Screen-Launcher |
-| DroidOS Trackpad Keyboard | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /Cover-Screen-Trackpad |
-
-
-📄 License
-This project is licensed under the GNU General Public License v3.0 (GPLv3).
-You are free to use, modify, and distribute this software, but all modifications must remain open source. See the LICENSE file for details.
