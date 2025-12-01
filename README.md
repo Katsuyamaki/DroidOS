@@ -9,6 +9,8 @@ It functions as a universal Samsung DeX replacement, a tiling window manager, an
 
 ![Screenshot_20251130_185618_Discord](https://github.com/user-attachments/assets/dca14a11-21e6-439c-b653-7ce9f8e73a87)
 
+https://youtu.be/aOzkV3t7wFM
+
 <br>
 <br>
 
@@ -116,8 +118,6 @@ The goal of this phase is to create a new virtual screen and move the Launcher's
  * Enable Virtual Display:
    * Navigate to the Settings Mode (Icon: Gear/Preferences) tab.
    * Toggle the "Virtual Display (1080p)" option.
-     > Technical: This executes a system command to create the virtual overlay: settings put global overlay_display_devices "1920x1080/320".
-     > 
  * Switch Launch Target:
    * Press the "Switch Display (Current [ID])" button immediately below the Virtual Display toggle.
    * Result: Your physical phone screen should become mostly blank, showing only the Launcher bubble (or the main screen if still open). The virtual screen on the glasses should now show the output.
