@@ -12,6 +12,7 @@ import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.hardware.display.DisplayManager
 import android.os.Handler
@@ -64,6 +65,9 @@ class FloatingLauncherService : Service() {
         const val TAG = "FloatingService"
         const val ACTION_OPEN_DRAWER = "com.example.quadrantlauncher.OPEN_DRAWER"
         const val ACTION_UPDATE_ICON = "com.example.quadrantlauncher.UPDATE_ICON"
+        
+        // Exact blue color from bg_item_active.xml
+        const val HIGHLIGHT_COLOR = 0xFF00A0E9.toInt()
     }
 
     private lateinit var windowManager: WindowManager
@@ -104,6 +108,17 @@ class FloatingLauncherService : Service() {
     private var currentDrawerHeightPercent = 70
     private var currentDrawerWidthPercent = 90
     private var autoResizeEnabled = true
+    
+    // --- REORDER LOGIC ---
+    private var reorderSelectionIndex = -1
+    private var hoverIndex = -1 // Tracks mouse hover
+    private var isReorderDragEnabled = true
+    private var isReorderTapEnabled = true
+    // private var isReorderScrollEnabled = true // Tabled
+    // private var reorderTimeoutSeconds = 2 // Tabled
+    
+    // private val reorderHandler = Handler(Looper.getMainLooper())
+    // private val reorderConfirmRunnable = Runnable { endReorderMode(true) }
     
     private val PACKAGE_BLANK = "internal.blank.spacer"
     
@@ -151,24 +166,21 @@ class FloatingLauncherService : Service() {
             val isSwipeable = when (currentMode) {
                 MODE_LAYOUTS -> {
                     if (item is LayoutOption) {
-                        // Only swipe Custom Saved layouts
                         item.type == LAYOUT_CUSTOM_DYNAMIC && item.isCustomSaved
                     } else false
                 }
                 MODE_RESOLUTION -> {
                     if (item is ResolutionOption) {
-                        // Only swipe Custom Resolutions (index >= 100)
                         item.index >= 100
                     } else false
                 }
                 MODE_PROFILES -> {
                     if (item is ProfileOption) {
-                        // Only swipe Saved Profiles (not the "Save New" button which has isCurrent=true in the list gen)
                         !item.isCurrent
                     } else false
                 }
-                MODE_SEARCH -> true // Allow swiping apps for Favorites
-                else -> false // Settings, DPI, etc are not swipeable
+                MODE_SEARCH -> true 
+                else -> false 
             }
 
             return if (isSwipeable) {
@@ -222,6 +234,11 @@ class FloatingLauncherService : Service() {
     }
 
     private val selectedAppsDragCallback = object : ItemTouchHelper.SimpleCallback(ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT, ItemTouchHelper.UP or ItemTouchHelper.DOWN) {
+        
+        override fun isLongPressDragEnabled(): Boolean {
+            return isReorderDragEnabled
+        }
+        
         override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder): Boolean {
             val fromPos = v.adapterPosition; val toPos = t.adapterPosition
             Collections.swap(selectedAppsQueue, fromPos, toPos)
@@ -238,6 +255,9 @@ class FloatingLauncherService : Service() {
                     showToast("Killed ${app.label}")
                 }
                 selectedAppsQueue.removeAt(pos)
+                // If reordering was happening and we swipe deleted, reset
+                if (reorderSelectionIndex != -1) endReorderMode(false)
+                
                 updateSelectedAppsDock()
                 drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
                 if (isInstantMode) applyLayoutImmediate()
@@ -297,6 +317,11 @@ class FloatingLauncherService : Service() {
         isInstantMode = AppPreferences.getInstantMode(this)
         showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         
+        // reorderTimeoutSeconds = AppPreferences.getReorderTimeout(this) // Tabled
+        isReorderDragEnabled = AppPreferences.getReorderDrag(this)
+        isReorderTapEnabled = AppPreferences.getReorderTap(this)
+        // isReorderScrollEnabled = AppPreferences.getReorderScroll(this) // Tabled
+        
         currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
         currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercent(this)
         autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
@@ -336,7 +361,7 @@ class FloatingLauncherService : Service() {
                         val rects = mutableListOf<Rect>()
                         val rectParts = data.split("|")
                         for (rp in rectParts) {
-                            val coords = rp.split(",")
+                            val coords = rp.split(",");
                             if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
                         }
                         activeCustomRects = rects
@@ -579,9 +604,61 @@ class FloatingLauncherService : Service() {
         val dockTouchHelper = ItemTouchHelper(selectedAppsDragCallback)
         dockTouchHelper.attachToRecyclerView(selectedRecycler)
         
+        // --- TABLED: SCROLL WHEEL LISTENER ---
+        /*
+        selectedRecycler.setOnGenericMotionListener { v, event ->
+             // ... (Scroll to move implementation tabled)
+             false
+        }
+        */
+        
         drawerView!!.setOnClickListener { toggleDrawer() }
         drawerView!!.isFocusableInTouchMode = true
         drawerView!!.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { toggleDrawer(); true } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && isExtinguished) { wakeUp(); true } else false }
+    }
+    
+    // --- REORDER FUNCTIONS ---
+    private fun startReorderMode(index: Int) {
+        if (!isReorderTapEnabled) return
+        if (index < 0 || index >= selectedAppsQueue.size) return
+        
+        val prevIndex = reorderSelectionIndex
+        reorderSelectionIndex = index
+        
+        val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter
+        if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex)
+        adapter?.notifyItemChanged(reorderSelectionIndex)
+        
+        // resetReorderTimeout() // Removed timeout
+        showToast("Tap another app to Swap")
+    }
+    
+    // private fun moveReorderItem(direction: Int) { ... } // Tabled
+    
+    private fun swapReorderItem(targetIndex: Int) {
+        if (reorderSelectionIndex == -1) return
+        
+        Collections.swap(selectedAppsQueue, reorderSelectionIndex, targetIndex)
+        val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter
+        
+        // Notify both positions
+        adapter?.notifyItemChanged(reorderSelectionIndex)
+        adapter?.notifyItemChanged(targetIndex)
+        
+        endReorderMode(true) // true = trigger instant mode
+    }
+    
+    // private fun resetReorderTimeout() { ... } // Tabled
+    
+    private fun endReorderMode(triggerInstantMode: Boolean) {
+        val prevIndex = reorderSelectionIndex
+        reorderSelectionIndex = -1
+        // reorderHandler.removeCallbacks(reorderConfirmRunnable) // Tabled
+        
+        val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter
+        if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex)
+        
+        if (triggerInstantMode && isInstantMode) applyLayoutImmediate()
     }
     
     private fun updateDrawerHeight(isKeyboardMode: Boolean) {
@@ -1013,6 +1090,13 @@ class FloatingLauncherService : Service() {
                 displayList.add(ToggleOption("Auto-Shrink for Keyboard", autoResizeEnabled) { autoResizeEnabled = it; AppPreferences.setAutoResizeKeyboard(this, it) })
                 displayList.add(FontSizeOption(currentFontSize))
                 displayList.add(IconOption("Launcher Icon (Tap to Change)"))
+                
+                // --- REORDER SETTINGS TABLED/REMOVED ---
+                // displayList.add(TimeoutOption(reorderTimeoutSeconds))
+                displayList.add(ToggleOption("Reorder: Drag & Drop", isReorderDragEnabled) { isReorderDragEnabled = it; AppPreferences.setReorderDrag(this, it) })
+                displayList.add(ToggleOption("Reorder: Tap to Swap (Long Press)", isReorderTapEnabled) { isReorderTapEnabled = it; AppPreferences.setReorderTap(this, it) })
+                // displayList.add(ToggleOption("Reorder: Scroll Wheel", isReorderScrollEnabled) { isReorderScrollEnabled = it; AppPreferences.setReorderScroll(this, it) })
+                
                 displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
                 displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
                 displayList.add(ToggleOption("Display Off (Touch on)", isExtinguished) { if (it) performExtinguish() else wakeUp() })
@@ -1039,11 +1123,73 @@ class FloatingLauncherService : Service() {
     data class IconOption(val name: String)
     data class ActionOption(val name: String, val action: () -> Unit)
     data class ToggleOption(val name: String, var isEnabled: Boolean, val onToggle: (Boolean) -> Unit)
+    data class TimeoutOption(val seconds: Int)
 
     inner class SelectedAppsAdapter : RecyclerView.Adapter<SelectedAppsAdapter.Holder>() {
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) { val icon: ImageView = v.findViewById(R.id.selected_app_icon) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
-        override fun onBindViewHolder(holder: Holder, position: Int) { val app = selectedAppsQueue[position]; if (app.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) }; holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } }
+        
+        override fun onBindViewHolder(holder: Holder, position: Int) { 
+            val app = selectedAppsQueue[position]
+            
+            // Visual logic for Reorder Mode (Blue)
+            if (position == reorderSelectionIndex) {
+                // FIXED COLOR: #00A0E9 (Active Reorder)
+                holder.icon.setColorFilter(HIGHLIGHT_COLOR)
+                holder.icon.alpha = 1.0f
+                holder.itemView.scaleX = 1.1f
+                holder.itemView.scaleY = 1.1f
+                holder.itemView.background = null 
+            } else {
+                // Default State
+                holder.icon.clearColorFilter()
+                holder.itemView.scaleX = 1.0f
+                holder.itemView.scaleY = 1.0f
+                holder.itemView.background = null
+                
+                if (app.packageName == PACKAGE_BLANK) { 
+                    holder.icon.setImageResource(R.drawable.ic_box_outline)
+                    holder.icon.alpha = 1.0f 
+                } else { 
+                    try { 
+                        holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) 
+                    } catch (e: Exception) { 
+                        holder.icon.setImageResource(R.drawable.ic_launcher_bubble) 
+                    }
+                    holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f 
+                }
+            }
+
+            holder.itemView.setOnClickListener { 
+                dismissKeyboardAndRestore()
+                if (reorderSelectionIndex != -1) {
+                    // REORDER MODE LOGIC
+                    if (position == reorderSelectionIndex) {
+                        // Tapped same item -> CANCEL
+                        endReorderMode(false) // false = no instant mode
+                    } else {
+                        // Tapped different item -> SWAP
+                        swapReorderItem(position)
+                    }
+                } else {
+                    // Normal mode (Minimize/Restore)
+                    if (app.packageName != PACKAGE_BLANK) { 
+                        app.isMinimized = !app.isMinimized
+                        notifyItemChanged(position)
+                        if (isInstantMode) applyLayoutImmediate() 
+                    }
+                }
+            }
+            
+            holder.itemView.setOnLongClickListener {
+                if (isReorderTapEnabled) {
+                    startReorderMode(position)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
         override fun getItemCount() = selectedAppsQueue.size
     }
 
@@ -1057,10 +1203,16 @@ class FloatingLauncherService : Service() {
         inner class ProfileRichHolder(v: View) : RecyclerView.ViewHolder(v) { val name: EditText = v.findViewById(R.id.profile_name_text); val details: TextView = v.findViewById(R.id.profile_details_text); val iconsContainer: LinearLayout = v.findViewById(R.id.profile_icons_container); val btnSave: ImageView = v.findViewById(R.id.btn_save_profile_rich) }
         inner class IconSettingHolder(v: View) : RecyclerView.ViewHolder(v) { val preview: ImageView = v.findViewById(R.id.icon_setting_preview) }
         inner class CustomResInputHolder(v: View) : RecyclerView.ViewHolder(v) { val inputW: EditText = v.findViewById(R.id.input_res_w); val inputH: EditText = v.findViewById(R.id.input_res_h); val btnSave: ImageView = v.findViewById(R.id.btn_save_res) }
+        inner class TimeoutHolder(v: View) : RecyclerView.ViewHolder(v) { 
+            val btnMinus: ImageView = v.findViewById(R.id.btn_height_minus)
+            val btnPlus: ImageView = v.findViewById(R.id.btn_height_plus)
+            val textVal: TextView = v.findViewById(R.id.text_height_value)
+            val label: TextView = (v as ViewGroup).getChildAt(0) as TextView 
+        }
 
-        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8; is CustomResInputOption -> 9; else -> 0 } }
+        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8; is CustomResInputOption -> 9; is TimeoutOption -> 10; else -> 0 } }
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false)); 9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false)); else -> AppHolder(View(parent.context)) } }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false)); 9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false)); 10 -> TimeoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); else -> AppHolder(View(parent.context)) } }
 
         private fun startRename(editText: EditText) { editText.isEnabled = true; editText.isFocusable = true; editText.isFocusableInTouchMode = true; editText.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) }
         private fun endRename(editText: EditText) { editText.isFocusable = false; editText.isFocusableInTouchMode = false; editText.isEnabled = false; val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(editText.windowToken, 0) }
@@ -1078,12 +1230,10 @@ class FloatingLauncherService : Service() {
                 if (item is LayoutOption) { holder.nameInput.setText(item.name); val isSelected = if (item.type == LAYOUT_CUSTOM_DYNAMIC) { item.type == selectedLayoutType && item.name == activeCustomLayoutName } else { item.type == selectedLayoutType && activeCustomLayoutName == null }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { selectLayout(item) }; if (item.isCustomSaved) { holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveLayoutName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { showToast("Renamed to $newName"); if (activeCustomLayoutName == item.name) { activeCustomLayoutName = newName; AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName) }; switchMode(MODE_LAYOUTS) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveLayoutName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveLayoutName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) } }
                 else if (item is ResolutionOption) { 
                     holder.nameInput.setText(item.name)
-                    
                     if (item.index >= 100) {
                         holder.nameInput.isEnabled = false 
                         holder.nameInput.setTextColor(Color.WHITE)
                         holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }
-                        
                         val saveResName = {
                             val newName = holder.nameInput.text.toString().trim()
                             if (newName.isNotEmpty() && newName != item.name) {
@@ -1101,7 +1251,6 @@ class FloatingLauncherService : Service() {
                         holder.nameInput.isFocusable = false
                         holder.nameInput.setTextColor(Color.WHITE)
                     }
-
                     val isSelected = (item.index == selectedResolutionIndex)
                     if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
                     holder.itemView.setOnClickListener { applyResolution(item) } 
@@ -1117,75 +1266,34 @@ class FloatingLauncherService : Service() {
                     if (wStr.isNotEmpty() && hStr.isNotEmpty()) {
                         val w = wStr.toIntOrNull()
                         val h = hStr.toIntOrNull()
-                        
                         if (w != null && h != null && w > 0 && h > 0) {
                             val gcdVal = calculateGCD(w, h)
                             val wRatio = w / gcdVal
                             val hRatio = h / gcdVal
-                            
                             val resString = "${w}x${h}"
                             val name = "$wRatio:$hRatio Custom ($resString)"
-                            
                             AppPreferences.saveCustomResolution(holder.itemView.context, name, resString)
                             showToast("Added $name")
                             dismissKeyboardAndRestore()
                             switchMode(MODE_RESOLUTION)
-                        } else {
-                             showToast("Invalid numbers")
-                        }
-                    } else {
-                        showToast("Input W and H")
-                    }
+                        } else { showToast("Invalid numbers") }
+                    } else { showToast("Input W and H") }
                 }
                 holder.inputW.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }
                 holder.inputH.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }
             }
             else if (holder is IconSettingHolder && item is IconOption) { try { val uriStr = AppPreferences.getIconUri(holder.itemView.context); if (uriStr != null) { val uri = Uri.parse(uriStr); val input = contentResolver.openInputStream(uri); val bitmap = BitmapFactory.decodeStream(input); input?.close(); holder.preview.setImageBitmap(bitmap) } else { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) } } catch(e: Exception) { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) }; holder.itemView.setOnClickListener { pickIcon() } }
-            
             else if (holder is DpiHolder && item is DpiOption) { 
                 holder.input.setText(item.currentDpi.toString()); 
-                
-                // Handle Manual Entry (Enter Key)
-                holder.input.setOnEditorActionListener { v, actionId, _ ->
-                    if (actionId == EditorInfo.IME_ACTION_DONE) {
-                        val valInt = v.text.toString().toIntOrNull()
-                        if (valInt != null) {
-                            selectDpi(valInt)
-                            showToast("DPI set to $valInt")
-                        }
-                        dismissKeyboardAndRestore()
-                        true
-                    } else false
-                }
-
-                // Handle Manual Entry (Focus Loss)
-                holder.input.setOnFocusChangeListener { _, hasFocus ->
-                    if (autoResizeEnabled) updateDrawerHeight(hasFocus)
-                    if (!hasFocus) {
-                        val valInt = holder.input.text.toString().toIntOrNull()
-                        if (valInt != null && valInt != item.currentDpi) {
-                            selectDpi(valInt)
-                        }
-                    }
-                }
-
-                holder.btnMinus.setOnClickListener { 
-                    val v = holder.input.text.toString().toIntOrNull() ?: 160; 
-                    val newVal = (v - 5).coerceAtLeast(50); 
-                    holder.input.setText(newVal.toString()); 
-                    selectDpi(newVal) 
-                }; 
-                
-                holder.btnPlus.setOnClickListener { 
-                    val v = holder.input.text.toString().toIntOrNull() ?: 160; 
-                    val newVal = (v + 5).coerceAtMost(600); 
-                    holder.input.setText(newVal.toString()); 
-                    selectDpi(newVal) 
-                } 
+                holder.input.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { val valInt = v.text.toString().toIntOrNull(); if (valInt != null) { selectDpi(valInt); showToast("DPI set to $valInt") }; dismissKeyboardAndRestore(); true } else false }
+                holder.input.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) { val valInt = holder.input.text.toString().toIntOrNull(); if (valInt != null && valInt != item.currentDpi) { selectDpi(valInt) } } }
+                holder.btnMinus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v - 5).coerceAtLeast(50); holder.input.setText(newVal.toString()); selectDpi(newVal) }; 
+                holder.btnPlus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v + 5).coerceAtMost(600); holder.input.setText(newVal.toString()); selectDpi(newVal) } 
             }
             else if (holder is FontSizeHolder && item is FontSizeOption) { holder.textVal.text = item.currentSize.toInt().toString(); holder.btnMinus.setOnClickListener { changeFontSize(item.currentSize - 1) }; holder.btnPlus.setOnClickListener { changeFontSize(item.currentSize + 1) } }
             else if (holder is HeightHolder && item is HeightOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerHeight(-5) }; holder.btnPlus.setOnClickListener { changeDrawerHeight(5) } }
             else if (holder is WidthHolder && item is WidthOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerWidth(-5) }; holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } }
+            // REMOVED: TimeoutHolder logic since feature is tabled
         }
         override fun getItemCount() = displayList.size
     }
