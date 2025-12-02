@@ -12,7 +12,7 @@ object AppPreferences {
     private const val KEY_CUSTOM_LAYOUTS = "KEY_CUSTOM_LAYOUTS"
     private const val KEY_FONT_SIZE = "KEY_FONT_SIZE"
     private const val KEY_ICON_URI = "KEY_ICON_URI"
-
+    
     // Settings
     private const val KEY_KILL_ON_EXECUTE = "KEY_KILL_ON_EXECUTE"
     private const val KEY_TARGET_DISPLAY_INDEX = "KEY_TARGET_DISPLAY_INDEX"
@@ -20,17 +20,17 @@ object AppPreferences {
     private const val KEY_LAST_QUEUE = "KEY_LAST_QUEUE"
     private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
     private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
-
+    
     // Reorder Methods
     private const val KEY_REORDER_METHOD_DRAG = "KEY_REORDER_METHOD_DRAG"
     private const val KEY_REORDER_METHOD_TAP = "KEY_REORDER_METHOD_TAP"
     private const val KEY_REORDER_METHOD_SCROLL = "KEY_REORDER_METHOD_SCROLL"
-
+    
     // Drawer Geometry
     private const val KEY_DRAWER_HEIGHT = "KEY_DRAWER_HEIGHT"
     private const val KEY_DRAWER_WIDTH = "KEY_DRAWER_WIDTH"
     private const val KEY_AUTO_RESIZE_KEYBOARD = "KEY_AUTO_RESIZE_KEYBOARD"
-
+    
     // Custom Resolutions
     private const val KEY_CUSTOM_RESOLUTION_NAMES = "KEY_CUSTOM_RESOLUTION_NAMES"
 
@@ -73,7 +73,7 @@ object AppPreferences {
         getPrefs(context).edit().putStringSet(KEY_FAVORITES, newSet).apply()
         return isAdded
     }
-
+    
     // --- GLOBAL LAYOUT PREFS ---
     fun saveLastLayout(context: Context, layoutId: Int) {
         getPrefs(context).edit().putInt(KEY_LAST_LAYOUT, layoutId).apply()
@@ -82,7 +82,7 @@ object AppPreferences {
     fun getLastLayout(context: Context): Int {
         return getPrefs(context).getInt(KEY_LAST_LAYOUT, 2)
     }
-
+    
     fun saveLastCustomLayoutName(context: Context, name: String?) {
         getPrefs(context).edit().putString(KEY_LAST_CUSTOM_LAYOUT_NAME, name).apply()
     }
@@ -92,7 +92,7 @@ object AppPreferences {
     }
 
     // --- PER-DISPLAY SETTINGS ---
-
+    
     fun saveDisplayResolution(context: Context, displayId: Int, resIndex: Int) {
         getPrefs(context).edit().putInt("RES_D$displayId", resIndex).apply()
     }
@@ -165,14 +165,14 @@ object AppPreferences {
     fun getCustomLayoutData(context: Context, name: String): String? {
         return getPrefs(context).getString("LAYOUT_$name", null)
     }
-
+    
     fun deleteCustomLayout(context: Context, name: String) {
         val names = getCustomLayoutNames(context)
         val newNames = HashSet(names)
         newNames.remove(name)
         getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).remove("LAYOUT_$name").apply()
     }
-
+    
     fun renameCustomLayout(context: Context, oldName: String, newName: String): Boolean {
         if (oldName == newName) return false
         if (newName.isEmpty()) return false
@@ -186,7 +186,7 @@ object AppPreferences {
         getPrefs(context).edit().putString("LAYOUT_$newName", data).remove("LAYOUT_$oldName").apply()
         return true
     }
-
+    
     // --- CUSTOM RESOLUTIONS ---
     fun getCustomResolutionNames(context: Context): MutableSet<String> {
         return getPrefs(context).getStringSet(KEY_CUSTOM_RESOLUTION_NAMES, mutableSetOf()) ?: mutableSetOf()
@@ -199,7 +199,7 @@ object AppPreferences {
         getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).apply()
         getPrefs(context).edit().putString("RES_$name", value).apply()
     }
-
+    
     fun getCustomResolutionValue(context: Context, name: String): String? {
         return getPrefs(context).getString("RES_$name", null)
     }
@@ -210,7 +210,7 @@ object AppPreferences {
         newNames.remove(name)
         getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).remove("RES_$name").apply()
     }
-
+    
     fun renameCustomResolution(context: Context, oldName: String, newName: String): Boolean {
         if (oldName == newName) return false
         if (newName.isEmpty()) return false
@@ -241,27 +241,27 @@ object AppPreferences {
     fun getIconUri(context: Context): String? {
         return getPrefs(context).getString(KEY_ICON_URI, null)
     }
-
+    
     fun setDrawerHeightPercent(context: Context, percent: Int) {
         getPrefs(context).edit().putInt(KEY_DRAWER_HEIGHT, percent).apply()
     }
-
+    
     fun getDrawerHeightPercent(context: Context): Int {
         return getPrefs(context).getInt(KEY_DRAWER_HEIGHT, 70)
     }
-
+    
     fun setDrawerWidthPercent(context: Context, percent: Int) {
         getPrefs(context).edit().putInt(KEY_DRAWER_WIDTH, percent).apply()
     }
-
+    
     fun getDrawerWidthPercent(context: Context): Int {
         return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 90)
     }
-
+    
     fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD, enable).apply()
     }
-
+    
     fun getAutoResizeKeyboard(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
     }
@@ -272,7 +272,8 @@ object AppPreferences {
     }
 
     fun getKillOnExecute(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, true)
+        // Default is FALSE for Kill On Execute
+        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, false)
     }
 
     fun setTargetDisplayIndex(context: Context, index: Int) {
@@ -291,18 +292,18 @@ object AppPreferences {
         // Default is TRUE for Instant Mode
         return getPrefs(context).getBoolean(KEY_IS_INSTANT_MODE, true)
     }
-
+    
     fun saveLastQueue(context: Context, apps: List<String>) {
         val str = apps.joinToString(",")
         getPrefs(context).edit().putString(KEY_LAST_QUEUE, str).apply()
     }
-
+    
     fun getLastQueue(context: Context): List<String> {
         val str = getPrefs(context).getString(KEY_LAST_QUEUE, "") ?: ""
         if (str.isEmpty()) return emptyList()
         return str.split(",").filter { it.isNotEmpty() }
     }
-
+    
     fun setShowShizukuWarning(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_SHOW_SHIZUKU_WARNING, enable).apply()
     }
@@ -310,36 +311,37 @@ object AppPreferences {
     fun getShowShizukuWarning(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_SHOW_SHIZUKU_WARNING, true)
     }
-
+    
     // --- REORDER PREFERENCES ---
     fun setReorderTimeout(context: Context, seconds: Int) {
         getPrefs(context).edit().putInt(KEY_REORDER_TIMEOUT, seconds).apply()
     }
-
+    
     fun getReorderTimeout(context: Context): Int {
         return getPrefs(context).getInt(KEY_REORDER_TIMEOUT, 2) // Default 2 seconds
     }
-
+    
     fun setReorderDrag(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_DRAG, enable).apply()
     }
-
+    
     fun getReorderDrag(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_DRAG, true) // Default Enabled
+        // CHANGED: Default to FALSE so Tap works out of box
+        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_DRAG, false)
     }
-
+    
     fun setReorderTap(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_TAP, enable).apply()
     }
-
+    
     fun getReorderTap(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_REORDER_METHOD_TAP, true) // Default Enabled
     }
-
+    
     fun setReorderScroll(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_SCROLL, enable).apply()
     }
-
+    
     fun getReorderScroll(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_REORDER_METHOD_SCROLL, true) // Default Enabled
     }

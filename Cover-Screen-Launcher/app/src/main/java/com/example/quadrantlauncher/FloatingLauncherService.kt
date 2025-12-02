@@ -117,10 +117,8 @@ class FloatingLauncherService : Service() {
     // private var isReorderScrollEnabled = true // Tabled
     // private var reorderTimeoutSeconds = 2 // Tabled
     
-    // private val reorderHandler = Handler(Looper.getMainLooper())
-    // private val reorderConfirmRunnable = Runnable { endReorderMode(true) }
-    
     private val PACKAGE_BLANK = "internal.blank.spacer"
+    private val PACKAGE_TRACKPAD = "com.katsuyamaki.DroidOSTrackpadKeyboard"
     
     private var shellService: IShellService? = null
     private var isBound = false
@@ -700,10 +698,81 @@ class FloatingLauncherService : Service() {
         allAppsList.clear()
         allAppsList.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK))
         for (ri in riList) {
-            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), ri.activityInfo.packageName, AppPreferences.isFavorite(this, ri.activityInfo.packageName))
+            val pkg = ri.activityInfo.packageName
+            if (pkg == PACKAGE_TRACKPAD) continue // Blacklist Trackpad
+            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), pkg, AppPreferences.isFavorite(this, pkg))
             allAppsList.add(app)
         }
         allAppsList.sortBy { it.label.lowercase() }
+    }
+    
+    private fun launchTrackpad() {
+        try {
+            val intent = packageManager.getLaunchIntentForPackage(PACKAGE_TRACKPAD)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                
+                // Calculate 50% bounds centered
+                val dm = DisplayMetrics()
+                val display = displayContext?.display ?: windowManager.defaultDisplay
+                display.getRealMetrics(dm)
+                
+                val w = dm.widthPixels
+                val h = dm.heightPixels
+                val targetW = (w * 0.5f).toInt()
+                val targetH = (h * 0.5f).toInt()
+                val left = (w - targetW) / 2
+                val top = (h - targetH) / 2
+                val bounds = Rect(left, top, left + targetW, top + targetH)
+
+                val options = android.app.ActivityOptions.makeBasic()
+                options.setLaunchDisplayId(currentDisplayId)
+                options.setLaunchBounds(bounds)
+                
+                // Try setLaunchWindowingMode (Hidden API / API 28+)
+                // WindowingMode 5 = Freeform
+                try {
+                    val method = android.app.ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
+                    method.invoke(options, 5)
+                } catch (e: Exception) { /* Ignore if unavailable */ }
+
+                startActivity(intent, options.toBundle())
+                toggleDrawer()
+                
+                // Fallback/Reinforce with Shell if bound (This is the most reliable way on Samsung)
+                if (shellService != null) {
+                     val component = intent.component?.flattenToShortString() ?: "$PACKAGE_TRACKPAD/.MainActivity"
+                     
+                     // Wait for activity to start, then reposition
+                     uiHandler.postDelayed({
+                         Thread {
+                             try {
+                                 // Try simple start first if needed, but repositionTask is safer
+                                 // shellService?.runCommand("am start -n $component --display $currentDisplayId --windowingMode 5")
+                                 shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH)
+                             } catch(e: Exception) {
+                                 Log.e(TAG, "Shell launch failed", e)
+                             }
+                         }.start()
+                     }, 400)
+                     
+                     // Retry resize
+                     uiHandler.postDelayed({
+                         Thread {
+                             try {
+                                 shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH)
+                             } catch(e: Exception) {}
+                         }.start()
+                     }, 1000)
+                }
+                
+            } else {
+                showToast("Trackpad App not found")
+            }
+        } catch (e: Exception) {
+            showToast("Error launching Trackpad")
+            Log.e(TAG, "Launch Error", e)
+        }
     }
 
     private fun getLayoutName(type: Int): String { 
@@ -1083,6 +1152,7 @@ class FloatingLauncherService : Service() {
             MODE_PROFILES -> { searchBar.hint = "Enter Profile Name..."; displayList.add(ProfileOption("Save Current as New", true, 0,0,0, emptyList())); val profileNames = AppPreferences.getProfileNames(this).sorted(); for (pName in profileNames) { val data = AppPreferences.getProfileData(this, pName); if (data != null) { try { val parts = data.split("|"); val lay = parts[0].toInt(); val res = parts[1].toInt(); val d = parts[2].toInt(); val pkgs = parts[3].split(",").filter { it.isNotEmpty() }; displayList.add(ProfileOption(pName, false, lay, res, d, pkgs)) } catch(e: Exception) {} } } }
             MODE_SETTINGS -> {
                 searchBar.hint = "Settings"
+                displayList.add(ActionOption("Launch DroidOS Trackpad") { launchTrackpad() }) // FIRST ITEM
                 displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { cycleDisplay() })
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
@@ -1203,16 +1273,11 @@ class FloatingLauncherService : Service() {
         inner class ProfileRichHolder(v: View) : RecyclerView.ViewHolder(v) { val name: EditText = v.findViewById(R.id.profile_name_text); val details: TextView = v.findViewById(R.id.profile_details_text); val iconsContainer: LinearLayout = v.findViewById(R.id.profile_icons_container); val btnSave: ImageView = v.findViewById(R.id.btn_save_profile_rich) }
         inner class IconSettingHolder(v: View) : RecyclerView.ViewHolder(v) { val preview: ImageView = v.findViewById(R.id.icon_setting_preview) }
         inner class CustomResInputHolder(v: View) : RecyclerView.ViewHolder(v) { val inputW: EditText = v.findViewById(R.id.input_res_w); val inputH: EditText = v.findViewById(R.id.input_res_h); val btnSave: ImageView = v.findViewById(R.id.btn_save_res) }
-        inner class TimeoutHolder(v: View) : RecyclerView.ViewHolder(v) { 
-            val btnMinus: ImageView = v.findViewById(R.id.btn_height_minus)
-            val btnPlus: ImageView = v.findViewById(R.id.btn_height_plus)
-            val textVal: TextView = v.findViewById(R.id.text_height_value)
-            val label: TextView = (v as ViewGroup).getChildAt(0) as TextView 
-        }
+        // TimeoutHolder REMOVED since feature is tabled
 
-        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8; is CustomResInputOption -> 9; is TimeoutOption -> 10; else -> 0 } }
+        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8; is CustomResInputOption -> 9; else -> 0 } }
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false)); 9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false)); 10 -> TimeoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); else -> AppHolder(View(parent.context)) } }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false)); 9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false)); else -> AppHolder(View(parent.context)) } }
 
         private fun startRename(editText: EditText) { editText.isEnabled = true; editText.isFocusable = true; editText.isFocusableInTouchMode = true; editText.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) }
         private fun endRename(editText: EditText) { editText.isFocusable = false; editText.isFocusableInTouchMode = false; editText.isEnabled = false; val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(editText.windowToken, 0) }
@@ -1293,7 +1358,6 @@ class FloatingLauncherService : Service() {
             else if (holder is FontSizeHolder && item is FontSizeOption) { holder.textVal.text = item.currentSize.toInt().toString(); holder.btnMinus.setOnClickListener { changeFontSize(item.currentSize - 1) }; holder.btnPlus.setOnClickListener { changeFontSize(item.currentSize + 1) } }
             else if (holder is HeightHolder && item is HeightOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerHeight(-5) }; holder.btnPlus.setOnClickListener { changeDrawerHeight(5) } }
             else if (holder is WidthHolder && item is WidthOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerWidth(-5) }; holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } }
-            // REMOVED: TimeoutHolder logic since feature is tabled
         }
         override fun getItemCount() = displayList.size
     }
