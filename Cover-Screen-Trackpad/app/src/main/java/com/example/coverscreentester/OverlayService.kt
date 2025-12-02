@@ -105,8 +105,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var hasSentMouseDown = false
     private var hasSentScrollDown = false
     
-    // Track the device ID of the current touch sequence
     private var activeFingerDeviceId = -1
+    private var pendingDragDownTime: Long = 0L
     
     private var cursorSpeed = 2.5f
     private var scrollSpeed = 3.0f 
@@ -166,7 +166,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "SET_TRACKPAD_VISIBILITY" -> {
                     val visible = intent.getBooleanExtra("VISIBLE", true)
-                    setTrackpadVisibility(visible)
+                    val menuDisplayId = intent.getIntExtra("MENU_DISPLAY_ID", -1)
+                    
+                    if (visible) {
+                        setTrackpadVisibility(true)
+                    } else {
+                        // Only hide if menu is on the SAME display as this overlay
+                        if (menuDisplayId == -1 || menuDisplayId == currentDisplayId) {
+                            setTrackpadVisibility(false)
+                        }
+                    }
                 }
                 "SET_PREVIEW_MODE" -> {
                     val preview = intent.getBooleanExtra("PREVIEW_MODE", false)
@@ -351,10 +360,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
                 val targetDisplayId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
-                if (targetDisplayId != currentDisplayId || trackpadLayout == null) { 
+                // --- FIX IMPLEMENTED HERE ---
+                // If force move is TRUE (user clicked button) OR if trackpad is null (fresh start)
+                val forceMove = intent.getBooleanExtra("FORCE_MOVE", false)
+                
+                if (trackpadLayout == null || forceMove) {
                     removeOverlays()
                     setupWindows(targetDisplayId) 
+                } else {
+                    Log.d(TAG, "Trackpad already active. Ignoring automatic move to Display $targetDisplayId")
                 }
+                // ----------------------------
             }
         } catch (e: Exception) { 
             Log.e(TAG, "Crash in onStartCommand", e) 
@@ -648,7 +664,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         MotionEvent.ACTION_CANCEL -> "CNCL"
                         else -> "?$action"
                     }
-                    val state = "D:$isTouchDragging L:$isLeftKeyHeld R:$isRightKeyHeld"
+                    val state = "D:$isTouchDragging L:$isLeftKeyHeld R:$isRightKeyHeld sent:$hasSentTouchDown"
                     debugTextView?.text = "$actionName $toolName id:$devId\n$state\nCUR:${cursorX.toInt()},${cursorY.toInt()}"
                 }
                 
@@ -1042,7 +1058,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     virtualScrollX = cursorX
                     virtualScrollY = cursorY
                     dragDownTime = SystemClock.uptimeMillis()
-                    // Only inject scroll start if cursor is NOT over trackpad
+                    
+                    // Start simulated scroll (Touch Down)
                     if (!isCursorOverTrackpad()) {
                         injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, 0, dragDownTime, virtualScrollX, virtualScrollY)
                         hasSentScrollDown = true
@@ -1054,7 +1071,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     virtualScrollX = cursorX
                     virtualScrollY = cursorY
                     dragDownTime = SystemClock.uptimeMillis()
-                    // Only inject scroll start if cursor is NOT over trackpad
+                    
+                    // Start simulated scroll (Touch Down)
                     if (!isCursorOverTrackpad()) {
                         injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, 0, dragDownTime, virtualScrollX, virtualScrollY)
                         hasSentScrollDown = true
@@ -1068,19 +1086,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 val rawDy = (event.y - lastTouchY) * cursorSpeed
                 
                 if (isVScrolling) { 
+                    // Simulate Touch Scroll (Drag)
                     val dist = (event.y - lastTouchY) * scrollSpeed
                     if (abs(dist) > 0) { 
                         if (prefReverseScroll) virtualScrollY += dist else virtualScrollY -= dist
-                        // Only inject if we started the scroll (cursor was outside trackpad)
                         if (hasSentScrollDown) {
                             injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, 0, dragDownTime, virtualScrollX, virtualScrollY)
                         }
                     } 
                 } else if (isHScrolling) { 
+                     // Simulate Touch Scroll (Drag)
                     val dist = (event.x - lastTouchX) * scrollSpeed
                     if (abs(dist) > 0) { 
                         if (prefReverseScroll) virtualScrollX += dist else virtualScrollX -= dist
-                        // Only inject if we started the scroll (cursor was outside trackpad)
                         if (hasSentScrollDown) {
                             injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, 0, dragDownTime, virtualScrollX, virtualScrollY)
                         }
@@ -1105,6 +1123,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         } 
                     }
                     
+                    // Store old cursor position to check if we crossed trackpad boundary
+                    val wasOverTrackpad = isCursorOverTrackpad()
+                    
                     // Update cursor position
                     val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
                     val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
@@ -1124,24 +1145,36 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {} 
                     }
                     
-                    // CRITICAL: Only inject if cursor is OUTSIDE trackpad bounds (on same display)
-                    // This prevents the OS from detecting a conflict between physical touch and injection
-                    val cursorOverTrackpad = isCursorOverTrackpad()
+                    // Check if cursor is now over trackpad
+                    val nowOverTrackpad = isCursorOverTrackpad()
                     
-                    if (!cursorOverTrackpad) {
+                    // DEFERRED INJECTION: If we're dragging and cursor just exited trackpad, send DOWN now
+                    if (isTouchDragging && !hasSentTouchDown && wasOverTrackpad && !nowOverTrackpad) {
+                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
+                        hasSentTouchDown = true
+                    }
+                    
+                    // Same for key drags
+                    if (isLeftKeyHeld && !hasSentMouseDown && wasOverTrackpad && !nowOverTrackpad) {
+                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+                        hasSentMouseDown = true
+                    }
+                    if (isRightKeyHeld && !hasSentMouseDown && wasOverTrackpad && !nowOverTrackpad) {
+                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_SECONDARY, dragDownTime)
+                        hasSentMouseDown = true
+                    }
+                    
+                    // Only inject MOVE if cursor is outside trackpad AND we've sent DOWN
+                    if (!nowOverTrackpad) {
                         if (isTouchDragging && hasSentTouchDown) {
-                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
                         } else if (isLeftKeyHeld && hasSentMouseDown) {
                             injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
                         } else if (isRightKeyHeld && hasSentMouseDown) {
                             injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_SECONDARY, dragDownTime)
-                        } else {
-                            // NO HOVER INJECTION when cursor is over trackpad or on same display
-                            // This is the key fix for Beam Pro - don't inject hover at all on local display
-                            if (inputTargetDisplayId != currentDisplayId) {
-                                injectAction(MotionEvent.ACTION_HOVER_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
-                            }
-                            // On local display, just update visual cursor position without injection
+                        } else if (!isTouchDragging && !isLeftKeyHeld && !isRightKeyHeld) {
+                            // ALWAYS INJECT HOVER MOVE
+                            injectAction(MotionEvent.ACTION_HOVER_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                         }
                     }
                 }
@@ -1198,11 +1231,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         vibrate()
         updateBorderColor(0xFF00FF00.toInt())
         dragDownTime = SystemClock.uptimeMillis()
-        // Only inject if cursor is outside trackpad (on same display)
+        // Only inject immediately if cursor is outside trackpad
         if (!isCursorOverTrackpad()) {
             injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime)
             hasSentMouseDown = true
         }
+        // Otherwise, hasSentMouseDown stays false and we'll send DOWN when cursor exits
     }
     
     private fun stopKeyDrag(button: Int) { 
@@ -1218,12 +1252,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         isTouchDragging = true
         vibrate()
         updateBorderColor(0xFF00FF00.toInt())
-        dragDownTime = SystemClock.uptimeMillis()
-        // Only inject if cursor is outside trackpad (on same display)
+        pendingDragDownTime = SystemClock.uptimeMillis()
+        
+        // Only inject immediately if cursor is outside trackpad
         if (!isCursorOverTrackpad()) {
-            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
             hasSentTouchDown = true
         }
+        // Otherwise, hasSentTouchDown stays false and we'll send DOWN when cursor exits trackpad
     }
     
     private fun stopTouchDrag() { 
@@ -1231,7 +1267,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) 
         else updateBorderColor(0x55FFFFFF.toInt())
         if (hasSentTouchDown) { 
-            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime) 
+            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime) 
         }
         hasSentTouchDown = false
     }
@@ -1245,6 +1281,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // Fire and forget on background thread - no blocking
         Thread {
             try {
+                // Use CURRENT event time for the action, but preserve original downTime
                 shellService?.injectMouse(action, x, y, dId, source, buttonState, downTime)
             } catch (e: Exception) {
                 Log.e(TAG, "Injection failed", e)

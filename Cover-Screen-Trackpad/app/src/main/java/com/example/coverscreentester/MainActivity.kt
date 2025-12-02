@@ -101,7 +101,8 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Please Enable Accessibility Service", Toast.LENGTH_LONG).show()
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             } else {
-                forceMoveCommand()
+                // EXPLICIT MOVE: User clicked the button
+                forceMoveCommand(true)
                 Toast.makeText(this, "Moving Trackpad to this screen...", Toast.LENGTH_SHORT).show()
             }
         }
@@ -156,16 +157,18 @@ class MainActivity : AppCompatActivity() {
         if (isAccessibilityEnabled()) {
             checkAndMoveDisplay()
         }
-        // Hide trackpad when main menu is visible
+        // Hide trackpad ONLY if on the SAME display as this menu
+        val myDisplayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
         val intent = Intent("SET_TRACKPAD_VISIBILITY")
         intent.setPackage(packageName)
         intent.putExtra("VISIBLE", false)
+        intent.putExtra("MENU_DISPLAY_ID", myDisplayId) // Pass ID to service
         sendBroadcast(intent)
     }
     
     override fun onPause() {
         super.onPause()
-        // Show trackpad when leaving main menu
+        // Show trackpad when leaving main menu (always show)
         val intent = Intent("SET_TRACKPAD_VISIBILITY")
         intent.setPackage(packageName)
         intent.putExtra("VISIBLE", true)
@@ -182,14 +185,18 @@ class MainActivity : AppCompatActivity() {
         val currentDisplayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
         if (currentDisplayId != lastKnownDisplayId) {
             lastKnownDisplayId = currentDisplayId
-            forceMoveCommand()
+            // IMPLICIT MOVE: Just updating known state, do not force if already open
+            forceMoveCommand(false)
         }
     }
 
-    private fun forceMoveCommand() {
+    private fun forceMoveCommand(isExplicit: Boolean) {
         val currentDisplayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
         val intent = Intent(this, OverlayService::class.java)
         intent.putExtra("DISPLAY_ID", currentDisplayId)
+        if (isExplicit) {
+            intent.putExtra("FORCE_MOVE", true)
+        }
         startService(intent)
     }
 
