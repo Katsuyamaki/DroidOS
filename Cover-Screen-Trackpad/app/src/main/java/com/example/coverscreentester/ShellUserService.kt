@@ -68,18 +68,18 @@ class ShellUserService : IShellService.Stub() {
 
     override fun execClick(x: Float, y: Float, displayId: Int) {
         val downTime = SystemClock.uptimeMillis()
-        // Changed source to SOURCE_TOUCHSCREEN for better reliability on virtual displays
-        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, downTime, downTime, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY)
+        // FIX: Changed SOURCE_TOUCHSCREEN to SOURCE_MOUSE to align with cursor movement
+        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, downTime, downTime, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY)
         try { Thread.sleep(50) } catch (e: InterruptedException) {}
-        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, downTime, SystemClock.uptimeMillis(), InputDevice.SOURCE_TOUCHSCREEN, 0)
+        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, downTime, SystemClock.uptimeMillis(), InputDevice.SOURCE_MOUSE, 0)
     }
 
     override fun execRightClick(x: Float, y: Float, displayId: Int) {
         val downTime = SystemClock.uptimeMillis()
-        // Changed source to SOURCE_TOUCHSCREEN for better reliability on virtual displays
-        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, downTime, downTime, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_SECONDARY)
+        // FIX: Changed SOURCE_TOUCHSCREEN to SOURCE_MOUSE
+        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, downTime, downTime, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_SECONDARY)
         try { Thread.sleep(50) } catch (e: InterruptedException) {}
-        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, downTime, SystemClock.uptimeMillis(), InputDevice.SOURCE_TOUCHSCREEN, 0)
+        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, downTime, SystemClock.uptimeMillis(), InputDevice.SOURCE_MOUSE, 0)
     }
 
     override fun injectMouse(action: Int, x: Float, y: Float, displayId: Int, source: Int, buttonState: Int, downTime: Long) {

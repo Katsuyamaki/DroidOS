@@ -1,0 +1,223 @@
+[33mcommit e1d90ad537ed22ac24479eb2916574b28dafdb0f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Tue Dec 2 13:59:01 2025 -0500
+
+    Launcher: Fixed Trackpad Freeform launch, set Tap-to-Swap as default reorder method
+
+[33mcommit 5194165e8ba0c11bedea03fdece7682fa018f067[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Tue Dec 2 13:06:07 2025 -0500
+
+    Launcher: Implemented Tap-to-Swap reordering, removed Scroll-to-Move settings
+
+[33mcommit 6945d60e2ef6e19e76f1007c028e9011a0464952[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Mon Dec 1 20:44:59 2025 -0500
+
+    Trackpad: Synced codebase with Claude reference build v2
+
+[33mcommit af7943808232e5ccc9f04760314ca20bd06424db[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Mon Dec 1 20:15:32 2025 -0500
+
+    click and hold debug by claude
+
+[33mcommit 355ca25614f5303376eae2fbf43ca0e743a326cf[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Mon Dec 1 10:52:08 2025 -0500
+
+    Trackpad: Refactored input handling from mouse events to touch events for improved stability
+
+[33mcommit 6c039864d269e7b1dbccc2cf73e4ff6693dcac06[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:43:44 2025 -0500
+
+    Simplify video demonstration section in README
+    
+    Removed redundant video demonstration link and thumbnail.
+
+[33mcommit f653071f8f491b851b1c570091c5759262b9170b[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:42:47 2025 -0500
+
+    Add video demonstration thumbnail to README
+    
+    Updated README to include video demonstration thumbnail.
+
+[33mcommit 6bdd5b9d943a1150630883b71e986b718a766325[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:41:52 2025 -0500
+
+    Enhance README with video demonstration
+    
+    Added a video demonstration link and thumbnail to README.
+
+[33mcommit fd91db26dec5d077f820ec1fbaf379e79b77cb69[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:37:32 2025 -0500
+
+    Update README with video demonstration
+    
+    Added a video demonstration link and embedded YouTube video.
+
+[33mcommit f2b7da23cf81abb01cde4dbc991f1ac00b655fa4[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:27:28 2025 -0500
+
+    Update README with video demonstration link
+
+[33mcommit d208afecd23139d55858c64e537a906683d0a94f[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:26:53 2025 -0500
+
+    Update README.md
+
+[33mcommit 2a846edb8cc17b8db026922c71e81282c76342c2[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:23:48 2025 -0500
+
+    Update README with virtual display setup instructions
+    
+    Added instructions for setting up a virtual display with AR glasses.
+
+[33mcommit d88204d2dada338238ca4d1e045c5ee97ea24fb5[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:22:05 2025 -0500
+
+    Enhance README with detailed features and setup
+    
+    Expanded the README.md to include more detailed descriptions of features, usage guides, and setup instructions for the DroidOS project.
+
+[33mcommit 8748b63726789454e90567774fe6d438500ab9df[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Mon Dec 1 07:05:17 2025 -0500
+
+    Enhance README with usage guide for DroidOS apps
+    
+    Added detailed usage instructions for DroidOS Launcher and Trackpad applications, including virtual display setup and trackpad controls.
+
+[33mcommit 39468670189627ba508d583a048c6f14a6ab91c6[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 21:39:20 2025 -0500
+
+    Update README.md
+
+[33mcommit 9d580f578bb338b836d6724f5521475619385e77[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 21:37:39 2025 -0500
+
+    Update README.md
+
+[33mcommit 5ed51306ed68c12c2d2f5f01d19d05600419a886[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 21:36:16 2025 -0500
+
+    Update README.md
+
+[33mcommit 764c6e9452ed858926ef901b4f23f64a6ba7f74c[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 21:33:17 2025 -0500
+
+    Update README.md
+
+[33mcommit a9dfc0b6f20093ac32175ca57011bdc0ced7631d[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 19:01:15 2025 -0500
+
+    Update README with additional screenshots
+    
+    Added multiple screenshots to the README for better visual representation.
+
+[33mcommit 797ea9e808beba072a0029121c9524e34f7b8c12[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 19:00:22 2025 -0500
+
+    Add screenshot to README
+    
+    Added a screenshot to the README for visual reference.
+
+[33mcommit d552d35133f7b7e31434f8b1fe88109a49b58e14[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 18:59:23 2025 -0500
+
+    Update README with more screenshots
+    
+    Added additional screenshots to the README.
+
+[33mcommit 1b1da100a52b03b1d8c4703a7d1530b29c3e07eb[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 18:49:02 2025 -0500
+
+    Replace and add screenshots in README
+    
+    Updated screenshots in the README and added a donation link.
+
+[33mcommit af9402a0c18df1a971592f9c05bf68db3f4ed8ac[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 13:28:05 2025 -0500
+
+    Update README.md
+
+[33mcommit f92b109bc0bf956eaea1f042e7dcd76a3195f2f0[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 13:17:14 2025 -0500
+
+    Add screenshots to README for app tile visualization
+    
+    Added multiple screenshots to illustrate app tiles.
+
+[33mcommit b0c3730022bff4415a1469f7025406ea4075889a[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 13:09:30 2025 -0500
+
+    Update usage guide for DroidOS Launcher
+
+[33mcommit 907cb0a0f7ae4fd819cacb762a21b84301e14524[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 13:06:56 2025 -0500
+
+    Add usage guide for DroidOS Launcher
+    
+    Added a comprehensive usage guide for the DroidOS Launcher, detailing operational modes, app queue management, and tiling positions.
+
+[33mcommit 8f12d14668fc7815aba85048fab3f2f76eb6399e[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sun Nov 30 12:53:44 2025 -0500
+
+    Rename CoverScreen to DroidOS in README
+
+[33mcommit a5061726df76fd8ddbe9850b5794c528c7952536[m[33m ([m[1;33mtag: [m[1;33mv1.0[m[33m)[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Sun Nov 30 12:32:21 2025 -0500
+
+    Launcher: Prevent swiping of default layout/resolution presets
+
+[33mcommit 172478da63fa1b2adc66006a906b78f52995d115[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Sun Nov 30 12:21:36 2025 -0500
+
+    Launcher: Fixed virtual display resolution detection for default resolution tiling
+
+[33mcommit 118ea3e08df9bbf61ef9159447d3f805d40210fe[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Sun Nov 30 11:35:41 2025 -0500
+
+    fix resync project structure and logic
+
+[33mcommit 2b4b3cddbe7343b417809c3dea15a4ff665a5896[m
+Author: Katsuyamaki <142951417+Katsuyamaki@users.noreply.github.com>
+Date:   Sat Nov 29 23:56:03 2025 -0500
+
+    Update README.md
+
+[33mcommit 86158997cf3283ebf50f49dbc3ffda6b9f53c2d1[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Sat Nov 29 23:54:10 2025 -0500
+
+    Add main DroidOS documentation
+
+[33mcommit 098b13e54e6c9a9163e7a26a8cc2be914eb9fe35[m
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Sat Nov 29 23:38:37 2025 -0500
+
+    Initial Release of DroidOS
