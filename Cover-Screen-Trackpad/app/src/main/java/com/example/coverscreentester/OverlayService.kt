@@ -108,9 +108,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Track the device ID of the current touch sequence
     private var activeFingerDeviceId = -1
     
-    // Track if we need to send a deferred DOWN when cursor exits trackpad
-    private var pendingDragDownTime: Long = 0L
-    
     private var cursorSpeed = 2.5f
     private var scrollSpeed = 3.0f 
     private var scrollZoneThickness = 60 
@@ -651,7 +648,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         MotionEvent.ACTION_CANCEL -> "CNCL"
                         else -> "?$action"
                     }
-                    val state = "D:$isTouchDragging L:$isLeftKeyHeld R:$isRightKeyHeld sent:$hasSentTouchDown"
+                    val state = "D:$isTouchDragging L:$isLeftKeyHeld R:$isRightKeyHeld"
                     debugTextView?.text = "$actionName $toolName id:$devId\n$state\nCUR:${cursorX.toInt()},${cursorY.toInt()}"
                 }
                 
@@ -683,12 +680,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                             return@setOnTouchListener false
                         }
                     }
-                }
-                
-                // FILTER: Ignore events at exact cursor pos (our own echo)
-                // Filter increased to 50px to prevent Flip 7 feedback loop
-                if (abs(event.rawX - cursorX) < 50 && abs(event.rawY - cursorY) < 50 && event.eventTime >= dragDownTime) {
-                    return@setOnTouchListener false
                 }
                 
                 // Skip if clicking animation in progress
@@ -791,7 +782,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             remoteCursorLayout = FrameLayout(remoteContext)
             remoteCursorView = ImageView(remoteContext)
             remoteCursorView?.setImageResource(R.drawable.ic_cursor)
-            val size = if (prefCursorSize > 0) prefCursorSize else 50;
+            val size = if (prefCursorSize > 0) prefCursorSize else 50
             remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size))
             remoteCursorParams = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -907,7 +898,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     
     private fun resetTrackpadPosition() { 
         if (windowManager == null || trackpadLayout == null) return
-        trackpadParams.width = 400; trackpadParams.height = 300
+        trackpadParams.width = 400
+        trackpadParams.height = 300
         val centerX = (uiScreenWidth / 2) - 200
         val centerY = (uiScreenHeight / 2) - 150
         trackpadParams.x = if (centerX > 0) centerX else 100
@@ -1113,9 +1105,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         } 
                     }
                     
-                    // Store old cursor position to check if we crossed trackpad boundary
-                    val wasOverTrackpad = isCursorOverTrackpad()
-                    
                     // Update cursor position
                     val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
                     val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
@@ -1135,38 +1124,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {} 
                     }
                     
-                    // Check if cursor is now over trackpad
-                    val nowOverTrackpad = isCursorOverTrackpad()
+                    // CRITICAL: Only inject if cursor is OUTSIDE trackpad bounds (on same display)
+                    // This prevents the OS from detecting a conflict between physical touch and injection
+                    val cursorOverTrackpad = isCursorOverTrackpad()
                     
-                    // DEFERRED INJECTION: If we're dragging and cursor just exited trackpad, send DOWN now
-                    if (isTouchDragging && !hasSentTouchDown && wasOverTrackpad && !nowOverTrackpad) {
-                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
-                        hasSentTouchDown = true
-                    }
-                    
-                    // Same for key drags
-                    if (isLeftKeyHeld && !hasSentMouseDown && wasOverTrackpad && !nowOverTrackpad) {
-                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, dragDownTime)
-                        hasSentMouseDown = true
-                    }
-                    if (isRightKeyHeld && !hasSentMouseDown && wasOverTrackpad && !nowOverTrackpad) {
-                        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_SECONDARY, dragDownTime)
-                        hasSentMouseDown = true
-                    }
-                    
-                    // Only inject MOVE if cursor is outside trackpad AND we've sent DOWN
-                    if (!nowOverTrackpad) {
+                    if (!cursorOverTrackpad) {
                         if (isTouchDragging && hasSentTouchDown) {
-                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
+                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
                         } else if (isLeftKeyHeld && hasSentMouseDown) {
-                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
                         } else if (isRightKeyHeld && hasSentMouseDown) {
-                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_SECONDARY, dragDownTime)
-                        } else if (!isTouchDragging && !isLeftKeyHeld && !isRightKeyHeld) {
-                            // Hover only on remote display
+                            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_SECONDARY, dragDownTime)
+                        } else {
+                            // NO HOVER INJECTION when cursor is over trackpad or on same display
+                            // This is the key fix for Beam Pro - don't inject hover at all on local display
                             if (inputTargetDisplayId != currentDisplayId) {
                                 injectAction(MotionEvent.ACTION_HOVER_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                             }
+                            // On local display, just update visual cursor position without injection
                         }
                     }
                 }
@@ -1223,19 +1198,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         vibrate()
         updateBorderColor(0xFF00FF00.toInt())
         dragDownTime = SystemClock.uptimeMillis()
-        // Only inject immediately if cursor is outside trackpad
+        // Only inject if cursor is outside trackpad (on same display)
         if (!isCursorOverTrackpad()) {
-            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_MOUSE, button, dragDownTime)
+            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime)
             hasSentMouseDown = true
         }
-        // Otherwise, hasSentMouseDown stays false and we'll send DOWN when cursor exits
     }
     
     private fun stopKeyDrag(button: Int) { 
         if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) 
         else updateBorderColor(0x55FFFFFF.toInt())
         if (hasSentMouseDown) { 
-            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_MOUSE, button, dragDownTime) 
+            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime) 
         }
         hasSentMouseDown = false
     }
@@ -1244,14 +1218,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         isTouchDragging = true
         vibrate()
         updateBorderColor(0xFF00FF00.toInt())
-        pendingDragDownTime = SystemClock.uptimeMillis()
-        
-        // Only inject immediately if cursor is outside trackpad
+        dragDownTime = SystemClock.uptimeMillis()
+        // Only inject if cursor is outside trackpad (on same display)
         if (!isCursorOverTrackpad()) {
-            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime)
+            injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
             hasSentTouchDown = true
         }
-        // Otherwise, hasSentTouchDown stays false and we'll send DOWN when cursor exits trackpad
     }
     
     private fun stopTouchDrag() { 
@@ -1259,7 +1231,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) 
         else updateBorderColor(0x55FFFFFF.toInt())
         if (hasSentTouchDown) { 
-            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY, pendingDragDownTime) 
+            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime) 
         }
         hasSentTouchDown = false
     }
@@ -1403,7 +1375,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         val notification = Notification.Builder(this, "overlay_service")
             .setContentTitle("Trackpad Active")
-            .setSmallIcon(R.drawable.ic_launcher_bubble)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) 
@@ -1439,7 +1411,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             windowManager?.updateViewLayout(trackpadLayout, trackpadParams)
             updateBorderColor(0xFFFF0000.toInt()) 
         } else { 
-            isKeyboardMode = false;
+            isKeyboardMode = false
             trackpadParams.x = savedWindowX
             trackpadParams.y = savedWindowY
             windowManager?.updateViewLayout(trackpadLayout, trackpadParams)
@@ -1481,13 +1453,154 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         return false
     }
     
-    private fun voiceWindow(event: MotionEvent): Boolean { if(event.action == MotionEvent.ACTION_DOWN) { handler.postDelayed(voiceRunnable, 1000); return true } else if (event.action == MotionEvent.ACTION_UP) { handler.removeCallbacks(voiceRunnable); if(!isKeyboardMode) updateBorderColor(currentBorderColor); return true }; return false }
-    private fun loadPrefs() { val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); cursorSpeed = p.getFloat("cursor_speed", 2.5f); scrollSpeed = p.getFloat("scroll_speed", 3.0f); prefVibrate = p.getBoolean("vibrate", true); prefReverseScroll = p.getBoolean("reverse_scroll", true); prefAlpha = p.getInt("alpha", 200); prefLocked = p.getBoolean("lock_position", false); prefVPosLeft = p.getBoolean("v_pos_left", false); prefHPosTop = p.getBoolean("h_pos_top", false); prefHandleTouchSize = p.getInt("handle_touch_size", 60); prefScrollTouchSize = p.getInt("scroll_touch_size", 60); prefHandleSize = p.getInt("handle_size", 60); prefScrollVisualSize = p.getInt("scroll_visual_size", 4); scrollZoneThickness = prefScrollTouchSize; prefCursorSize = p.getInt("cursor_size", 50) }
-    private fun handlePreview(intent: Intent) { val t = intent.getStringExtra("TARGET"); val v = intent.getIntExtra("VALUE", 0); handler.removeCallbacks(clearHighlightsRunnable); when (t) { "alpha" -> { prefAlpha = v; highlightAlpha = true; updateBorderColor(currentBorderColor) }; "handle_touch" -> { prefHandleTouchSize = v; highlightHandles = true; updateLayoutSizes() }; "scroll_touch" -> { prefScrollTouchSize = v; scrollZoneThickness = v; highlightScrolls = true; updateLayoutSizes(); updateScrollPosition() }; "handle_size" -> { prefHandleSize = v; highlightHandles = true; updateHandleSize() }; "scroll_visual" -> { prefScrollVisualSize = v; highlightScrolls = true; updateLayoutSizes() }; "cursor_size" -> { prefCursorSize = v; updateCursorSize() } }; handler.postDelayed(clearHighlightsRunnable, 1500) }
-    private fun addHandle(context: Context, gravity: Int, color: Int, onTouch: (View, MotionEvent) -> Boolean) { val c = FrameLayout(context); val cp = FrameLayout.LayoutParams(prefHandleTouchSize, prefHandleTouchSize); cp.gravity = gravity; val v = View(context); val bg = GradientDrawable(); bg.setColor(color); bg.cornerRadii = floatArrayOf(15f, 15f, 15f, 15f, 15f, 15f, 15f, 15f); v.background = bg; val vp = FrameLayout.LayoutParams(prefHandleSize, prefHandleSize); vp.gravity = Gravity.CENTER; c.addView(v, vp); handleVisuals.add(v); handleContainers.add(c); trackpadLayout?.addView(c, cp); c.setOnTouchListener { view, e -> onTouch(view, e) } }
-    private fun updateHandleSize() { for (v in handleVisuals) { val p = v.layoutParams; p.width = prefHandleSize; p.height = prefHandleSize; v.layoutParams = p } }
-    private fun updateLayoutSizes() { for (c in handleContainers) { val p = c.layoutParams; p.width = prefHandleTouchSize; p.height = prefHandleTouchSize; c.layoutParams = p }; updateScrollPosition() } 
-    private fun addScrollBars(context: Context) { val m = prefHandleTouchSize + 10; vScrollContainer = FrameLayout(context); val vp = FrameLayout.LayoutParams(prefScrollTouchSize, FrameLayout.LayoutParams.MATCH_PARENT); vp.gravity = if (prefVPosLeft) Gravity.LEFT else Gravity.RIGHT; vp.setMargins(0, m, 0, m); trackpadLayout?.addView(vScrollContainer, vp); vScrollVisual = View(context); vScrollVisual!!.setBackgroundColor(0x30FFFFFF.toInt()); val vvp = FrameLayout.LayoutParams(prefScrollVisualSize, FrameLayout.LayoutParams.MATCH_PARENT); vvp.gravity = Gravity.CENTER_HORIZONTAL; vScrollContainer?.addView(vScrollVisual, vvp); hScrollContainer = FrameLayout(context); val hp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefScrollTouchSize); hp.gravity = if (prefHPosTop) Gravity.TOP else Gravity.BOTTOM; hp.setMargins(m, 0, m, 0); trackpadLayout?.addView(hScrollContainer, hp); hScrollVisual = View(context); hScrollVisual!!.setBackgroundColor(0x30FFFFFF.toInt()); val hvp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefScrollVisualSize); hvp.gravity = Gravity.CENTER_VERTICAL; hScrollContainer?.addView(hScrollVisual, hvp) }
-    private fun updateScrollPosition() { val m = prefHandleTouchSize + 10; if (vScrollContainer != null) { val vp = vScrollContainer!!.layoutParams as FrameLayout.LayoutParams; vp.gravity = if (prefVPosLeft) Gravity.LEFT else Gravity.RIGHT; vp.setMargins(0, m, 0, m); vScrollContainer!!.layoutParams = vp }; if (hScrollContainer != null) { val hp = hScrollContainer!!.layoutParams as FrameLayout.LayoutParams; hp.gravity = if (prefHPosTop) Gravity.TOP else Gravity.BOTTOM; hp.setMargins(m, 0, m, 0); hScrollContainer!!.layoutParams = hp } }
-    private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor(Color.TRANSPARENT); val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefAlpha shl 24); bg.setStroke(4, if (highlightAlpha) 0xFF00FF00.toInt() else colorWithAlpha); trackpadLayout?.invalidate() }
+    private fun loadPrefs() { 
+        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        cursorSpeed = p.getFloat("cursor_speed", 2.5f)
+        scrollSpeed = p.getFloat("scroll_speed", 3.0f)
+        prefVibrate = p.getBoolean("vibrate", true)
+        prefReverseScroll = p.getBoolean("reverse_scroll", true)
+        prefAlpha = p.getInt("alpha", 200)
+        prefLocked = p.getBoolean("lock_position", false)
+        prefVPosLeft = p.getBoolean("v_pos_left", false)
+        prefHPosTop = p.getBoolean("h_pos_top", false)
+        prefHandleTouchSize = p.getInt("handle_touch_size", 60)
+        prefScrollTouchSize = p.getInt("scroll_touch_size", 60)
+        prefHandleSize = p.getInt("handle_size", 60)
+        prefScrollVisualSize = p.getInt("scroll_visual_size", 4)
+        scrollZoneThickness = prefScrollTouchSize
+        prefCursorSize = p.getInt("cursor_size", 50) 
+    }
+    
+    private fun handlePreview(intent: Intent) { 
+        val target = intent.getStringExtra("TARGET")
+        val value = intent.getIntExtra("VALUE", 0)
+        handler.removeCallbacks(clearHighlightsRunnable)
+        when (target) { 
+            "alpha" -> { 
+                prefAlpha = value
+                highlightAlpha = true
+                updateBorderColor(currentBorderColor) 
+            }
+            "handle_touch" -> { 
+                prefHandleTouchSize = value
+                highlightHandles = true
+                updateLayoutSizes() 
+            }
+            "scroll_touch" -> { 
+                prefScrollTouchSize = value
+                scrollZoneThickness = value
+                highlightScrolls = true
+                updateLayoutSizes()
+                updateScrollPosition() 
+            }
+            "handle_size" -> { 
+                prefHandleSize = value
+                highlightHandles = true
+                updateHandleSize() 
+            }
+            "scroll_visual" -> { 
+                prefScrollVisualSize = value
+                highlightScrolls = true
+                updateLayoutSizes() 
+            }
+            "cursor_size" -> { 
+                prefCursorSize = value
+                updateCursorSize() 
+            } 
+        }
+        handler.postDelayed(clearHighlightsRunnable, 1500) 
+    }
+    
+    private fun addHandle(context: Context, gravity: Int, color: Int, onTouch: (View, MotionEvent) -> Boolean) { 
+        val container = FrameLayout(context)
+        val containerParams = FrameLayout.LayoutParams(prefHandleTouchSize, prefHandleTouchSize)
+        containerParams.gravity = gravity
+        
+        val visual = View(context)
+        val bg = GradientDrawable()
+        bg.setColor(color)
+        bg.cornerRadii = floatArrayOf(15f, 15f, 15f, 15f, 15f, 15f, 15f, 15f)
+        visual.background = bg
+        
+        val visualParams = FrameLayout.LayoutParams(prefHandleSize, prefHandleSize)
+        visualParams.gravity = Gravity.CENTER
+        container.addView(visual, visualParams)
+        
+        handleVisuals.add(visual)
+        handleContainers.add(container)
+        trackpadLayout?.addView(container, containerParams)
+        container.setOnTouchListener { view, e -> onTouch(view, e) } 
+    }
+    
+    private fun updateHandleSize() { 
+        for (v in handleVisuals) { 
+            val p = v.layoutParams
+            p.width = prefHandleSize
+            p.height = prefHandleSize
+            v.layoutParams = p 
+        } 
+    }
+    
+    private fun updateLayoutSizes() { 
+        for (c in handleContainers) { 
+            val p = c.layoutParams
+            p.width = prefHandleTouchSize
+            p.height = prefHandleTouchSize
+            c.layoutParams = p 
+        }
+        updateScrollPosition() 
+    }
+    
+    private fun addScrollBars(context: Context) { 
+        val margin = prefHandleTouchSize + 10
+        
+        vScrollContainer = FrameLayout(context)
+        val vParams = FrameLayout.LayoutParams(prefScrollTouchSize, FrameLayout.LayoutParams.MATCH_PARENT)
+        vParams.gravity = if (prefVPosLeft) Gravity.LEFT else Gravity.RIGHT
+        vParams.setMargins(0, margin, 0, margin)
+        trackpadLayout?.addView(vScrollContainer, vParams)
+        
+        vScrollVisual = View(context)
+        vScrollVisual!!.setBackgroundColor(0x30FFFFFF.toInt())
+        val vvParams = FrameLayout.LayoutParams(prefScrollVisualSize, FrameLayout.LayoutParams.MATCH_PARENT)
+        vvParams.gravity = Gravity.CENTER_HORIZONTAL
+        vScrollContainer?.addView(vScrollVisual, vvParams)
+        
+        hScrollContainer = FrameLayout(context)
+        val hParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefScrollTouchSize)
+        hParams.gravity = if (prefHPosTop) Gravity.TOP else Gravity.BOTTOM
+        hParams.setMargins(margin, 0, margin, 0)
+        trackpadLayout?.addView(hScrollContainer, hParams)
+        
+        hScrollVisual = View(context)
+        hScrollVisual!!.setBackgroundColor(0x30FFFFFF.toInt())
+        val hvParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefScrollVisualSize)
+        hvParams.gravity = Gravity.CENTER_VERTICAL
+        hScrollContainer?.addView(hScrollVisual, hvParams) 
+    }
+    
+    private fun updateScrollPosition() { 
+        val margin = prefHandleTouchSize + 10
+        vScrollContainer?.let { container ->
+            val vp = container.layoutParams as FrameLayout.LayoutParams
+            vp.gravity = if (prefVPosLeft) Gravity.LEFT else Gravity.RIGHT
+            vp.setMargins(0, margin, 0, margin)
+            container.layoutParams = vp 
+        }
+        hScrollContainer?.let { container ->
+            val hp = container.layoutParams as FrameLayout.LayoutParams
+            hp.gravity = if (prefHPosTop) Gravity.TOP else Gravity.BOTTOM
+            hp.setMargins(margin, 0, margin, 0)
+            container.layoutParams = hp 
+        }
+    }
+    
+    private fun updateBorderColor(strokeColor: Int) { 
+        currentBorderColor = strokeColor
+        val bg = trackpadLayout?.background as? GradientDrawable ?: return
+        bg.setColor(Color.TRANSPARENT)
+        val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefAlpha shl 24)
+        bg.setStroke(4, if (highlightAlpha) 0xFF00FF00.toInt() else colorWithAlpha)
+        trackpadLayout?.invalidate() 
+    }
 }

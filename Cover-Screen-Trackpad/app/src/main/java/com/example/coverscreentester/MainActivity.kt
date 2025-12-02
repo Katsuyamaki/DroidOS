@@ -1,4 +1,3 @@
-
 package com.example.coverscreentester
 
 import android.content.ComponentName
