@@ -127,21 +127,6 @@ class FloatingLauncherService : Service() {
     private var shellService: IShellService? = null
     private var isBound = false
     private val uiHandler = Handler(Looper.getMainLooper())
-    
-    // DAEMON
-    private var extinguishThread: Thread? = null
-
-    private val newProcessMethod: Method by lazy {
-        val clazz = Class.forName("rikka.shizuku.Shizuku")
-        val method = clazz.getDeclaredMethod(
-            "newProcess",
-            Array<String>::class.java,
-            Array<String>::class.java,
-            String::class.java
-        )
-        method.isAccessible = true
-        method
-    }
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult -> if (grantResult == PackageManager.PERMISSION_GRANTED) bindShizuku() }
@@ -152,7 +137,6 @@ class FloatingLauncherService : Service() {
             else if (intent?.action == ACTION_UPDATE_ICON) { updateBubbleIcon(); if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) }
         }
     }
-
     private val swipeCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
         override fun getMovementFlags(r: RecyclerView, v: RecyclerView.ViewHolder): Int {
             val pos = v.adapterPosition; if (pos == RecyclerView.NO_POSITION || pos >= displayList.size) return 0
@@ -217,15 +201,10 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // KILL DAEMON
         isExtinguished = false
-        extinguishThread?.interrupt()
-
+        // We are no longer using a Daemon thread
         if (useAltScreenOff) { 
-            Thread { 
-                runDirectShizukuCommand("settings put system screen_brightness 128")
-                runDirectShizukuCommand("settings put system screen_brightness_mode 1") 
-            }.start() 
+             try { shellService?.setBrightness(128) } catch(e: Exception) {}
         }
         try { Shizuku.removeBinderReceivedListener(shizukuBinderListener); Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); unregisterReceiver(commandReceiver) } catch (e: Exception) {}
         try { if (bubbleView != null) windowManager.removeView(bubbleView); if (isExpanded) windowManager.removeView(drawerView) } catch (e: Exception) {}
@@ -250,34 +229,6 @@ class FloatingLauncherService : Service() {
                 vibrator.vibrate(50)
             }
         } catch (e: Exception) {}
-    }
-
-    private fun runDirectShizukuCommand(command: String) {
-        try {
-            val cmd = arrayOf("sh", "-c", command)
-            val process = newProcessMethod.invoke(null, cmd, null, null) as Process
-            process.waitFor()
-        } catch (e: Exception) {
-            Log.e(DEBUG_TAG, "CMD Failed: $command", e)
-        }
-    }
-
-    private fun runCommandWithOutput(command: String): String {
-        val output = StringBuilder()
-        try {
-            val cmd = arrayOf("sh", "-c", command)
-            val process = newProcessMethod.invoke(null, cmd, null, null) as Process
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                output.append(line)
-            }
-            reader.close()
-            process.waitFor()
-        } catch (e: Exception) {
-            return "Err"
-        }
-        return output.toString()
     }
 
     private fun setupDisplayContext(displayId: Int) {
@@ -421,51 +372,29 @@ class FloatingLauncherService : Service() {
     }
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
-    // --- SCREEN OFF LOGIC (DAEMON MONITOR) ---
+    // --- SCREEN OFF LOGIC (NEW BINDER API) ---
     private fun performExtinguish() {
         vibrate()
-        safeToast("Daemon Monitor Starting...")
-        // Keep drawer open for debug visibility
-        // toggleDrawer()
+        safeToast("Extinguish (Binder API)...")
+        // toggleDrawer() 
         isExtinguished = true
         
         if (useAltScreenOff) {
-            extinguishThread?.interrupt()
-            extinguishThread = Thread {
-                try {
-                    // 1. Initial Setup
-                    runDirectShizukuCommand("settings put system screen_brightness_mode 0")
-                    runDirectShizukuCommand("settings put system screen_brightness_min 0")
-                    runDirectShizukuCommand("settings put system screen_brightness_float 0.0")
-                    
-                    // 2. The Monitor Loop
-                    while (isExtinguished) {
-                        // Read current value
-                        val res = runCommandWithOutput("settings get system screen_brightness").trim()
-                        
-                        // If system fought back (not -1), force it again
-                        if (res != "-1") {
-                            uiHandler.post { if(debugStatusView != null) debugStatusView?.text = "Fixing... ($res)" }
-                            
-                            // Force Update
-                            runDirectShizukuCommand("content update --uri content://settings/system --bind value:i:-1 --where \"name='screen_brightness'\"")
-                            
-                            // Force Insert (Backup)
-                            runDirectShizukuCommand("content insert --uri content://settings/system --bind name:s:screen_brightness --bind value:i:-1")
-                        } else {
-                            uiHandler.post { if(debugStatusView != null) debugStatusView?.text = "Stable (-1)" }
-                        }
-                        
-                        Thread.sleep(100) // Check every 100ms
-                    }
-                } catch (e: InterruptedException) {
-                    // Thread killed
-                } catch (e: Exception) {
-                    Log.e(TAG, "Daemon Crash", e)
-                }
-            }
-            extinguishThread?.start()
+             // Call the Java API method directly via Shizuku
+             // This avoids the "shell startup delay" and "package mismatch" errors
+             try {
+                 if (shellService != null) {
+                     shellService?.setBrightness(-1)
+                     uiHandler.post { safeToast("Sent brightness -1 via Binder") }
+                 } else {
+                     safeToast("Service Disconnected!")
+                 }
+             } catch (e: Exception) {
+                 Log.e(TAG, "Binder Call Failed", e)
+                 safeToast("Error: ${e.message}")
+             }
         } else {
+            // Default: SurfaceControl Power Off
             Thread { try { shellService?.setScreenOff(0, true); if (currentDisplayId != 0) shellService?.setScreenOff(currentDisplayId, true) } catch (e: Exception) {} }.start()
             safeToast("Screen OFF (SurfaceControl)")
         }
@@ -474,15 +403,13 @@ class FloatingLauncherService : Service() {
     private fun wakeUp() {
         vibrate()
         isExtinguished = false
-        extinguishThread?.interrupt()
-        extinguishThread = null
-
         if (useAltScreenOff) {
              Thread {
                 try {
-                    runDirectShizukuCommand("settings put system screen_brightness 128")
-                    runDirectShizukuCommand("settings put system screen_brightness_float 0.5")
-                    runDirectShizukuCommand("settings put system screen_brightness_mode 1")
+                    // We can use shell for restore as speed doesn't matter as much here
+                    val cmd = "settings put system screen_brightness_mode 1; settings put system screen_brightness 128; settings put system screen_brightness_float 0.5"
+                    val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                    p.waitFor()
                     uiHandler.post { safeToast("Brightness Restored") }
                 } catch (e: Exception) {}
             }.start()
