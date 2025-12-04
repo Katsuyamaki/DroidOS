@@ -15,6 +15,14 @@ class ShellUserService : IShellService.Stub() {
     companion object {
         const val POWER_MODE_OFF = 0
         const val POWER_MODE_NORMAL = 2
+        
+        // Static cache to persist across method calls within the same process
+        @Volatile private var displayControlClass: Class<*>? = null
+        @Volatile private var displayControlClassLoaded = false
+        @Volatile private var displayControlClassFailed = false
+        
+        @Volatile private var cachedDisplayToken: IBinder? = null
+        @Volatile private var displayTokenFailed = false
     }
 
     // ============================================================
@@ -28,8 +36,20 @@ class ShellUserService : IShellService.Stub() {
     /**
      * For Android 14+ (API 34+), we need to use DisplayControl from services.jar
      * to get the physical display token. For older versions, SurfaceControl works.
+     * 
+     * CACHING: This now caches the result to prevent repeated library loading failures.
      */
     private fun getDisplayControlClass(): Class<*>? {
+        // If we already tried and failed, don't try again in this process
+        if (displayControlClassFailed) {
+            return null
+        }
+        
+        // If already loaded successfully, return cached class
+        if (displayControlClassLoaded && displayControlClass != null) {
+            return displayControlClass
+        }
+        
         return try {
             val classLoaderFactoryClass = Class.forName("com.android.internal.os.ClassLoaderFactory")
             val createClassLoaderMethod = classLoaderFactoryClass.getDeclaredMethod(
@@ -47,7 +67,7 @@ class ShellUserService : IShellService.Stub() {
                 ClassLoader.getSystemClassLoader(), 0, true, null
             ) as ClassLoader
 
-            classLoader.loadClass("com.android.server.display.DisplayControl").also {
+            val loadedClass = classLoader.loadClass("com.android.server.display.DisplayControl").also {
                 val loadMethod = Runtime::class.java.getDeclaredMethod(
                     "loadLibrary0",
                     Class::class.java,
@@ -56,31 +76,48 @@ class ShellUserService : IShellService.Stub() {
                 loadMethod.isAccessible = true
                 loadMethod.invoke(Runtime.getRuntime(), it, "android_servers")
             }
+            
+            // Cache the successful result
+            displayControlClass = loadedClass
+            displayControlClassLoaded = true
+            Log.i(TAG, "DisplayControl class loaded successfully")
+            loadedClass
         } catch (e: Exception) {
             Log.w(TAG, "DisplayControl not available, falling back to SurfaceControl", e)
+            displayControlClassFailed = true
             null
         }
     }
 
     /**
      * Get the primary physical display token.
+     * CACHING: Caches the token to avoid repeated reflection failures.
      */
     private fun getPrimaryPhysicalDisplayToken(): IBinder? {
+        // If we already have a cached token, use it
+        cachedDisplayToken?.let { return it }
+        
+        // If we already tried and failed, don't try again
+        if (displayTokenFailed) {
+            return null
+        }
+        
         return try {
-            if (Build.VERSION.SDK_INT >= 34) {
-                val displayControlClass = getDisplayControlClass()
-                if (displayControlClass != null) {
-                    val getIdsMethod = displayControlClass.getMethod("getPhysicalDisplayIds")
+            val token: IBinder? = if (Build.VERSION.SDK_INT >= 34) {
+                val controlClass = getDisplayControlClass()
+                if (controlClass != null) {
+                    val getIdsMethod = controlClass.getMethod("getPhysicalDisplayIds")
                     val physicalIds = getIdsMethod.invoke(null) as LongArray
                     if (physicalIds.isEmpty()) {
                         Log.e(TAG, "No physical displays found")
-                        return null
+                        null
+                    } else {
+                        val getTokenMethod = controlClass.getMethod(
+                            "getPhysicalDisplayToken",
+                            Long::class.javaPrimitiveType
+                        )
+                        getTokenMethod.invoke(null, physicalIds[0]) as IBinder
                     }
-                    val getTokenMethod = displayControlClass.getMethod(
-                        "getPhysicalDisplayToken",
-                        Long::class.javaPrimitiveType
-                    )
-                    getTokenMethod.invoke(null, physicalIds[0]) as IBinder
                 } else {
                     getSurfaceControlDisplayToken()
                 }
@@ -91,8 +128,17 @@ class ShellUserService : IShellService.Stub() {
                 val method = surfaceControlClass.getMethod("getBuiltInDisplay", Int::class.java)
                 method.invoke(null, 0) as IBinder
             }
+            
+            if (token != null) {
+                cachedDisplayToken = token
+                Log.i(TAG, "Display token obtained and cached successfully")
+            } else {
+                displayTokenFailed = true
+            }
+            token
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get display token", e)
+            displayTokenFailed = true
             null
         }
     }
