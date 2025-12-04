@@ -1,24 +1,38 @@
-# DroidOS v1.1 - Compatibility & Customization Update
+# DroidOS v2.0 - The "Beam Pro" & Android 14 Update
 
-## 🚀 Key Highlights
+**Release Date:** December 2025
+**Codename:** Compatibility
 
-### 📱 Launcher: Adaptive App Queue Reordering (Android 14 Fix)
-We have introduced a new default method for reordering apps in the launcher dock to ensure compatibility with Android 14 devices where standard Drag-and-Drop gestures often conflict with system navigation or behave inconsistently.
+This major release focuses on stabilizing the DroidOS ecosystem for **Android 14** devices, specifically optimizing for the **Xreal Beam Pro** and modern Samsung Foldables. It introduces new input paradigms to bypass system restrictions on touch-and-hold gestures and refines the "Headless" (Screen Off) experience.
 
-* **Long-Tap to Swap (Default):**
-    * **How it works:** Long-press an icon in your App Queue (Dock). You will see a highlight and a prompt: *"Tap another app to Swap"*. Simply tap the target position, and the apps will swap places instantly.
-    * **Why:** This bypasses the complex drag-shadow APIs that cause crashes or UI freezes on certain Samsung OneUI 6.0 / Android 14 builds.
+## 🌟 Major Features
 
-* **Drag-and-Drop (Toggle):**
-    * For users on Android 15/16 or devices with robust drag support, the traditional "Hold and Drag" method remains available.
-    * You can enable this in **Settings > Reorder: Drag & Drop**.
+### 🕶️ Xreal Beam Pro & Android 14 Compatibility
+* **Fixed Hidden API Reflection:** Updated `ShellUserService` to correctly handle `DisplayControl` vs `SurfaceControl` classes on Android 14, ensuring proper token acquisition for secondary displays.
+* **Alternate Screen Off Mode:** Introduced a specific "Alternate Mode" for devices (like Beam Pro) where the standard `setDisplayPowerMode` API fails or sleeps the CPU.
+    * *Mechanism:* Uses a specific `setBrightness(-1)` implementation via the legacy 2-argument hidden API, which successfully cuts backlight power on A14 without triggering system sleep.
+    * *Behavior:* Configurable in Settings. Includes a "Wake on Power Button" listener to ensure the screen doesn't get stuck in a dark state.
 
-### ⌨️ Trackpad: Keyboard Resizing
-The virtual keyboard overlay is no longer one-size-fits-all.
-* **Dynamic Scaling:** Added a slider in Settings to scale the keyboard key size from **50% to 200%**.
-* **Auto-Shrink:** The Launcher drawer now intelligently detects when the keyboard is active and shrinks itself to prevent visual overlap, ensuring you can see what you are typing.
+### 🖱️ Input & Interaction Overhaul
+Android 14 introduced stricter gesture interception, breaking traditional drag-and-drop on some cover screens/overlays.
+* **Tap-to-Swap (Launcher):** Replaced the buggy drag-and-drop reordering with a robust "Tap-to-Swap" mode.
+    * *Usage:* Long-press an app -> Icon highlights -> Tap destination to swap.
+    * *Benefit:* Works reliably on all touchscreens and trackpads where "hold-and-drag" is intercepted by system gestures.
+* **Trackpad Gestures:**
+    * **Edge Scrolling:** dedicated scroll zones on the edges of the trackpad overlay.
+    * **Touchpad Swipe:** Improved swipe detection logic for scrolling lists remotely.
 
-### 🛠️ Optimizations & Bug Fixes
-* **Cursor "Stuck" Fix:** Resolved a critical issue where the mouse cursor would freeze or fight against user input. Implemented a 100px buffer zone around the trackpad overlay to prevent OS input loop conflicts.
-* **Virtual Display Logic:** Fixed an issue where the Trackpad would close or reset incorrectly when launching applications onto a virtual screen (AR Glasses). The service now intelligently detects if it should remain on the cover screen or follow the app.
-* **Launch Stability:** Improved the specific `am start` shell commands used by Shizuku to ensure apps launch in Freeform mode consistently across different Android versions.
+### 📱 Launcher Improvements
+* **Targeted Display Control:** The Launcher now intelligently passes the exact `displayId` to the Shell Service, ensuring that Screen Off/Brightness commands only affect the intended screen (Cover vs Main) on foldables.
+* **Power Button Intercept:** Added a BroadcastReceiver for `ACTION_SCREEN_ON`. If you physically press the power button while in "Extinguish" mode, DroidOS now immediately clears the black screen override, preventing "panic" situations.
+
+### 🛠️ Bug Fixes
+* **Fixed:** "Binder haven't been received" crashes on startup by making the Shell Service connection more robust.
+* **Fixed:** Cursor getting stuck in "drag" mode when connection flickered.
+* **Fixed:** `setSystemBrightness` crash on Android 14 due to mismatched method signatures (reverted to legacy safe method).
+
+---
+
+## 📦 Module Versioning
+* **CoverScreen Launcher:** v2.0
+* **CoverScreen Trackpad:** v2.0

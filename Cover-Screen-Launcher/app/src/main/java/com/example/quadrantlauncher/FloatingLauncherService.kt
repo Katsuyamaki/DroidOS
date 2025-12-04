@@ -104,7 +104,7 @@ class FloatingLauncherService : Service() {
     
     private var killAppOnExecute = true
     private var targetDisplayIndex = 1 
-    private var isExtinguished = false
+    private var isScreenOffState = false
     private var isInstantMode = true 
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
@@ -133,10 +133,22 @@ class FloatingLauncherService : Service() {
 
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_OPEN_DRAWER) { if (isExtinguished) wakeUp() else if (!isExpanded) toggleDrawer() } 
-            else if (intent?.action == ACTION_UPDATE_ICON) { updateBubbleIcon(); if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) }
+            val action = intent?.action
+            if (action == ACTION_OPEN_DRAWER) { 
+                if (isScreenOffState) wakeUp() else if (!isExpanded) toggleDrawer() 
+            } 
+            else if (action == ACTION_UPDATE_ICON) { 
+                updateBubbleIcon()
+                if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) 
+            }
+            else if (action == Intent.ACTION_SCREEN_ON) {
+                if (isScreenOffState) {
+                    wakeUp()
+                }
+            }
         }
     }
+    
     private val swipeCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
         override fun getMovementFlags(r: RecyclerView, v: RecyclerView.ViewHolder): Int {
             val pos = v.adapterPosition; if (pos == RecyclerView.NO_POSITION || pos >= displayList.size) return 0
@@ -178,7 +190,14 @@ class FloatingLauncherService : Service() {
         super.onCreate()
         startForegroundService()
         try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
-        val filter = IntentFilter().apply { addAction(ACTION_OPEN_DRAWER); addAction(ACTION_UPDATE_ICON) }
+        
+        val filter = IntentFilter().apply { 
+            addAction(ACTION_OPEN_DRAWER)
+            addAction(ACTION_UPDATE_ICON)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
         try { if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {}
         
@@ -201,11 +220,9 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        isExtinguished = false
-        // We are no longer using a Daemon thread
-        if (useAltScreenOff) { 
-             try { shellService?.setBrightness(128) } catch(e: Exception) {}
-        }
+        isScreenOffState = false
+        // Force wake on destroy to prevent stuck screen
+        wakeUp()
         try { Shizuku.removeBinderReceivedListener(shizukuBinderListener); Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); unregisterReceiver(commandReceiver) } catch (e: Exception) {}
         try { if (bubbleView != null) windowManager.removeView(bubbleView); if (isExpanded) windowManager.removeView(drawerView) } catch (e: Exception) {}
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
@@ -311,7 +328,7 @@ class FloatingLauncherService : Service() {
         selectedRecycler.layoutManager = LinearLayoutManager(themeContext, LinearLayoutManager.HORIZONTAL, false); selectedRecycler.adapter = SelectedAppsAdapter(); val dockTouchHelper = ItemTouchHelper(selectedAppsDragCallback); dockTouchHelper.attachToRecyclerView(selectedRecycler)
         drawerView!!.setOnClickListener { toggleDrawer() }
         drawerView!!.isFocusableInTouchMode = true
-        drawerView!!.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { toggleDrawer(); true } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && isExtinguished) { wakeUp(); true } else false }
+        drawerView!!.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { toggleDrawer(); true } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && isScreenOffState) { wakeUp(); true } else false }
     }
     
     private fun startReorderMode(index: Int) { if (!isReorderTapEnabled) return; if (index < 0 || index >= selectedAppsQueue.size) return; val prevIndex = reorderSelectionIndex; reorderSelectionIndex = index; val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter; if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex); adapter?.notifyItemChanged(reorderSelectionIndex); safeToast("Tap another app to Swap") }
@@ -336,7 +353,7 @@ class FloatingLauncherService : Service() {
     
     private fun launchTrackpad() {
         if (isTrackpadRunning()) { safeToast("Trackpad is already active"); return }
-        try { val intent = packageManager.getLaunchIntentForPackage(PACKAGE_TRACKPAD); if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); val dm = DisplayMetrics(); val display = displayContext?.display ?: windowManager.defaultDisplay; display.getRealMetrics(dm); val w = dm.widthPixels; val h = dm.heightPixels; val targetW = (w * 0.5f).toInt(); val targetH = (h * 0.5f).toInt(); val left = (w - targetW) / 2; val top = (h - targetH) / 2; val bounds = Rect(left, top, left + targetW, top + targetH); val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(bounds); try { val method = android.app.ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType); method.invoke(options, 5) } catch (e: Exception) {}; startActivity(intent, options.toBundle()); toggleDrawer(); if (shellService != null) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH) } catch(e: Exception) { Log.e(TAG, "Shell launch failed", e) } }.start() }, 400) } } else { safeToast("Trackpad App not found") } } catch (e: Exception) { safeToast("Error launching Trackpad") }
+        try { val intent = packageManager.getLaunchIntentForPackage(PACKAGE_TRACKPAD); if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); val dm = DisplayMetrics(); val display = displayContext?.display ?: windowManager.defaultDisplay; display.getRealMetrics(dm); val w = dm.widthPixels; val h = dm.heightPixels; val targetW = (w * 0.5f).toInt(); val targetH = (h * 0.5f).toInt(); val left = (w - targetW) / 2; val top = (h - targetH) / 2; val bounds = Rect(left, top, left + targetW, top + targetH); val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(left, top, left + targetW, top + targetH)); try { val method = android.app.ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType); method.invoke(options, 5) } catch (e: Exception) {}; startActivity(intent, options.toBundle()); toggleDrawer(); if (shellService != null) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH) } catch(e: Exception) { Log.e(TAG, "Shell launch failed", e) } }.start() }, 400) } } else { safeToast("Trackpad App not found") } } catch (e: Exception) { safeToast("Error launching Trackpad") }
     }
 
     private fun isTrackpadRunning(): Boolean { try { val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager; val runningApps = am.runningAppProcesses; if (runningApps != null) { for (info in runningApps) { if (info.processName == PACKAGE_TRACKPAD) return true } } } catch (e: Exception) {}; return false }
@@ -373,19 +390,18 @@ class FloatingLauncherService : Service() {
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
     // --- SCREEN OFF LOGIC (NEW BINDER API) ---
-    private fun performExtinguish() {
+    private fun performScreenOff() {
         vibrate()
-        safeToast("Extinguish (Binder API)...")
-        // toggleDrawer() 
-        isExtinguished = true
+        isScreenOffState = true
+        safeToast("Screen Off: Double press Power Button to turn on")
         
         if (useAltScreenOff) {
              // Call the Java API method directly via Shizuku
-             // This avoids the "shell startup delay" and "package mismatch" errors
              try {
                  if (shellService != null) {
-                     shellService?.setBrightness(-1)
-                     uiHandler.post { safeToast("Sent brightness -1 via Binder") }
+                     // The service will now ignore the displayId arg and apply to ALL physical screens
+                     shellService?.setBrightness(0, -1)
+                     uiHandler.post { safeToast("Pixels OFF (Alternate Mode)") }
                  } else {
                      safeToast("Service Disconnected!")
                  }
@@ -395,28 +411,23 @@ class FloatingLauncherService : Service() {
              }
         } else {
             // Default: SurfaceControl Power Off
-            Thread { try { shellService?.setScreenOff(0, true); if (currentDisplayId != 0) shellService?.setScreenOff(currentDisplayId, true) } catch (e: Exception) {} }.start()
+            // The service will now ignore displayId arg and apply to ALL physical screens
+            Thread { try { shellService?.setScreenOff(0, true) } catch (e: Exception) {} }.start()
             safeToast("Screen OFF (SurfaceControl)")
         }
     }
     
     private fun wakeUp() {
         vibrate()
-        isExtinguished = false
-        if (useAltScreenOff) {
-             Thread {
-                try {
-                    // We can use shell for restore as speed doesn't matter as much here
-                    val cmd = "settings put system screen_brightness_mode 1; settings put system screen_brightness 128; settings put system screen_brightness_float 0.5"
-                    val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                    p.waitFor()
-                    uiHandler.post { safeToast("Brightness Restored") }
-                } catch (e: Exception) {}
-            }.start()
-        } else {
-            Thread { try { shellService?.setScreenOff(0, false); shellService?.setScreenOff(currentDisplayId, false) } catch (e: Exception) {} }.start()
-            safeToast("Screen Woke Up")
-        }
+        isScreenOffState = false
+        
+        // Restore Alternate Mode State (Brightness)
+        Thread { try { shellService?.setBrightness(0, 128) } catch (e: Exception) {} }.start()
+        
+        // Restore Standard Mode State (SurfaceControl)
+        Thread { try { shellService?.setScreenOff(0, false) } catch (e: Exception) {} }.start()
+
+        safeToast("Screen On")
         if (currentMode == MODE_SETTINGS) drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
     }
 
@@ -471,10 +482,31 @@ class FloatingLauncherService : Service() {
                 displayList.add(ToggleOption("Reorder: Tap to Swap (Long Press)", isReorderTapEnabled) { isReorderTapEnabled = it; AppPreferences.setReorderTap(this, it) })
                 displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
                 displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
-                displayList.add(ToggleOption("Display Off (Touch on)", isExtinguished) { if (it) performExtinguish() else wakeUp() })
                 
-                // Alt Screen Off: Brightness -1 (OLED Pixel Off)
-                displayList.add(ToggleOption("Alt Screen Off (Brightness -1)", useAltScreenOff) { useAltScreenOff = it; AppPreferences.setUseAltScreenOff(this, it) })
+                // STANDARD MODE TOGGLE
+                displayList.add(ToggleOption("Screen Off (Standard)", isScreenOffState && !useAltScreenOff) { 
+                    if (it) {
+                        if (isScreenOffState) wakeUp() // Reset if already off
+                        useAltScreenOff = false
+                        AppPreferences.setUseAltScreenOff(this, false)
+                        performScreenOff()
+                    } else {
+                        wakeUp()
+                    }
+                })
+
+                // ALTERNATE MODE TOGGLE
+                displayList.add(ToggleOption("Screen Off (Alternate)", isScreenOffState && useAltScreenOff) { 
+                    if (it) {
+                        if (isScreenOffState) wakeUp() // Reset if already off
+                        useAltScreenOff = true
+                        AppPreferences.setUseAltScreenOff(this, true)
+                        performScreenOff()
+                    } else {
+                        wakeUp()
+                    }
+                })
+                
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
             }
         }

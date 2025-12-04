@@ -1,12 +1,12 @@
 package com.example.quadrantlauncher
 
 import android.os.IBinder
+import android.os.Binder
 import android.os.Build
 import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.ArrayList
-import java.util.regex.Pattern
 
 class ShellUserService : IShellService.Stub() {
 
@@ -16,39 +16,16 @@ class ShellUserService : IShellService.Stub() {
         const val POWER_MODE_OFF = 0
         const val POWER_MODE_NORMAL = 2
         
-        // Static cache to persist across method calls within the same process
         @Volatile private var displayControlClass: Class<*>? = null
         @Volatile private var displayControlClassLoaded = false
-        @Volatile private var displayControlClassFailed = false
-        
-        @Volatile private var cachedDisplayToken: IBinder? = null
-        @Volatile private var displayTokenFailed = false
     }
-
-    // ============================================================
-    // SurfaceControl Hidden API Access (Extinguish Methodology)
-    // ============================================================
 
     private val surfaceControlClass: Class<*> by lazy {
         Class.forName("android.view.SurfaceControl")
     }
 
-    /**
-     * For Android 14+ (API 34+), we need to use DisplayControl from services.jar
-     * to get the physical display token. For older versions, SurfaceControl works.
-     * 
-     * CACHING: This now caches the result to prevent repeated library loading failures.
-     */
     private fun getDisplayControlClass(): Class<*>? {
-        // If we already tried and failed, don't try again in this process
-        if (displayControlClassFailed) {
-            return null
-        }
-        
-        // If already loaded successfully, return cached class
-        if (displayControlClassLoaded && displayControlClass != null) {
-            return displayControlClass
-        }
+        if (displayControlClassLoaded && displayControlClass != null) return displayControlClass
         
         return try {
             val classLoaderFactoryClass = Class.forName("com.android.internal.os.ClassLoaderFactory")
@@ -77,132 +54,97 @@ class ShellUserService : IShellService.Stub() {
                 loadMethod.invoke(Runtime.getRuntime(), it, "android_servers")
             }
             
-            // Cache the successful result
             displayControlClass = loadedClass
             displayControlClassLoaded = true
-            Log.i(TAG, "DisplayControl class loaded successfully")
             loadedClass
         } catch (e: Exception) {
-            Log.w(TAG, "DisplayControl not available, falling back to SurfaceControl", e)
-            displayControlClassFailed = true
+            Log.w(TAG, "DisplayControl not available", e)
             null
         }
     }
 
-    /**
-     * Get the primary physical display token.
-     * CACHING: Caches the token to avoid repeated reflection failures.
-     */
-    private fun getPrimaryPhysicalDisplayToken(): IBinder? {
-        // If we already have a cached token, use it
-        cachedDisplayToken?.let { return it }
-        
-        // If we already tried and failed, don't try again
-        if (displayTokenFailed) {
-            return null
-        }
-        
-        return try {
-            val token: IBinder? = if (Build.VERSION.SDK_INT >= 34) {
+    private fun getAllPhysicalDisplayTokens(): List<IBinder> {
+        val tokens = ArrayList<IBinder>()
+        try {
+            val physicalIds: LongArray = if (Build.VERSION.SDK_INT >= 34) {
                 val controlClass = getDisplayControlClass()
                 if (controlClass != null) {
-                    val getIdsMethod = controlClass.getMethod("getPhysicalDisplayIds")
-                    val physicalIds = getIdsMethod.invoke(null) as LongArray
-                    if (physicalIds.isEmpty()) {
-                        Log.e(TAG, "No physical displays found")
-                        null
-                    } else {
-                        val getTokenMethod = controlClass.getMethod(
-                            "getPhysicalDisplayToken",
-                            Long::class.javaPrimitiveType
-                        )
-                        getTokenMethod.invoke(null, physicalIds[0]) as IBinder
-                    }
+                    controlClass.getMethod("getPhysicalDisplayIds").invoke(null) as LongArray
                 } else {
-                    getSurfaceControlDisplayToken()
+                     try {
+                        surfaceControlClass.getMethod("getPhysicalDisplayIds").invoke(null) as LongArray
+                     } catch (e: Exception) { LongArray(0) }
                 }
-            } else if (Build.VERSION.SDK_INT >= 29) {
-                val method = surfaceControlClass.getMethod("getInternalDisplayToken")
-                method.invoke(null) as IBinder
             } else {
-                val method = surfaceControlClass.getMethod("getBuiltInDisplay", Int::class.java)
-                method.invoke(null, 0) as IBinder
+                surfaceControlClass.getMethod("getPhysicalDisplayIds").invoke(null) as LongArray
             }
-            
-            if (token != null) {
-                cachedDisplayToken = token
-                Log.i(TAG, "Display token obtained and cached successfully")
-            } else {
-                displayTokenFailed = true
-            }
-            token
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get display token", e)
-            displayTokenFailed = true
-            null
-        }
-    }
 
-    private fun getSurfaceControlDisplayToken(): IBinder? {
-        return try {
-            val getIdsMethod = surfaceControlClass.getMethod("getPhysicalDisplayIds")
-            val physicalIds = getIdsMethod.invoke(null) as LongArray
             if (physicalIds.isEmpty()) {
-                Log.e(TAG, "No physical displays found via SurfaceControl")
-                return null
+                getSurfaceControlInternalToken()?.let { tokens.add(it) }
+                return tokens
             }
-            val getTokenMethod = surfaceControlClass.getMethod(
-                "getPhysicalDisplayToken",
-                Long::class.javaPrimitiveType
-            )
-            getTokenMethod.invoke(null, physicalIds[0]) as IBinder
+
+            for (id in physicalIds) {
+                try {
+                    val token: IBinder? = if (Build.VERSION.SDK_INT >= 34) {
+                        val controlClass = getDisplayControlClass()
+                        if (controlClass != null) {
+                             controlClass.getMethod("getPhysicalDisplayToken", Long::class.javaPrimitiveType)
+                                .invoke(null, id) as? IBinder
+                        } else {
+                            surfaceControlClass.getMethod("getPhysicalDisplayToken", Long::class.javaPrimitiveType)
+                                .invoke(null, id) as? IBinder
+                        }
+                    } else {
+                        surfaceControlClass.getMethod("getPhysicalDisplayToken", Long::class.javaPrimitiveType)
+                            .invoke(null, id) as? IBinder
+                    }
+                    
+                    if (token != null) tokens.add(token)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to get token for physical ID $id", e)
+                }
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "SurfaceControl display token methods failed", e)
-            null
+            Log.e(TAG, "Critical failure getting display tokens", e)
         }
+        return tokens
     }
 
-    /**
-     * Set display power mode via SurfaceControl.
-     */
-    private fun setDisplayPowerMode(mode: Int): Boolean {
+    private fun getSurfaceControlInternalToken(): IBinder? {
         return try {
-            val displayToken = getPrimaryPhysicalDisplayToken()
-            if (displayToken == null) {
-                Log.e(TAG, "Cannot set power mode: no display token")
-                return false
+            if (Build.VERSION.SDK_INT < 29) {
+                surfaceControlClass.getMethod("getBuiltInDisplay", Int::class.java).invoke(null, 0) as IBinder
+            } else {
+                surfaceControlClass.getMethod("getInternalDisplayToken").invoke(null) as IBinder
             }
-            
+        } catch (e: Exception) { null }
+    }
+
+    private fun setPowerModeOnToken(token: IBinder, mode: Int) {
+        try {
             val method = surfaceControlClass.getMethod(
                 "setDisplayPowerMode",
                 IBinder::class.java,
                 Int::class.javaPrimitiveType
             )
-            method.invoke(null, displayToken, mode)
-            Log.d(TAG, "setDisplayPowerMode($mode) SUCCESS")
-            true
+            method.invoke(null, token, mode)
         } catch (e: Exception) {
-            Log.e(TAG, "setDisplayPowerMode($mode) FAILED", e)
-            false
+            Log.e(TAG, "setDisplayPowerMode failed for token $token", e)
         }
     }
 
-    /**
-     * Set display brightness via SurfaceControl.setDisplayBrightness()
-     * THIS IS THE KEY EXTINGUISH METHOD!
-     * 
-     * @param brightness: 0.0f to 1.0f for normal brightness, -1.0f to turn off backlight
-     */
-    private fun setDisplayBrightnessInternal(brightness: Float): Boolean {
-        return try {
-            val displayToken = getPrimaryPhysicalDisplayToken()
-            if (displayToken == null) {
-                Log.e(TAG, "Cannot set brightness: no display token")
-                return false
-            }
-            
-            // Try the newer 5-parameter API first (Android 12+)
-            try {
+    private fun setDisplayBrightnessOnToken(token: IBinder, brightness: Float): Boolean {
+        try {
+            val method = surfaceControlClass.getMethod(
+                "setDisplayBrightness",
+                IBinder::class.java,
+                Float::class.javaPrimitiveType
+            )
+            method.invoke(null, token, brightness)
+            return true
+        } catch (e: Exception) {
+             try {
                 val method = surfaceControlClass.getMethod(
                     "setDisplayBrightness",
                     IBinder::class.java,
@@ -211,35 +153,23 @@ class ShellUserService : IShellService.Stub() {
                     Float::class.javaPrimitiveType,
                     Float::class.javaPrimitiveType
                 )
-                val result = method.invoke(null, displayToken, brightness, -1f, brightness, -1f) as Boolean
-                Log.d(TAG, "setDisplayBrightness(5-param, $brightness) = $result")
-                return result
-            } catch (e: NoSuchMethodException) {
-                Log.d(TAG, "5-param setDisplayBrightness not available, trying 2-param")
+                method.invoke(null, token, brightness, brightness, brightness, brightness)
+                return true
+            } catch (e2: Exception) {
+                return false
             }
-            
-            // Fall back to 2-parameter API
-            val method = surfaceControlClass.getMethod(
-                "setDisplayBrightness",
-                IBinder::class.java,
-                Float::class.javaPrimitiveType
-            )
-            val result = method.invoke(null, displayToken, brightness) as Boolean
-            Log.d(TAG, "setDisplayBrightness(2-param, $brightness) = $result")
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "setDisplayBrightness($brightness) FAILED", e)
-            false
         }
     }
 
-    // ============================================================
-    // Shell Command Helper
-    // ============================================================
+    private fun setDisplayBrightnessInternal(displayId: Int, brightness: Float): Boolean {
+        // Legacy shim for single-target calls
+        val tokens = getAllPhysicalDisplayTokens()
+        if (tokens.isNotEmpty()) return setDisplayBrightnessOnToken(tokens[0], brightness)
+        return false
+    }
 
     private val shLock = Object()
     private var _shProcess: Process? = null
-    
     private val shProcess: Process
         get() = synchronized(shLock) {
             if (_shProcess?.isAlive == true) _shProcess!!
@@ -252,9 +182,8 @@ class ShellUserService : IShellService.Stub() {
                 val output = shProcess.outputStream
                 output.write("$command\n".toByteArray())
                 output.flush()
-                Log.d(TAG, "Shell: $command")
             } catch (e: Exception) {
-                Log.e(TAG, "Shell command failed: $command", e)
+                Log.e(TAG, "Shell command failed", e)
             }
         }
     }
@@ -263,156 +192,174 @@ class ShellUserService : IShellService.Stub() {
     // AIDL Interface Implementations
     // ============================================================
 
-    /**
-     * Main brightness control method.
-     * 
-     * For -1 (or any negative): Turn screen OFF using Extinguish methodology
-     * For 0-255: Set normal brightness
-     */
-    override fun setBrightness(brightness: Int) {
-        Log.d(TAG, "setBrightness($brightness) called")
-        
+    override fun setBrightness(displayId: Int, brightness: Int) {
+        Log.d(TAG, "setBrightness(Global Broadcast, Value: $brightness)")
+        val token = Binder.clearCallingIdentity()
         try {
             if (brightness < 0) {
-                // SCREEN OFF MODE - Use Extinguish methodology
-                Log.i(TAG, "=== SCREEN OFF MODE (Extinguish Method) ===")
-                
-                // Step 1: Disable auto brightness
+                // === SCREEN OFF ===
                 execShellCommand("settings put system screen_brightness_mode 0")
                 
-                // Step 2: Try SurfaceControl.setDisplayBrightness(-1.0f) first
-                // This is the Extinguish "ShizukuScreenBrightnessNeg1" solution
-                val brightnessResult = setDisplayBrightnessInternal(-1.0f)
-                Log.d(TAG, "SurfaceControl.setDisplayBrightness(-1.0f) = $brightnessResult")
+                // Get ALL tokens, but ONLY apply to the first 2 (Main + Cover)
+                // This prevents killing the Glasses (which would be index 2+)
+                val tokens = getAllPhysicalDisplayTokens()
+                val safeTokens = tokens.take(2)
                 
-                // Step 3: Also set settings values (belt and suspenders)
+                for (t in safeTokens) {
+                    setDisplayBrightnessOnToken(t, -1.0f)
+                }
+                
                 execShellCommand("settings put system screen_brightness_float -1.0")
                 execShellCommand("settings put system screen_brightness -1")
-                
-                Log.i(TAG, "=== SCREEN OFF COMPLETE ===")
             } else {
-                // SCREEN ON / NORMAL BRIGHTNESS
-                Log.i(TAG, "=== RESTORING BRIGHTNESS: $brightness ===")
-                
+                // === SCREEN ON ===
                 val floatVal = brightness.toFloat() / 255.0f
                 
-                // Step 1: Use SurfaceControl to set brightness
-                setDisplayBrightnessInternal(floatVal)
+                // Restore ALL tokens (safety, in case user replugged glasses)
+                val tokens = getAllPhysicalDisplayTokens()
+                for (t in tokens) {
+                    setDisplayBrightnessOnToken(t, floatVal)
+                }
                 
-                // Step 2: Set settings values
                 execShellCommand("settings put system screen_brightness_float $floatVal")
                 execShellCommand("settings put system screen_brightness $brightness")
-                
-                Log.i(TAG, "=== BRIGHTNESS RESTORED ===")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "setBrightness($brightness) FAILED", e)
+            Log.e(TAG, "setBrightness failed", e)
+        } finally {
+             Binder.restoreCallingIdentity(token)
         }
     }
 
-    /**
-     * Screen on/off using SurfaceControl.setDisplayPowerMode()
-     * This is the Extinguish "ShizukuPowerOffScreen" solution.
-     */
     override fun setScreenOff(displayIndex: Int, turnOff: Boolean) {
-        Log.d(TAG, "setScreenOff(displayIndex=$displayIndex, turnOff=$turnOff)")
-        
+        Log.d(TAG, "setScreenOff(Global Broadcast, TurnOff: $turnOff)")
+        val token = Binder.clearCallingIdentity()
         try {
             val mode = if (turnOff) POWER_MODE_OFF else POWER_MODE_NORMAL
-            val result = setDisplayPowerMode(mode)
-            Log.d(TAG, "setDisplayPowerMode($mode) = $result")
+            
+            // Same safety limit: Only affect first 2 physical screens
+            val tokens = getAllPhysicalDisplayTokens()
+            val safeTokens = tokens.take(2)
+            
+            for (t in safeTokens) {
+                setPowerModeOnToken(t, mode)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "setScreenOff failed", e)
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
     }
 
-    // ============================================================
-    // Other AIDL Methods
-    // ============================================================
-
     override fun forceStop(packageName: String) {
-        try { Runtime.getRuntime().exec("am force-stop $packageName").waitFor() } catch (e: Exception) {}
+        val token = Binder.clearCallingIdentity()
+        try { Runtime.getRuntime().exec("am force-stop $packageName").waitFor() } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
 
     override fun runCommand(command: String) {
-        try { Runtime.getRuntime().exec(command).waitFor() } catch (e: Exception) {}
+        val token = Binder.clearCallingIdentity()
+        try { Runtime.getRuntime().exec(command).waitFor() } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
 
     override fun repositionTask(packageName: String, left: Int, top: Int, right: Int, bottom: Int) {
+        val token = Binder.clearCallingIdentity()
         try {
-            val process = Runtime.getRuntime().exec("dumpsys activity top")
+            val cmd = arrayOf("sh", "-c", "dumpsys activity top | grep -E 'TASK.*id=|ACTIVITY.*$packageName'")
+            val process = Runtime.getRuntime().exec(cmd)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             var line: String?
             var targetTaskId = -1
+            
             while (reader.readLine().also { line = it } != null) {
-                val l = line!!.trim()
-                if (l.startsWith("TASK") && l.contains(packageName)) {
-                    val match = Regex("id=(\\d+)").find(l)
-                    if (match != null) { targetTaskId = match.groupValues[1].toInt(); break }
+                if (line!!.contains("TASK") && line!!.contains("id=")) {
+                     val match = Regex("id=(\\d+)").find(line!!)
+                     if (match != null) targetTaskId = match.groupValues[1].toInt()
+                }
+                if (targetTaskId != -1 && line!!.contains(packageName)) {
+                    break
                 }
             }
             reader.close()
             process.waitFor()
+            
             if (targetTaskId != -1) {
                 Runtime.getRuntime().exec("am task set-windowing-mode $targetTaskId 5").waitFor()
                 Runtime.getRuntime().exec("am task resize $targetTaskId $left $top $right $bottom").waitFor()
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
 
     override fun getVisiblePackages(displayId: Int): List<String> {
         val packages = ArrayList<String>()
+        val token = Binder.clearCallingIdentity()
         try {
-            val process = Runtime.getRuntime().exec("dumpsys activity activities")
+            val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep -E 'Display #|ActivityRecord'")
+            val process = Runtime.getRuntime().exec(cmd)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             var line: String?
             var currentScanningDisplayId = -1
-            val recordPattern = Pattern.compile("u\\d+\\s+([a-zA-Z0-9_.]+)/")
+            
+            val pkgRegex = Regex("u\\d+\\s+(\\S+?)/")
+            val displayRegex = Regex("Display #(\\d+)")
+
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-                if (l.startsWith("Display #")) {
-                    val displayMatch = Regex("Display #(\\d+)").find(l)
+                if (l.contains("Display #")) {
+                    val displayMatch = displayRegex.find(l)
                     if (displayMatch != null) currentScanningDisplayId = displayMatch.groupValues[1].toInt()
                     continue
                 }
                 if (currentScanningDisplayId == displayId && l.contains("ActivityRecord{")) {
-                    val matcher = recordPattern.matcher(l)
-                    if (matcher.find()) {
-                        val pkg: String? = matcher.group(1)
-                        if (pkg != null && !packages.contains(pkg)) packages.add(pkg)
+                    val matcher = pkgRegex.find(l)
+                    if (matcher != null) {
+                        val pkg = matcher.groupValues[1]
+                        if (!packages.contains(pkg)) packages.add(pkg)
                     }
                 }
             }
             reader.close()
             process.waitFor()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "getVisiblePackages failed", e)
+        } finally { 
+            Binder.restoreCallingIdentity(token) 
+        }
         return packages
     }
 
     override fun getAllRunningPackages(): List<String> {
         val packages = ArrayList<String>()
+        val token = Binder.clearCallingIdentity()
         try {
-            val process = Runtime.getRuntime().exec("dumpsys activity activities")
+            val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep 'ActivityRecord'")
+            val process = Runtime.getRuntime().exec(cmd)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             var line: String?
-            val recordPattern = Pattern.compile("ActivityRecord\\{[0-9a-f]+ u\\d+ ([a-zA-Z0-9_.]+)/")
+            val pkgRegex = Regex("u\\d+\\s+(\\S+?)/")
+            
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
                 if (l.contains("ActivityRecord{")) {
-                    val matcher = recordPattern.matcher(l)
-                    if (matcher.find()) {
-                        val pkg: String? = matcher.group(1)
-                        if (pkg != null && !packages.contains(pkg)) packages.add(pkg)
+                    val matcher = pkgRegex.find(l)
+                    if (matcher != null) {
+                        val pkg = matcher.groupValues[1]
+                        if (!packages.contains(pkg)) packages.add(pkg)
                     }
                 }
             }
             reader.close()
             process.waitFor()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
         return packages
     }
 
-    override fun getWindowLayouts(displayId: Int): List<String> { return ArrayList<String>() }
-    override fun getTaskId(packageName: String): Int { return -1 }
+    override fun getWindowLayouts(displayId: Int): List<String> = ArrayList()
+    override fun getTaskId(packageName: String): Int = -1
     override fun moveTaskToBack(taskId: Int) {}
+    override fun setSystemBrightness(brightness: Int) { execShellCommand("settings put system screen_brightness $brightness") }
+    override fun getSystemBrightness(): Int = 128
+    override fun getSystemBrightnessFloat(): Float = 0.5f
+    override fun setAutoBrightness(enabled: Boolean) { execShellCommand("settings put system screen_brightness_mode ${if (enabled) 1 else 0}") }
+    override fun isAutoBrightness(): Boolean = true
+    override fun setBrightnessViaDisplayManager(displayId: Int, brightness: Float): Boolean = setDisplayBrightnessInternal(displayId, brightness)
 }

@@ -10,7 +10,17 @@ interface IShellService {
     List<String> getAllRunningPackages();
     int getTaskId(String packageName);
     void moveTaskToBack(int taskId);
+
+    // Brightness Control
+    void setSystemBrightness(int brightness);
+    int getSystemBrightness();
+    float getSystemBrightnessFloat();
+    void setAutoBrightness(boolean enabled);
+    boolean isAutoBrightness();
     
-    // The Magic Method
-    void setBrightness(int brightness);
+    // Legacy / Direct Hardware Control
+    boolean setBrightnessViaDisplayManager(int displayId, float brightness);
+
+    // NEW: Alternate Display Off Logic (Targeted)
+    void setBrightness(int displayId, int value);
 }
