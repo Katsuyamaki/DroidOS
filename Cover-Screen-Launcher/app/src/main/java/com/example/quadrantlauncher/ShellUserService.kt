@@ -11,10 +11,6 @@ import java.util.regex.Pattern
 
 class ShellUserService(private val context: Context) : IShellService.Stub() {
 
-    // No-arg constructor required for Shizuku binding in some versions, 
-    // but we use the context-aware one for Service. 
-    // If your setup uses a specific constructor, ensure it matches.
-    // For this file we generally just need the methods.
     constructor() : this(null!!)
 
     private val TAG = "ShellUserService"
@@ -39,7 +35,6 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
     }
 
     override fun setScreenOff(displayIndex: Int, turnOff: Boolean) {
-        // Legacy method (SurfaceControl)
         try {
             val scClass = if (Build.VERSION.SDK_INT >= 34) {
                 try { Class.forName("com.android.server.display.DisplayControl") } catch (e: Exception) { Class.forName("android.view.SurfaceControl") }
@@ -69,17 +64,16 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
             Log.e(TAG, "Failed to set screen power", e)
         }
     }
-    
+
+    // V2.0 Feature: Alt Screen Off (Pixels Off)
     override fun setBrightness(displayIndex: Int, brightness: Int) {
-        // V2 Feature: Alt Screen Off
         try {
             if (brightness == -1) {
-                // Magic value for Extinguish
                 setScreenOff(displayIndex, true)
             } else {
                 setScreenOff(displayIndex, false)
-                // Restore brightness command if needed
-                runCommand("settings put system screen_brightness $brightness")
+                // Optional: Restore brightness via settings if needed
+                runCommand("settings put system screen_brightness 128")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set brightness", e)
@@ -118,37 +112,52 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
         }
     }
 
+    // REVISED: Uses 'dumpsys window windows' to accurately detect VISIBLE apps
     override fun getVisiblePackages(displayId: Int): List<String> {
         val packages = ArrayList<String>()
         try {
-            val process = Runtime.getRuntime().exec("dumpsys activity activities")
+            val process = Runtime.getRuntime().exec("dumpsys window windows")
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             
             var line: String?
-            var currentScanningDisplayId = -1
-            val recordPattern = Pattern.compile("u\\d+\\s+([a-zA-Z0-9_.]+)/")
+            var currentPkg: String? = null
+            var isVisible = false
+            var onCorrectDisplay = false
+            
+            // Regex to parse "Window{... u0 com.package ...}"
+            val windowPattern = Pattern.compile("Window\\{[0-9a-f]+ u\\d+ ([^\\}/ ]+)")
 
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-
-                if (l.startsWith("Display #")) {
-                    val displayMatch = Regex("Display #(\\d+)").find(l)
-                    if (displayMatch != null) {
-                        currentScanningDisplayId = displayMatch.groupValues[1].toInt()
+                
+                if (l.startsWith("Window #")) {
+                    // Reset state for new window block
+                    currentPkg = null
+                    isVisible = false
+                    onCorrectDisplay = false
+                    
+                    val matcher = windowPattern.matcher(l)
+                    if (matcher.find()) {
+                        currentPkg = matcher.group(1)
                     }
-                    continue
                 }
 
-                if (currentScanningDisplayId == displayId) {
-                    if (l.contains("ActivityRecord{")) {
-                        val matcher = recordPattern.matcher(l)
-                        if (matcher.find()) {
-                            val pkg = matcher.group(1)
-                            if (pkg != null && !packages.contains(pkg) && isUserApp(pkg)) {
-                                packages.add(pkg)
-                            }
-                        }
+                // Display Check (handles various dumpsys formats)
+                if (l.contains("displayId=$displayId") || l.contains("mDisplayId=$displayId")) {
+                    onCorrectDisplay = true
+                }
+
+                // Visibility Check: 0x0 means VISIBLE, 0x4/0x8 means HIDDEN/GONE
+                if (l.contains("mViewVisibility=0x0")) {
+                    isVisible = true
+                }
+
+                // If conditions met, add package
+                if (currentPkg != null && isVisible && onCorrectDisplay) {
+                    if (isUserApp(currentPkg!!) && !packages.contains(currentPkg!!)) {
+                        packages.add(currentPkg!!)
                     }
+                    currentPkg = null // Prevent duplicates for this window
                 }
             }
             reader.close()
@@ -208,36 +217,29 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
                     pendingPkg = null
                     isVisible = false
                     isBaseApp = false
-                    
                     val matcher = windowPattern.matcher(l)
                     if (matcher.find()) {
                         val pkg = matcher.group(1)
-                        if (isUserApp(pkg)) {
-                            pendingPkg = pkg
-                        }
+                        if (isUserApp(pkg)) pendingPkg = pkg
                     }
                     continue
                 }
                 
                 if (pendingPkg == null) continue
-
                 if (l.contains("mViewVisibility=0x0")) isVisible = true
                 if (l.contains("ty=BASE_APPLICATION") || l.contains("type=BASE_APPLICATION")) isBaseApp = true
                 
                 if (isVisible && isBaseApp && (l.contains("frame=") || l.contains("mFrame="))) {
                     val matcher = framePattern.matcher(l)
                     if (matcher.find()) {
-                        try {
-                            val left = matcher.group(1).toInt()
-                            val top = matcher.group(2).toInt()
-                            val right = matcher.group(3).toInt()
-                            val bottom = matcher.group(4).toInt()
-                            
-                            if ((right - left) > 10 && (bottom - top) > 10) {
-                                results.add("$pendingPkg|$left,$top,$right,$bottom")
-                                pendingPkg = null 
-                            }
-                        } catch (e: Exception) {}
+                        val left = matcher.group(1).toInt()
+                        val top = matcher.group(2).toInt()
+                        val right = matcher.group(3).toInt()
+                        val bottom = matcher.group(4).toInt()
+                        if ((right - left) > 10 && (bottom - top) > 10) {
+                            results.add("$pendingPkg|$left,$top,$right,$bottom")
+                            pendingPkg = null 
+                        }
                     }
                 }
             }
@@ -249,12 +251,11 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
         return results
     }
 
-    // --- RESTORED V1.0 METHODS FOR MINIMIZATION ---
-    
+    // --- V1.0 RESTORED LOGIC ---
     override fun getTaskId(packageName: String): Int {
         var taskId = -1
         try {
-            // Exact v1 logic using grep
+            // Using grep as requested for Task ID extraction
             val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep -E 'Task id|$packageName'")
             val process = Runtime.getRuntime().exec(cmd)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -262,44 +263,33 @@ class ShellUserService(private val context: Context) : IShellService.Stub() {
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-                // Only parse lines containing the package name to avoid wrong task matches
                 if (l.contains(packageName)) {
-                    // 1. Check Task Header: "* Task{... #11390 ...}"
                     if (l.startsWith("* Task{") || l.startsWith("Task{")) {
                          val match = Regex("#(\\d+)").find(l)
-                         if (match != null) {
-                             taskId = match.groupValues[1].toInt()
-                             break 
-                         }
+                         if (match != null) { taskId = match.groupValues[1].toInt(); break }
                     }
-                    // 2. Check ActivityRecord: "... t11390}"
                     if (l.contains("ActivityRecord")) {
                          val match = Regex("t(\\d+)").find(l)
-                         if (match != null) {
-                             taskId = match.groupValues[1].toInt()
-                             break
-                         }
+                         if (match != null) { taskId = match.groupValues[1].toInt(); break }
                     }
                 }
             }
             reader.close()
             process.waitFor()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to find Task ID for $packageName", e)
+            Log.e(TAG, "Failed to find Task ID", e)
         }
         return taskId
     }
 
     override fun moveTaskToBack(taskId: Int) {
         try {
-            // Modern Android (10+) via Reflection on ActivityTaskManager
             val atmClass = Class.forName("android.app.ActivityTaskManager")
             val serviceMethod = atmClass.getMethod("getService")
             val atm = serviceMethod.invoke(null)
             val moveMethod = atm.javaClass.getMethod("moveTaskToBack", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
             moveMethod.invoke(atm, taskId, true)
         } catch (e: Exception) {
-            // Fallback to ActivityManagerNative (Older Android)
             try {
                 val am = Class.forName("android.app.ActivityManagerNative").getMethod("getDefault").invoke(null)
                 val moveMethod = am.javaClass.getMethod("moveTaskToBack", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
