@@ -8,11 +8,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.katsuyamaki.DroidOSLauncher"
+        applicationId = "com.example.com.katsuyamaki.coverscreenlauncher"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 1
+        versionName = "1.0"
         multiDexEnabled = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -23,6 +23,7 @@ android {
         aidl = true
     }
 
+    // THIS BLOCK IS CRITICAL FOR AIDL TO WORK WITH KOTLIN
     sourceSets {
         getByName("main") {
             aidl.srcDirs(listOf("src/main/aidl"))

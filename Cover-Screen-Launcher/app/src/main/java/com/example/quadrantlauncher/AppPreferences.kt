@@ -19,13 +19,6 @@ object AppPreferences {
     private const val KEY_IS_INSTANT_MODE = "KEY_IS_INSTANT_MODE"
     private const val KEY_LAST_QUEUE = "KEY_LAST_QUEUE"
     private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
-    private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
-    private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
-    
-    // Reorder Methods
-    private const val KEY_REORDER_METHOD_DRAG = "KEY_REORDER_METHOD_DRAG"
-    private const val KEY_REORDER_METHOD_TAP = "KEY_REORDER_METHOD_TAP"
-    private const val KEY_REORDER_METHOD_SCROLL = "KEY_REORDER_METHOD_SCROLL"
     
     // Drawer Geometry
     private const val KEY_DRAWER_HEIGHT = "KEY_DRAWER_HEIGHT"
@@ -273,8 +266,7 @@ object AppPreferences {
     }
 
     fun getKillOnExecute(context: Context): Boolean {
-        // Default is FALSE for Kill On Execute
-        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, false)
+        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, true)
     }
 
     fun setTargetDisplayIndex(context: Context, index: Int) {
@@ -305,54 +297,12 @@ object AppPreferences {
         return str.split(",").filter { it.isNotEmpty() }
     }
     
+    // --- NEW: Shizuku Warning Toggle ---
     fun setShowShizukuWarning(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_SHOW_SHIZUKU_WARNING, enable).apply()
     }
 
     fun getShowShizukuWarning(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_SHOW_SHIZUKU_WARNING, true)
-    }
-    
-    fun setUseAltScreenOff(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_USE_ALT_SCREEN_OFF, enable).apply()
-    }
-
-    fun getUseAltScreenOff(context: Context): Boolean {
-        // Default false (use standard SurfaceControl method)
-        return getPrefs(context).getBoolean(KEY_USE_ALT_SCREEN_OFF, false)
-    }
-    
-    // --- REORDER PREFERENCES ---
-    fun setReorderTimeout(context: Context, seconds: Int) {
-        getPrefs(context).edit().putInt(KEY_REORDER_TIMEOUT, seconds).apply()
-    }
-    
-    fun getReorderTimeout(context: Context): Int {
-        return getPrefs(context).getInt(KEY_REORDER_TIMEOUT, 2) // Default 2 seconds
-    }
-    
-    fun setReorderDrag(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_DRAG, enable).apply()
-    }
-    
-    fun getReorderDrag(context: Context): Boolean {
-        // CHANGED: Default to FALSE so Tap works out of box
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_DRAG, false)
-    }
-    
-    fun setReorderTap(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_TAP, enable).apply()
-    }
-    
-    fun getReorderTap(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_TAP, true) // Default Enabled
-    }
-    
-    fun setReorderScroll(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_SCROLL, enable).apply()
-    }
-    
-    fun getReorderScroll(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_SCROLL, true) // Default Enabled
     }
 }

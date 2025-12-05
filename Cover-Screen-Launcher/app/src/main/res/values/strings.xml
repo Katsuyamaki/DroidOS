@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">DroidOS Launcher</string>
-    <string name="accessibility_service_description">DroidOS Launcher Service</string>
+    <string name="app_name">CoverScreenLauncher</string>
+    <string name="accessibility_service_description">Cover Screen Launcher Service</string>
 </resources>
