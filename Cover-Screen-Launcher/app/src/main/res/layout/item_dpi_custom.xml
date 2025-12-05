@@ -25,6 +25,7 @@
         android:text="120"
         android:textColor="#FFFFFF"
         android:textSize="18sp"
+        android:imeOptions="actionDone"
         android:background="@null"/>
 
     <ImageView

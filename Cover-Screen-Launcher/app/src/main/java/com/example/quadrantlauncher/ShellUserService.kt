@@ -1,5 +1,6 @@
 package com.example.quadrantlauncher
 
+import android.content.Context
 import android.os.IBinder
 import android.os.Build
 import android.util.Log
@@ -8,7 +9,13 @@ import java.io.InputStreamReader
 import java.util.ArrayList
 import java.util.regex.Pattern
 
-class ShellUserService : IShellService.Stub() {
+class ShellUserService(private val context: Context) : IShellService.Stub() {
+
+    // No-arg constructor required for Shizuku binding in some versions, 
+    // but we use the context-aware one for Service. 
+    // If your setup uses a specific constructor, ensure it matches.
+    // For this file we generally just need the methods.
+    constructor() : this(null!!)
 
     private val TAG = "ShellUserService"
 
@@ -32,6 +39,7 @@ class ShellUserService : IShellService.Stub() {
     }
 
     override fun setScreenOff(displayIndex: Int, turnOff: Boolean) {
+        // Legacy method (SurfaceControl)
         try {
             val scClass = if (Build.VERSION.SDK_INT >= 34) {
                 try { Class.forName("com.android.server.display.DisplayControl") } catch (e: Exception) { Class.forName("android.view.SurfaceControl") }
@@ -41,7 +49,6 @@ class ShellUserService : IShellService.Stub() {
 
             val getIdsMethod = scClass.getMethod("getPhysicalDisplayIds")
             val physicalIds = getIdsMethod.invoke(null) as LongArray
-
             if (physicalIds.isEmpty()) return
 
             val targetId = if (displayIndex >= 0 && displayIndex < physicalIds.size) {
@@ -60,6 +67,22 @@ class ShellUserService : IShellService.Stub() {
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set screen power", e)
+        }
+    }
+    
+    override fun setBrightness(displayIndex: Int, brightness: Int) {
+        // V2 Feature: Alt Screen Off
+        try {
+            if (brightness == -1) {
+                // Magic value for Extinguish
+                setScreenOff(displayIndex, true)
+            } else {
+                setScreenOff(displayIndex, false)
+                // Restore brightness command if needed
+                runCommand("settings put system screen_brightness $brightness")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set brightness", e)
         }
     }
 
@@ -226,11 +249,12 @@ class ShellUserService : IShellService.Stub() {
         return results
     }
 
-    // --- NEW: Implement getTaskId ---
+    // --- RESTORED V1.0 METHODS FOR MINIMIZATION ---
+    
     override fun getTaskId(packageName: String): Int {
         var taskId = -1
         try {
-            // grep -E 'Task id|com.package' logic
+            // Exact v1 logic using grep
             val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep -E 'Task id|$packageName'")
             val process = Runtime.getRuntime().exec(cmd)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -238,7 +262,7 @@ class ShellUserService : IShellService.Stub() {
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-                // Only parse lines containing the package name
+                // Only parse lines containing the package name to avoid wrong task matches
                 if (l.contains(packageName)) {
                     // 1. Check Task Header: "* Task{... #11390 ...}"
                     if (l.startsWith("* Task{") || l.startsWith("Task{")) {
@@ -266,17 +290,16 @@ class ShellUserService : IShellService.Stub() {
         return taskId
     }
 
-    // --- NEW: Implement moveTaskToBack ---
     override fun moveTaskToBack(taskId: Int) {
         try {
-            // Modern Android (10+)
+            // Modern Android (10+) via Reflection on ActivityTaskManager
             val atmClass = Class.forName("android.app.ActivityTaskManager")
             val serviceMethod = atmClass.getMethod("getService")
             val atm = serviceMethod.invoke(null)
             val moveMethod = atm.javaClass.getMethod("moveTaskToBack", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
             moveMethod.invoke(atm, taskId, true)
         } catch (e: Exception) {
-            // Fallback
+            // Fallback to ActivityManagerNative (Older Android)
             try {
                 val am = Class.forName("android.app.ActivityManagerNative").getMethod("getDefault").invoke(null)
                 val moveMethod = am.javaClass.getMethod("moveTaskToBack", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
