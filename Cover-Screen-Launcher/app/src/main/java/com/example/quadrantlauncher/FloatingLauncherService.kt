@@ -47,6 +47,7 @@ import java.lang.reflect.Method
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.math.hypot
+import kotlin.math.min
 
 class FloatingLauncherService : Service() {
 
@@ -109,6 +110,9 @@ class FloatingLauncherService : Service() {
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
     
+    private var savedBrightness: Int = -1
+    private var savedAutoBrightness: Boolean = true
+    
     private var isVirtualDisplayActive = false
     private var currentDrawerHeightPercent = 70
     private var currentDrawerWidthPercent = 90
@@ -145,6 +149,7 @@ class FloatingLauncherService : Service() {
             }
         }
     }
+    
     private val swipeCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
         override fun getMovementFlags(r: RecyclerView, v: RecyclerView.ViewHolder): Int {
             val pos = v.adapterPosition; if (pos == RecyclerView.NO_POSITION || pos >= displayList.size) return 0
@@ -171,9 +176,40 @@ class FloatingLauncherService : Service() {
 
     private val selectedAppsDragCallback = object : ItemTouchHelper.SimpleCallback(ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT, ItemTouchHelper.UP or ItemTouchHelper.DOWN) {
         override fun isLongPressDragEnabled(): Boolean = isReorderDragEnabled
-        override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder): Boolean { Collections.swap(selectedAppsQueue, v.adapterPosition, t.adapterPosition); r.adapter?.notifyItemMoved(v.adapterPosition, t.adapterPosition); return true }
-        override fun onSwiped(v: RecyclerView.ViewHolder, direction: Int) { dismissKeyboardAndRestore(); val pos = v.adapterPosition; if (pos != RecyclerView.NO_POSITION) { val app = selectedAppsQueue[pos]; if (app.packageName != PACKAGE_BLANK) { Thread { try { shellService?.forceStop(app.packageName) } catch(e: Exception) {} }.start(); safeToast("Killed ${app.label}") }; selectedAppsQueue.removeAt(pos); if (reorderSelectionIndex != -1) endReorderMode(false); updateSelectedAppsDock(); drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } }
-        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) { super.clearView(recyclerView, viewHolder); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this@FloatingLauncherService, pkgs); if (isInstantMode) applyLayoutImmediate() }
+        
+        override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder): Boolean { 
+            Collections.swap(selectedAppsQueue, v.adapterPosition, t.adapterPosition)
+            r.adapter?.notifyItemMoved(v.adapterPosition, t.adapterPosition)
+            return true 
+        }
+
+        override fun onSwiped(v: RecyclerView.ViewHolder, direction: Int) { 
+            dismissKeyboardAndRestore()
+            val pos = v.adapterPosition
+            if (pos != RecyclerView.NO_POSITION) { 
+                val app = selectedAppsQueue[pos]
+                if (app.packageName != PACKAGE_BLANK) { 
+                    Thread { try { shellService?.forceStop(app.packageName) } catch(e: Exception) {} }.start()
+                    safeToast("Killed ${app.label}") 
+                }
+                selectedAppsQueue.removeAt(pos)
+                if (reorderSelectionIndex != -1) endReorderMode(false)
+                updateSelectedAppsDock()
+                drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+                if (isInstantMode) applyLayoutImmediate() 
+            } 
+        }
+
+        // Fix 1: Detect drag completion to trigger update
+        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+            super.clearView(recyclerView, viewHolder)
+            // Save the new order to prefs
+            val pkgs = selectedAppsQueue.map { it.packageName }
+            AppPreferences.saveLastQueue(this@FloatingLauncherService, pkgs)
+            
+            // Trigger layout update immediately if in Instant Mode
+            if (isInstantMode) applyLayoutImmediate()
+        }
     }
 
     private val userServiceConnection = object : ServiceConnection {
@@ -187,12 +223,14 @@ class FloatingLauncherService : Service() {
         super.onCreate()
         startForegroundService()
         try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
+        
         val filter = IntentFilter().apply { 
             addAction(ACTION_OPEN_DRAWER)
             addAction(ACTION_UPDATE_ICON)
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }
+        
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
         try { if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {}
         
@@ -343,24 +381,11 @@ class FloatingLauncherService : Service() {
         if (isExpanded) { try { windowManager.removeView(drawerView) } catch(e: Exception) {}; bubbleView?.visibility = View.VISIBLE; isExpanded = false } else { setupDisplayContext(currentDisplayId); updateDrawerHeight(false); try { windowManager.addView(drawerView, drawerParams) } catch(e: Exception) {}; bubbleView?.visibility = View.GONE; isExpanded = true; switchMode(MODE_SEARCH); val et = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); et?.setText(""); et?.clearFocus(); updateSelectedAppsDock(); if (isInstantMode) fetchRunningApps() }
     }
     private fun updateGlobalFontSize() { val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); searchBar?.textSize = currentFontSize; drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() }
-    private fun loadInstalledApps() { 
-        val pm = packageManager; 
-        val intent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }; 
-        val riList = pm.queryIntentActivities(intent, 0); 
-        allAppsList.clear(); 
-        allAppsList.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)); 
-        for (ri in riList) { 
-            val pkg = ri.activityInfo.packageName; 
-            if (pkg == PACKAGE_TRACKPAD || pkg == packageName) continue; 
-            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), pkg, AppPreferences.isFavorite(this, pkg)); 
-            allAppsList.add(app) 
-        }; 
-        allAppsList.sortBy { it.label.lowercase() } 
-    }
+    private fun loadInstalledApps() { val pm = packageManager; val intent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }; val riList = pm.queryIntentActivities(intent, 0); allAppsList.clear(); allAppsList.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)); for (ri in riList) { val pkg = ri.activityInfo.packageName; if (pkg == PACKAGE_TRACKPAD) continue; val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), pkg, AppPreferences.isFavorite(this, pkg)); allAppsList.add(app) }; allAppsList.sortBy { it.label.lowercase() } }
     
     private fun launchTrackpad() {
         if (isTrackpadRunning()) { safeToast("Trackpad is already active"); return }
-        try { val intent = packageManager.getLaunchIntentForPackage(PACKAGE_TRACKPAD); if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); val dm = DisplayMetrics(); val display = displayContext?.display ?: windowManager.defaultDisplay; display.getRealMetrics(dm); val w = dm.widthPixels; val h = dm.heightPixels; val targetW = (w * 0.5f).toInt(); val targetH = (h * 0.5f).toInt(); val left = (w - targetW) / 2; val top = (h - targetH) / 2; val bounds = Rect(left, top, left + targetW, top + targetH); val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(bounds); try { val method = android.app.ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType); method.invoke(options, 5) } catch (e: Exception) {}; startActivity(intent, options.toBundle()); toggleDrawer(); if (shellService != null) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH) } catch(e: Exception) { Log.e(TAG, "Shell launch failed", e) } }.start() }, 400) } } else { safeToast("Trackpad App not found") } } catch (e: Exception) { safeToast("Error launching Trackpad") }
+        try { val intent = packageManager.getLaunchIntentForPackage(PACKAGE_TRACKPAD); if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); val dm = DisplayMetrics(); val display = displayContext?.display ?: windowManager.defaultDisplay; display.getRealMetrics(dm); val w = dm.widthPixels; val h = dm.heightPixels; val targetW = (w * 0.5f).toInt(); val targetH = (h * 0.5f).toInt(); val left = (w - targetW) / 2; val top = (h - targetH) / 2; val bounds = Rect(left, top, left + targetW, top + targetH); val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(left, top, left + targetW, top + targetH)); try { val method = android.app.ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType); method.invoke(options, 5) } catch (e: Exception) {}; startActivity(intent, options.toBundle()); toggleDrawer(); if (shellService != null) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(PACKAGE_TRACKPAD, left, top, left+targetW, top+targetH) } catch(e: Exception) { Log.e(TAG, "Shell launch failed", e) } }.start() }, 400) } } else { safeToast("Trackpad App not found") } } catch (e: Exception) { safeToast("Error launching Trackpad") }
     }
 
     private fun isTrackpadRunning(): Boolean { try { val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager; val runningApps = am.runningAppProcesses; if (runningApps != null) { for (info in runningApps) { if (info.processName == PACKAGE_TRACKPAD) return true } } } catch (e: Exception) {}; return false }
@@ -396,19 +421,16 @@ class FloatingLauncherService : Service() {
     }
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
-    // --- v2.0 SCREEN OFF LOGIC ---
     private fun performScreenOff() {
         vibrate()
         isScreenOffState = true
         safeToast("Screen Off: Double press Power Button to turn on")
         
         if (useAltScreenOff) {
-             // New Methodology: Fast Binder Call via Shizuku (v2.0)
              Thread {
                  try {
                      if (shellService != null) {
-                         // -1 triggers the specific Extinguish logic in ShellUserService (v2.0: Single Arg)
-                         shellService?.setBrightness(-1)
+                         shellService?.setBrightness(0, -1)
                          uiHandler.post { safeToast("Pixels OFF (Alternate Mode)") }
                      } else {
                          safeToast("Service Disconnected!")
@@ -419,7 +441,6 @@ class FloatingLauncherService : Service() {
                  }
             }.start()
         } else {
-            // Default: SurfaceControl Power Off
             Thread { try { shellService?.setScreenOff(0, true) } catch (e: Exception) {} }.start()
             safeToast("Screen OFF (SurfaceControl)")
         }
@@ -429,8 +450,7 @@ class FloatingLauncherService : Service() {
         vibrate()
         isScreenOffState = false
         
-        // Restore brightness and power
-        Thread { try { shellService?.setBrightness(128) } catch (e: Exception) {} }.start()
+        Thread { try { shellService?.setBrightness(0, 128) } catch (e: Exception) {} }.start()
         Thread { try { shellService?.setScreenOff(0, false) } catch (e: Exception) {} }.start()
 
         safeToast("Screen On")
@@ -454,6 +474,7 @@ class FloatingLauncherService : Service() {
         if (closeDrawer) toggleDrawer(); refreshDisplayId(); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this, pkgs)
         Thread { try { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); if (currentDpiSetting > 0) { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } else { if (currentDpiSetting == -1) shellService?.runCommand("wm density reset -d $currentDisplayId") }; Thread.sleep(800); val targetDim = getTargetDimensions(selectedResolutionIndex); var w = 0; var h = 0; if (targetDim != null) { w = targetDim.first; h = targetDim.second } else { val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val display = dm.getDisplay(currentDisplayId); if (display != null) { val metrics = DisplayMetrics(); display.getRealMetrics(metrics); w = metrics.widthPixels; h = metrics.heightPixels } else { val bounds = windowManager.maximumWindowMetrics.bounds; w = bounds.width(); h = bounds.height() } }; val rects = mutableListOf<Rect>(); when (layoutType) { LAYOUT_FULL -> { rects.add(Rect(0, 0, w, h)) }; LAYOUT_SIDE_BY_SIDE -> { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) }; LAYOUT_TOP_BOTTOM -> { rects.add(Rect(0, 0, w, h/2)); rects.add(Rect(0, h/2, w, h)) }; LAYOUT_TRI_EVEN -> { val third = w / 3; rects.add(Rect(0, 0, third, h)); rects.add(Rect(third, 0, third * 2, h)); rects.add(Rect(third * 2, 0, w, h)) }; LAYOUT_CORNERS -> { rects.add(Rect(0, 0, w/2, h/2)); rects.add(Rect(w/2, 0, w, h/2)); rects.add(Rect(0, h/2, w/2, h)); rects.add(Rect(w/2, h/2, w, h)) }; LAYOUT_TRI_SIDE_MAIN_SIDE -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_QUAD_ROW_EVEN -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 2, h)); rects.add(Rect(quarter * 2, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_CUSTOM_DYNAMIC -> { if (activeCustomRects != null) { rects.addAll(activeCustomRects!!) } else { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) } } }; if (selectedAppsQueue.isNotEmpty()) { val minimizedApps = selectedAppsQueue.filter { it.isMinimized }; for (app in minimizedApps) { if (app.packageName != PACKAGE_BLANK) { try { val tid = shellService?.getTaskId(app.packageName) ?: -1; if (tid != -1) shellService?.moveTaskToBack(tid) } catch (e: Exception) { Log.e(TAG, "Failed to minimize ${app.packageName}", e) } } }; val activeApps = selectedAppsQueue.filter { !it.isMinimized }; if (killAppOnExecute) { for (app in activeApps) { if (app.packageName != PACKAGE_BLANK) { shellService?.forceStop(app.packageName) } }; Thread.sleep(400) } else { Thread.sleep(100) }; val count = Math.min(activeApps.size, rects.size); for (i in 0 until count) { val pkg = activeApps[i].packageName; val bounds = rects[i]; if (pkg == PACKAGE_BLANK) continue; uiHandler.postDelayed({ launchViaApi(pkg, bounds) }, (i * 150).toLong()); uiHandler.postDelayed({ launchViaShell(pkg) }, (i * 150 + 50).toLong()); if (!killAppOnExecute) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 150).toLong()) }; uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 800).toLong()) }; if (closeDrawer) { uiHandler.post { selectedAppsQueue.clear(); updateSelectedAppsDock() } } } } catch (e: Exception) { Log.e(TAG, "Execute Failed", e); safeToast("Execute Failed: ${e.message}") } }.start(); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
     }
+ 
     
     private fun calculateGCD(a: Int, b: Int): Int { return if (b == 0) a else calculateGCD(b, a % b) }
 
@@ -488,8 +509,6 @@ class FloatingLauncherService : Service() {
                 displayList.add(ToggleOption("Reorder: Tap to Swap (Long Press)", isReorderTapEnabled) { isReorderTapEnabled = it; AppPreferences.setReorderTap(this, it) })
                 displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
                 displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
-                
-                // --- V2.0 MENU ITEMS RESTORED ---
                 
                 // STANDARD MODE TOGGLE
                 displayList.add(ToggleOption("Screen Off (Standard)", isScreenOffState && !useAltScreenOff) { 
@@ -540,7 +559,18 @@ class FloatingLauncherService : Service() {
         override fun onBindViewHolder(holder: Holder, position: Int) { 
             val app = selectedAppsQueue[position]; if (position == reorderSelectionIndex) { holder.icon.setColorFilter(HIGHLIGHT_COLOR); holder.icon.alpha = 1.0f; holder.itemView.scaleX = 1.1f; holder.itemView.scaleY = 1.1f; holder.itemView.background = null } else { holder.icon.clearColorFilter(); holder.itemView.scaleX = 1.0f; holder.itemView.scaleY = 1.0f; holder.itemView.background = null; if (app.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) }; holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f } }
             holder.itemView.setOnClickListener { try { dismissKeyboardAndRestore(); if (reorderSelectionIndex != -1) { if (position == reorderSelectionIndex) { endReorderMode(false) } else { swapReorderItem(position) } } else { if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } } catch(e: Exception) {} }
-            holder.itemView.setOnLongClickListener { if (isReorderTapEnabled) { startReorderMode(position); true } else { false } }
+            
+            // Fix 2: Conditional Long Click Handler
+            holder.itemView.setOnLongClickListener { 
+                if (isReorderDragEnabled) {
+                    false // Return false to let ItemTouchHelper take over for Drag
+                } else if (isReorderTapEnabled) {
+                    startReorderMode(position)
+                    true // Consume event for Tap-to-Swap
+                } else {
+                    false
+                }
+            }
         }
         override fun getItemCount() = selectedAppsQueue.size
     }
