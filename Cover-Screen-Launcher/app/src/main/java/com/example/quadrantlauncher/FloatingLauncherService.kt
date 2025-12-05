@@ -104,7 +104,7 @@ class FloatingLauncherService : Service() {
     
     private var killAppOnExecute = true
     private var targetDisplayIndex = 1 
-    private var isExtinguished = false
+    private var isScreenOffState = false
     private var isInstantMode = true 
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
@@ -130,8 +130,19 @@ class FloatingLauncherService : Service() {
 
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_OPEN_DRAWER) { if (isExtinguished) wakeUp() else if (!isExpanded) toggleDrawer() } 
-            else if (intent?.action == ACTION_UPDATE_ICON) { updateBubbleIcon(); if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) }
+            val action = intent?.action
+            if (action == ACTION_OPEN_DRAWER) { 
+                if (isScreenOffState) wakeUp() else if (!isExpanded) toggleDrawer() 
+            } 
+            else if (action == ACTION_UPDATE_ICON) { 
+                updateBubbleIcon()
+                if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) 
+            }
+            else if (action == Intent.ACTION_SCREEN_ON) {
+                if (isScreenOffState) {
+                    wakeUp()
+                }
+            }
         }
     }
     private val swipeCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
@@ -176,7 +187,12 @@ class FloatingLauncherService : Service() {
         super.onCreate()
         startForegroundService()
         try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
-        val filter = IntentFilter().apply { addAction(ACTION_OPEN_DRAWER); addAction(ACTION_UPDATE_ICON) }
+        val filter = IntentFilter().apply { 
+            addAction(ACTION_OPEN_DRAWER)
+            addAction(ACTION_UPDATE_ICON)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
         try { if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {}
         
@@ -199,10 +215,8 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        isExtinguished = false
-        if (useAltScreenOff) { 
-             try { shellService?.setBrightness(0, 128) } catch(e: Exception) {}
-        }
+        isScreenOffState = false
+        wakeUp()
         try { Shizuku.removeBinderReceivedListener(shizukuBinderListener); Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); unregisterReceiver(commandReceiver) } catch (e: Exception) {}
         try { if (bubbleView != null) windowManager.removeView(bubbleView); if (isExpanded) windowManager.removeView(drawerView) } catch (e: Exception) {}
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
@@ -308,7 +322,7 @@ class FloatingLauncherService : Service() {
         selectedRecycler.layoutManager = LinearLayoutManager(themeContext, LinearLayoutManager.HORIZONTAL, false); selectedRecycler.adapter = SelectedAppsAdapter(); val dockTouchHelper = ItemTouchHelper(selectedAppsDragCallback); dockTouchHelper.attachToRecyclerView(selectedRecycler)
         drawerView!!.setOnClickListener { toggleDrawer() }
         drawerView!!.isFocusableInTouchMode = true
-        drawerView!!.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { toggleDrawer(); true } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && isExtinguished) { wakeUp(); true } else false }
+        drawerView!!.setOnKeyListener { _, keyCode, event -> if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { toggleDrawer(); true } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && isScreenOffState) { wakeUp(); true } else false }
     }
     
     private fun startReorderMode(index: Int) { if (!isReorderTapEnabled) return; if (index < 0 || index >= selectedAppsQueue.size) return; val prevIndex = reorderSelectionIndex; reorderSelectionIndex = index; val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter; if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex); adapter?.notifyItemChanged(reorderSelectionIndex); safeToast("Tap another app to Swap") }
@@ -382,18 +396,20 @@ class FloatingLauncherService : Service() {
     }
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
-    private fun performExtinguish() {
+    // --- v2.0 SCREEN OFF LOGIC ---
+    private fun performScreenOff() {
         vibrate()
-        isExtinguished = true
+        isScreenOffState = true
+        safeToast("Screen Off: Double press Power Button to turn on")
         
         if (useAltScreenOff) {
-             // New Methodology: Fast Binder Call via Shizuku
+             // New Methodology: Fast Binder Call via Shizuku (v2.0)
              Thread {
                  try {
                      if (shellService != null) {
-                         // -1 triggers the specific Extinguish logic in ShellUserService (ContextWrapper + putFloat -1.0f)
-                         shellService?.setBrightness(0, -1)
-                         uiHandler.post { safeToast("Pixels OFF (Extinguish Mode)") }
+                         // -1 triggers the specific Extinguish logic in ShellUserService (v2.0: Single Arg)
+                         shellService?.setBrightness(-1)
+                         uiHandler.post { safeToast("Pixels OFF (Alternate Mode)") }
                      } else {
                          safeToast("Service Disconnected!")
                      }
@@ -404,26 +420,20 @@ class FloatingLauncherService : Service() {
             }.start()
         } else {
             // Default: SurfaceControl Power Off
-            Thread { try { shellService?.setScreenOff(0, true); if (currentDisplayId != 0) shellService?.setScreenOff(currentDisplayId, true) } catch (e: Exception) {} }.start()
+            Thread { try { shellService?.setScreenOff(0, true) } catch (e: Exception) {} }.start()
             safeToast("Screen OFF (SurfaceControl)")
         }
     }
     
     private fun wakeUp() {
         vibrate()
-        isExtinguished = false
-        if (useAltScreenOff) {
-             // Use the fast Binder API to restore brightness
-             Thread {
-                try {
-                    shellService?.setBrightness(0, 128)
-                    uiHandler.post { safeToast("Brightness Restored") }
-                } catch (e: Exception) {}
-            }.start()
-        } else {
-            Thread { try { shellService?.setScreenOff(0, false); shellService?.setScreenOff(currentDisplayId, false) } catch (e: Exception) {} }.start()
-            safeToast("Screen Woke Up")
-        }
+        isScreenOffState = false
+        
+        // Restore brightness and power
+        Thread { try { shellService?.setBrightness(128) } catch (e: Exception) {} }.start()
+        Thread { try { shellService?.setScreenOff(0, false) } catch (e: Exception) {} }.start()
+
+        safeToast("Screen On")
         if (currentMode == MODE_SETTINGS) drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
     }
 
@@ -442,65 +452,7 @@ class FloatingLauncherService : Service() {
     
     private fun executeLaunch(layoutType: Int, closeDrawer: Boolean) { 
         if (closeDrawer) toggleDrawer(); refreshDisplayId(); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this, pkgs)
-        Thread { try { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); if (currentDpiSetting > 0) { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } else { if (currentDpiSetting == -1) shellService?.runCommand("wm density reset -d $currentDisplayId") }; Thread.sleep(800); val targetDim = getTargetDimensions(selectedResolutionIndex); var w = 0; var h = 0; if (targetDim != null) { w = targetDim.first; h = targetDim.second } else { val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val display = dm.getDisplay(currentDisplayId); if (display != null) { val metrics = DisplayMetrics(); display.getRealMetrics(metrics); w = metrics.widthPixels; h = metrics.heightPixels } else { val bounds = windowManager.maximumWindowMetrics.bounds; w = bounds.width(); h = bounds.height() } }; val rects = mutableListOf<Rect>(); when (layoutType) { LAYOUT_FULL -> { rects.add(Rect(0, 0, w, h)) }; LAYOUT_SIDE_BY_SIDE -> { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) }; LAYOUT_TOP_BOTTOM -> { rects.add(Rect(0, 0, w, h/2)); rects.add(Rect(0, h/2, w, h)) }; LAYOUT_TRI_EVEN -> { val third = w / 3; rects.add(Rect(0, 0, third, h)); rects.add(Rect(third, 0, third * 2, h)); rects.add(Rect(third * 2, 0, w, h)) }; LAYOUT_CORNERS -> { rects.add(Rect(0, 0, w/2, h/2)); rects.add(Rect(w/2, 0, w, h/2)); rects.add(Rect(0, h/2, w/2, h)); rects.add(Rect(w/2, h/2, w, h)) }; LAYOUT_TRI_SIDE_MAIN_SIDE -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_QUAD_ROW_EVEN -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 2, h)); rects.add(Rect(quarter * 2, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_CUSTOM_DYNAMIC -> { if (activeCustomRects != null) { rects.addAll(activeCustomRects!!) } else { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) } } }; 
-        
-        // --- V1.0 LOGIC RESTORATION START ---
-        val activeApps = selectedAppsQueue.filter { !it.isMinimized }
-        val count = Math.min(activeApps.size, rects.size)
-        
-        // Identify apps to HIDE (minimized + overflow)
-        val appsToHide = mutableListOf<String>()
-        selectedAppsQueue.filter { it.isMinimized }.forEach { appsToHide.add(it.packageName) }
-        
-        // Add overflow apps (active but don't fit in layout) to the hide list
-        if (activeApps.size > count) {
-            for (i in count until activeApps.size) {
-                appsToHide.add(activeApps[i].packageName)
-            }
-        }
-
-        // Minimize Phase
-        for (pkg in appsToHide) {
-             if (pkg != PACKAGE_BLANK) {
-                 try { 
-                     val tid = shellService?.getTaskId(pkg) ?: -1
-                     if (tid != -1) {
-                         shellService?.moveTaskToBack(tid)
-                         // Small sleep to ensure system processes the background move
-                         Thread.sleep(50) 
-                     }
-                 } catch (e: Exception) { Log.e(TAG, "Failed to minimize $pkg", e) }
-            }
-        }
-
-        if (killAppOnExecute) { 
-            for (i in 0 until count) {
-                 val app = activeApps[i]
-                 if (app.packageName != PACKAGE_BLANK) shellService?.forceStop(app.packageName)
-            }
-            Thread.sleep(400) 
-        } else { 
-            Thread.sleep(100) 
-        }
-
-        for (i in 0 until count) { 
-            val pkg = activeApps[i].packageName
-            val bounds = rects[i]
-            if (pkg == PACKAGE_BLANK) continue 
-            
-            uiHandler.postDelayed({ launchViaApi(pkg, bounds) }, (i * 150).toLong())
-            uiHandler.postDelayed({ launchViaShell(pkg) }, (i * 150 + 50).toLong())
-            
-            if (!killAppOnExecute) { 
-                uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 150).toLong()) 
-            }
-            uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 800).toLong()) 
-        }
-        
-        if (closeDrawer) { uiHandler.post { selectedAppsQueue.clear(); updateSelectedAppsDock() } } 
-        // --- V1.0 LOGIC RESTORATION END ---
-
-        } catch (e: Exception) { Log.e(TAG, "Execute Failed", e); safeToast("Execute Failed: ${e.message}") } }.start(); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
+        Thread { try { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); if (currentDpiSetting > 0) { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } else { if (currentDpiSetting == -1) shellService?.runCommand("wm density reset -d $currentDisplayId") }; Thread.sleep(800); val targetDim = getTargetDimensions(selectedResolutionIndex); var w = 0; var h = 0; if (targetDim != null) { w = targetDim.first; h = targetDim.second } else { val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val display = dm.getDisplay(currentDisplayId); if (display != null) { val metrics = DisplayMetrics(); display.getRealMetrics(metrics); w = metrics.widthPixels; h = metrics.heightPixels } else { val bounds = windowManager.maximumWindowMetrics.bounds; w = bounds.width(); h = bounds.height() } }; val rects = mutableListOf<Rect>(); when (layoutType) { LAYOUT_FULL -> { rects.add(Rect(0, 0, w, h)) }; LAYOUT_SIDE_BY_SIDE -> { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) }; LAYOUT_TOP_BOTTOM -> { rects.add(Rect(0, 0, w, h/2)); rects.add(Rect(0, h/2, w, h)) }; LAYOUT_TRI_EVEN -> { val third = w / 3; rects.add(Rect(0, 0, third, h)); rects.add(Rect(third, 0, third * 2, h)); rects.add(Rect(third * 2, 0, w, h)) }; LAYOUT_CORNERS -> { rects.add(Rect(0, 0, w/2, h/2)); rects.add(Rect(w/2, 0, w, h/2)); rects.add(Rect(0, h/2, w/2, h)); rects.add(Rect(w/2, h/2, w, h)) }; LAYOUT_TRI_SIDE_MAIN_SIDE -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_QUAD_ROW_EVEN -> { val quarter = w / 4; rects.add(Rect(0, 0, quarter, h)); rects.add(Rect(quarter, 0, quarter * 2, h)); rects.add(Rect(quarter * 2, 0, quarter * 3, h)); rects.add(Rect(quarter * 3, 0, w, h)) }; LAYOUT_CUSTOM_DYNAMIC -> { if (activeCustomRects != null) { rects.addAll(activeCustomRects!!) } else { rects.add(Rect(0, 0, w/2, h)); rects.add(Rect(w/2, 0, w, h)) } } }; if (selectedAppsQueue.isNotEmpty()) { val minimizedApps = selectedAppsQueue.filter { it.isMinimized }; for (app in minimizedApps) { if (app.packageName != PACKAGE_BLANK) { try { val tid = shellService?.getTaskId(app.packageName) ?: -1; if (tid != -1) shellService?.moveTaskToBack(tid) } catch (e: Exception) { Log.e(TAG, "Failed to minimize ${app.packageName}", e) } } }; val activeApps = selectedAppsQueue.filter { !it.isMinimized }; if (killAppOnExecute) { for (app in activeApps) { if (app.packageName != PACKAGE_BLANK) { shellService?.forceStop(app.packageName) } }; Thread.sleep(400) } else { Thread.sleep(100) }; val count = Math.min(activeApps.size, rects.size); for (i in 0 until count) { val pkg = activeApps[i].packageName; val bounds = rects[i]; if (pkg == PACKAGE_BLANK) continue; uiHandler.postDelayed({ launchViaApi(pkg, bounds) }, (i * 150).toLong()); uiHandler.postDelayed({ launchViaShell(pkg) }, (i * 150 + 50).toLong()); if (!killAppOnExecute) { uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 150).toLong()) }; uiHandler.postDelayed({ Thread { try { shellService?.repositionTask(pkg, bounds.left, bounds.top, bounds.right, bounds.bottom) } catch (e: Exception) {} }.start() }, (i * 150 + 800).toLong()) }; if (closeDrawer) { uiHandler.post { selectedAppsQueue.clear(); updateSelectedAppsDock() } } } } catch (e: Exception) { Log.e(TAG, "Execute Failed", e); safeToast("Execute Failed: ${e.message}") } }.start(); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
     }
     
     private fun calculateGCD(a: Int, b: Int): Int { return if (b == 0) a else calculateGCD(b, a % b) }
@@ -536,10 +488,33 @@ class FloatingLauncherService : Service() {
                 displayList.add(ToggleOption("Reorder: Tap to Swap (Long Press)", isReorderTapEnabled) { isReorderTapEnabled = it; AppPreferences.setReorderTap(this, it) })
                 displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
                 displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
-                displayList.add(ToggleOption("Display Off (Touch on)", isExtinguished) { if (it) performExtinguish() else wakeUp() })
                 
-                // Alt Screen Off: Brightness -1 (OLED Pixel Off)
-                displayList.add(ToggleOption("Alt Screen Off (Brightness -1)", useAltScreenOff) { useAltScreenOff = it; AppPreferences.setUseAltScreenOff(this, it) })
+                // --- V2.0 MENU ITEMS RESTORED ---
+                
+                // STANDARD MODE TOGGLE
+                displayList.add(ToggleOption("Screen Off (Standard)", isScreenOffState && !useAltScreenOff) { 
+                    if (it) {
+                        if (isScreenOffState) wakeUp() // Reset if already off
+                        useAltScreenOff = false
+                        AppPreferences.setUseAltScreenOff(this, false)
+                        performScreenOff()
+                    } else {
+                        wakeUp()
+                    }
+                })
+
+                // ALTERNATE MODE TOGGLE
+                displayList.add(ToggleOption("Screen Off (Alternate)", isScreenOffState && useAltScreenOff) { 
+                    if (it) {
+                        if (isScreenOffState) wakeUp() // Reset if already off
+                        useAltScreenOff = true
+                        AppPreferences.setUseAltScreenOff(this, true)
+                        performScreenOff()
+                    } else {
+                        wakeUp()
+                    }
+                })
+                
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
             }
         }
