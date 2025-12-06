@@ -11,6 +11,13 @@
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="rikka.shizuku.ui" />
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VOICE_COMMAND" />
+        </intent>
+        <package android:name="com.google.android.googlequicksearchbox" />
     </queries>
 
     <application
@@ -51,6 +58,13 @@
             android:name=".ManualAdjustActivity"
             android:exported="false" 
             android:theme="@style/Theme.CoverScreenTester" />
+            
+        <activity 
+            android:name=".KeyboardActivity"
+            android:exported="false" 
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
         <service
             android:name=".OverlayService"
@@ -65,7 +79,15 @@
                 <action android:name="LOAD_LAYOUT" />
                 <action android:name="RELOAD_PREFS" />
                 <action android:name="DELETE_PROFILE" />
-                <action android:name="MANUAL_ADJUST" /> </intent-filter>
+                <action android:name="MANUAL_ADJUST" /> 
+                <action android:name="CYCLE_INPUT_TARGET" />
+                <action android:name="RESET_CURSOR" />
+                <action android:name="TOGGLE_DEBUG" />
+                <action android:name="FORCE_KEYBOARD" />
+                <action android:name="TOGGLE_CUSTOM_KEYBOARD" />
+                <action android:name="SET_TRACKPAD_VISIBILITY" />
+                <action android:name="SET_PREVIEW_MODE" />
+            </intent-filter>
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
