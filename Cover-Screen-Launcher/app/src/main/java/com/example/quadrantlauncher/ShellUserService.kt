@@ -396,7 +396,8 @@ class ShellUserService : IShellService.Stub() {
         return true
     }
     //Displayoff code DO NOT CHANGE 
-     override fun getSystemBrightness(): Int = 128
+override fun setSystemBrightness(brightness: Int) { execShellCommand("settings put system screen_brightness $brightness") }
+    override fun getSystemBrightness(): Int = 128
     override fun getSystemBrightnessFloat(): Float = 0.5f
     override fun setAutoBrightness(enabled: Boolean) { execShellCommand("settings put system screen_brightness_mode ${if (enabled) 1 else 0}") }
     override fun isAutoBrightness(): Boolean = true
