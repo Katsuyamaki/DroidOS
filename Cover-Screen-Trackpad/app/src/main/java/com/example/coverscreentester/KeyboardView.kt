@@ -4,13 +4,14 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -26,16 +27,15 @@ class KeyboardView @JvmOverloads constructor(
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
     interface KeyboardListener {
-        fun onKeyPress(keyCode: Int, char: Char?, metaState: Int)
+        fun onKeyPress(keyCode: Int, char: Char?)
         fun onTextInput(text: String)
-        fun onSpecialKey(key: SpecialKey, metaState: Int)
+        fun onSpecialKey(key: SpecialKey)
     }
 
     enum class SpecialKey {
         BACKSPACE, ENTER, SPACE, SHIFT, CAPS_LOCK, SYMBOLS, ABC,
         TAB, ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT,
-        HOME, END, DELETE, ESCAPE, CTRL, ALT,
-        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT
+        HOME, END, DELETE, ESCAPE, CTRL, ALT
     }
 
     enum class KeyboardState {
@@ -46,9 +46,6 @@ class KeyboardView @JvmOverloads constructor(
     private var currentState = KeyboardState.LOWERCASE
     private var vibrationEnabled = true
     
-    private var isCtrlActive = false
-    private var isAltActive = false
-    
     private val BASE_KEY_HEIGHT = 40
     private val BASE_FONT_SIZE = 14f
     private var scaleFactor = 1.0f
@@ -56,6 +53,24 @@ class KeyboardView @JvmOverloads constructor(
     private var keyHeight = BASE_KEY_HEIGHT
     private var keySpacing = 2
     private var fontSize = BASE_FONT_SIZE
+
+    private val repeatHandler = Handler(Looper.getMainLooper())
+    private var currentRepeatKey: String? = null
+    private var isRepeating = false
+    
+    private val REPEAT_INITIAL_DELAY = 400L
+    private val REPEAT_INTERVAL = 50L
+    
+    private val repeatRunnable = object : Runnable {
+        override fun run() {
+            currentRepeatKey?.let { key ->
+                if (isRepeating) {
+                    handleKeyPress(key, fromRepeat = true)
+                    repeatHandler.postDelayed(this, REPEAT_INTERVAL)
+                }
+            }
+        }
+    }
 
     private val lowercaseRows = listOf(
         listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
@@ -81,15 +96,27 @@ class KeyboardView @JvmOverloads constructor(
         listOf("SYM1", "€", "£", "¥", "¢", "§", "¶", "∆", "BKSP")
     )
 
-    // Row 4 (Space)
     private val row4Lower = listOf("SYM", ",", "SPACE", ".")
     private val row4Sym = listOf("ABC", ",", "SPACE", ".")
 
-    // Row 5 (Arrows)
     private val arrowRow = listOf("TAB", "CTRL", "ALT", "←", "↑", "↓", "→", "ESC")
-    
-    // Row 6 (Media/Nav)
-    private val navRow = listOf("MUTE", "VOL-", "VOL+", "BACK", "FWD", "MIC")
+
+    private val repeatableKeys = setOf(
+        "BKSP", "SPACE", "←", "→", "↑", "↓",
+        "q", "w", "e", "r", "t", "y", "u", "i", "o", "p",
+        "a", "s", "d", "f", "g", "h", "j", "k", "l",
+        "z", "x", "c", "v", "b", "n", "m",
+        "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
+        "A", "S", "D", "F", "G", "H", "J", "K", "L",
+        "Z", "X", "C", "V", "B", "N", "M",
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+        "@", "#", "\$", "%", "&", "-", "+", "(", ")",
+        "*", "\"", "'", ":", ";", "!", "?",
+        "~", "`", "|", "^", "=", "{", "}", "[", "]", "\\",
+        "<", ">", "/", "_", "©", "®", "™", "°", "•",
+        "€", "£", "¥", "¢", "§", "¶", "∆",
+        ",", "."
+    )
 
     init {
         orientation = VERTICAL
@@ -111,21 +138,20 @@ class KeyboardView @JvmOverloads constructor(
     private fun buildKeyboard() {
         removeAllViews()
         
-        // Rows 1-3
         val topRows = when (currentState) {
             KeyboardState.LOWERCASE -> lowercaseRows
             KeyboardState.UPPERCASE, KeyboardState.CAPS_LOCK -> uppercaseRows
             KeyboardState.SYMBOLS_1 -> symbols1Rows
             KeyboardState.SYMBOLS_2 -> symbols2Rows
         }
+        
         for ((index, rowKeys) in topRows.withIndex()) {
             addView(createRow(rowKeys, index))
         }
         
-        // Middle Split (Row 4 + 5 + Enter)
-        val middleContainer = LinearLayout(context)
-        middleContainer.orientation = HORIZONTAL
-        middleContainer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        val bottomContainer = LinearLayout(context)
+        bottomContainer.orientation = HORIZONTAL
+        bottomContainer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         
         val leftCol = LinearLayout(context)
         leftCol.orientation = VERTICAL
@@ -134,9 +160,10 @@ class KeyboardView @JvmOverloads constructor(
         
         val r4Keys = if (currentState == KeyboardState.LOWERCASE || currentState == KeyboardState.UPPERCASE || currentState == KeyboardState.CAPS_LOCK) row4Lower else row4Sym
         leftCol.addView(createRow(r4Keys, 3))
+        
         leftCol.addView(createRow(arrowRow, 4))
         
-        middleContainer.addView(leftCol)
+        bottomContainer.addView(leftCol)
         
         val enterContainer = FrameLayout(context)
         val enterParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1.5f)
@@ -148,12 +175,9 @@ class KeyboardView @JvmOverloads constructor(
         enterKey.layoutParams = kParams
         
         enterContainer.addView(enterKey)
-        middleContainer.addView(enterContainer)
+        bottomContainer.addView(enterContainer)
         
-        addView(middleContainer)
-        
-        // Row 6 (Bottom Nav)
-        addView(createRow(navRow, 5))
+        addView(bottomContainer)
     }
 
     private fun createRow(keys: List<String>, rowIndex: Int): LinearLayout {
@@ -163,6 +187,7 @@ class KeyboardView @JvmOverloads constructor(
         row.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(keyHeight)).apply {
             setMargins(0, dpToPx(keySpacing), 0, 0)
         }
+        
         if (rowIndex == 1) row.setPadding(dpToPx((12 * scaleFactor).toInt()), 0, dpToPx((12 * scaleFactor).toInt()), 0)
         
         for (key in keys) { 
@@ -173,7 +198,8 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun getKeyWeight(key: String, rowIndex: Int): Float {
-        if (rowIndex >= 4) return 1f 
+        if (rowIndex == 4) return 1f 
+        
         return when (key) {
             "SPACE" -> 4.0f
             "SHIFT", "BKSP" -> 1.5f
@@ -184,13 +210,20 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun createKey(key: String, weight: Float): View {
         val container = FrameLayout(context)
-        val params = if (weight > 0) LayoutParams(0, LayoutParams.MATCH_PARENT, weight) else LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        
+        val params = if (weight > 0) {
+            LayoutParams(0, LayoutParams.MATCH_PARENT, weight)
+        } else {
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        }
+        
         params.setMargins(dpToPx(keySpacing), 0, dpToPx(keySpacing), 0)
         container.layoutParams = params
 
         val keyView = TextView(context)
         keyView.gravity = Gravity.CENTER
-        val rowFontSize = if (key in arrowRow || key in navRow) fontSize - 4 else fontSize
+        
+        val rowFontSize = if (key in arrowRow) fontSize - 4 else fontSize
         keyView.setTextSize(TypedValue.COMPLEX_UNIT_SP, rowFontSize)
         keyView.setTextColor(Color.WHITE)
         keyView.text = getDisplayText(key)
@@ -206,14 +239,23 @@ class KeyboardView @JvmOverloads constructor(
         container.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    bg.setColor(Color.parseColor("#3DDC84")) 
+                    bg.setColor(Color.parseColor("#3DDC84"))
                     keyView.background = bg
                     if (vibrationEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    
+                    handleKeyPress(key, fromRepeat = false)
+                    
+                    if (key in repeatableKeys) {
+                        currentRepeatKey = key
+                        isRepeating = true
+                        repeatHandler.postDelayed(repeatRunnable, REPEAT_INITIAL_DELAY)
+                    }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (event.action == MotionEvent.ACTION_UP) handleKeyPress(key)
                     bg.setColor(getKeyColor(key))
                     keyView.background = bg
+                    
+                    stopRepeat()
                 }
             }
             true
@@ -222,21 +264,23 @@ class KeyboardView @JvmOverloads constructor(
         return container
     }
 
+    private fun stopRepeat() {
+        isRepeating = false
+        currentRepeatKey = null
+        repeatHandler.removeCallbacks(repeatRunnable)
+    }
+
     private fun getDisplayText(key: String): String = when (key) {
         "SHIFT" -> if (currentState == KeyboardState.CAPS_LOCK) "⬆" else "⇧"
         "BKSP" -> "⌫"; "ENTER" -> "↵"; "SPACE" -> " "
         "SYM", "SYM1", "SYM2" -> "?123"; "ABC" -> "ABC"
         "TAB" -> "⇥"; "CTRL" -> "Ctrl"; "ALT" -> "Alt"; "ESC" -> "Esc"
         "←" -> "◀"; "→" -> "▶"; "↑" -> "▲"; "↓" -> "▼"
-        "MUTE" -> "Mute"; "VOL-" -> "Vol-"; "VOL+" -> "Vol+"
-        "BACK" -> "Back"; "FWD" -> "Fwd"; "MIC" -> "🎤"
         else -> key
     }
 
     private fun getKeyColor(key: String): Int {
-        if (key == "CTRL" && isCtrlActive) return Color.parseColor("#3DDC84")
-        if (key == "ALT" && isAltActive) return Color.parseColor("#3DDC84")
-        if (key in arrowRow || key in navRow) return Color.parseColor("#252525")
+        if (key in arrowRow) return Color.parseColor("#252525")
         
         return when (key) {
             "SHIFT" -> when (currentState) {
@@ -251,99 +295,30 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
-    private fun getMetaState(): Int {
-        var meta = 0
-        if (isCtrlActive) meta = meta or 0x1000 // META_CTRL_ON
-        if (isAltActive) meta = meta or 0x02 // META_ALT_ON
-        return meta
-    }
-
-    private fun handleKeyPress(key: String) {
-        var meta = getMetaState()
-        
+    private fun handleKeyPress(key: String, fromRepeat: Boolean = false) {
         when (key) {
-            "CTRL" -> { isCtrlActive = !isCtrlActive; return }
-            "ALT" -> { isAltActive = !isAltActive; return }
-            "SHIFT" -> toggleShift()
-            "BKSP" -> listener?.onSpecialKey(SpecialKey.BACKSPACE, meta)
-            "ENTER" -> listener?.onSpecialKey(SpecialKey.ENTER, meta)
-            "SPACE" -> listener?.onSpecialKey(SpecialKey.SPACE, meta)
-            "TAB" -> listener?.onSpecialKey(SpecialKey.TAB, meta)
-            "ESC" -> listener?.onSpecialKey(SpecialKey.ESCAPE, meta)
-            "←" -> listener?.onSpecialKey(SpecialKey.ARROW_LEFT, meta)
-            "→" -> listener?.onSpecialKey(SpecialKey.ARROW_RIGHT, meta)
-            "↑" -> listener?.onSpecialKey(SpecialKey.ARROW_UP, meta)
-            "↓" -> listener?.onSpecialKey(SpecialKey.ARROW_DOWN, meta)
-            "MUTE" -> listener?.onSpecialKey(SpecialKey.MUTE, meta)
-            "VOL-" -> listener?.onSpecialKey(SpecialKey.VOL_DOWN, meta)
-            "VOL+" -> listener?.onSpecialKey(SpecialKey.VOL_UP, meta)
-            "BACK" -> listener?.onSpecialKey(SpecialKey.BACK_NAV, meta)
-            "FWD" -> listener?.onSpecialKey(SpecialKey.FWD_NAV, meta)
-            "MIC" -> listener?.onSpecialKey(SpecialKey.VOICE_INPUT, meta)
-            "SYM", "SYM1" -> { currentState = KeyboardState.SYMBOLS_1; buildKeyboard() }
-            "SYM2" -> { currentState = KeyboardState.SYMBOLS_2; buildKeyboard() }
-            "ABC" -> { currentState = KeyboardState.LOWERCASE; buildKeyboard() }
+            "SHIFT" -> { if (!fromRepeat) toggleShift() }
+            "BKSP" -> listener?.onSpecialKey(SpecialKey.BACKSPACE)
+            "ENTER" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ENTER) }
+            "SPACE" -> listener?.onSpecialKey(SpecialKey.SPACE)
+            "TAB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.TAB) }
+            "CTRL" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.CTRL) }
+            "ALT" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ALT) }
+            "ESC" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ESCAPE) }
+            "←" -> listener?.onSpecialKey(SpecialKey.ARROW_LEFT)
+            "→" -> listener?.onSpecialKey(SpecialKey.ARROW_RIGHT)
+            "↑" -> listener?.onSpecialKey(SpecialKey.ARROW_UP)
+            "↓" -> listener?.onSpecialKey(SpecialKey.ARROW_DOWN)
+            "SYM", "SYM1" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_1; buildKeyboard() } }
+            "SYM2" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_2; buildKeyboard() } }
+            "ABC" -> { if (!fromRepeat) { currentState = KeyboardState.LOWERCASE; buildKeyboard() } }
             else -> {
-                val char = key[0]
-                val pair = getSymbolKeyCode(char)
-                val code = pair.first
-                val shiftNeeded = pair.second
-                
-                if (shiftNeeded) meta = meta or KeyEvent.META_SHIFT_ON
-                
-                listener?.onKeyPress(code, char, meta)
-                
-                if (currentState == KeyboardState.UPPERCASE) { 
+                listener?.onTextInput(key)
+                if (!fromRepeat && currentState == KeyboardState.UPPERCASE) { 
                     currentState = KeyboardState.LOWERCASE
-                    buildKeyboard()
+                    buildKeyboard() 
                 }
             }
-        }
-        
-        if (key != "CTRL" && key != "ALT" && key != "SHIFT") {
-            isCtrlActive = false
-            isAltActive = false
-            buildKeyboard()
-        }
-    }
-
-    private fun getSymbolKeyCode(c: Char): Pair<Int, Boolean> {
-        return when (c) {
-            in 'a'..'z' -> KeyEvent.keyCodeFromString("KEYCODE_${c.uppercase()}") to false
-            in 'A'..'Z' -> KeyEvent.keyCodeFromString("KEYCODE_${c}") to true
-            in '0'..'9' -> KeyEvent.keyCodeFromString("KEYCODE_${c}") to false
-            ' ' -> KeyEvent.KEYCODE_SPACE to false
-            '.' -> KeyEvent.KEYCODE_PERIOD to false
-            ',' -> KeyEvent.KEYCODE_COMMA to false
-            ';' -> KeyEvent.KEYCODE_SEMICOLON to false
-            ':' -> KeyEvent.KEYCODE_SEMICOLON to true
-            '=' -> KeyEvent.KEYCODE_EQUALS to false
-            '+' -> KeyEvent.KEYCODE_PLUS to false
-            '-' -> KeyEvent.KEYCODE_MINUS to false
-            '_' -> KeyEvent.KEYCODE_MINUS to true
-            '/' -> KeyEvent.KEYCODE_SLASH to false
-            '?' -> KeyEvent.KEYCODE_SLASH to true
-            '`' -> KeyEvent.KEYCODE_GRAVE to false
-            '~' -> KeyEvent.KEYCODE_GRAVE to true
-            '[' -> KeyEvent.KEYCODE_LEFT_BRACKET to false
-            '{' -> KeyEvent.KEYCODE_LEFT_BRACKET to true
-            ']' -> KeyEvent.KEYCODE_RIGHT_BRACKET to false
-            '}' -> KeyEvent.KEYCODE_RIGHT_BRACKET to true
-            '\\' -> KeyEvent.KEYCODE_BACKSLASH to false
-            '|' -> KeyEvent.KEYCODE_BACKSLASH to true
-            '\'' -> KeyEvent.KEYCODE_APOSTROPHE to false
-            '"' -> KeyEvent.KEYCODE_APOSTROPHE to true
-            '!' -> KeyEvent.KEYCODE_1 to true
-            '@' -> KeyEvent.KEYCODE_2 to true
-            '#' -> KeyEvent.KEYCODE_3 to true
-            '$' -> KeyEvent.KEYCODE_4 to true
-            '%' -> KeyEvent.KEYCODE_5 to true
-            '^' -> KeyEvent.KEYCODE_6 to true
-            '&' -> KeyEvent.KEYCODE_7 to true
-            '*' -> KeyEvent.KEYCODE_8 to true
-            '(' -> KeyEvent.KEYCODE_9 to true
-            ')' -> KeyEvent.KEYCODE_0 to true
-            else -> KeyEvent.KEYCODE_UNKNOWN to false
         }
     }
 
@@ -377,4 +352,9 @@ class KeyboardView @JvmOverloads constructor(
     private fun dpToPx(dp: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, dp.toFloat(), resources.displayMetrics
     ).roundToInt()
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        stopRepeat()
+    }
 }

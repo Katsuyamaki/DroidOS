@@ -13,7 +13,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import kotlin.math.max
-import kotlin.math.roundToInt
 
 class KeyboardOverlay(
     private val context: Context,
@@ -38,7 +37,7 @@ class KeyboardOverlay(
 
     private val TAG = "KeyboardOverlay"
     private var keyboardWidth = 500
-    private var keyboardHeight = 320 
+    private var keyboardHeight = 260
     private var screenWidth = 720
     private var screenHeight = 748
     
@@ -48,89 +47,170 @@ class KeyboardOverlay(
         screenWidth = width
         screenHeight = height
         currentDisplayId = displayId
+        
         loadKeyboardSizeForDisplay(displayId)
+        
         val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         if (!prefs.contains("keyboard_width_d$displayId")) {
             keyboardWidth = (width * 0.95f).toInt().coerceIn(300, 650)
-            keyboardHeight = (height * 0.45f).toInt().coerceIn(240, 400) 
+            keyboardHeight = (height * 0.36f).toInt().coerceIn(180, 320)
         }
     }
 
     fun updateScale(scale: Float) {
         if (keyboardView == null) return
+        
         keyboardView?.setScale(scale)
-        val newHeight = (320 * scale).toInt().coerceAtLeast(220)
+        
+        val newHeight = (260 * scale).toInt().coerceAtLeast(180)
         keyboardHeight = newHeight
+        
         if (isVisible && keyboardParams != null) {
             keyboardParams?.height = newHeight
-            try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardSize() } catch (e: Exception) {}
+            try {
+                windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+                saveKeyboardSize()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
-    fun show() { if (isVisible) return; try { createKeyboardWindow(); isVisible = true } catch (e: Exception) { Log.e(TAG, "Failed to show keyboard", e) } }
-    fun hide() { if (!isVisible) return; try { windowManager.removeView(keyboardContainer); keyboardContainer = null; keyboardView = null; isVisible = false } catch (e: Exception) { Log.e(TAG, "Failed to hide keyboard", e) } }
+    fun show() {
+        if (isVisible) return
+        try { createKeyboardWindow(); isVisible = true } 
+        catch (e: Exception) { Log.e(TAG, "Failed to show keyboard", e) }
+    }
+
+    fun hide() {
+        if (!isVisible) return
+        try { windowManager.removeView(keyboardContainer); keyboardContainer = null; keyboardView = null; isVisible = false } 
+        catch (e: Exception) { Log.e(TAG, "Failed to hide keyboard", e) }
+    }
+
     fun toggle() { if (isVisible) hide() else show() }
     fun isShowing(): Boolean = isVisible
 
     fun moveWindow(dx: Int, dy: Int) {
         if (!isVisible || keyboardParams == null) return
-        keyboardParams!!.x += dx; keyboardParams!!.y += dy
-        try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardPosition() } catch (e: Exception) {}
+        keyboardParams!!.x += dx
+        keyboardParams!!.y += dy
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+            saveKeyboardPosition()
+        } catch (e: Exception) {}
     }
     
     fun resizeWindow(dw: Int, dh: Int) {
          if (!isVisible || keyboardParams == null) return
-         keyboardParams!!.width = max(280, keyboardParams!!.width + dw); keyboardParams!!.height = max(180, keyboardParams!!.height + dh)
-         keyboardWidth = keyboardParams!!.width; keyboardHeight = keyboardParams!!.height
-         try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardSize() } catch (e: Exception) {}
+         keyboardParams!!.width = max(280, keyboardParams!!.width + dw)
+         keyboardParams!!.height = max(180, keyboardParams!!.height + dh)
+         keyboardWidth = keyboardParams!!.width
+         keyboardHeight = keyboardParams!!.height
+         try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+            saveKeyboardSize()
+         } catch (e: Exception) {}
     }
 
     private fun createKeyboardWindow() {
         keyboardContainer = FrameLayout(context)
-        val containerBg = GradientDrawable(); containerBg.setColor(Color.parseColor("#1A1A1A")); containerBg.cornerRadius = 16f; containerBg.setStroke(2, Color.parseColor("#3DDC84"))
+        val containerBg = GradientDrawable()
+        containerBg.setColor(Color.parseColor("#1A1A1A"))
+        containerBg.cornerRadius = 16f
+        containerBg.setStroke(2, Color.parseColor("#3DDC84"))
         keyboardContainer?.background = containerBg
+
         keyboardView = KeyboardView(context)
         keyboardView?.setKeyboardListener(this)
         val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         keyboardView?.setVibrationEnabled(prefs.getBoolean("vibrate", true))
-        val scale = prefs.getInt("keyboard_key_scale", 100) / 100f; keyboardView?.setScale(scale)
+        
+        val scale = prefs.getInt("keyboard_key_scale", 100) / 100f
+        keyboardView?.setScale(scale)
+
         val kbParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         kbParams.setMargins(6, 28, 6, 6)
         keyboardContainer?.addView(keyboardView, kbParams)
-        addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
+
+        addDragHandle()
+        addResizeHandle()
+        addCloseButton()
+        addTargetLabel()
+
         val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", (screenWidth - keyboardWidth) / 2)
         val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", screenHeight - keyboardHeight - 10)
-        keyboardParams = WindowManager.LayoutParams(keyboardWidth, keyboardHeight, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT)
-        keyboardParams?.gravity = Gravity.TOP or Gravity.LEFT; keyboardParams?.x = savedX; keyboardParams?.y = savedY
+
+        keyboardParams = WindowManager.LayoutParams(
+            keyboardWidth, keyboardHeight,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        keyboardParams?.gravity = Gravity.TOP or Gravity.LEFT
+        keyboardParams?.x = savedX
+        keyboardParams?.y = savedY
         windowManager.addView(keyboardContainer, keyboardParams)
     }
 
     private fun addDragHandle() {
-        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 28); handleParams.gravity = Gravity.TOP
-        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#555555")); indicatorBg.cornerRadius = 3f; indicator.background = indicatorBg
-        val indicatorParams = FrameLayout.LayoutParams(50, 5); indicatorParams.gravity = Gravity.CENTER; indicatorParams.topMargin = 8
-        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleDrag(event); true }
+        val handle = FrameLayout(context)
+        val handleParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 28)
+        handleParams.gravity = Gravity.TOP
+        val indicator = View(context)
+        val indicatorBg = GradientDrawable()
+        indicatorBg.setColor(Color.parseColor("#555555"))
+        indicatorBg.cornerRadius = 3f
+        indicator.background = indicatorBg
+        val indicatorParams = FrameLayout.LayoutParams(50, 5)
+        indicatorParams.gravity = Gravity.CENTER
+        indicatorParams.topMargin = 8
+        handle.addView(indicator, indicatorParams)
+        handle.setOnTouchListener { _, event -> handleDrag(event); true }
         keyboardContainer?.addView(handle, handleParams)
     }
 
     private fun addResizeHandle() {
-        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(36, 36); handleParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
-        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#3DDC84")); indicatorBg.cornerRadius = 4f; indicator.background = indicatorBg; indicator.alpha = 0.7f
-        val indicatorParams = FrameLayout.LayoutParams(14, 14); indicatorParams.gravity = Gravity.BOTTOM or Gravity.RIGHT; indicatorParams.setMargins(0, 0, 6, 6)
-        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleResize(event); true }
+        val handle = FrameLayout(context)
+        val handleParams = FrameLayout.LayoutParams(36, 36)
+        handleParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
+        val indicator = View(context)
+        val indicatorBg = GradientDrawable()
+        indicatorBg.setColor(Color.parseColor("#3DDC84"))
+        indicatorBg.cornerRadius = 4f
+        indicator.background = indicatorBg
+        indicator.alpha = 0.7f
+        val indicatorParams = FrameLayout.LayoutParams(14, 14)
+        indicatorParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
+        indicatorParams.setMargins(0, 0, 6, 6)
+        handle.addView(indicator, indicatorParams)
+        handle.setOnTouchListener { _, event -> handleResize(event); true }
         keyboardContainer?.addView(handle, handleParams)
     }
 
     private fun addCloseButton() {
-        val button = FrameLayout(context); val buttonParams = FrameLayout.LayoutParams(28, 28); buttonParams.gravity = Gravity.TOP or Gravity.RIGHT; buttonParams.setMargins(0, 2, 4, 0)
-        val closeText = TextView(context); closeText.text = "X"; closeText.setTextColor(Color.parseColor("#FF5555")); closeText.textSize = 12f; closeText.gravity = Gravity.CENTER
-        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)); button.setOnClickListener { hide() }
+        val button = FrameLayout(context)
+        val buttonParams = FrameLayout.LayoutParams(28, 28)
+        buttonParams.gravity = Gravity.TOP or Gravity.RIGHT
+        buttonParams.setMargins(0, 2, 4, 0)
+        val closeText = TextView(context)
+        closeText.text = "X"
+        closeText.setTextColor(Color.parseColor("#FF5555"))
+        closeText.textSize = 12f
+        closeText.gravity = Gravity.CENTER
+        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        button.setOnClickListener { hide() }
         keyboardContainer?.addView(button, buttonParams)
     }
 
     private fun addTargetLabel() {
-        val label = TextView(context); label.text = "Display $targetDisplayId"; label.setTextColor(Color.parseColor("#888888")); label.textSize = 9f
-        val labelParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT); labelParams.gravity = Gravity.TOP or Gravity.LEFT; labelParams.setMargins(8, 6, 0, 0)
+        val label = TextView(context)
+        label.text = "Display $targetDisplayId"
+        label.setTextColor(Color.parseColor("#888888"))
+        label.textSize = 9f
+        val labelParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+        labelParams.gravity = Gravity.TOP or Gravity.LEFT
+        labelParams.setMargins(8, 6, 0, 0)
         keyboardContainer?.addView(label, labelParams)
     }
 
@@ -152,22 +232,40 @@ class KeyboardOverlay(
         return true
     }
 
-    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
-    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
-    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
+    private fun saveKeyboardSize() {
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+            .putInt("keyboard_width_d$currentDisplayId", keyboardWidth)
+            .putInt("keyboard_height_d$currentDisplayId", keyboardHeight)
+            .apply()
+    }
 
-    override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) { injectKey(keyCode, metaState) }
+    private fun saveKeyboardPosition() {
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+            .putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0)
+            .putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0)
+            .apply()
+    }
+
+    private fun loadKeyboardSizeForDisplay(displayId: Int) {
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth)
+        keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight)
+    }
+
+    override fun onKeyPress(keyCode: Int, char: Char?) { injectKey(keyCode) }
     
     override fun onTextInput(text: String) {
         if (shellService == null) return
-        Thread { try { val cmd = "input -d $targetDisplayId text \"$text\""; shellService.runCommand(cmd) } catch (e: Exception) { Log.e(TAG, "Text injection failed", e) } }.start()
+        Thread {
+            try {
+                val escaped = escapeForShell(text)
+                val cmd = "input -d $targetDisplayId text $escaped"
+                shellService.runCommand(cmd)
+            } catch (e: Exception) { Log.e(TAG, "Text injection failed", e) }
+        }.start()
     }
 
-    override fun onSpecialKey(key: KeyboardView.SpecialKey, metaState: Int) {
-        if (key == KeyboardView.SpecialKey.VOICE_INPUT) {
-            triggerVoiceTyping()
-            return
-        }
+    override fun onSpecialKey(key: KeyboardView.SpecialKey) {
         val keyCode = when (key) {
             KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
             KeyboardView.SpecialKey.ENTER -> KeyEvent.KEYCODE_ENTER
@@ -181,47 +279,54 @@ class KeyboardOverlay(
             KeyboardView.SpecialKey.HOME -> KeyEvent.KEYCODE_MOVE_HOME
             KeyboardView.SpecialKey.END -> KeyEvent.KEYCODE_MOVE_END
             KeyboardView.SpecialKey.DELETE -> KeyEvent.KEYCODE_FORWARD_DEL
-            KeyboardView.SpecialKey.MUTE -> KeyEvent.KEYCODE_VOLUME_MUTE
-            KeyboardView.SpecialKey.VOL_UP -> KeyEvent.KEYCODE_VOLUME_UP
-            KeyboardView.SpecialKey.VOL_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
-            KeyboardView.SpecialKey.BACK_NAV -> KeyEvent.KEYCODE_BACK
-            KeyboardView.SpecialKey.FWD_NAV -> KeyEvent.KEYCODE_FORWARD
+            KeyboardView.SpecialKey.SHIFT -> KeyEvent.KEYCODE_SHIFT_LEFT
+            KeyboardView.SpecialKey.CTRL -> KeyEvent.KEYCODE_CTRL_LEFT
+            KeyboardView.SpecialKey.ALT -> KeyEvent.KEYCODE_ALT_LEFT
             else -> return
         }
-        injectKey(keyCode, metaState)
+        injectKey(keyCode)
     }
 
-    private fun triggerVoiceTyping() {
+    private fun injectKey(keyCode: Int) {
         if (shellService == null) return
         Thread {
             try {
-                // 1. Get List of IMEs
-                val output = shellService.runCommand("ime list -a -s")
-                
-                // 2. Find Google Voice or any Voice Service
-                val voiceIme = output.lines().find { it.contains("google", true) && it.contains("voice", true) }
-                    ?: output.lines().find { it.contains("voice", true) }
-                
-                if (voiceIme != null) {
-                    Log.d(TAG, "Switching to Voice IME: $voiceIme")
-                    shellService.runCommand("ime set $voiceIme")
-                } else {
-                    Log.e(TAG, "No Voice IME found")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Voice Switch Failed", e)
-            }
-        }.start()
-    }
-
-    private fun injectKey(keyCode: Int, metaState: Int) {
-        if (shellService == null) return
-        Thread {
-            try {
-                shellService.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, targetDisplayId)
-                Thread.sleep(20)
-                shellService.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, targetDisplayId)
+                val cmd = "input -d $targetDisplayId keyevent $keyCode"
+                shellService.runCommand(cmd)
             } catch (e: Exception) { Log.e(TAG, "Key injection failed", e) }
         }.start()
+    }
+    
+    private fun escapeForShell(text: String): String {
+        val sb = StringBuilder()
+        for (c in text) {
+            when (c) {
+                ' ' -> sb.append("%s")
+                '\'' -> sb.append("'")
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '`' -> sb.append("\\`")
+                '$' -> sb.append("\\$")
+                '&' -> sb.append("\\&")
+                '|' -> sb.append("\\|")
+                ';' -> sb.append("\\;")
+                '(' -> sb.append("\\(")
+                ')' -> sb.append("\\)")
+                '<' -> sb.append("\\<")
+                '>' -> sb.append("\\>")
+                '!' -> sb.append("\\!")
+                '?' -> sb.append("\\?")
+                '*' -> sb.append("\\*")
+                '[' -> sb.append("\\[")
+                ']' -> sb.append("\\]")
+                '{' -> sb.append("\\{")
+                '}' -> sb.append("\\}")
+                '#' -> sb.append("\\#")
+                '~' -> sb.append("\\~")
+                '^' -> sb.append("\\^")
+                else -> sb.append(c)
+            }
+        }
+        return sb.toString()
     }
 }
