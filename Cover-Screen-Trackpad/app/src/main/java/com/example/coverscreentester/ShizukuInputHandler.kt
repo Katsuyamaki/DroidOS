@@ -28,7 +28,7 @@ object ShizukuInputHandler {
     private fun executeCommand(command: String) {
         try {
             // Using Shizuku to execute the shell command
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+//             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
             // If strictly using Shizuku binding without 'su', replace above with:
             // Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
         } catch (e: Exception) {

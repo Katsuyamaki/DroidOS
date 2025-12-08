@@ -273,7 +273,7 @@ class KeyboardManager(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = (initialTouchX - event.rawX).toInt() // Inverse for bottom gravity sometimes depending on config
+//                 val dx = (initialTouchX - event.rawX).toInt() // Inverse for bottom gravity sometimes depending on config
                 val dy = (initialTouchY - event.rawY).toInt()
                 // For Gravity.BOTTOM, positive Y moves UP
                 layoutParams?.y = (initialY + dy)

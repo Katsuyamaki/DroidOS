@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#80000000"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:id="@+id/menu_container"
+        android:layout_width="350dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/bg_trackpad_drawer"
+        android:padding="8dp"
+        android:elevation="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:paddingBottom="8dp">
+
+            <ImageView
+                android:id="@+id/tab_main"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_main"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Main"/>
+
+            <ImageView
+                android:id="@+id/tab_move"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_move"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Trackpad Adjust"/>
+
+            <ImageView
+                android:id="@+id/tab_kb_move"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_keyboard"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Keyboard Adjust"/>
+
+            <ImageView
+                android:id="@+id/tab_config"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_settings"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Settings"/>
+
+            <ImageView
+                android:id="@+id/tab_tune"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_tune"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Tune"/>
+                
+            <ImageView
+                android:id="@+id/tab_profiles"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_profiles"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Profiles"/>
+
+            <ImageView
+                android:id="@+id/tab_help"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_tab_help"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:tooltipText="Help"/>
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#444444"
+            android:layout_marginBottom="4dp"/>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/menu_recycler"
+            android:layout_width="match_parent"
+            android:layout_height="300dp"
+            android:scrollbars="vertical" />
+            
+        <TextView
+            android:id="@+id/btn_close_menu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="CLOSE"
+            android:textColor="#FF5555"
+            android:gravity="center"
+            android:padding="12dp"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:background="?attr/selectableItemBackground"/>
+
+    </LinearLayout>
+</FrameLayout>

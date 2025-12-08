@@ -47,7 +47,7 @@ class TrackpadService : Service() {
 
             // Setup Trackpad Touch Listener
             val trackpadView = overlayView?.findViewById<View>(R.id.view_trackpad)
-            trackpadView?.setOnTouchListener { _, event ->
+            trackpadView?.setOnTouchListener { _, _ ->
                 // This consumes the touch event so it doesn't pass through to the launcher
                 // We will add the Shizuku injection logic here next.
                 true

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_item_press"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:minHeight="40dp">
+
+        <ImageView
+            android:id="@+id/item_icon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_cursor"
+            android:tint="#AAAAAA"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/item_title"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="Setting Name"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <TextView
+            android:id="@+id/item_value_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="100%"
+            android:textColor="#3DDC84"
+            android:visibility="gone"
+            android:paddingEnd="8dp"/>
+
+        <Switch
+            android:id="@+id/item_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:visibility="gone"/>
+            
+        <ImageView
+            android:id="@+id/item_action_icon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@android:drawable/ic_media_play"
+            android:tint="#3DDC84"
+            android:visibility="gone"/>
+
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/item_seekbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:visibility="gone"/>
+
+    <GridLayout
+        android:id="@+id/item_dpad_grid"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:columnCount="3"
+        android:rowCount="3"
+        android:visibility="gone"
+        android:padding="8dp">
+
+        <Space android:layout_width="50dp" android:layout_height="50dp"/>
+        <Button android:id="@+id/btn_up" android:text="▲" android:layout_width="50dp" android:layout_height="50dp" android:backgroundTint="#333333" android:textColor="#FFFFFF"/>
+        <Space android:layout_width="50dp" android:layout_height="50dp"/>
+
+        <Button android:id="@+id/btn_left" android:text="◀" android:layout_width="50dp" android:layout_height="50dp" android:backgroundTint="#333333" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btn_center" android:text="⟲" android:layout_width="50dp" android:layout_height="50dp" android:backgroundTint="#555555" android:textColor="#FFFFFF"/>
+        <Button android:id="@+id/btn_right" android:text="▶" android:layout_width="50dp" android:layout_height="50dp" android:backgroundTint="#333333" android:textColor="#FFFFFF"/>
+
+        <Space android:layout_width="50dp" android:layout_height="50dp"/>
+        <Button android:id="@+id/btn_down" android:text="▼" android:layout_width="50dp" android:layout_height="50dp" android:backgroundTint="#333333" android:textColor="#FFFFFF"/>
+        <Space android:layout_width="50dp" android:layout_height="50dp"/>
+    </GridLayout>
+
+    <TextView
+        android:id="@+id/item_help_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Help text goes here..."
+        android:textColor="#AAAAAA"
+        android:textSize="14sp"
+        android:visibility="gone"
+        android:padding="4dp"/>
+
+</LinearLayout>
