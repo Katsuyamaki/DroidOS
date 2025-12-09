@@ -1,14 +1,9 @@
 package com.example.coverscreentester
 
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
+import android.view.Display
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import rikka.shizuku.Shizuku
@@ -17,43 +12,34 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Please grant Overlay Permission", Toast.LENGTH_LONG).show()
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            finish()
-            return
-        }
+        // No setContentView() - this is a trampoline Activity
 
+        // 1. Check if Shizuku is granted
         if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            // If not granted, we must show UI to request it
             Shizuku.requestPermission(0)
-        }
-
-        if (!isAccessibilityServiceEnabled()) {
-            Toast.makeText(this, "Please enable DroidOS Trackpad in Accessibility Settings", Toast.LENGTH_LONG).show()
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
+            Toast.makeText(this, "Please grant Shizuku permission", Toast.LENGTH_LONG).show()
             finish()
             return
         }
 
-        Toast.makeText(this, "Trackpad Service Already Running!", Toast.LENGTH_SHORT).show()
-        finish()
-    }
+        // 2. Determine current display ID
+        val currentDisplayId = display?.displayId ?: Display.DEFAULT_DISPLAY
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        val expectedComponentName = ComponentName(this, OverlayService::class.java)
-        for (service in enabledServices) {
-            val enabledServiceName = service.resolveInfo.serviceInfo.let {
-                ComponentName(it.packageName, it.name)
-            }
-            if (enabledServiceName == expectedComponentName) {
-                return true
-            }
+        // 3. Start Service with "OPEN_MENU" action on this display
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = "OPEN_MENU"
+            putExtra("DISPLAY_ID", currentDisplayId)
+            putExtra("FORCE_MOVE", true) // Ensure it moves here
         }
-        return false
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+
+        // 4. Close this activity immediately
+        finish()
     }
 }

@@ -66,14 +66,11 @@ class TrackpadMenuManager(
         val inflater = LayoutInflater.from(themedContext)
         drawerView = inflater.inflate(R.layout.layout_trackpad_drawer, null)
 
-        // Close Button
         drawerView?.findViewById<View>(R.id.btn_close_menu)?.setOnClickListener { hide() }
         
-        // Setup Recycler
         recyclerView = drawerView?.findViewById(R.id.menu_recycler)
         recyclerView?.layoutManager = LinearLayoutManager(context)
 
-        // Tabs
         val tabs = listOf(
             R.id.tab_main to TAB_MAIN,
             R.id.tab_move to TAB_MOVE,
@@ -90,7 +87,6 @@ class TrackpadMenuManager(
             }
         }
 
-        // Window Params
         drawerParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -143,8 +139,6 @@ class TrackpadMenuManager(
         }
     }
 
-    // --- ITEM GENERATORS ---
-
     private fun getMainItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         
@@ -173,7 +167,7 @@ class TrackpadMenuManager(
             TrackpadMenuAdapter.Type.ACTION) { service.hideApp() })
             
         list.add(TrackpadMenuAdapter.MenuItem("Force Kill Service", android.R.drawable.ic_delete, 
-            TrackpadMenuAdapter.Type.ACTION) { service.stopSelf() })
+            TrackpadMenuAdapter.Type.ACTION) { service.forceExit() })
 
         return list
     }

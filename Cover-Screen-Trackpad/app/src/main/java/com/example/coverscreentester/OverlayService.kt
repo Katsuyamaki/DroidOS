@@ -12,6 +12,9 @@ package com.example.coverscreentester
  * 6. PREFS: Safe parsing preserved.
  * 7. REMOTE: cycleInputTarget creates remote cursor on secondary context.
  * 8. AUTOMATION: Keyboard Open = Screen ON. Keyboard Close = Screen OFF (Alt/Std).
+ * 9. MENU ACTIONS: hideApp() minimizes, forceExit() kills process.
+ * 10. ENTRY POINT: "OPEN_MENU" action triggers menuManager.show().
+ * 11. FULL SCREEN: NO_LIMITS + SHORT_EDGES flags required for cursor to reach edges.
  * ======================================================================================
  */
 
@@ -34,6 +37,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -51,6 +55,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -180,6 +185,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_DEBUG" -> toggleDebugMode()
                 "FORCE_KEYBOARD" -> toggleCustomKeyboard()
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                "OPEN_MENU" -> {
+                    menuManager?.show()
+                    vibrate()
+                }
                 "SET_TRACKPAD_VISIBILITY" -> {
                     val visible = intent.getBooleanExtra("VISIBLE", true)
                     val menuDisplayId = intent.getIntExtra("MENU_DISPLAY_ID", -1)
@@ -227,7 +236,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         super.onCreate()
         try { displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; displayManager?.registerDisplayListener(this, handler) } catch (e: Exception) {}
         loadPrefs()
-        val filter = IntentFilter().apply { addAction("CYCLE_INPUT_TARGET"); addAction("RESET_CURSOR"); addAction("TOGGLE_DEBUG"); addAction("FORCE_KEYBOARD"); addAction("TOGGLE_CUSTOM_KEYBOARD"); addAction("SET_TRACKPAD_VISIBILITY"); addAction("SET_PREVIEW_MODE") }
+        val filter = IntentFilter().apply { 
+            addAction("CYCLE_INPUT_TARGET")
+            addAction("RESET_CURSOR")
+            addAction("TOGGLE_DEBUG")
+            addAction("FORCE_KEYBOARD")
+            addAction("TOGGLE_CUSTOM_KEYBOARD")
+            addAction("SET_TRACKPAD_VISIBILITY")
+            addAction("SET_PREVIEW_MODE") 
+            addAction("OPEN_MENU")
+        }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(switchReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(switchReceiver, filter)
     }
 
@@ -253,6 +271,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_DEBUG" -> toggleDebugMode()
                 "FORCE_KEYBOARD" -> toggleCustomKeyboard()
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                "OPEN_MENU" -> {
+                    menuManager?.show()
+                    vibrate()
+                }
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
                 val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
@@ -294,7 +316,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     private fun setupBubble(context: Context) {
         bubbleView = LayoutInflater.from(context).inflate(R.layout.layout_trackpad_bubble, null)
-        bubbleParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT)
+        bubbleParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+             bubbleParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         bubbleParams.gravity = Gravity.TOP or Gravity.START; bubbleParams.x = 50; bubbleParams.y = 300
         var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
         bubbleView?.setOnTouchListener { _, event ->
@@ -318,15 +351,52 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         addHandle(context, Gravity.BOTTOM or Gravity.LEFT, handleColor) { _, e -> openMenuHandle(e) }
         addScrollBars(context)
         debugTextView = TextView(context); debugTextView?.text = "DEBUG"; debugTextView?.setTextColor(Color.YELLOW); debugTextView?.setBackgroundColor(0xAA000000.toInt()); debugTextView?.textSize = 9f; debugTextView?.visibility = View.GONE; val debugParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT); debugParams.gravity = Gravity.CENTER; trackpadLayout?.addView(debugTextView, debugParams)
-        trackpadParams = WindowManager.LayoutParams(400, 300, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); trackpadParams.gravity = Gravity.TOP or Gravity.LEFT; loadLayout()
-        val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() { override fun onSingleTapConfirmed(e: MotionEvent): Boolean { if (!isTouchDragging && !isVScrolling && !isHScrolling) performClick(false); return true } })
+        
+        trackpadParams = WindowManager.LayoutParams(
+            400, 300, 
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or 
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH, 
+            PixelFormat.TRANSLUCENT
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+             trackpadParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
+        trackpadParams.gravity = Gravity.TOP or Gravity.LEFT; loadLayout()
+        val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() { 
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { 
+                if (!isTouchDragging && !isLeftKeyHeld && !isRightKeyHeld && !isVScrolling && !isHScrolling) {
+                    performClick(false)
+                }
+                return true 
+            } 
+        })
+        
         trackpadLayout?.setOnTouchListener { _, event -> val devId = event.deviceId; val tool = event.getToolType(0); if (tool != MotionEvent.TOOL_TYPE_FINGER) return@setOnTouchListener false; when (event.actionMasked) { MotionEvent.ACTION_DOWN -> activeFingerDeviceId = devId; MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> { if (activeFingerDeviceId > 0 && devId != activeFingerDeviceId) return@setOnTouchListener false } }; gestureDetector.onTouchEvent(event); handleTrackpadTouch(event); true }
         trackpadLayout?.visibility = View.GONE; windowManager?.addView(trackpadLayout, trackpadParams); updateBorderColor(currentBorderColor)
     }
     
     private fun setupCursor(context: Context) {
         cursorLayout = FrameLayout(context); cursorView = ImageView(context); cursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorLayout?.addView(cursorView, FrameLayout.LayoutParams(size, size))
-        cursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT); cursorParams.gravity = Gravity.TOP or Gravity.LEFT; cursorParams.x = uiScreenWidth / 2; cursorParams.y = uiScreenHeight / 2; windowManager?.addView(cursorLayout, cursorParams)
+        
+        cursorParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, 
+            WindowManager.LayoutParams.WRAP_CONTENT, 
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+             cursorParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        
+        cursorParams.gravity = Gravity.TOP or Gravity.LEFT; cursorParams.x = uiScreenWidth / 2; cursorParams.y = uiScreenHeight / 2; windowManager?.addView(cursorLayout, cursorParams)
     }
 
     fun toggleTrackpad() { isTrackpadVisible = !isTrackpadVisible; trackpadLayout?.visibility = if (isTrackpadVisible) View.VISIBLE else View.GONE; if (isTrackpadVisible) updateBorderColor(currentBorderColor) }
@@ -338,7 +408,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun updateBubbleStatus() { val dot = bubbleView?.findViewById<ImageView>(R.id.status_dot); if (shellService != null) dot?.visibility = View.GONE else dot?.visibility = View.VISIBLE }
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
     fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; try { windowManager?.removeView(bubbleView); windowManager?.removeView(trackpadLayout); windowManager?.removeView(cursorLayout); menuManager?.hide(); setupUI(displayId) } catch (e: Exception) {} }
-    fun hideApp() { performGlobalAction(GLOBAL_ACTION_HOME) }
+    
+    // --- UPDATED HIDE APP LOGIC ---
+    fun hideApp() { 
+        menuManager?.hide()
+        if (isTrackpadVisible) toggleTrackpad()
+    }
+    
+    // --- NEW FORCE EXIT LOGIC ---
+    fun forceExit() {
+        try {
+            stopSelf()
+            Process.killProcess(Process.myPid())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
     
     fun manualAdjust(isKeyboard: Boolean, isResize: Boolean, dx: Int, dy: Int) { if (isKeyboard) { if (isResize) keyboardOverlay?.resizeWindow(dx, dy) else keyboardOverlay?.moveWindow(dx, dy) } else { if (trackpadLayout == null) return; trackpadParams.x += dx; trackpadParams.y += dy; if (isResize) { trackpadParams.width = max(200, trackpadParams.width + dx); trackpadParams.height = max(200, trackpadParams.height + dy) }; try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveLayout() } }
     
@@ -413,7 +498,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun updateHandleSize() { for (v in handleVisuals) { val p = v.layoutParams; p.width = prefs.prefHandleSize; p.height = prefs.prefHandleSize; v.layoutParams = p } }
     private fun updateLayoutSizes() { for (c in handleContainers) { val p = c.layoutParams; p.width = prefs.prefHandleTouchSize; p.height = prefs.prefHandleTouchSize; c.layoutParams = p } }
     private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
-    private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor(Color.TRANSPARENT); val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefs.prefAlpha shl 24); bg.setStroke(4, colorWithAlpha); trackpadLayout?.invalidate() }
+    private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor(Color.TRANSPARENT); val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefs.prefAlpha shl 24); bg.setStroke(4, if (highlightAlpha) 0xFF00FF00.toInt() else colorWithAlpha); trackpadLayout?.invalidate() }
     
     private fun handleTrackpadTouch(event: MotionEvent) {
          val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
