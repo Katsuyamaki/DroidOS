@@ -15,11 +15,13 @@ package com.example.coverscreentester
  * 9. MENU ACTIONS: hideApp() minimizes, forceExit() kills process.
  * 10. ENTRY POINT: "OPEN_MENU" action triggers menuManager.show().
  * 11. FULL SCREEN: NO_LIMITS + SHORT_EDGES flags required for cursor to reach edges.
- * 12. PRESETS: applyLayoutPreset(1|2) supported.
+ * 12. PRESETS: applyLayoutPreset(1|2|0) supported. 0 is Freeform.
  * 13. LAUNCH: FORCE_MOVE extra forces UI refresh on current display.
  * 14. DISPLAY CONTEXT: WindowManager MUST be obtained from display-specific context.
  * 15. FOREGROUND: Safe startForeground with try-catch fallback.
  * 16. MULTI-DISPLAY: Teardown old views before switching displays.
+ * 17. BUBBLE: resetBubblePosition() added.
+ * 18. HANDLE: Size scaled 2x, Touch size synced.
  * ======================================================================================
  */
 
@@ -106,7 +108,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefVPosLeft = false
         var prefHPosTop = false
         var prefLocked = false
-        var prefHandleTouchSize = 60 
+        var prefHandleTouchSize = 80
         var prefScrollTouchSize = 60 
         var prefScrollVisualSize = 4
         var prefCursorSize = 50 
@@ -196,7 +198,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> {
                     menuManager?.show()
-                    vibrate()
+                    // Removed vibrate()
                 }
                 "SET_TRACKPAD_VISIBILITY" -> {
                     val visible = intent.getBooleanExtra("VISIBLE", true)
@@ -261,7 +263,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onServiceConnected() {
         super.onServiceConnected()
         bindShizuku()
-        // Don't setup UI here yet, wait for onStartCommand to tell us which display
+        setupUI(Display.DEFAULT_DISPLAY)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -292,20 +294,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> {
                     menuManager?.show()
-                    vibrate()
+                    // Removed vibrate()
                 }
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
                 val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
                 val force = intent.getBooleanExtra("FORCE_MOVE", false)
-                
-                // If it's a cold start (no windowManager), initialize.
-                // Or if target has changed, or forced.
-                if (windowManager == null || (targetId >= 0 && (targetId != currentDisplayId || force))) {
+                if (targetId >= 0 && (targetId != currentDisplayId || force)) {
                     forceMoveToDisplay(targetId)
                 }
             } else if (windowManager == null) {
-                // Fallback for cold start without extras
                 setupUI(Display.DEFAULT_DISPLAY)
             }
         } catch (e: Exception) { e.printStackTrace() }
@@ -329,7 +327,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     private fun setupUI(displayId: Int) {
-        // --- CLEANUP FIRST ---
         try {
             if (windowManager != null) {
                 if (bubbleView != null) windowManager?.removeView(bubbleView)
@@ -511,27 +508,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun manualAdjust(isKeyboard: Boolean, isResize: Boolean, dx: Int, dy: Int) { if (isKeyboard) { if (isResize) keyboardOverlay?.resizeWindow(dx, dy) else keyboardOverlay?.moveWindow(dx, dy) } else { if (trackpadLayout == null) return; trackpadParams.x += dx; trackpadParams.y += dy; if (isResize) { trackpadParams.width = max(200, trackpadParams.width + dx); trackpadParams.height = max(200, trackpadParams.height + dy) }; try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveLayout() } }
     
     private fun parseBoolean(value: Any): Boolean { return when(value) { is Boolean -> value; is Int -> value == 1; is String -> value == "1" || value.equals("true", ignoreCase = true); else -> false } }
-    
-    fun updatePref(key: String, value: Any) { 
-        when(key) { 
-            "cursor_speed" -> prefs.cursorSpeed = (value.toString().toFloatOrNull() ?: 2.5f)
-            "scroll_speed" -> prefs.scrollSpeed = (value.toString().toFloatOrNull() ?: 3.0f)
-            "tap_scroll" -> prefs.prefTapScroll = parseBoolean(value)
-            "vibrate" -> prefs.prefVibrate = parseBoolean(value)
-            "reverse_scroll" -> prefs.prefReverseScroll = parseBoolean(value)
-            "alpha" -> { prefs.prefAlpha = (value.toString().toIntOrNull() ?: 200); updateBorderColor(currentBorderColor) }
-            "keyboard_alpha" -> { prefs.prefKeyboardAlpha = (value.toString().toIntOrNull() ?: 200); keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha) }
-            "handle_size" -> { prefs.prefHandleSize = (value.toString().toIntOrNull() ?: 60); updateHandleSize() }
-            "cursor_size" -> { prefs.prefCursorSize = (value.toString().toIntOrNull() ?: 50); updateCursorSize() }
-            "keyboard_key_scale" -> { prefs.prefKeyScale = (value.toString().toIntOrNull() ?: 100); keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f) }
-            "use_alt_screen_off" -> prefs.prefUseAltScreenOff = parseBoolean(value) 
-            "automation_enabled" -> prefs.prefAutomationEnabled = parseBoolean(value)
-        }
-        savePrefs() 
-    }
+    fun updatePref(key: String, value: Any) { when(key) { "cursor_speed" -> prefs.cursorSpeed = (value.toString().toFloatOrNull() ?: 2.5f); "scroll_speed" -> prefs.scrollSpeed = (value.toString().toFloatOrNull() ?: 3.0f); "tap_scroll" -> prefs.prefTapScroll = parseBoolean(value); "vibrate" -> prefs.prefVibrate = parseBoolean(value); "reverse_scroll" -> prefs.prefReverseScroll = parseBoolean(value); "alpha" -> { prefs.prefAlpha = (value.toString().toIntOrNull() ?: 200); updateBorderColor(currentBorderColor) }; "handle_size" -> { prefs.prefHandleSize = (value.toString().toIntOrNull() ?: 60); updateHandleSize() }; "cursor_size" -> { prefs.prefCursorSize = (value.toString().toIntOrNull() ?: 50); updateCursorSize() }; "keyboard_key_scale" -> { prefs.prefKeyScale = (value.toString().toIntOrNull() ?: 100); keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f) }; "use_alt_screen_off" -> prefs.prefUseAltScreenOff = parseBoolean(value) }; savePrefs() }
     
     // --- PRESETS LOGIC ---
     fun applyLayoutPreset(type: Int) {
+        if (type == 0) { // Freeform
+            loadLayout()
+            // keyboardOverlay?.restoreProfile() // Logic would go here
+            showToast("Freeform Profile Loaded")
+            // Removed vibrate()
+            return
+        }
+
         val h = uiScreenHeight
         val w = uiScreenWidth
         
@@ -567,35 +555,25 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 keyboardOverlay?.setWindowBounds(kbX, kbY, kbW, kbH)
             }
         }
-        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams); saveLayout() } catch(e: Exception){}
+        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception){} // Don't call saveLayout for presets!
         showToast("Preset $type Applied")
-        vibrate()
+        // Removed vibrate()
     }
     
-    private fun loadPrefs() { 
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f)
-        prefs.scrollSpeed = p.getFloat("scroll_speed", 3.0f)
-        prefs.prefAlpha = p.getInt("alpha", 200)
-        prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 200)
-        prefs.prefCursorSize = p.getInt("cursor_size", 50)
-        prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
-        prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", true)
-        prefs.prefBubbleX = p.getInt("bubble_x", 50)
-        prefs.prefBubbleY = p.getInt("bubble_y", 300)
+    fun resetBubblePosition() {
+        bubbleParams.x = 50
+        bubbleParams.y = uiScreenHeight / 2
+        try {
+            windowManager?.updateViewLayout(bubbleView, bubbleParams)
+            prefs.prefBubbleX = bubbleParams.x
+            prefs.prefBubbleY = bubbleParams.y
+            savePrefs()
+            showToast("Bubble Reset")
+        } catch(e: Exception){}
     }
-    
-    private fun savePrefs() { 
-        val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-        e.putFloat("cursor_speed", prefs.cursorSpeed)
-        e.putInt("alpha", prefs.prefAlpha)
-        e.putInt("keyboard_alpha", prefs.prefKeyboardAlpha)
-        e.putBoolean("use_alt_screen_off", prefs.prefUseAltScreenOff)
-        e.putBoolean("automation_enabled", prefs.prefAutomationEnabled)
-        e.putInt("bubble_x", prefs.prefBubbleX)
-        e.putInt("bubble_y", prefs.prefBubbleY)
-        e.apply() 
-    }
+
+    private fun loadPrefs() { val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f); prefs.scrollSpeed = p.getFloat("scroll_speed", 3.0f); prefs.prefAlpha = p.getInt("alpha", 200); prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 200); prefs.prefCursorSize = p.getInt("cursor_size", 50); prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true); prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", true); prefs.prefBubbleX = p.getInt("bubble_x", 50); prefs.prefBubbleY = p.getInt("bubble_y", 300) }
+    private fun savePrefs() { val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit(); e.putFloat("cursor_speed", prefs.cursorSpeed); e.putInt("alpha", prefs.prefAlpha); e.putInt("keyboard_alpha", prefs.prefKeyboardAlpha); e.putBoolean("use_alt_screen_off", prefs.prefUseAltScreenOff); e.putBoolean("automation_enabled", prefs.prefAutomationEnabled); e.putInt("bubble_x", prefs.prefBubbleX); e.putInt("bubble_y", prefs.prefBubbleY); e.apply() }
 
     private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) { e.printStackTrace() } }
     
@@ -672,12 +650,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefUseAltScreenOff = !prefs.prefUseAltScreenOff
         savePrefs()
         showToast("Mode: ${if(prefs.prefUseAltScreenOff) "Alternate" else "Standard"}")
-        vibrate()
+        // Removed vibrate()
     }
 
     private fun toggleScreen() {
         if (isScreenOff) turnScreenOn() else turnScreenOff()
-        vibrate()
+        // Removed vibrate()
     }
     
     private fun updateUiMetrics() { val display = displayManager?.getDisplay(currentDisplayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); uiScreenWidth = metrics.widthPixels; uiScreenHeight = metrics.heightPixels }

@@ -23,16 +23,28 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            display?.displayId ?: displayManager.getDisplay(Display.DEFAULT_DISPLAY).displayId
-        } else {
-            windowManager.defaultDisplay.displayId
+        // --- ROBUST DISPLAY DETECTION ---
+        var targetDisplayId = Display.DEFAULT_DISPLAY
+        
+        try {
+            // 1. Try modern API (R+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display?.let { 
+                    targetDisplayId = it.displayId 
+                }
+            } else {
+                // 2. Try WindowManager (Legacy)
+                @Suppress("DEPRECATION")
+                targetDisplayId = windowManager.defaultDisplay.displayId
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
+        // 3. Start Service
         val intent = Intent(this, OverlayService::class.java).apply {
             action = "OPEN_MENU"
-            putExtra("DISPLAY_ID", displayId)
+            putExtra("DISPLAY_ID", targetDisplayId)
             putExtra("FORCE_MOVE", true) 
         }
         
