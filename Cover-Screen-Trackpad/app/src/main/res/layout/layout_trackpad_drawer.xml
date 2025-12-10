@@ -115,6 +115,14 @@
                             android:tint="#888888" />
 
                         <ImageView
+                            android:id="@+id/tab_bubble"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:padding="12dp"
+                            android:src="@android:drawable/ic_menu_compass"
+                            android:tint="#888888" />
+
+                        <ImageView
                             android:id="@+id/tab_profiles"
                             android:layout_width="match_parent"
                             android:layout_height="48dp"

@@ -107,7 +107,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var cursorSpeed = 2.5f
         var scrollSpeed = 3.0f 
         var prefTapScroll = true 
-        var prefVibrate = true
+        var prefVibrate = false
         var prefReverseScroll = true
         var prefAlpha = 200
         var prefKeyboardAlpha = 200
@@ -116,7 +116,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefHPosTop = false
         var prefLocked = false
         var prefHandleTouchSize = 80
-        var prefScrollTouchSize = 60 
+        var prefScrollTouchSize = 80 
         var prefScrollVisualSize = 4
         var prefCursorSize = 50 
         var prefKeyScale = 100 
@@ -125,6 +125,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefBubbleX = 50
         var prefBubbleY = 300
         var prefAnchored = false  // NEW: Anchor mode to disable handle drag/resize
+        var prefBubbleSize = 100        // 50-200 range (percentage, 100 = standard)
+        var prefBubbleIconIndex = 0     // Index into icon array
+        var prefBubbleAlpha = 255       // 0-255 opacity
     }
     // =========================
     // END PREFS CLASS
@@ -173,6 +176,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var highlightHandles = false
     private var highlightScrolls = false
 
+    // Scroll zone touch detection thickness (synced with prefScrollTouchSize)
+    private var scrollZoneThickness = 80
     private val handleContainers = ArrayList<FrameLayout>()
     private val handleVisuals = ArrayList<View>()
     private var vScrollContainer: FrameLayout? = null
@@ -187,7 +192,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private lateinit var remoteCursorParams: WindowManager.LayoutParams
     private var currentOverlayDisplayId = 0
     private var lastLoadedProfileKey = ""
-    private var scrollZoneThickness = 60
 
     private val longPressRunnable = Runnable { startTouchDrag() }
     private var isResizing = false
@@ -425,6 +429,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
         }
         windowManager?.addView(bubbleView, bubbleParams); updateBubbleStatus()
+        applyBubbleAppearance()
     }
     
     private fun setupTrackpad(context: Context) {
@@ -492,6 +497,90 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun toggleDebugMode() { isDebugMode = !isDebugMode; if (isDebugMode) { showToast("Debug ON"); updateBorderColor(0xFFFFFF00.toInt()); debugTextView?.visibility = View.VISIBLE } else { showToast("Debug OFF"); if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt()); debugTextView?.visibility = View.GONE } }
 
     fun updateBubbleStatus() { val dot = bubbleView?.findViewById<ImageView>(R.id.status_dot); if (shellService != null) dot?.visibility = View.GONE else dot?.visibility = View.VISIBLE }
+
+    // =========================
+    // BUBBLE CUSTOMIZATION - Icon, Size, and Opacity
+    // =========================
+    
+    // Available bubble icons (add more as needed)
+    private val bubbleIcons = arrayOf(
+        R.mipmap.ic_trackpad_adaptive,     // Default trackpad icon
+        R.drawable.ic_cursor,               // Cursor icon
+        R.drawable.ic_tab_main,             // Main tab icon
+        R.drawable.ic_tab_keyboard,         // Keyboard icon
+        android.R.drawable.ic_menu_compass, // System compass
+        android.R.drawable.ic_menu_myplaces // System location
+    )
+    
+    fun getBubbleIconCount(): Int = bubbleIcons.size
+    
+    fun updateBubbleSize(sizePercent: Int) {
+        prefs.prefBubbleSize = sizePercent.coerceIn(50, 200)
+        applyBubbleAppearance()
+        savePrefs()
+    }
+    
+    fun updateBubbleIcon(index: Int) {
+        prefs.prefBubbleIconIndex = index.coerceIn(0, bubbleIcons.size - 1)
+        applyBubbleAppearance()
+        savePrefs()
+    }
+    
+    fun cycleBubbleIcon() {
+        val nextIndex = (prefs.prefBubbleIconIndex + 1) % bubbleIcons.size
+        updateBubbleIcon(nextIndex)
+    }
+    
+    fun updateBubbleAlpha(alpha: Int) {
+        prefs.prefBubbleAlpha = alpha.coerceIn(50, 255)
+        applyBubbleAppearance()
+        savePrefs()
+    }
+    
+    private fun applyBubbleAppearance() {
+        if (bubbleView == null) return
+        
+        val scale = prefs.prefBubbleSize / 100f
+        
+        // Base sizes (standard = Launcher size: 60dp container, 40dp icon)
+        val baseContainerDp = 60
+        val baseIconDp = 40
+        
+        val density = resources.displayMetrics.density
+        val containerSize = (baseContainerDp * scale * density).toInt()
+        val iconSize = (baseIconDp * scale * density).toInt()
+        
+        // Update container size via LayoutParams
+        bubbleParams.width = containerSize
+        bubbleParams.height = containerSize
+        try {
+            windowManager?.updateViewLayout(bubbleView, bubbleParams)
+        } catch (e: Exception) {}
+        
+        // Update icon
+        val iconView = bubbleView?.findViewById<ImageView>(R.id.bubble_icon)
+        iconView?.let {
+            val iconParams = it.layoutParams as? FrameLayout.LayoutParams
+            iconParams?.width = iconSize
+            iconParams?.height = iconSize
+            it.layoutParams = iconParams
+            
+            // Set icon drawable
+            val iconRes = bubbleIcons.getOrElse(prefs.prefBubbleIconIndex) { bubbleIcons[0] }
+            it.setImageResource(iconRes)
+            
+            // Set alpha (0.0-1.0)
+            it.alpha = prefs.prefBubbleAlpha / 255f
+        }
+        
+        // Also apply alpha to background
+        bubbleView?.alpha = prefs.prefBubbleAlpha / 255f
+    }
+    // =========================
+    // END BUBBLE CUSTOMIZATION
+    // =========================
+
+
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
     fun forceMoveToDisplay(displayId: Int) { 
         if (displayId == currentDisplayId) return // Optimization: Don't teardown if already there
@@ -560,7 +649,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 updateHandleSize()
                 updateLayoutSizes()
             }
-            "cursor_size" -> { prefs.prefCursorSize = (value.toString().toIntOrNull() ?: 50); updateCursorSize() }
+            "scroll_size" -> {
+                // === FINE TUNING: Adjust multipliers here ===
+                val touchSize = (value.toString().toIntOrNull() ?: 80)
+                val visualSize = (touchSize * 8 / 80).coerceIn(4, 20) // Proportional scaling
+                // === END FINE TUNING ===
+                
+                prefs.prefScrollTouchSize = touchSize
+                prefs.prefScrollVisualSize = visualSize
+                scrollZoneThickness = touchSize  // CRITICAL: Sync the touch detection zone!
+                updateScrollSize()
+            }
+           "cursor_size" -> { prefs.prefCursorSize = (value.toString().toIntOrNull() ?: 50); updateCursorSize() }
             "keyboard_key_scale" -> { prefs.prefKeyScale = (value.toString().toIntOrNull() ?: 100); keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f) }
             "use_alt_screen_off" -> prefs.prefUseAltScreenOff = parseBoolean(value) 
             "automation_enabled" -> prefs.prefAutomationEnabled = parseBoolean(value)
@@ -568,6 +668,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 prefs.prefAnchored = parseBoolean(value)
                 keyboardOverlay?.setAnchored(prefs.prefAnchored)  // Sync to keyboard overlay
             }
+             "bubble_size" -> { prefs.prefBubbleSize = (value.toString().toIntOrNull() ?: 100); applyBubbleAppearance() }
+            "bubble_icon" -> { cycleBubbleIcon() }
+            "bubble_alpha" -> { prefs.prefBubbleAlpha = (value.toString().toIntOrNull() ?: 255); applyBubbleAppearance() }
         }
         savePrefs() 
     }
@@ -575,11 +678,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // END UPDATE PREF
     // =========================
     
-    // --- PRESETS LOGIC ---
+    // =========================
+    // PRESETS LOGIC - Apply split screen layouts
+    // Type 0 = Freeform (loads saved profile)
+    // Type 1 = KB Top / TP Bottom
+    // Type 2 = TP Top / KB Bottom
+    // =========================
     fun applyLayoutPreset(type: Int) {
         if (type == 0) { // Freeform
             loadLayout()
-            // keyboardOverlay?.restoreProfile() // Logic would go here
             showToast("Freeform Profile Loaded")
             return
         }
@@ -597,7 +704,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 
                 // KB: Width 90%, centered horizontal, bottom aligned in top half
                 val kbW = (w * 0.9f).toInt()
-                val kbH = (h * 0.4f).toInt() // Slightly less than 50% to fit UI
+                val kbH = (h * 0.4f).toInt()
                 val kbX = (w - kbW) / 2
                 val kbY = (h / 2) - kbH
                 
@@ -610,18 +717,37 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 trackpadParams.width = w
                 trackpadParams.height = h / 2
                 
-                // KB: Width 90%, centered horizontal, bottom aligned in bottom half (screen bottom)
+                // KB: Width 90%, centered horizontal, at screen bottom
                 val kbW = (w * 0.9f).toInt()
                 val kbH = (h * 0.4f).toInt()
                 val kbX = (w - kbW) / 2
-                val kbY = h - kbH // Bottom of screen
+                val kbY = h - kbH
                 
                 keyboardOverlay?.setWindowBounds(kbX, kbY, kbW, kbH)
             }
         }
-        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception){} // Don't call saveLayout for presets!
-        showToast("Preset $type Applied")
+                // === OPTIONAL: Use wider scroll bars for split presets ===
+        // When trackpad is smaller (split view), make scroll bars easier to hit
+        if (type == 1 || type == 2) {
+            prefs.prefScrollTouchSize = prefs.prefScrollTouchSize.coerceAtLeast(200) // At least 100px
+            prefs.prefScrollVisualSize = prefs.prefScrollVisualSize.coerceAtLeast(10) // At least 10px visible
+        }
+        // === END OPTIONAL ===
+        // Update trackpad window
+        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception){}
+        
+        // === FIX: Refresh scroll bars after preset resize ===
+        updateScrollSize()
+        updateScrollPosition()
+        updateHandleSize()
+        updateLayoutSizes()
+        // === END FIX ===
+        
+        // Don't call saveLayout for presets - they're temporary
     }
+    // =========================
+    // END PRESETS LOGIC
+    // =========================
     
     fun resetBubblePosition() {
         bubbleParams.x = 50
@@ -636,34 +762,47 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     // =========================
-    // LOAD PREFS - Loads all user preferences from SharedPreferences
-    // Includes anchor mode preference
+// =========================
+    // LOAD PREFS - Loads all preferences from SharedPreferences
     // =========================
     private fun loadPrefs() { 
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f)
         prefs.scrollSpeed = p.getFloat("scroll_speed", 3.0f)
+        prefs.prefTapScroll = p.getBoolean("tap_scroll", true)
+        prefs.prefVibrate = p.getBoolean("vibrate", true)
+        prefs.prefReverseScroll = p.getBoolean("reverse_scroll", true)
         prefs.prefAlpha = p.getInt("alpha", 200)
         prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 200)
+        prefs.prefHandleSize = p.getInt("handle_size", 60)
+        prefs.prefHandleTouchSize = p.getInt("handle_touch_size", 80)
+        prefs.prefVPosLeft = p.getBoolean("v_pos_left", false)
+        prefs.prefHPosTop = p.getBoolean("h_pos_top", false)
+        prefs.prefLocked = p.getBoolean("lock_position", false)
         prefs.prefCursorSize = p.getInt("cursor_size", 50)
+        prefs.prefKeyScale = p.getInt("keyboard_key_scale", 100)
         prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
         prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", true)
         prefs.prefBubbleX = p.getInt("bubble_x", 50)
         prefs.prefBubbleY = p.getInt("bubble_y", 300)
-        prefs.prefAnchored = p.getBoolean("anchored", false)  // NEW: Load anchor mode
+        prefs.prefAnchored = p.getBoolean("anchored", false)
+        prefs.prefBubbleSize = p.getInt("bubble_size", 100)
+        prefs.prefBubbleIconIndex = p.getInt("bubble_icon_index", 0)
+        prefs.prefBubbleAlpha = p.getInt("bubble_alpha", 255)
+        prefs.prefScrollTouchSize = p.getInt("scroll_touch_size", 80)
+        prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 8)
+        
+        // === CRITICAL: Sync scrollZoneThickness with loaded value ===
+        scrollZoneThickness = prefs.prefScrollTouchSize
+        // === END SYNC ===
+        
         // Reset handles if corrupted or first run
         if (prefs.prefHandleSize > 300) prefs.prefHandleSize = 60
         if (prefs.prefHandleTouchSize > 300) prefs.prefHandleTouchSize = 80
     }
     // =========================
     // END LOAD PREFS
-    // =========================
-
-    
-    // =========================
-    // SAVE PREFS - Saves all user preferences to SharedPreferences
-    // Includes anchor mode preference
-    // =========================
+    // =========================    
     private fun savePrefs() { 
         val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
         e.putFloat("cursor_speed", prefs.cursorSpeed)
@@ -674,6 +813,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         e.putInt("bubble_x", prefs.prefBubbleX)
         e.putInt("bubble_y", prefs.prefBubbleY)
         e.putBoolean("anchored", prefs.prefAnchored)  // NEW: Save anchor mode
+        e.putInt("bubble_size", prefs.prefBubbleSize)
+        e.putInt("bubble_icon_index", prefs.prefBubbleIconIndex)
+        e.putInt("bubble_alpha", prefs.prefBubbleAlpha)
+        e.putInt("scroll_touch_size", prefs.prefScrollTouchSize)
+        e.putInt("scroll_visual_size", prefs.prefScrollVisualSize)
         e.apply() 
     }
     // =========================
@@ -764,10 +908,203 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun updateUiMetrics() { val display = displayManager?.getDisplay(currentDisplayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); uiScreenWidth = metrics.widthPixels; uiScreenHeight = metrics.heightPixels }
     private fun createTrackpadDisplayContext(display: Display): Context { return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) createDisplayContext(display).createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null) else createDisplayContext(display) }
     private fun addHandle(context: Context, gravity: Int, color: Int, onTouch: (View, MotionEvent) -> Boolean) { val container = FrameLayout(context); val p = FrameLayout.LayoutParams(prefs.prefHandleTouchSize, prefs.prefHandleTouchSize); p.gravity = gravity; val visual = View(context); val bg = GradientDrawable(); bg.setColor(color); bg.cornerRadius = 15f; visual.background = bg; val vp = FrameLayout.LayoutParams(prefs.prefHandleSize, prefs.prefHandleSize); vp.gravity = Gravity.CENTER; container.addView(visual, vp); handleContainers.add(container); handleVisuals.add(visual); trackpadLayout?.addView(container, p); container.setOnTouchListener { v, e -> onTouch(v, e) } }
-    private fun addScrollBars(context: Context) { val margin = prefs.prefHandleTouchSize + 10; vScrollContainer = FrameLayout(context); val vp = FrameLayout.LayoutParams(prefs.prefScrollTouchSize, FrameLayout.LayoutParams.MATCH_PARENT); vp.gravity = if (prefs.prefVPosLeft) Gravity.LEFT else Gravity.RIGHT; vp.setMargins(0, margin, 0, margin); trackpadLayout?.addView(vScrollContainer, vp); vScrollVisual = View(context); vScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt()); vScrollContainer?.addView(vScrollVisual, FrameLayout.LayoutParams(prefs.prefScrollVisualSize, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER)); hScrollContainer = FrameLayout(context); val hp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefs.prefScrollTouchSize); hp.gravity = if (prefs.prefHPosTop) Gravity.TOP else Gravity.BOTTOM; hp.setMargins(margin, 0, margin, 0); trackpadLayout?.addView(hScrollContainer, hp); hScrollVisual = View(context); hScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt()); hScrollContainer?.addView(hScrollVisual, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefs.prefScrollVisualSize, Gravity.CENTER)) }
+    // =========================
+    // ADD SCROLL BARS - Creates visual scroll bar overlays with touch handlers
+    // Touch handlers consume events to prevent trackpad from receiving them
+    // =========================
+    private fun addScrollBars(context: Context) {
+        val margin = prefs.prefHandleTouchSize + 10
+        
+        // --- Vertical Scroll Bar ---
+        vScrollContainer = FrameLayout(context)
+        val vp = FrameLayout.LayoutParams(prefs.prefScrollTouchSize, FrameLayout.LayoutParams.MATCH_PARENT)
+        vp.gravity = if (prefs.prefVPosLeft) Gravity.LEFT else Gravity.RIGHT
+        vp.setMargins(0, margin, 0, margin)
+        trackpadLayout?.addView(vScrollContainer, vp)
+        
+        vScrollVisual = View(context)
+        vScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt())
+        vScrollContainer?.addView(vScrollVisual, FrameLayout.LayoutParams(prefs.prefScrollVisualSize, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        
+        // Touch listener for vertical scroll - MUST return true to consume event
+        vScrollContainer?.setOnTouchListener { _, event ->
+            handleVScrollTouch(event)
+            true  // Always consume to prevent trackpad from getting the touch
+        }
+        
+        // --- Horizontal Scroll Bar ---
+        hScrollContainer = FrameLayout(context)
+        val hp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefs.prefScrollTouchSize)
+        hp.gravity = if (prefs.prefHPosTop) Gravity.TOP else Gravity.BOTTOM
+        hp.setMargins(margin, 0, margin, 0)
+        trackpadLayout?.addView(hScrollContainer, hp)
+        
+        hScrollVisual = View(context)
+        hScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt())
+        hScrollContainer?.addView(hScrollVisual, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, prefs.prefScrollVisualSize, Gravity.CENTER))
+        
+        // Touch listener for horizontal scroll - MUST return true to consume event
+        hScrollContainer?.setOnTouchListener { _, event ->
+            handleHScrollTouch(event)
+            true  // Always consume to prevent trackpad from getting the touch
+        }
+    }
+    // =========================
+    // END ADD SCROLL BARS
+    // =========================
+
+    // =========================
+    // HANDLE V SCROLL TOUCH - Dedicated vertical scroll bar touch handler
+    // Consumes all touches in the scroll bar area
+    // =========================
+    private fun handleVScrollTouch(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isVScrolling = true
+                lastTouchY = event.y
+                scrollAccumulatorY = 0f
+                vScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt())  // Highlight active
+                
+                if (prefs.prefTapScroll) {
+                    // Tap mode: instant scroll based on tap position
+                    val viewHeight = vScrollContainer?.height ?: return
+                    val isTopHalf = event.y < (viewHeight / 2)
+                    val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                    val dy = if (isTopHalf) {
+                        if (prefs.prefReverseScroll) -dist else dist
+                    } else {
+                        if (prefs.prefReverseScroll) dist else -dist
+                    }
+                    performSwipe(0f, dy)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (isVScrolling && !prefs.prefTapScroll) {
+                    // Drag mode: continuous scroll
+                    val dy = event.y - lastTouchY
+                    scrollAccumulatorY += dy * prefs.scrollSpeed
+                    
+                    val scrollThreshold = 30f
+                    if (kotlin.math.abs(scrollAccumulatorY) > scrollThreshold) {
+                        val scrollDist = scrollAccumulatorY * 2
+                        val actualDy = if (prefs.prefReverseScroll) -scrollDist else scrollDist
+                        performSwipe(0f, actualDy)
+                        scrollAccumulatorY = 0f
+                    }
+                    lastTouchY = event.y
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isVScrolling = false
+                scrollAccumulatorY = 0f
+                vScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt())  // Reset color
+            }
+        }
+    }
+    // =========================
+    // END HANDLE V SCROLL TOUCH
+    // =========================
+    
+    // =========================
+    // HANDLE H SCROLL TOUCH - Dedicated horizontal scroll bar touch handler
+    // Consumes all touches in the scroll bar area
+    // =========================
+    private fun handleHScrollTouch(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isHScrolling = true
+                lastTouchX = event.x
+                scrollAccumulatorX = 0f
+                hScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt())  // Highlight active
+                
+                if (prefs.prefTapScroll) {
+                    // Tap mode: instant scroll based on tap position
+                    val viewWidth = hScrollContainer?.width ?: return
+                    val isLeftHalf = event.x < (viewWidth / 2)
+                    val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                    val dx = if (isLeftHalf) {
+                        if (prefs.prefReverseScroll) -dist else dist
+                    } else {
+                        if (prefs.prefReverseScroll) dist else -dist
+                    }
+                    performSwipe(dx, 0f)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (isHScrolling && !prefs.prefTapScroll) {
+                    // Drag mode: continuous scroll
+                    val dx = event.x - lastTouchX
+                    scrollAccumulatorX += dx * prefs.scrollSpeed
+                    
+                    val scrollThreshold = 30f
+                    if (kotlin.math.abs(scrollAccumulatorX) > scrollThreshold) {
+                        val scrollDist = scrollAccumulatorX * 2
+                        val actualDx = if (prefs.prefReverseScroll) -scrollDist else scrollDist
+                        performSwipe(actualDx, 0f)
+                        scrollAccumulatorX = 0f
+                    }
+                    lastTouchX = event.x
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isHScrolling = false
+                scrollAccumulatorX = 0f
+                hScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt())  // Reset color
+            }
+        }
+    }
+    // =========================
+    // END HANDLE H SCROLL TOUCH
+    // =========================
     private fun updateScrollPosition() { val margin = prefs.prefHandleTouchSize + 10; vScrollContainer?.let { container -> val vp = container.layoutParams as FrameLayout.LayoutParams; vp.gravity = if (prefs.prefVPosLeft) Gravity.LEFT else Gravity.RIGHT; vp.setMargins(0, margin, 0, margin); container.layoutParams = vp }; hScrollContainer?.let { container -> val hp = container.layoutParams as FrameLayout.LayoutParams; hp.gravity = if (prefs.prefHPosTop) Gravity.TOP else Gravity.BOTTOM; hp.setMargins(margin, 0, margin, 0); container.layoutParams = hp } }
     private fun updateHandleSize() { for (v in handleVisuals) { val p = v.layoutParams; p.width = prefs.prefHandleSize; p.height = prefs.prefHandleSize; v.layoutParams = p } }
-    private fun updateLayoutSizes() { for (c in handleContainers) { val p = c.layoutParams; p.width = prefs.prefHandleTouchSize; p.height = prefs.prefHandleTouchSize; c.layoutParams = p } }
+     // =========================
+    // UPDATE SCROLL SIZE - Updates scrollbar touch and visual widths
+    // Called when user adjusts the Scroll Bar Width slider
+    // MIN/MAX values can be adjusted here for fine-tuning
+    // =========================
+    private fun updateScrollSize() {
+        val SCROLL_TOUCH_MIN = 40
+        val SCROLL_TOUCH_MAX = 180
+        val SCROLL_VISUAL_MIN = 4
+        val SCROLL_VISUAL_MAX = 20
+        
+        prefs.prefScrollTouchSize = prefs.prefScrollTouchSize.coerceIn(SCROLL_TOUCH_MIN, SCROLL_TOUCH_MAX)
+        prefs.prefScrollVisualSize = prefs.prefScrollVisualSize.coerceIn(SCROLL_VISUAL_MIN, SCROLL_VISUAL_MAX)
+        
+        // === CRITICAL: Sync the touch detection variable ===
+        scrollZoneThickness = prefs.prefScrollTouchSize
+        // === END SYNC ===
+        
+        // Update vertical scroll bar
+        vScrollContainer?.let { container ->
+            val params = container.layoutParams as? FrameLayout.LayoutParams
+            params?.width = prefs.prefScrollTouchSize
+            container.layoutParams = params
+        }
+
+        vScrollVisual?.let { visual ->
+            val params = visual.layoutParams as? FrameLayout.LayoutParams
+            params?.width = prefs.prefScrollVisualSize
+            visual.layoutParams = params
+        }
+        
+        // Update horizontal scroll bar
+        hScrollContainer?.let { container ->
+            val params = container.layoutParams as? FrameLayout.LayoutParams
+            params?.height = prefs.prefScrollTouchSize
+            container.layoutParams = params
+        }
+        hScrollVisual?.let { visual ->
+            val params = visual.layoutParams as? FrameLayout.LayoutParams
+            params?.height = prefs.prefScrollVisualSize
+            visual.layoutParams = params
+        }
+    }
+    // =========================
+    // END UPDATE SCROLL SIZE
+    // =========================
+   private fun updateLayoutSizes() { for (c in handleContainers) { val p = c.layoutParams; p.width = prefs.prefHandleTouchSize; p.height = prefs.prefHandleTouchSize; c.layoutParams = p } }
     private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
     private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor(Color.TRANSPARENT); val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefs.prefAlpha shl 24); bg.setStroke(4, if (highlightAlpha) 0xFF00FF00.toInt() else colorWithAlpha); trackpadLayout?.invalidate() }
     

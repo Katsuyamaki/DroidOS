@@ -34,8 +34,9 @@ class TrackpadMenuManager(
     private val TAB_KB_MOVE = 3
     private val TAB_CONFIG = 4
     private val TAB_TUNE = 5
-    private val TAB_PROFILES = 6
-    private val TAB_HELP = 7
+    private val TAB_BUBBLE = 6      // NEW
+    private val TAB_PROFILES = 7
+    private val TAB_HELP = 8
     
     private var currentTab = TAB_MAIN
 
@@ -80,6 +81,7 @@ class TrackpadMenuManager(
             R.id.tab_config to TAB_CONFIG,
             R.id.tab_tune to TAB_TUNE,
             R.id.tab_profiles to TAB_PROFILES,
+            R.id.tab_bubble to TAB_BUBBLE,      // NEW
             R.id.tab_help to TAB_HELP
         )
 
@@ -122,6 +124,7 @@ class TrackpadMenuManager(
             TAB_KB_MOVE -> getMoveItems(true)
             TAB_CONFIG -> getConfigItems()
             TAB_TUNE -> getTuneItems()
+            TAB_BUBBLE -> getBubbleItems()      // NEW
             TAB_PROFILES -> getProfileItems()
             TAB_HELP -> getHelpItems()
             else -> emptyList()
@@ -131,7 +134,7 @@ class TrackpadMenuManager(
     }
 
     private fun updateTabIcons(activeIdx: Int) {
-        val tabIds = listOf(R.id.tab_main, R.id.tab_presets, R.id.tab_move, R.id.tab_kb_move, R.id.tab_config, R.id.tab_tune, R.id.tab_profiles, R.id.tab_help)
+        val tabIds = listOf(R.id.tab_main, R.id.tab_presets, R.id.tab_move, R.id.tab_kb_move, R.id.tab_config, R.id.tab_tune, R.id.tab_bubble, R.id.tab_profiles, R.id.tab_help)
         for ((i, id) in tabIds.withIndex()) {
             val view = drawerView?.findViewById<ImageView>(id)
             if (i == activeIdx) view?.setColorFilter(Color.parseColor("#3DDC84")) 
@@ -179,13 +182,20 @@ class TrackpadMenuManager(
 
 
     
+// =========================
+    // GET PRESET ITEMS - Layout presets for split screen modes
+    // Freeform (type 0) loads saved profile, NOT a split preset
+    // =========================
     private fun getPresetItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         list.add(TrackpadMenuAdapter.MenuItem("SPLIT SCREEN PRESETS", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.INFO))
+        
+        // Freeform FIRST - this loads the saved profile (not a split preset)
         list.add(TrackpadMenuAdapter.MenuItem("Freeform (Use Profile)", android.R.drawable.ic_menu_edit, TrackpadMenuAdapter.Type.ACTION) { 
             service.applyLayoutPreset(0)
             hide()
         })
+        
         list.add(TrackpadMenuAdapter.MenuItem("KB Top / TP Bottom", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
             service.applyLayoutPreset(1)
             hide()
@@ -196,7 +206,9 @@ class TrackpadMenuManager(
         })
         return list
     }
-
+    // =========================
+    // END GET PRESET ITEMS
+    // =========================
     private fun getMoveItems(isKeyboard: Boolean): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         val target = if (isKeyboard) "Keyboard" else "Trackpad"
@@ -253,7 +265,8 @@ class TrackpadMenuManager(
         
         list.add(TrackpadMenuAdapter.MenuItem("Trackpad Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha) { v -> service.updatePref("alpha", v) })
         
-        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        // Scroll Bar Width: min 40, max 180 (3x of base 60)
+        list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize) { v -> service.updatePref("scroll_size", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Reverse Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefReverseScroll) 1 else 0) { v -> service.updatePref("reverse_scroll", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Tap to Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefTapScroll) 1 else 0) { v -> service.updatePref("tap_scroll", v) })
@@ -278,6 +291,47 @@ class TrackpadMenuManager(
     }
     // =========================
     // END GET TUNE ITEMS
+    // =========================
+
+
+    // =========================
+    // GET BUBBLE ITEMS - Bubble launcher customization
+    // Size slider, Icon cycle, Opacity slider
+    // =========================
+    private fun getBubbleItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        // Info header
+        list.add(TrackpadMenuAdapter.MenuItem("BUBBLE CUSTOMIZATION", android.R.drawable.ic_menu_info_details, TrackpadMenuAdapter.Type.INFO))
+        
+        // Size slider: 50-200 (50=half, 100=standard, 200=double)
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleSize) { v ->
+            service.updatePref("bubble_size", v)
+        })
+        
+        // Icon cycle action
+        val iconNames = arrayOf("Trackpad", "Cursor", "Main", "Keyboard", "Compass", "Location")
+        val currentIconName = iconNames.getOrElse(p.prefBubbleIconIndex) { "Default" }
+        list.add(TrackpadMenuAdapter.MenuItem("Icon: $currentIconName", android.R.drawable.ic_menu_gallery, TrackpadMenuAdapter.Type.ACTION) { 
+            service.updatePref("bubble_icon", true)
+            loadTab(TAB_BUBBLE) // Refresh to show new icon name
+        })
+        
+        // Opacity slider: 50-255
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleAlpha) { v ->
+            service.updatePref("bubble_alpha", v)
+        })
+        
+        // Reset button
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_revert, TrackpadMenuAdapter.Type.ACTION) { 
+            service.resetBubblePosition()
+        })
+        
+        return list
+    }
+    // =========================
+    // END GET BUBBLE ITEMS
     // =========================
 
     private fun getProfileItems(): List<TrackpadMenuAdapter.MenuItem> {
