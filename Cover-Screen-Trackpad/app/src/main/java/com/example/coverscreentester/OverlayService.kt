@@ -175,6 +175,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var highlightAlpha = false
     private var highlightHandles = false
     private var highlightScrolls = false
+    // =========================
+    // TOUCH TIMING VARIABLES - For click detection and release debounce
+    // =========================
+    private var touchDownTime: Long = 0L          // When finger touched down
+    private var touchDownX: Float = 0f            // Where finger touched down (X)
+    private var touchDownY: Float = 0f            // Where finger touched down (Y)
+    private var isReleaseDebouncing = false       // True during post-release cooldown
+    private val releaseDebounceRunnable = Runnable { isReleaseDebouncing = false }
+    
+    // === FINE TUNING: Adjust these for click sensitivity ===
+    private val TAP_TIMEOUT_MS = 300L             // Max time for tap (ms) - longer = click
+    private val TAP_SLOP_PX = 15f                 // Max movement for tap (px) - more = drag
+    private val RELEASE_DEBOUNCE_MS = 50L         // Cooldown after release (ms)
+    // === END FINE TUNING ===
+    // =========================
+    // END TOUCH TIMING VARIABLES
+    // =========================
 
     // Scroll zone touch detection thickness (synced with prefScrollTouchSize)
     private var scrollZoneThickness = 80
@@ -458,12 +475,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         trackpadParams.gravity = Gravity.TOP or Gravity.LEFT; loadLayout()
         val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() { 
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { 
-                if (!isTouchDragging && !isLeftKeyHeld && !isRightKeyHeld && !isVScrolling && !isHScrolling) {
-                    performClick(false)
-                }
-                return true 
-            } 
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // Let handleTrackpadTouch handle clicks
+                return false
+            }
+ 
         })
         
         trackpadLayout?.setOnTouchListener { _, event -> val devId = event.deviceId; val tool = event.getToolType(0); if (tool != MotionEvent.TOOL_TYPE_FINGER) return@setOnTouchListener false; when (event.actionMasked) { MotionEvent.ACTION_DOWN -> activeFingerDeviceId = devId; MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> { if (activeFingerDeviceId > 0 && devId != activeFingerDeviceId) return@setOnTouchListener false } }; gestureDetector.onTouchEvent(event); handleTrackpadTouch(event); true }
@@ -1128,79 +1144,145 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }.start()
     }
 
-    private fun handleTrackpadTouch(event: MotionEvent) {
-         val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
-         when (event.actionMasked) {
-             MotionEvent.ACTION_DOWN -> {
-                 lastTouchX = event.x; lastTouchY = event.y; isTouchDragging = false; handler.postDelayed(longPressRunnable, 400)
-                 val actualZoneV = min(scrollZoneThickness, (viewWidth * 0.15f).toInt()); val actualZoneH = min(scrollZoneThickness, (viewHeight * 0.15f).toInt())
-                 val inVZone = if (prefs.prefVPosLeft) event.x < actualZoneV else event.x > (viewWidth - actualZoneV); val inHZone = if (prefs.prefHPosTop) event.y < actualZoneH else event.y > (viewHeight - actualZoneH)
-                 
-                 // --- SCROLL ZONE LOGIC ---
-                 if (inVZone) {
-                     if (prefs.prefTapScroll) { // GESTURE
-                         val isTopHalf = event.y < (viewHeight / 2)
-                         val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
-                         val dy = if (isTopHalf) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist)
-                         performSwipe(0f, dy)
-                         ignoreTouchSequence = true
-                         return
-                     } else { // WHEEL
-                         isVScrolling = true
-                         updateBorderColor(0xFF00FFFF.toInt())
-                     }
-                 } else if (inHZone) {
-                     if (prefs.prefTapScroll) { // GESTURE
-                         val isLeftHalf = event.x < (viewWidth / 2)
-                         val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
-                         val dx = if (isLeftHalf) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist)
-                         performSwipe(dx, 0f)
-                         ignoreTouchSequence = true
-                         return
-                     } else { // WHEEL
-                         isHScrolling = true
-                         updateBorderColor(0xFF00FFFF.toInt())
-                     }
-                 }
-             }
-             MotionEvent.ACTION_MOVE -> {
-                 if (ignoreTouchSequence) return
-                 
-                 val rawDx = (event.x - lastTouchX); val rawDy = (event.y - lastTouchY); val dx = rawDx * prefs.cursorSpeed; val dy = rawDy * prefs.cursorSpeed
-                 if (!isTouchDragging && (abs(rawDx) > 20 || abs(rawDy) > 20)) handler.removeCallbacks(longPressRunnable)
-                 
-                 if (isVScrolling) {
-                     scrollAccumulatorY += (event.y - lastTouchY) * prefs.scrollSpeed
-                     if (abs(scrollAccumulatorY) > SCROLL_THRESHOLD) {
-                         val vScrollAmount = if (prefs.prefReverseScroll) scrollAccumulatorY else -scrollAccumulatorY
-                         injectScroll(0f, vScrollAmount / 10f) 
-                         scrollAccumulatorY = 0f
-                     }
-                 } else if (isHScrolling) {
-                     scrollAccumulatorX += (event.x - lastTouchX) * prefs.scrollSpeed
-                     if (abs(scrollAccumulatorX) > SCROLL_THRESHOLD) {
-                         val hScrollAmount = if (prefs.prefReverseScroll) scrollAccumulatorX else -scrollAccumulatorX
-                         injectScroll(hScrollAmount / 10f, 0f)
-                         scrollAccumulatorX = 0f
-                     }
-                 } else {
-                    val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat(); val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
-                    var finalDx = dx; var finalDy = dy
-                    when (rotationAngle) { 90 -> { finalDx = -dy; finalDy = dx }; 180 -> { finalDx = -dx; finalDy = -dy } }
-                    cursorX = (cursorX + finalDx).coerceIn(0f, safeW); cursorY = (cursorY + finalDy).coerceIn(0f, safeH)
-                    if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){} } 
-                    else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} }
-                    if (isTouchDragging) injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis())
-                    else injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
-                 }
-                 lastTouchX = event.x; lastTouchY = event.y
-             }
-             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                 handler.removeCallbacks(longPressRunnable); if (isTouchDragging) injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis()); isTouchDragging = false; isVScrolling = false; isHScrolling = false; ignoreTouchSequence = false; updateBorderColor(currentBorderColor)
-             }
-         }
-    }
     
+    // =========================
+    // HANDLE TRACKPAD TOUCH - Main touch event handler
+    // Click logic: Only click on short tap with minimal movement
+    // Drag logic: Long press OR significant movement starts drag
+    // Release debounce: Brief cooldown prevents phantom cursor movement
+    // =========================
+    private fun handleTrackpadTouch(event: MotionEvent) {
+        val viewWidth = trackpadLayout?.width ?: 0
+        val viewHeight = trackpadLayout?.height ?: 0
+        if (viewWidth == 0 || viewHeight == 0) return
+        
+        // Skip input during release debounce period
+        if (isReleaseDebouncing && event.actionMasked != MotionEvent.ACTION_DOWN) {
+            return
+        }
+        
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Cancel any active debounce
+                handler.removeCallbacks(releaseDebounceRunnable)
+                isReleaseDebouncing = false
+                
+                // Record touch start position and time
+                touchDownTime = SystemClock.uptimeMillis()
+                touchDownX = event.x
+                touchDownY = event.y
+                lastTouchX = event.x
+                lastTouchY = event.y
+                isTouchDragging = false
+                
+                // Check scroll zones first
+                val actualZoneV = kotlin.math.min(scrollZoneThickness, (viewWidth * 0.15f).toInt())
+                val actualZoneH = kotlin.math.min(scrollZoneThickness, (viewHeight * 0.15f).toInt())
+                val inVZone = if (prefs.prefVPosLeft) event.x < actualZoneV else event.x > (viewWidth - actualZoneV)
+                val inHZone = if (prefs.prefHPosTop) event.y < actualZoneH else event.y > (viewHeight - actualZoneH)
+                
+                if (inVZone || inHZone) {
+                    // Touch is in scroll zone - let scroll handlers deal with it
+                    ignoreTouchSequence = true
+                    return
+                }
+                
+                // Schedule long press for DRAG (not click)
+                handler.postDelayed(longPressRunnable, 400)
+            }
+            
+            MotionEvent.ACTION_MOVE -> {
+                if (ignoreTouchSequence) return
+                
+                // Calculate movement from touch DOWN position (not last position)
+                val totalDx = event.x - touchDownX
+                val totalDy = event.y - touchDownY
+                val totalDistance = kotlin.math.sqrt(totalDx * totalDx + totalDy * totalDy)
+                
+                // If moved beyond tap threshold, this is now a cursor move (not a tap)
+                if (totalDistance > TAP_SLOP_PX) {
+                    // Cancel long press - movement detected
+                    handler.removeCallbacks(longPressRunnable)
+                }
+                
+                // Calculate delta from LAST position for cursor movement
+                val dx = (event.x - lastTouchX) * prefs.cursorSpeed
+                val dy = (event.y - lastTouchY) * prefs.cursorSpeed
+                
+                val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
+                val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
+                
+                var finalDx = dx
+                var finalDy = dy
+                when (rotationAngle) {
+                    90 -> { finalDx = -dy; finalDy = dx }
+                    180 -> { finalDx = -dx; finalDy = -dy }
+                    270 -> { finalDx = dy; finalDy = -dx }
+                }
+                
+                cursorX = (cursorX + finalDx).coerceIn(0f, safeW)
+                cursorY = (cursorY + finalDy).coerceIn(0f, safeH)
+                
+                // Update cursor visual
+                if (inputTargetDisplayId == currentDisplayId) {
+                    cursorParams.x = cursorX.toInt()
+                    cursorParams.y = cursorY.toInt()
+                    try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {}
+                } else {
+                    remoteCursorParams.x = cursorX.toInt()
+                    remoteCursorParams.y = cursorY.toInt()
+                    try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+                }
+                
+                // Inject appropriate event
+                if (isTouchDragging) {
+                    injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis())
+                } else {
+                    injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
+                }
+                
+                lastTouchX = event.x
+                lastTouchY = event.y
+            }
+            
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPressRunnable)
+                
+                if (!ignoreTouchSequence) {
+                    val touchDuration = SystemClock.uptimeMillis() - touchDownTime
+                    val totalDx = event.x - touchDownX
+                    val totalDy = event.y - touchDownY
+                    val totalDistance = kotlin.math.sqrt(totalDx * totalDx + totalDy * totalDy)
+                    
+                    if (isTouchDragging) {
+                        // End drag
+                        injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis())
+                        isTouchDragging = false
+                        hasSentTouchDown = false
+                    } else if (touchDuration < TAP_TIMEOUT_MS && totalDistance < TAP_SLOP_PX) {
+                        // This was a TAP - perform click
+                        performClick(false)
+                    }
+                    // Else: Long touch without drag, or moved too much - no click
+                }
+                
+                // Start release debounce
+                isReleaseDebouncing = true
+                handler.postDelayed(releaseDebounceRunnable, RELEASE_DEBOUNCE_MS)
+                
+                // Reset state
+                isTouchDragging = false
+                isVScrolling = false
+                isHScrolling = false
+                ignoreTouchSequence = false
+                updateBorderColor(currentBorderColor)
+            }
+        }
+    }
+    // =========================
+    // END HANDLE TRACKPAD TOUCH
+    // =========================
+
     // =========================
     // MOVE WINDOW - Handles trackpad overlay position drag
     // Returns early if anchored to prevent accidental movement
@@ -1263,7 +1345,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
     private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
     private fun removeRemoteCursor() { try { if (remoteCursorLayout != null && remoteWindowManager != null) { remoteWindowManager?.removeView(remoteCursorLayout) } } catch (e: Exception) {}; remoteCursorLayout = null; remoteCursorView = null; remoteWindowManager = null }
-    private fun startTouchDrag() { isTouchDragging = true; vibrate(); updateBorderColor(0xFF00FF00.toInt()); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis()) }
+    // =========================
+    // START TOUCH DRAG - Called by longPressRunnable after 400ms hold
+    // Initiates drag mode with touch injection
+    // =========================
+    private fun startTouchDrag() {
+        if (ignoreTouchSequence || isTouchDragging) return
+        
+        isTouchDragging = true
+        dragDownTime = SystemClock.uptimeMillis()
+        
+        // Inject touch down at current cursor position
+        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+        hasSentTouchDown = true
+        
+        // Visual feedback
+        if (prefs.prefVibrate) vibrate()
+        updateBorderColor(0xFFFF9900.toInt())  // Orange = drag mode
+    }
+    // =========================
+    // END START TOUCH DRAG
+    // =========================
+
     private fun startResize() {}
     private fun startMove() {}
     private fun startKeyDrag(button: Int) { vibrate(); updateBorderColor(0xFF00FF00.toInt()); dragDownTime = SystemClock.uptimeMillis(); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime); hasSentMouseDown = true }
