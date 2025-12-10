@@ -23,6 +23,9 @@ class TrackpadMenuManager(
     private var recyclerView: RecyclerView? = null
     private var drawerParams: WindowManager.LayoutParams? = null
     private var isVisible = false
+    
+    // Manual Adjust State
+    private var isResizeMode = false // Default to Move Mode
 
     // Tab Constants
     private val TAB_MAIN = 0
@@ -82,7 +85,6 @@ class TrackpadMenuManager(
 
         for ((id, index) in tabs) {
             drawerView?.findViewById<ImageView>(id)?.setOnClickListener { 
-                // Removed vibrate() call here
                 loadTab(index) 
             }
         }
@@ -140,11 +142,16 @@ class TrackpadMenuManager(
     private fun getMainItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         list.add(TrackpadMenuAdapter.MenuItem("Shizuku Status", android.R.drawable.ic_dialog_info, TrackpadMenuAdapter.Type.INFO)) 
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
+            service.resetBubblePosition()
+            hide()
+        })
+        
         list.add(TrackpadMenuAdapter.MenuItem("Move Trackpad Here", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { service.forceMoveToCurrentDisplay(); hide() })
         list.add(TrackpadMenuAdapter.MenuItem("Target: ${if(service.inputTargetDisplayId == service.currentDisplayId) "Local" else "Remote"}", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN) })
         list.add(TrackpadMenuAdapter.MenuItem("Toggle Keyboard", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { service.toggleCustomKeyboard() })
         list.add(TrackpadMenuAdapter.MenuItem("Reset Cursor", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.resetCursorCenter() })
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { service.resetBubblePosition() })
         list.add(TrackpadMenuAdapter.MenuItem("Hide App", android.R.drawable.ic_menu_close_clear_cancel, TrackpadMenuAdapter.Type.ACTION) { service.hideApp() })
         list.add(TrackpadMenuAdapter.MenuItem("Force Kill Service", android.R.drawable.ic_delete, TrackpadMenuAdapter.Type.ACTION) { service.forceExit() })
         return list
@@ -153,9 +160,18 @@ class TrackpadMenuManager(
     private fun getPresetItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         list.add(TrackpadMenuAdapter.MenuItem("SPLIT SCREEN PRESETS", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.INFO))
-        list.add(TrackpadMenuAdapter.MenuItem("Freeform (Use Profile)", android.R.drawable.ic_menu_edit, TrackpadMenuAdapter.Type.ACTION) { service.applyLayoutPreset(0) })
-        list.add(TrackpadMenuAdapter.MenuItem("KB Top / TP Bottom", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { service.applyLayoutPreset(1) })
-        list.add(TrackpadMenuAdapter.MenuItem("TP Top / KB Bottom", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { service.applyLayoutPreset(2) })
+        list.add(TrackpadMenuAdapter.MenuItem("Freeform (Use Profile)", android.R.drawable.ic_menu_edit, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(0)
+            hide()
+        })
+        list.add(TrackpadMenuAdapter.MenuItem("KB Top / TP Bottom", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(1)
+            hide()
+        })
+        list.add(TrackpadMenuAdapter.MenuItem("TP Top / KB Bottom", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(2)
+            hide()
+        })
         return list
     }
 
@@ -163,18 +179,41 @@ class TrackpadMenuManager(
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         val target = if (isKeyboard) "Keyboard" else "Trackpad"
         
-        list.add(TrackpadMenuAdapter.MenuItem("$target Position", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
-            val step = 10
+        // 1. Mode Switcher (Toggle Item)
+        val modeText = if (isResizeMode) "Resize (Size)" else "Position (Move)"
+        val modeIcon = if (isResizeMode) android.R.drawable.ic_menu_crop else android.R.drawable.ic_menu_mylocation
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Mode: $modeText", modeIcon, TrackpadMenuAdapter.Type.ACTION) {
+            isResizeMode = !isResizeMode
+            loadTab(currentTab) // Refresh UI to update text
+        })
+        
+        // 2. The D-Pad
+        val actionText = if (isResizeMode) "Resize" else "Move"
+        list.add(TrackpadMenuAdapter.MenuItem("$target $actionText", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
+            val step = 20
             val command = cmd as String
+            
+            // isResizeMode determines whether we move X/Y or change W/H
             when(command) {
-                "UP" -> service.manualAdjust(isKeyboard, false, 0, -step)
-                "DOWN" -> service.manualAdjust(isKeyboard, false, 0, step)
-                "LEFT" -> service.manualAdjust(isKeyboard, false, -step, 0)
-                "RIGHT" -> service.manualAdjust(isKeyboard, false, step, 0)
+                "UP" -> service.manualAdjust(isKeyboard, isResizeMode, 0, -step)
+                "DOWN" -> service.manualAdjust(isKeyboard, isResizeMode, 0, step)
+                "LEFT" -> service.manualAdjust(isKeyboard, isResizeMode, -step, 0)
+                "RIGHT" -> service.manualAdjust(isKeyboard, isResizeMode, step, 0)
                 "CENTER" -> service.resetTrackpadPosition()
             }
         })
-        list.add(TrackpadMenuAdapter.MenuItem("Rotate 90°", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.performRotation() })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Rotate 90°", android.R.drawable.ic_menu_rotate, 
+            TrackpadMenuAdapter.Type.ACTION) { service.performRotation() })
+            
+        if (isKeyboard) {
+            val p = service.prefs
+            list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha) { v ->
+                service.updatePref("keyboard_alpha", v)
+            })
+        }
+            
         return list
     }
 

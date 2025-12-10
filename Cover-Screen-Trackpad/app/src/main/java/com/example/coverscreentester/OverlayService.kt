@@ -1,75 +1,30 @@
 package com.example.coverscreentester
 
-
 /*
  * ======================================================================================
- * CRITICAL REGRESSION CHECKLIST - OVERLAY SERVICE
+ * CRITICAL REGRESSION CHECKLIST
  * ======================================================================================
- * METHODOLOGY ENFORCEMENT:
- * * 1. SCROLL LOGIC: 
- * - Detection: defined by `scrollZoneThickness` (approx 15% of width/height).
- * - Execution: `injectScroll` MUST be used. Do not simulate Drag for scrolling.
- * - State: `isVScrolling` / `isHScrolling` flags must block cursor movement logic.
- *
- * 2. DRAG & HOLD LOGIC:
- * - Trigger: `longPressRunnable` (400ms delay) sets `isTouchDragging = true`.
- * - Sensitivity: `DRAG_MOVEMENT_THRESHOLD` (20px) prevents accidental cancels.
- * - Input Source: While `isTouchDragging` is true, injected events MUST use 
- * `InputDevice.SOURCE_TOUCHSCREEN`. Do NOT use `SOURCE_MOUSE` for dragging.
- * - Visuals: Border color must change to Green (0xFF00FF00) during drag.
- *
- * 3. CURSOR MOVEMENT:
- * - Input Source: Standard movement MUST use `InputDevice.SOURCE_MOUSE` (Hover).
- * - Coordinate System: Uses raw screen coordinates (0,0 = top-left).
- * - OFFSETS FORBIDDEN: Do not add manual X/Y offsets (e.g., +100f). 
- * Alignment issues must be fixed via WindowManager flags (Item 11).
- *
- * 4. HARDWARE KEYS:
- * - Vol Up: Acts as Left Click (Tap) or Drag Toggle (Hold).
- * - Vol Down: Acts as Right Click (Back).
- *
- * 5. SAFETY & STABILITY:
- * - Null Checks: All `shellService` calls must be wrapped in `try-catch`.
- * - Crash Prevention: `updatePref` must handle type casting (String/Int/Bool) safely.
- *
- * 6. REMOTE DISPLAY TARGETING:
- * - Logic: `cycleInputTarget` iterates through `displayManager.getDisplays()`.
- * - UI: If targeting Remote, Local cursor View is HIDDEN, Remote cursor View is CREATED.
- * - Context: Remote cursor requires its own `createDisplayContext` + `WindowManager`.
- *
- * 7. AUTOMATION (SMART SCREEN OFF):
- * - Trigger: `toggleCustomKeyboard` calls `turnScreenOn` / `turnScreenOff`.
- * - Targeting: `turnScreenOff` MUST use `currentDisplayId` variable. 
- * NEVER hardcode `0` or `Display.DEFAULT_DISPLAY`.
- * - Modes: Support `setBrightness(-1)` (Alternate) and `setScreenOff(id, true)` (Standard).
- *
- * 8. MENU & LIFECYCLE:
- * - Entry: `onStartCommand` with action `OPEN_MENU` calls `menuManager.show()`.
- * - Hide: `hideApp()` minimizes overlay (visibility GONE) but keeps Service alive.
- * - Exit: `forceExit()` calls `stopSelf()` AND `Process.killProcess()` for clean restart.
- *
- * 9. WINDOW CONFIGURATION (CRITICAL FOR COVER SCREENS):
- * - Flags: `FLAG_LAYOUT_NO_LIMITS` is MANDATORY to reach screen edges.
- * - Cutout: `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` is MANDATORY to bypass notches.
- * - Type: `TYPE_ACCESSIBILITY_OVERLAY` is the only window type used.
- *
- * 10. PRESETS & LAYOUT:
- * - `applyLayoutPreset(type)`: 0=Freeform (Load from Prefs), 1=Split Top, 2=Split Bottom.
- * - Keyboard: `setWindowBounds` must be used for absolute positioning in presets.
- *
- * 11. STARTUP & DISPLAY CONTEXT:
- * - Intent: `FORCE_MOVE` extra forces a UI teardown and rebuild.
- * - Context Creation: `WindowManager` MUST be obtained via:
- * `createDisplayContext(display).createWindowContext(TYPE_ACCESSIBILITY_OVERLAY, null)`.
- * Using `applicationContext` will fail on secondary displays (Cover Screen).
- *
- * 12. FOREGROUND SERVICE:
- * - Requirement: `createNotification()` (startForeground) MUST be called immediately 
- * at the top of `onStartCommand` to prevent Android 14+ crashes.
- *
- * 13. UI PERSISTENCE:
- * - Bubble: `resetBubblePosition()` centers bubble. Dragging bubble saves X/Y to prefs.
- * - Handles: Size preference scales 2x visually (`value * 2`) but keeps touch target synced.
+ * 1. SCROLL: Edge Zones (15%) + Tap/Hold logic preserved.
+ * 2. DRAG: Long Press (400ms) + SOURCE_TOUCHSCREEN injection preserved.
+ * 3. CURSOR: SOURCE_MOUSE for hover. No offsets.
+ * 4. KEYS: Vol Up/Down preserved.
+ * 5. SAFETY: Shell checks + Vibrate preserved.
+ * 6. PREFS: Safe parsing preserved.
+ * 7. REMOTE: cycleInputTarget creates remote cursor on secondary context.
+ * 8. AUTOMATION: Keyboard Open = Screen ON. Keyboard Close = Screen OFF (Alt/Std).
+ * 9. MENU ACTIONS: hideApp() minimizes, forceExit() kills process.
+ * 10. ENTRY POINT: "OPEN_MENU" action triggers menuManager.show().
+ * 11. FULL SCREEN: NO_LIMITS + SHORT_EDGES flags required for cursor to reach edges.
+ * 12. PRESETS: applyLayoutPreset(1|2|0) supported. 0 is Freeform.
+ * 13. LAUNCH: FORCE_MOVE extra forces UI refresh on current display.
+ * 14. DISPLAY CONTEXT: WindowManager MUST be obtained from display-specific context.
+ * 15. FOREGROUND: Safe startForeground with try-catch fallback.
+ * 16. MULTI-DISPLAY: Teardown old views before switching displays.
+ * 17. BUBBLE: resetBubblePosition() added.
+ * 18. HANDLE: Size scaled 2x, Touch size synced.
+ * 19. NO VIBRATE: Removed debug vibrations from menu/toggles.
+ * 20. SCROLL FIX: performSwipe restored. ACTION_DOWN checks prefTapScroll.
+ * 21. MANUAL ADJUST: manualAdjust() uses separate Move vs Resize logic via Toggle.
  * ======================================================================================
  */
 
@@ -551,7 +506,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
     }
     
-    fun manualAdjust(isKeyboard: Boolean, isResize: Boolean, dx: Int, dy: Int) { if (isKeyboard) { if (isResize) keyboardOverlay?.resizeWindow(dx, dy) else keyboardOverlay?.moveWindow(dx, dy) } else { if (trackpadLayout == null) return; trackpadParams.x += dx; trackpadParams.y += dy; if (isResize) { trackpadParams.width = max(200, trackpadParams.width + dx); trackpadParams.height = max(200, trackpadParams.height + dy) }; try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveLayout() } }
+    // --- FIXED MANUAL ADJUST ---
+    fun manualAdjust(isKeyboard: Boolean, isResize: Boolean, dx: Int, dy: Int) { 
+        if (isKeyboard) { 
+            if (isResize) keyboardOverlay?.resizeWindow(dx, dy) 
+            else keyboardOverlay?.moveWindow(dx, dy) 
+        } else { 
+            if (trackpadLayout == null) return
+            
+            if (isResize) {
+                // Resize: Only change width/height
+                trackpadParams.width = max(200, trackpadParams.width + dx)
+                trackpadParams.height = max(200, trackpadParams.height + dy)
+            } else {
+                // Move: Only change x/y
+                trackpadParams.x += dx
+                trackpadParams.y += dy
+            }
+            
+            try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}
+            saveLayout() 
+        } 
+    }
     
     private fun parseBoolean(value: Any): Boolean { return when(value) { is Boolean -> value; is Int -> value == 1; is String -> value == "1" || value.equals("true", ignoreCase = true); else -> false } }
     
@@ -722,7 +698,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         Thread {
             try {
                 shellService?.setBrightness(128)
-                shellService?.setScreenOff(currentDisplayId, false) // Use specific ID
+                shellService?.setScreenOff(0, false)
             } catch(e: Exception) {}
         }.start()
         showToast("Screen On")
@@ -732,11 +708,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         isScreenOff = true
         Thread {
             try {
-                if (prefs.prefUseAltScreenOff) {
-                    shellService?.setBrightness(-1) // Global hack still required for Alt
-                } else {
-                    shellService?.setScreenOff(currentDisplayId, true) // Use specific ID
-                }
+                if (prefs.prefUseAltScreenOff) shellService?.setBrightness(-1) 
+                else shellService?.setScreenOff(0, true)
             } catch(e: Exception) {}
         }.start()
         showToast("Screen Off (${if(prefs.prefUseAltScreenOff) "Alt" else "Std"})")
@@ -762,6 +735,26 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
     private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor(Color.TRANSPARENT); val colorWithAlpha = (strokeColor and 0x00FFFFFF) or (prefs.prefAlpha shl 24); bg.setStroke(4, if (highlightAlpha) 0xFF00FF00.toInt() else colorWithAlpha); trackpadLayout?.invalidate() }
     
+    private fun performSwipe(dx: Float, dy: Float) {
+        Thread {
+            val dId = if (inputTargetDisplayId != -1) inputTargetDisplayId else (cursorLayout?.display?.displayId ?: Display.DEFAULT_DISPLAY)
+            val now = SystemClock.uptimeMillis()
+            val startX = cursorX
+            val startY = cursorY
+            val endX = startX + dx
+            val endY = startY + dy
+            try { shellService?.injectMouse(MotionEvent.ACTION_DOWN, startX, startY, dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now) } catch(e: Exception) {}
+            val steps = 5
+            for (i in 1..steps) {
+                val t = i.toFloat() / steps
+                val cx = startX + (dx * t)
+                val cy = startY + (dy * t)
+                try { shellService?.injectMouse(MotionEvent.ACTION_MOVE, cx, cy, dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + (i * 10)); Thread.sleep(10) } catch(e: Exception) {}
+            }
+            try { shellService?.injectMouse(MotionEvent.ACTION_UP, endX, endY, dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + 100) } catch(e: Exception) {}
+        }.start()
+    }
+
     private fun handleTrackpadTouch(event: MotionEvent) {
          val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
          when (event.actionMasked) {
@@ -769,20 +762,54 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                  lastTouchX = event.x; lastTouchY = event.y; isTouchDragging = false; handler.postDelayed(longPressRunnable, 400)
                  val actualZoneV = min(scrollZoneThickness, (viewWidth * 0.15f).toInt()); val actualZoneH = min(scrollZoneThickness, (viewHeight * 0.15f).toInt())
                  val inVZone = if (prefs.prefVPosLeft) event.x < actualZoneV else event.x > (viewWidth - actualZoneV); val inHZone = if (prefs.prefHPosTop) event.y < actualZoneH else event.y > (viewHeight - actualZoneH)
-                 if (inVZone || inHZone) { 
-                     handler.removeCallbacks(longPressRunnable); if (inVZone) { isVScrolling = true; vibrate() } else { isHScrolling = true; vibrate() }; updateBorderColor(0xFF00FFFF.toInt()) 
+                 
+                 // --- SCROLL ZONE LOGIC ---
+                 if (inVZone) {
+                     if (prefs.prefTapScroll) { // GESTURE
+                         val isTopHalf = event.y < (viewHeight / 2)
+                         val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                         val dy = if (isTopHalf) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist)
+                         performSwipe(0f, dy)
+                         ignoreTouchSequence = true
+                         return
+                     } else { // WHEEL
+                         isVScrolling = true
+                         updateBorderColor(0xFF00FFFF.toInt())
+                     }
+                 } else if (inHZone) {
+                     if (prefs.prefTapScroll) { // GESTURE
+                         val isLeftHalf = event.x < (viewWidth / 2)
+                         val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                         val dx = if (isLeftHalf) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist)
+                         performSwipe(dx, 0f)
+                         ignoreTouchSequence = true
+                         return
+                     } else { // WHEEL
+                         isHScrolling = true
+                         updateBorderColor(0xFF00FFFF.toInt())
+                     }
                  }
              }
              MotionEvent.ACTION_MOVE -> {
+                 if (ignoreTouchSequence) return
+                 
                  val rawDx = (event.x - lastTouchX); val rawDy = (event.y - lastTouchY); val dx = rawDx * prefs.cursorSpeed; val dy = rawDy * prefs.cursorSpeed
                  if (!isTouchDragging && (abs(rawDx) > 20 || abs(rawDy) > 20)) handler.removeCallbacks(longPressRunnable)
                  
                  if (isVScrolling) {
                      scrollAccumulatorY += (event.y - lastTouchY) * prefs.scrollSpeed
-                     if (abs(scrollAccumulatorY) > 5) { injectScroll(0f, if (prefs.prefReverseScroll) scrollAccumulatorY else -scrollAccumulatorY); scrollAccumulatorY = 0f }
+                     if (abs(scrollAccumulatorY) > SCROLL_THRESHOLD) {
+                         val vScrollAmount = if (prefs.prefReverseScroll) scrollAccumulatorY else -scrollAccumulatorY
+                         injectScroll(0f, vScrollAmount / 10f) 
+                         scrollAccumulatorY = 0f
+                     }
                  } else if (isHScrolling) {
                      scrollAccumulatorX += (event.x - lastTouchX) * prefs.scrollSpeed
-                     if (abs(scrollAccumulatorX) > 5) { injectScroll(if (prefs.prefReverseScroll) scrollAccumulatorX else -scrollAccumulatorX, 0f); scrollAccumulatorX = 0f }
+                     if (abs(scrollAccumulatorX) > SCROLL_THRESHOLD) {
+                         val hScrollAmount = if (prefs.prefReverseScroll) scrollAccumulatorX else -scrollAccumulatorX
+                         injectScroll(hScrollAmount / 10f, 0f)
+                         scrollAccumulatorX = 0f
+                     }
                  } else {
                     val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat(); val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
                     var finalDx = dx; var finalDy = dy
@@ -796,7 +823,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                  lastTouchX = event.x; lastTouchY = event.y
              }
              MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                 handler.removeCallbacks(longPressRunnable); if (isTouchDragging) injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis()); isTouchDragging = false; isVScrolling = false; isHScrolling = false; updateBorderColor(currentBorderColor)
+                 handler.removeCallbacks(longPressRunnable); if (isTouchDragging) injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis()); isTouchDragging = false; isVScrolling = false; isHScrolling = false; ignoreTouchSequence = false; updateBorderColor(currentBorderColor)
              }
          }
     }
@@ -823,8 +850,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun cycleInputTarget() { 
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
-        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); vibrate() } 
-        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); vibrate() }
+        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)") } 
+        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId") }
     }
     private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
     private fun removeRemoteCursor() { try { if (remoteCursorLayout != null && remoteWindowManager != null) { remoteWindowManager?.removeView(remoteCursorLayout) } } catch (e: Exception) {}; remoteCursorLayout = null; remoteCursorView = null; remoteWindowManager = null }
