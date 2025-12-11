@@ -1,3 +1,17 @@
+# Code Update: Force UI Display & Safe Permission Checks
+
+## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/MainActivity.kt
+
+### Description
+Rewrites `MainActivity` to prioritize user control and stability.
+1.  **Always Shows UI**: Removes the logic that `finish()`es the activity immediately if permissions are granted.
+2.  **Safe Checks**: Prevents `IllegalStateException` crashes by wrapping Shizuku checks.
+3.  **Reactive Status**: Updates the "Status" text dynamically when permissions change.
+
+### Code
+Replace the **entire file content** with:
+
+```kotlin
 package com.example.coverscreentester
 
 import android.content.ComponentName
