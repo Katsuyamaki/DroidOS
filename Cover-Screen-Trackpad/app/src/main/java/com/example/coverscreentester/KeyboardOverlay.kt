@@ -205,6 +205,14 @@ class KeyboardOverlay(
     fun toggle() { if (isVisible) hide() else show() }
     fun isShowing(): Boolean = isVisible
 
+    // Robust Force Re-Add for Z-order management
+    fun bringToFront() {
+        if (isVisible && keyboardContainer != null) {
+            try { windowManager.removeView(keyboardContainer) } catch (e: Exception) {}
+            try { windowManager.addView(keyboardContainer, keyboardParams) } catch (e: Exception) {}
+        }
+    }
+
     fun moveWindow(dx: Int, dy: Int) {
         if (!isVisible || keyboardParams == null) return
         keyboardParams!!.x += dx; keyboardParams!!.y += dy
