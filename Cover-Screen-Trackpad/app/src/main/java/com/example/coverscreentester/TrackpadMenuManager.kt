@@ -63,16 +63,6 @@ class TrackpadMenuManager(
         if (isVisible) hide() else show()
     }
 
-    fun isShowing(): Boolean = isVisible
-
-    // Robust Force Re-Add for Z-order management
-    fun bringToFront() {
-        if (isVisible && drawerView != null) {
-            try { windowManager.removeView(drawerView) } catch (e: Exception) {}
-            try { windowManager.addView(drawerView, drawerParams) } catch (e: Exception) {}
-        }
-    }
-
     private fun setupDrawer() {
         val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)
         val inflater = LayoutInflater.from(themedContext)
@@ -104,17 +94,24 @@ class TrackpadMenuManager(
         }
 
         drawerParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, // Width: wrap card
-            WindowManager.LayoutParams.WRAP_CONTENT, // Height: wrap card
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         )
-        drawerParams?.gravity = Gravity.CENTER
-
-        // Simplified listener: Only needed to consume touches on the menu itself
-        drawerView?.setOnTouchListener { _, _ ->
-            true // Consume touch so it doesn't pass through the menu card
+        
+        drawerView?.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                val container = drawerView?.findViewById<View>(R.id.menu_container)
+                val hitRect = android.graphics.Rect()
+                container?.getGlobalVisibleRect(hitRect)
+                if (!hitRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                    hide()
+                    return@setOnTouchListener true
+                }
+            }
+            false
         }
     }
 

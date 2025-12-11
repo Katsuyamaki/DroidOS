@@ -306,13 +306,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> {
                     menuManager?.show()
-                    // Re-sort all layers to ensure Menu is sandwiched correctly (KB < Menu < Bubble)
-                    bringOverlayLayersToFront()
+                    // Enforce Stack: Menu just added, so move Bubble/Cursor to top
+                    enforceZOrder()
                 }
                 "SET_TRACKPAD_VISIBILITY" -> {
                     val visible = intent.getBooleanExtra("VISIBLE", true)
                     val menuDisplayId = intent.getIntExtra("MENU_DISPLAY_ID", -1)
-                    if (visible) setTrackpadVisibility(true)
+                    if (visible) setTrackpadVisibility(true) 
                     else { if (menuDisplayId == -1 || menuDisplayId == currentDisplayId) setTrackpadVisibility(false) }
                 }
                 "SET_PREVIEW_MODE" -> {
@@ -403,8 +403,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> {
                     menuManager?.show()
-                    // Re-sort all layers to ensure Menu is sandwiched correctly (KB < Menu < Bubble)
-                    bringOverlayLayersToFront()
                 }
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
@@ -570,6 +568,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             
             menuManager = TrackpadMenuManager(windowContext, windowManager!!, this)
             if (shellService != null) initCustomKeyboard()
+            
+            // Ensure correct initial stack
+            enforceZOrder()
             
             showToast("Trackpad active on Display $displayId")
             
@@ -1290,12 +1291,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             false
         } else {
             keyboardOverlay?.show()
-            // Re-stack everything to ensure KB is under Menu/Bubble/Cursor
-            bringOverlayLayersToFront()
             true
         }
 
         isCustomKeyboardVisible = isNowVisible
+        
+        // Enforce Stack: Keyboard just added, so move Bubble/Cursor to top
+        enforceZOrder()
 
         if (prefs.prefAutomationEnabled) {
             if (isNowVisible) turnScreenOn() else turnScreenOff()
@@ -1834,68 +1836,31 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     // =========================
-    // Z-ORDER MANAGEMENT - Ensures strict overlay stacking order
-    // Order (Bottom to Top): Trackpad < Keyboard < Menu < Bubble < Cursor
-    // Uses "Force Re-Add" strategy: blindly remove/add to handle edge cases
+    // Z-ORDER ENFORCEMENT
+    // Stack: Trackpad (Bottom) -> Keyboard -> Menu -> Bubble -> Cursor (Top)
     // =========================
-
-    /**
-     * Forces a view to the top by removing and re-adding it.
-     * Ignores current state (attached/detached) to ensure consistency.
-     */
-    private fun forceBringViewToTop(view: View?, params: WindowManager.LayoutParams?) {
-        if (view == null || params == null || windowManager == null) return
-
-        // 1. Try to remove (Ignore failures if not attached)
-        try {
-            windowManager?.removeView(view)
-        } catch (e: Exception) {
-            // Expected if view wasn't attached
-        }
-
-        // 2. Try to add (Places at top of stack)
-        try {
-            windowManager?.addView(view, params)
-        } catch (e: Exception) {
-            Log.e(TAG, "forceBringViewToTop failed to add view: ${e.message}")
-        }
-    }
-
-    private fun bringOverlayLayersToFront() {
+    fun enforceZOrder() {
         if (windowManager == null) return
 
-        // Capture visibility states
-        val isKbShowing = keyboardOverlay?.isShowing() == true
-        val isMenuShowing = menuManager?.isShowing() == true
-
-        // STACK ORDER (Bottom to Top):
-
-        // 1. Trackpad (Input Layer)
-        if (isTrackpadVisible && trackpadLayout != null) {
-            forceBringViewToTop(trackpadLayout, trackpadParams)
+        // 1. Bubble (Floating Entry - Above Menu)
+        // We remove and re-add to force it to the top of the window stack
+        if (bubbleView != null && bubbleView!!.isAttachedToWindow) {
+            try {
+                windowManager?.removeView(bubbleView)
+                windowManager?.addView(bubbleView, bubbleParams)
+            } catch (e: Exception) {}
         }
 
-        // 2. Keyboard (Visual Layer)
-        if (isKbShowing) {
-            keyboardOverlay?.bringToFront()
-        }
-
-        // 3. Menu (Interactive Layer)
-        if (isMenuShowing) {
-            menuManager?.bringToFront()
-        }
-
-        // 4. Bubble (Entry Point)
-        if (bubbleView != null) {
-            forceBringViewToTop(bubbleView, bubbleParams)
-        }
-
-        // 5. Cursor (Visual Feedback - Absolute Top)
-        if (cursorLayout != null) {
-            forceBringViewToTop(cursorLayout, cursorParams)
+        // 2. Cursor (Visual Feedback - Absolute Top)
+        // Must be added LAST to be visible over everything else
+        if (cursorLayout != null && cursorLayout!!.isAttachedToWindow) {
+            try {
+                windowManager?.removeView(cursorLayout)
+                windowManager?.addView(cursorLayout, cursorParams)
+            } catch (e: Exception) {}
         }
     }
     // =========================
-    // END Z-ORDER MANAGEMENT
+    // END Z-ORDER ENFORCEMENT
     // =========================
 }
