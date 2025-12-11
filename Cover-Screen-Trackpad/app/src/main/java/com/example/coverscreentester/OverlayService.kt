@@ -258,11 +258,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Hold detection runnables - trigger hold action after delay
     private val volUpHoldRunnable = Runnable {
         volUpHoldTriggered = true
-        executeHardkeyAction(prefs.hardkeyVolUpHold)
+        // Execute DOWN phase of the hold action (starts drag if mapped to left_click)
+        executeHardkeyAction(prefs.hardkeyVolUpHold, KeyEvent.ACTION_DOWN)
     }
     private val volDownHoldRunnable = Runnable {
         volDownHoldTriggered = true
-        executeHardkeyAction(prefs.hardkeyVolDownHold)
+        // Execute DOWN phase of the hold action
+        executeHardkeyAction(prefs.hardkeyVolDownHold, KeyEvent.ACTION_DOWN)
     }
     
     // Double-tap detection runnables - execute single tap if no second tap arrives
@@ -420,23 +422,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         val action = event.action
         val keyCode = event.keyCode
         
-        // Helper to check if an action is a direct mouse operation
-        fun isDirectMouseAction(actionId: String): Boolean {
-            return actionId == "left_click" || actionId == "right_click"
-        }
-
         // =========================
         // VOLUME UP
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            // If configured as a simple click/drag button, execute immediately
-            // We use the "Hold" preference slot as the primary binding for single-button usage
-            if (isDirectMouseAction(prefs.hardkeyVolUpHold)) {
-                executeHardkeyAction(prefs.hardkeyVolUpHold, action)
-                return true
-            }
-            
-            // Standard Timer Logic for non-mouse actions (menus, toggles)
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isLeftKeyHeld) {
@@ -448,20 +437,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 KeyEvent.ACTION_UP -> {
                     isLeftKeyHeld = false
                     handler.removeCallbacks(volUpHoldRunnable)
-                    if (!volUpHoldTriggered) {
-                        // Handle tap/double-tap logic here...
-                        // (Use existing logic for taps)
-                         val timeSinceLastTap = System.currentTimeMillis() - lastVolUpTime
-                         lastVolUpTime = System.currentTimeMillis()
-                         if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
-                             handler.removeCallbacks(volUpDoubleTapRunnable)
-                             volUpTapCount = 0
-                             executeHardkeyAction(prefs.hardkeyVolUpDouble, KeyEvent.ACTION_UP)
-                         } else {
-                             volUpTapCount = 1
-                             handler.removeCallbacks(volUpDoubleTapRunnable)
-                             handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
-                         }
+                    
+                    if (volUpHoldTriggered) {
+                        // Hold was active (Timer fired DOWN). Now execute UP to finish drag.
+                        executeHardkeyAction(prefs.hardkeyVolUpHold, KeyEvent.ACTION_UP)
+                    } else {
+                        // Timer didn't fire -> It's a Tap
+                        val timeSinceLastTap = System.currentTimeMillis() - lastVolUpTime
+                        lastVolUpTime = System.currentTimeMillis()
+                        
+                        if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
+                            handler.removeCallbacks(volUpDoubleTapRunnable)
+                            volUpTapCount = 0
+                            executeHardkeyAction(prefs.hardkeyVolUpDouble, KeyEvent.ACTION_UP)
+                        } else {
+                            volUpTapCount = 1
+                            handler.removeCallbacks(volUpDoubleTapRunnable)
+                            handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                        }
                     }
                 }
             }
@@ -472,11 +465,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // VOLUME DOWN
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-             if (isDirectMouseAction(prefs.hardkeyVolDownHold)) {
-                executeHardkeyAction(prefs.hardkeyVolDownHold, action)
-                return true
-            }
-            
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isRightKeyHeld) {
@@ -488,18 +476,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 KeyEvent.ACTION_UP -> {
                     isRightKeyHeld = false
                     handler.removeCallbacks(volDownHoldRunnable)
-                    if (!volDownHoldTriggered) {
-                         val timeSinceLastTap = System.currentTimeMillis() - lastVolDownTime
-                         lastVolDownTime = System.currentTimeMillis()
-                         if (timeSinceLastTap < prefs.doubleTapMs && volDownTapCount == 1) {
-                             handler.removeCallbacks(volDownDoubleTapRunnable)
-                             volDownTapCount = 0
-                             executeHardkeyAction(prefs.hardkeyVolDownDouble, KeyEvent.ACTION_UP)
-                         } else {
-                             volDownTapCount = 1
-                             handler.removeCallbacks(volDownDoubleTapRunnable)
-                             handler.postDelayed(volDownDoubleTapRunnable, prefs.doubleTapMs.toLong())
-                         }
+                    
+                    if (volDownHoldTriggered) {
+                        // Finish the Hold action
+                        executeHardkeyAction(prefs.hardkeyVolDownHold, KeyEvent.ACTION_UP)
+                    } else {
+                        // Tap Logic
+                        val timeSinceLastTap = System.currentTimeMillis() - lastVolDownTime
+                        lastVolDownTime = System.currentTimeMillis()
+                        
+                        if (timeSinceLastTap < prefs.doubleTapMs && volDownTapCount == 1) {
+                            handler.removeCallbacks(volDownDoubleTapRunnable)
+                            volDownTapCount = 0
+                            executeHardkeyAction(prefs.hardkeyVolDownDouble, KeyEvent.ACTION_UP)
+                        } else {
+                            volDownTapCount = 1
+                            handler.removeCallbacks(volDownDoubleTapRunnable)
+                            handler.postDelayed(volDownDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                        }
                     }
                 }
             }
