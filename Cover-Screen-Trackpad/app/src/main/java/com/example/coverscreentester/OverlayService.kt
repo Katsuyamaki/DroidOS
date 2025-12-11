@@ -1280,17 +1280,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // --- KEYBOARD AUTOMATION FIX ---
     fun toggleCustomKeyboard() {
         if (keyboardOverlay == null) initCustomKeyboard()
-        
+
         val isNowVisible = if (keyboardOverlay?.isShowing() == true) {
             keyboardOverlay?.hide()
             false
         } else {
             keyboardOverlay?.show()
+            bringCursorToFront() // Fix Z-Order: Cursor > Keyboard
             true
         }
-        
+
         isCustomKeyboardVisible = isNowVisible
-        
+
         if (prefs.prefAutomationEnabled) {
             if (isNowVisible) turnScreenOn() else turnScreenOff()
         }
@@ -1825,5 +1826,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         display.getRealMetrics(metrics)
         targetScreenWidth = metrics.widthPixels
         targetScreenHeight = metrics.heightPixels
+    }
+
+    // This function enforces the visual stack: Keyboard (Bottom) -> Cursor -> Bubble (Top)
+    private fun bringCursorToFront() {
+        if (windowManager == null) return
+
+        // 1. Move Cursor to Front (Above Keyboard)
+        if (cursorLayout != null && cursorLayout!!.isAttachedToWindow) {
+            try {
+                windowManager?.removeView(cursorLayout)
+                windowManager?.addView(cursorLayout, cursorParams)
+            } catch (e: Exception) {}
+        }
+
+        // 2. Move Bubble to Front (Highest Z-Order, Above Cursor)
+        // This ensures the menu button is never covered by the cursor or keyboard
+        if (bubbleView != null && bubbleView!!.isAttachedToWindow) {
+            try {
+                windowManager?.removeView(bubbleView)
+                windowManager?.addView(bubbleView, bubbleParams)
+            } catch (e: Exception) {}
+        }
     }
 }
