@@ -297,15 +297,12 @@ class TrackpadMenuManager(
     // =========================
 
     // =========================
-    // HARDKEY ACTIONS LIST - Available actions for hardkey bindings
-    // Each action has an ID and display name
+    // HARDKEY ACTIONS LIST
     // =========================
     private val hardkeyActions = listOf(
         "none" to "None",
-        "left_click" to "Left Click",
-        "right_click" to "Right Click",
-        "left_drag" to "Left Drag",
-        "right_drag" to "Right Drag",
+        "left_click" to "Left Click (Hold to Drag)",
+        "right_click" to "Right Click (Hold to Drag)",
         "scroll_up" to "Scroll Up",
         "scroll_down" to "Scroll Down",
         "display_toggle" to "Display Toggle",

@@ -419,145 +419,93 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         
         val action = event.action
         val keyCode = event.keyCode
-        val currentTime = System.currentTimeMillis()
         
+        // Helper to check if an action is a direct mouse operation
+        fun isDirectMouseAction(actionId: String): Boolean {
+            return actionId == "left_click" || actionId == "right_click"
+        }
+
         // =========================
-        // VOLUME UP KEY HANDLING
+        // VOLUME UP
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            // If configured as a simple click/drag button, execute immediately
+            // We use the "Hold" preference slot as the primary binding for single-button usage
+            if (isDirectMouseAction(prefs.hardkeyVolUpHold)) {
+                executeHardkeyAction(prefs.hardkeyVolUpHold, action)
+                return true
+            }
+            
+            // Standard Timer Logic for non-mouse actions (menus, toggles)
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isLeftKeyHeld) {
                         isLeftKeyHeld = true
                         volUpHoldTriggered = false
-                        
-                        // Schedule hold action
                         handler.postDelayed(volUpHoldRunnable, prefs.holdDurationMs.toLong())
                     }
                 }
                 KeyEvent.ACTION_UP -> {
                     isLeftKeyHeld = false
-                    
-                    // Cancel hold runnable if key released before hold threshold
                     handler.removeCallbacks(volUpHoldRunnable)
-                    
-                    // If drag is active, stop it
-                    if (volUpDragActive) {
-                        volUpDragActive = false
-                        stopKeyDrag(MotionEvent.BUTTON_PRIMARY)
-                    }
-                    
-                    // If hold was triggered, don't process as tap
-                    if (volUpHoldTriggered) {
-                        volUpHoldTriggered = false
-                        return true
-                    }
-                    
-                    // Process as tap or double-tap
-                    val timeSinceLastTap = currentTime - lastVolUpTime
-                    lastVolUpTime = currentTime
-                    
-                    if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
-                        // Double-tap detected
-                        handler.removeCallbacks(volUpDoubleTapRunnable)
-                        volUpTapCount = 0
-                        if (prefs.hardkeyVolUpDouble != "none") {
-                            executeHardkeyAction(prefs.hardkeyVolUpDouble)
-                        }
-                    } else {
-                        // First tap - wait for possible second tap
-                        volUpTapCount = 1
-                        handler.removeCallbacks(volUpDoubleTapRunnable)
-                        handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                    if (!volUpHoldTriggered) {
+                        // Handle tap/double-tap logic here...
+                        // (Use existing logic for taps)
+                         val timeSinceLastTap = System.currentTimeMillis() - lastVolUpTime
+                         lastVolUpTime = System.currentTimeMillis()
+                         if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
+                             handler.removeCallbacks(volUpDoubleTapRunnable)
+                             volUpTapCount = 0
+                             executeHardkeyAction(prefs.hardkeyVolUpDouble, KeyEvent.ACTION_UP)
+                         } else {
+                             volUpTapCount = 1
+                             handler.removeCallbacks(volUpDoubleTapRunnable)
+                             handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                         }
                     }
                 }
             }
             return true
         }
-        
+
         // =========================
-        // VOLUME DOWN KEY HANDLING
+        // VOLUME DOWN
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+             if (isDirectMouseAction(prefs.hardkeyVolDownHold)) {
+                executeHardkeyAction(prefs.hardkeyVolDownHold, action)
+                return true
+            }
+            
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isRightKeyHeld) {
                         isRightKeyHeld = true
                         volDownHoldTriggered = false
-                        
-                        // Schedule hold action
                         handler.postDelayed(volDownHoldRunnable, prefs.holdDurationMs.toLong())
                     }
                 }
                 KeyEvent.ACTION_UP -> {
                     isRightKeyHeld = false
-                    
-                    // Cancel hold runnable if key released before hold threshold
                     handler.removeCallbacks(volDownHoldRunnable)
-                    
-                    // If drag is active, stop it
-                    if (volDownDragActive) {
-                        volDownDragActive = false
-                        stopKeyDrag(MotionEvent.BUTTON_SECONDARY)
-                    }
-                    
-                    // If hold was triggered, don't process as tap
-                    if (volDownHoldTriggered) {
-                        volDownHoldTriggered = false
-                        return true
-                    }
-                    
-                    // Process as tap or double-tap
-                    val timeSinceLastTap = currentTime - lastVolDownTime
-                    lastVolDownTime = currentTime
-                    
-                    if (timeSinceLastTap < prefs.doubleTapMs && volDownTapCount == 1) {
-                        // Double-tap detected
-                        handler.removeCallbacks(volDownDoubleTapRunnable)
-                        volDownTapCount = 0
-                        if (prefs.hardkeyVolDownDouble != "none") {
-                            executeHardkeyAction(prefs.hardkeyVolDownDouble)
-                        }
-                    } else {
-                        // First tap - wait for possible second tap
-                        volDownTapCount = 1
-                        handler.removeCallbacks(volDownDoubleTapRunnable)
-                        handler.postDelayed(volDownDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                    if (!volDownHoldTriggered) {
+                         val timeSinceLastTap = System.currentTimeMillis() - lastVolDownTime
+                         lastVolDownTime = System.currentTimeMillis()
+                         if (timeSinceLastTap < prefs.doubleTapMs && volDownTapCount == 1) {
+                             handler.removeCallbacks(volDownDoubleTapRunnable)
+                             volDownTapCount = 0
+                             executeHardkeyAction(prefs.hardkeyVolDownDouble, KeyEvent.ACTION_UP)
+                         } else {
+                             volDownTapCount = 1
+                             handler.removeCallbacks(volDownDoubleTapRunnable)
+                             handler.postDelayed(volDownDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                         }
                     }
                 }
             }
             return true
         }
-        
-        // =========================
-        // POWER KEY HANDLING (Double-tap only, single tap handled by system)
-        // =========================
-        if (keyCode == KeyEvent.KEYCODE_POWER) {
-            when (action) {
-                KeyEvent.ACTION_UP -> {
-                    val timeSinceLastTap = currentTime - lastPowerTime
-                    lastPowerTime = currentTime
-                    
-                    if (timeSinceLastTap < prefs.doubleTapMs && powerTapCount == 1) {
-                        // Double-tap detected
-                        handler.removeCallbacks(powerDoubleTapRunnable)
-                        powerTapCount = 0
-                        if (prefs.hardkeyPowerDouble != "none") {
-                            executeHardkeyAction(prefs.hardkeyPowerDouble)
-                            return true // Consume the event
-                        }
-                    } else {
-                        // First tap - wait for possible second tap
-                        powerTapCount = 1
-                        handler.removeCallbacks(powerDoubleTapRunnable)
-                        handler.postDelayed(powerDoubleTapRunnable, prefs.doubleTapMs.toLong())
-                    }
-                }
-            }
-            // Don't consume power key events - let system handle single taps
-            return false
-        }
-        
+
         return super.onKeyEvent(event)
     }
     // =========================
@@ -721,123 +669,145 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Called by onKeyEvent() when a tap/double-tap/hold gesture is detected
     // Action IDs map to specific behaviors defined in HARDKEY_ACTIONS
     // =========================
-    private fun executeHardkeyAction(actionId: String) {
+    private fun executeHardkeyAction(actionId: String, keyEventAction: Int = KeyEvent.ACTION_UP) {
         when (actionId) {
             "none" -> { /* Do nothing */ }
             
             "left_click" -> {
-                performClick(false) // false = left click
+                if (keyEventAction == KeyEvent.ACTION_DOWN) {
+                    if (!volUpDragActive) { // Re-using state var to track physical press state
+                        volUpDragActive = true
+                        startKeyDrag(MotionEvent.BUTTON_PRIMARY)
+                    }
+                } else {
+                    volUpDragActive = false
+                    stopKeyDrag(MotionEvent.BUTTON_PRIMARY)
+                }
             }
             
             "right_click" -> {
-                performClick(true) // true = right click (back)
-            }
-            
-            "left_drag" -> {
-                // Start left-click drag (hold button while moving)
-                if (!volUpDragActive) {
-                    volUpDragActive = true
-                    startKeyDrag(MotionEvent.BUTTON_PRIMARY)
+                 if (keyEventAction == KeyEvent.ACTION_DOWN) {
+                    if (!volDownDragActive) {
+                        volDownDragActive = true
+                        startKeyDrag(MotionEvent.BUTTON_SECONDARY)
+                    }
+                } else {
+                    volDownDragActive = false
+                    stopKeyDrag(MotionEvent.BUTTON_SECONDARY)
                 }
             }
             
-            "right_drag" -> {
-                // Start right-click drag (hold button while moving)
-                if (!volDownDragActive) {
-                    volDownDragActive = true
-                    startKeyDrag(MotionEvent.BUTTON_SECONDARY)
-                }
-            }
-            
+            // ... (rest of the actions remain the same, just wrapped in 'if (keyEventAction == ACTION_UP)')
             "scroll_up" -> {
-                val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
-                performSwipe(0f, -dist)
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                    performSwipe(0f, -dist)
+                }
             }
-            
             "scroll_down" -> {
-                val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
-                performSwipe(0f, dist)
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
+                    performSwipe(0f, dist)
+                }
             }
             
             "display_toggle" -> {
-                // Use preferred display off mode
-                when (prefs.displayOffMode) {
-                    "standard" -> {
-                        isScreenOff = !isScreenOff
-                        Thread {
-                            try {
-                                if (isScreenOff) shellService?.setScreenOff(0, true)
-                                else shellService?.setScreenOff(0, false)
-                            } catch (e: Exception) {}
-                        }.start()
-                        showToast("Display ${if(isScreenOff) "Off" else "On"} (Std)")
-                    }
-                    else -> {
-                        isScreenOff = !isScreenOff
-                        Thread {
-                            try {
-                                if (isScreenOff) shellService?.setBrightness(-1)
-                                else shellService?.setBrightness(128)
-                            } catch (e: Exception) {}
-                        }.start()
-                        showToast("Display ${if(isScreenOff) "Off" else "On"} (Alt)")
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    // Use preferred display off mode
+                    when (prefs.displayOffMode) {
+                        "standard" -> {
+                            isScreenOff = !isScreenOff
+                            Thread {
+                                try {
+                                    if (isScreenOff) shellService?.setScreenOff(0, true)
+                                    else shellService?.setScreenOff(0, false)
+                                } catch (e: Exception) {}
+                            }.start()
+                            showToast("Display ${if(isScreenOff) "Off" else "On"} (Std)")
+                        }
+                        else -> {
+                            isScreenOff = !isScreenOff
+                            Thread {
+                                try {
+                                    if (isScreenOff) shellService?.setBrightness(-1)
+                                    else shellService?.setBrightness(128)
+                                } catch (e: Exception) {}
+                            }.start()
+                            showToast("Display ${if(isScreenOff) "Off" else "On"} (Alt)")
+                        }
                     }
                 }
             }
             
             "display_toggle_alt" -> {
-                isScreenOff = !isScreenOff
-                Thread {
-                    try {
-                        if (isScreenOff) shellService?.setBrightness(-1)
-                        else shellService?.setBrightness(128)
-                    } catch (e: Exception) {}
-                }.start()
-                showToast("Display ${if(isScreenOff) "Off" else "On"} (Alt)")
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    isScreenOff = !isScreenOff
+                    Thread {
+                        try {
+                            if (isScreenOff) shellService?.setBrightness(-1)
+                            else shellService?.setBrightness(128)
+                        } catch (e: Exception) {}
+                    }.start()
+                    showToast("Display ${if(isScreenOff) "Off" else "On"} (Alt)")
+                }
             }
             
             "display_toggle_std" -> {
-                isScreenOff = !isScreenOff
-                Thread {
-                    try {
-                        if (isScreenOff) shellService?.setScreenOff(0, true)
-                        else shellService?.setScreenOff(0, false)
-                    } catch (e: Exception) {}
-                }.start()
-                        showToast("Display ${if(isScreenOff) "Off" else "On"} (Std)")
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    isScreenOff = !isScreenOff
+                    Thread {
+                        try {
+                            if (isScreenOff) shellService?.setScreenOff(0, true)
+                            else shellService?.setScreenOff(0, false)
+                        } catch (e: Exception) {}
+                    }.start()
+                            showToast("Display ${if(isScreenOff) "Off" else "On"} (Std)")
+                }
             }
             
             "alt_position" -> {
-                toggleKeyboardMode()
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    toggleKeyboardMode()
+                }
             }
             
             "toggle_keyboard" -> {
-                toggleCustomKeyboard()
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    toggleCustomKeyboard()
+                }
             }
             
             "toggle_trackpad" -> {
-                toggleTrackpad()
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    toggleTrackpad()
+                }
             }
             
             "open_menu" -> {
-                menuManager?.toggle()
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    menuManager?.toggle()
+                }
             }
             
             "reset_cursor" -> {
-                resetCursorCenter()
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    resetCursorCenter()
+                }
             }
             
             "display_wake" -> {
-                // Wake display if off
-                if (isScreenOff) {
-                    isScreenOff = false
-                    Thread {
-                        try {
-                            shellService?.setBrightness(128)
-                            shellService?.setScreenOff(0, false)
-                        } catch (e: Exception) {}
-                    }.start()
-                    showToast("Display Woken")
+                if (keyEventAction == KeyEvent.ACTION_UP) {
+                    // Wake display if off
+                    if (isScreenOff) {
+                        isScreenOff = false
+                        Thread {
+                            try {
+                                shellService?.setBrightness(128)
+                                shellService?.setScreenOff(0, false)
+                            } catch (e: Exception) {}
+                        }.start()
+                        showToast("Display Woken")
+                    }
                 }
             }
         }
