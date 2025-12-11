@@ -1,3 +1,14 @@
+# Code Update: Robust Landing Page & Crash Prevention
+
+## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/MainActivity.kt
+
+### Description
+Rewrites `MainActivity` to safely handle Shizuku permission checks. If the Shizuku service is dead (e.g., after a crash or reboot), standard permission checks throw a `RuntimeException`, causing the app to crash on launch. This update catches those errors, treats them as "Permission Missing," and forces the Landing Page to open so the user can fix it.
+
+### Code
+Replace the **entire file content** with this safer implementation:
+
+```kotlin
 package com.example.coverscreentester
 
 import android.content.ComponentName
