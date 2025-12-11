@@ -266,10 +266,14 @@ class TrackpadMenuManager(
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.cursorSpeed * 10).toInt()) { v -> service.updatePref("cursor_speed", (v as Int) / 10f) })
         list.add(TrackpadMenuAdapter.MenuItem("Scroll Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.scrollSpeed * 10).toInt()) { v -> service.updatePref("scroll_speed", (v as Int) / 10f) })
         
-        list.add(TrackpadMenuAdapter.MenuItem("Trackpad Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha) { v -> service.updatePref("alpha", v) })
+        // Max 255 for Alpha
+        list.add(TrackpadMenuAdapter.MenuItem("Trackpad Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
         
-        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        // Scroll Bar Width: min 40, max 180 (3x of base 60)
-        list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize) { v -> service.updatePref("scroll_size", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        
+        
+        // Max 200 for Scroll Width
+        list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize, 200) { v -> service.updatePref("scroll_size", v) })
+        
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Reverse Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefReverseScroll) 1 else 0) { v -> service.updatePref("reverse_scroll", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Tap to Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefTapScroll) 1 else 0) { v -> service.updatePref("tap_scroll", v) })
@@ -287,8 +291,10 @@ class TrackpadMenuManager(
     private fun getTuneItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         val p = service.prefs
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha) { v -> service.updatePref("keyboard_alpha", v) })
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Scale", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyScale) { v -> service.updatePref("keyboard_key_scale", v) })
+        // Max 255 for Alpha
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha, 255) { v -> service.updatePref("keyboard_alpha", v) })
+        // Max 200 for Scale (200%)
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Scale", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyScale, 200) { v -> service.updatePref("keyboard_key_scale", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Auto Display Off", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefAutomationEnabled) 1 else 0) { v -> service.updatePref("automation_enabled", v) })
         return list
     }
@@ -305,7 +311,6 @@ class TrackpadMenuManager(
         "right_click" to "Right Click (Hold to Drag)",
         "scroll_up" to "Scroll Up",
         "scroll_down" to "Scroll Down",
-        "display_toggle" to "Display Toggle",
         "display_toggle_alt" to "Display (Alt Mode)",
         "display_toggle_std" to "Display (Std Mode)",
         "display_wake" to "Display Wake",
@@ -409,49 +414,31 @@ class TrackpadMenuManager(
             TrackpadMenuAdapter.Type.ACTION
         ) { showActionPicker("hardkey_vol_down_hold", p.hardkeyVolDownHold) })
         
-        // === POWER BUTTON SECTION ===
-        list.add(TrackpadMenuAdapter.MenuItem("POWER BUTTON", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Double-Tap: ${getActionDisplayName(p.hardkeyPowerDouble)}",
-            android.R.drawable.ic_lock_idle_lock,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_power_double", p.hardkeyPowerDouble) })
-        
-        // === DISPLAY SETTINGS SECTION ===
-        list.add(TrackpadMenuAdapter.MenuItem("DISPLAY SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Display Off Mode: ${if (p.displayOffMode == "alternate") "Alternate" else "Standard"}",
-            android.R.drawable.ic_menu_view,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { 
-            val newMode = if (p.displayOffMode == "alternate") "standard" else "alternate"
-            service.updatePref("display_off_mode", newMode)
-            loadTab(TAB_HARDKEYS)
-        })
-        
         // === TIMING SECTION ===
         list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.HEADER))
         
+        // Max 500ms
+        // Removed loadTab() call to prevent menu closing/refreshing while dragging
         list.add(TrackpadMenuAdapter.MenuItem(
-            "Double-Tap Speed (${p.doubleTapMs}ms)",
+            "Double-Tap Speed (ms)",
             android.R.drawable.ic_menu_recent_history,
             TrackpadMenuAdapter.Type.SLIDER,
-            p.doubleTapMs
+            p.doubleTapMs,
+            500 
         ) { v ->
             service.updatePref("double_tap_ms", v)
-            loadTab(TAB_HARDKEYS) // Refresh to update label
         })
         
+        // Max 800ms
+        // Removed loadTab() call to prevent menu closing/refreshing while dragging
         list.add(TrackpadMenuAdapter.MenuItem(
-            "Hold Duration (${p.holdDurationMs}ms)",
+            "Hold Duration (ms)",
             android.R.drawable.ic_menu_recent_history,
             TrackpadMenuAdapter.Type.SLIDER,
-            p.holdDurationMs
+            p.holdDurationMs,
+            800 
         ) { v ->
             service.updatePref("hold_duration_ms", v)
-            loadTab(TAB_HARDKEYS) // Refresh to update label
         })
         
         return list
@@ -473,7 +460,8 @@ class TrackpadMenuManager(
         list.add(TrackpadMenuAdapter.MenuItem("BUBBLE CUSTOMIZATION", android.R.drawable.ic_menu_info_details, TrackpadMenuAdapter.Type.INFO))
         
         // Size slider: 50-200 (50=half, 100=standard, 200=double)
-        list.add(TrackpadMenuAdapter.MenuItem("Bubble Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleSize) { v ->
+        // Max 200
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleSize, 200) { v ->
             service.updatePref("bubble_size", v)
         })
         
@@ -486,7 +474,8 @@ class TrackpadMenuManager(
         })
         
         // Opacity slider: 50-255
-        list.add(TrackpadMenuAdapter.MenuItem("Bubble Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleAlpha) { v ->
+        // Max 255
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleAlpha, 255) { v ->
             service.updatePref("bubble_alpha", v)
         })
         

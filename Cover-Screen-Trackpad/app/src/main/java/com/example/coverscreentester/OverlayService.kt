@@ -137,7 +137,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =========================
         var hardkeyVolUpTap = "left_click"
         var hardkeyVolUpDouble = "none"
-        var hardkeyVolUpHold = "left_drag"
+        var hardkeyVolUpHold = "left_click"
         var hardkeyVolDownTap = "right_click"
         var hardkeyVolDownDouble = "display_toggle"
         var hardkeyVolDownHold = "alt_position"
@@ -240,6 +240,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private val keyboardLongPressRunnable = Runnable { toggleKeyboardMode() }
     private val clearHighlightsRunnable = Runnable { highlightAlpha = false; highlightHandles = false; highlightScrolls = false; updateBorderColor(currentBorderColor); updateLayoutSizes() }
     
+    // --- KEY DRAG STATE ---
+    private var isKeyDragging = false
+    private var activeDragButton = MotionEvent.BUTTON_PRIMARY
+    // ---------------------
+    
     // =========================
     // HARDKEY DETECTION STATE - Variables for tap/double-tap/hold detection
     // Used by onKeyEvent() to distinguish between different gesture types
@@ -257,11 +262,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     
     // Hold detection runnables - trigger hold action after delay
     private val volUpHoldRunnable = Runnable {
+        android.util.Log.d("OverlayService", "volUpHoldRunnable FIRED! Setting volUpHoldTriggered=true, calling executeHardkeyAction(${prefs.hardkeyVolUpHold}, DOWN)")
         volUpHoldTriggered = true
         // Execute DOWN phase of the hold action (starts drag if mapped to left_click)
         executeHardkeyAction(prefs.hardkeyVolUpHold, KeyEvent.ACTION_DOWN)
     }
     private val volDownHoldRunnable = Runnable {
+        android.util.Log.d("OverlayService", "volDownHoldRunnable FIRED! Setting volDownHoldTriggered=true")
         volDownHoldTriggered = true
         // Execute DOWN phase of the hold action
         executeHardkeyAction(prefs.hardkeyVolDownHold, KeyEvent.ACTION_DOWN)
@@ -413,11 +420,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onInterrupt() {}
     // =========================
     // ON KEY EVENT - Hardware key handler with configurable bindings
-    // Supports tap, double-tap, and hold gestures for Vol Up, Vol Down, and Power
-    // Uses prefs.doubleTapMs for double-tap window and prefs.holdDurationMs for hold threshold
+    // DEBUG VERSION - Added logging to trace flow
     // =========================
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (isPreviewMode || !isTrackpadVisible) return super.onKeyEvent(event)
+        val TAG = "OverlayService"
+        
+        // DEBUG: Log every key event received
+        android.util.Log.d(TAG, "onKeyEvent: keyCode=${event.keyCode}, action=${event.action}, isPreviewMode=$isPreviewMode, isTrackpadVisible=$isTrackpadVisible")
+        
+        if (isPreviewMode || !isTrackpadVisible) {
+            android.util.Log.d(TAG, "onKeyEvent: BLOCKED - preview=$isPreviewMode visible=$isTrackpadVisible")
+            return super.onKeyEvent(event)
+        }
         
         val action = event.action
         val keyCode = event.keyCode
@@ -426,34 +440,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // VOLUME UP
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            android.util.Log.d(TAG, "VOL_UP: action=$action, isLeftKeyHeld=$isLeftKeyHeld, volUpHoldTriggered=$volUpHoldTriggered")
+            
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isLeftKeyHeld) {
                         isLeftKeyHeld = true
                         volUpHoldTriggered = false
+                        android.util.Log.d(TAG, "VOL_UP DOWN: Posting hold runnable, delay=${prefs.holdDurationMs}ms, action=${prefs.hardkeyVolUpHold}")
                         handler.postDelayed(volUpHoldRunnable, prefs.holdDurationMs.toLong())
+                    } else {
+                        android.util.Log.d(TAG, "VOL_UP DOWN: Already held, ignoring")
                     }
                 }
                 KeyEvent.ACTION_UP -> {
                     isLeftKeyHeld = false
                     handler.removeCallbacks(volUpHoldRunnable)
+                    android.util.Log.d(TAG, "VOL_UP UP: volUpHoldTriggered=$volUpHoldTriggered")
                     
                     if (volUpHoldTriggered) {
-                        // Hold was active (Timer fired DOWN). Now execute UP to finish drag.
+                        android.util.Log.d(TAG, "VOL_UP UP: Hold was triggered, executing UP action")
                         executeHardkeyAction(prefs.hardkeyVolUpHold, KeyEvent.ACTION_UP)
                     } else {
-                        // Timer didn't fire -> It's a Tap
+                        android.util.Log.d(TAG, "VOL_UP UP: Was a tap, processing tap/double-tap")
                         val timeSinceLastTap = System.currentTimeMillis() - lastVolUpTime
                         lastVolUpTime = System.currentTimeMillis()
                         
                         if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
                             handler.removeCallbacks(volUpDoubleTapRunnable)
                             volUpTapCount = 0
+                            android.util.Log.d(TAG, "VOL_UP: Double-tap detected")
                             executeHardkeyAction(prefs.hardkeyVolUpDouble, KeyEvent.ACTION_UP)
                         } else {
                             volUpTapCount = 1
                             handler.removeCallbacks(volUpDoubleTapRunnable)
                             handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
+                            android.util.Log.d(TAG, "VOL_UP: Single tap pending, waiting for double-tap window")
                         }
                     }
                 }
@@ -465,23 +487,25 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // VOLUME DOWN
         // =========================
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            android.util.Log.d(TAG, "VOL_DOWN: action=$action, isRightKeyHeld=$isRightKeyHeld, volDownHoldTriggered=$volDownHoldTriggered")
+            
             when (action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (!isRightKeyHeld) {
                         isRightKeyHeld = true
                         volDownHoldTriggered = false
+                        android.util.Log.d(TAG, "VOL_DOWN DOWN: Posting hold runnable, delay=${prefs.holdDurationMs}ms")
                         handler.postDelayed(volDownHoldRunnable, prefs.holdDurationMs.toLong())
                     }
                 }
                 KeyEvent.ACTION_UP -> {
                     isRightKeyHeld = false
                     handler.removeCallbacks(volDownHoldRunnable)
+                    android.util.Log.d(TAG, "VOL_DOWN UP: volDownHoldTriggered=$volDownHoldTriggered")
                     
                     if (volDownHoldTriggered) {
-                        // Finish the Hold action
                         executeHardkeyAction(prefs.hardkeyVolDownHold, KeyEvent.ACTION_UP)
                     } else {
-                        // Tap Logic
                         val timeSinceLastTap = System.currentTimeMillis() - lastVolDownTime
                         lastVolDownTime = System.currentTimeMillis()
                         
@@ -664,7 +688,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Action IDs map to specific behaviors defined in HARDKEY_ACTIONS
     // =========================
     private fun executeHardkeyAction(actionId: String, keyEventAction: Int = KeyEvent.ACTION_UP) {
-        when (actionId) {
+    val actionName = if (keyEventAction == KeyEvent.ACTION_DOWN) "DOWN" else "UP"
+    android.util.Log.d("OverlayService", ">>> executeHardkeyAction: actionId=$actionId, keyEventAction=$actionName")
+    
+    when (actionId) {
             "none" -> { /* Do nothing */ }
             
             "left_click" -> {
@@ -1147,7 +1174,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =========================
         prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "left_click") ?: "left_click"
         prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "none") ?: "none"
-        prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "left_drag") ?: "left_drag"
+        prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "left_click") ?: "left_click"
         prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "right_click") ?: "right_click"
         prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "display_toggle") ?: "display_toggle"
         prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "alt_position") ?: "alt_position"
@@ -1155,6 +1182,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.doubleTapMs = p.getInt("double_tap_ms", 300)
         prefs.holdDurationMs = p.getInt("hold_duration_ms", 400)
         prefs.displayOffMode = p.getString("display_off_mode", "alternate") ?: "alternate"
+
+        // === MIGRATION: Fix invalid action IDs from old versions ===
+        // "left_drag" and "right_drag" don't exist - map to "left_click"/"right_click"
+        if (prefs.hardkeyVolUpHold == "left_drag") {
+            prefs.hardkeyVolUpHold = "left_click"
+            p.edit().putString("hardkey_vol_up_hold", "left_click").apply()
+        }
+        if (prefs.hardkeyVolDownHold == "right_drag") {
+            prefs.hardkeyVolDownHold = "right_click"
+            p.edit().putString("hardkey_vol_down_hold", "right_click").apply()
+        }
+        // === END MIGRATION ===
         // =========================
         // END LOAD HARDKEY BINDINGS
         // =========================
@@ -1551,7 +1590,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 val inHZone = if (prefs.prefHPosTop) event.y < actualZoneH else event.y > (viewHeight - actualZoneH)
                 
                 if (inVZone || inHZone) {
-                    // Touch is in scroll zone - let scroll handlers deal with it
                     ignoreTouchSequence = true
                     return
                 }
@@ -1563,14 +1601,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             MotionEvent.ACTION_MOVE -> {
                 if (ignoreTouchSequence) return
                 
-                // Calculate movement from touch DOWN position (not last position)
+                // Calculate movement from touch DOWN position
                 val totalDx = event.x - touchDownX
                 val totalDy = event.y - touchDownY
                 val totalDistance = kotlin.math.sqrt(totalDx * totalDx + totalDy * totalDy)
                 
-                // If moved beyond tap threshold, this is now a cursor move (not a tap)
+                // If moved beyond tap threshold, cancel long press
                 if (totalDistance > TAP_SLOP_PX) {
-                    // Cancel long press - movement detected
                     handler.removeCallbacks(longPressRunnable)
                 }
                 
@@ -1604,8 +1641,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 }
                 
                 // Inject appropriate event
-                if (isTouchDragging) {
-                    injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis())
+                // FIX: Support both Touch Drag (Long press) and Key Drag (Volume buttons)
+                if (isTouchDragging || isKeyDragging) {
+                    injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis())
                 } else {
                     injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                 }
@@ -1624,27 +1662,33 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     val totalDistance = kotlin.math.sqrt(totalDx * totalDx + totalDy * totalDy)
                     
                     if (isTouchDragging) {
-                        // End drag
-                        injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, SystemClock.uptimeMillis())
+                        // End Touch Drag (Finger lifted)
+                        injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis())
                         isTouchDragging = false
                         hasSentTouchDown = false
-                    } else if (touchDuration < TAP_TIMEOUT_MS && totalDistance < TAP_SLOP_PX) {
+                    } 
+                    else if (isKeyDragging) {
+                        // Key Drag active: Do NOT send UP. 
+                        // Just stop tracking movement. Drag continues until Key Release.
+                    }
+                    else if (touchDuration < TAP_TIMEOUT_MS && totalDistance < TAP_SLOP_PX) {
                         // This was a TAP - perform click
                         performClick(false)
                     }
-                    // Else: Long touch without drag, or moved too much - no click
                 }
                 
                 // Start release debounce
                 isReleaseDebouncing = true
                 handler.postDelayed(releaseDebounceRunnable, RELEASE_DEBOUNCE_MS)
                 
-                // Reset state
-                isTouchDragging = false
-                isVScrolling = false
-                isHScrolling = false
+                // Reset visual state (unless key dragging)
+                if (!isKeyDragging) {
+                    isVScrolling = false
+                    isHScrolling = false
+                    updateBorderColor(currentBorderColor)
+                }
+                
                 ignoreTouchSequence = false
-                updateBorderColor(currentBorderColor)
             }
         }
     }
@@ -1722,10 +1766,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         if (ignoreTouchSequence || isTouchDragging) return
         
         isTouchDragging = true
+        activeDragButton = MotionEvent.BUTTON_PRIMARY // Default to Left Click for touch drag
         dragDownTime = SystemClock.uptimeMillis()
         
         // Inject touch down at current cursor position
-        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, dragDownTime)
+        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, dragDownTime)
         hasSentTouchDown = true
         
         // Visual feedback
@@ -1738,8 +1783,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     private fun startResize() {}
     private fun startMove() {}
-    private fun startKeyDrag(button: Int) { vibrate(); updateBorderColor(0xFF00FF00.toInt()); dragDownTime = SystemClock.uptimeMillis(); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime); hasSentMouseDown = true }
-    private fun stopKeyDrag(button: Int) { if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt()); if (hasSentMouseDown) injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime); hasSentMouseDown = false }
+    private fun startKeyDrag(button: Int) { 
+        vibrate()
+        updateBorderColor(0xFF00FF00.toInt())
+        
+        isKeyDragging = true
+        activeDragButton = button
+        
+        dragDownTime = SystemClock.uptimeMillis()
+        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime)
+        hasSentMouseDown = true 
+    }
+
+    private fun stopKeyDrag(button: Int) { 
+        if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) 
+        else updateBorderColor(0x55FFFFFF.toInt())
+        
+        isKeyDragging = false
+        
+        if (hasSentMouseDown) {
+            injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime)
+        }
+        hasSentMouseDown = false 
+    }
     private fun handleManualAdjust(intent: Intent) {}
     private fun handlePreview(intent: Intent) {}
     private fun setTrackpadVisibility(visible: Boolean) { isTrackpadVisible = visible; if (trackpadLayout != null) trackpadLayout?.visibility = if (visible) View.VISIBLE else View.GONE }

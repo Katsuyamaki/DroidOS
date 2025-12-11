@@ -19,6 +19,7 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
         val iconRes: Int,
         val type: Type,
         val initValue: Int = 0, // For sliders (0-100) or Toggles (0/1)
+        val max: Int = 100,     // NEW: Custom max value for sliders
         val action: ((Any) -> Unit)? = null // Callback
     )
 
@@ -86,7 +87,10 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
                 holder.valueText.visibility = View.VISIBLE
                 holder.slider.visibility = View.VISIBLE
                 
-                // Scale 0-100 to display logic handled by callback, usually 
+                // Set Max FIRST
+                holder.slider.max = item.max
+                
+                // Then set progress
                 holder.valueText.text = "${item.initValue}"
                 holder.slider.progress = item.initValue
                 
