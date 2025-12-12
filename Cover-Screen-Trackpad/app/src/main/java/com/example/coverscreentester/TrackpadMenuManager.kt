@@ -75,6 +75,17 @@ class TrackpadMenuManager(
         if (isVisible) hide() else show()
     }
 
+    fun bringToFront() {
+        if (!isVisible || drawerView == null) return
+        try {
+            // Detach and Re-attach to move to top of Z-Order stack
+            windowManager.removeView(drawerView)
+            windowManager.addView(drawerView, drawerParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun setupDrawer() {
         // Use ContextWrapper to ensure correct theme (Matches Launcher)
         val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)

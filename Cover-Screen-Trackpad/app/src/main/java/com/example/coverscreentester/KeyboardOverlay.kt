@@ -239,11 +239,11 @@ class KeyboardOverlay(
         addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
         val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", (screenWidth - keyboardWidth) / 2)
         val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", screenHeight - keyboardHeight - 10)
-        // CHANGED: Use TYPE_APPLICATION_OVERLAY to match the Service's context and Z-Order tier
+        // CHANGED: Revert to Accessibility Overlay
         keyboardParams = WindowManager.LayoutParams(
             keyboardWidth, 
             keyboardHeight, 
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, 
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, 
             PixelFormat.TRANSLUCENT
         )

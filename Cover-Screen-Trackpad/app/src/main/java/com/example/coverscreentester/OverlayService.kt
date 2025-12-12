@@ -532,21 +532,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     
     private fun setupUI(displayId: Int) {
         try {
-            // Cleanup existing views from both managers
             if (windowManager != null) {
                 if (bubbleView != null) windowManager?.removeView(bubbleView)
                 if (cursorLayout != null) windowManager?.removeView(cursorLayout)
             }
-            if (appWindowManager != null) {
-                if (trackpadLayout != null) appWindowManager?.removeView(trackpadLayout)
+            // Use same manager for trackpad now
+            if (trackpadLayout != null && windowManager != null) {
+                 try { windowManager?.removeView(trackpadLayout) } catch(e: Exception){}
             }
             
-            // Cleanup Keyboard & Menu
             keyboardOverlay?.hide()
             keyboardOverlay = null
             menuManager?.hide()
             menuManager = null
-            
         } catch (e: Exception) {}
 
         val display = displayManager?.getDisplay(displayId)
@@ -556,29 +554,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
 
         try {
-            // 1. Create Base Display Context
             val displayContext = createDisplayContext(display)
 
-            // 2. Create Contexts for different Z-Layers (Android 11/R+ requires this)
-            val accessContext: Context
-            val appContext: Context
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                // High Z-Order (Accessibility)
-                accessContext = displayContext.createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
-                // Low Z-Order (Application)
-                appContext = displayContext.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
-            } else {
-                accessContext = displayContext
-                appContext = displayContext
-            }
+            // CHANGED: Use Accessibility Overlay for EVERYTHING (High Z-Order)
+            // This prevents system UI (Edge Panel, etc.) from drawing over the trackpad.
+            val accessContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                 displayContext.createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
+            } else displayContext
             
-            // 3. Assign Window Managers
-            // windowManager = High Level (Bubble, Cursor, Menu)
+            // Unified Window Manager
             windowManager = accessContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            
-            // appWindowManager = Low Level (Trackpad, Keyboard)
-            appWindowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            appWindowManager = windowManager // Alias for compatibility
 
             currentDisplayId = displayId
             inputTargetDisplayId = displayId
@@ -586,27 +572,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             updateUiMetrics()
 
             // --- Z-ORDER SETUP (Bottom to Top) ---
+            // Since all are Accessibility Overlays, order of adding matters.
             
-            // 1. Trackpad (Bottom - Application Layer)
-            setupTrackpad(appContext)
+            // 1. Trackpad (Bottom)
+            setupTrackpad(accessContext)
             
-            // 2. Keyboard (Application Layer)
+            // 2. Keyboard (Initialized hidden) - Will pop to top when shown, requires re-stacking
             if (shellService != null) initCustomKeyboard()
             
-            // 3. Menu (Accessibility Layer)
-            // Note: We use displayContext for MenuManager to ensure it can create its own clean context if needed,
-            // but we pass the Accessibility WindowManager to ensure it sits on top.
+            // 3. Menu (Initialized hidden)
             menuManager = TrackpadMenuManager(displayContext, windowManager!!, this)
 
-            // 4. Bubble (Accessibility Layer)
+            // 4. Bubble
             setupBubble(accessContext)
             
-            // 5. Cursor (Accessibility Layer)
+            // 5. Cursor
             setupCursor(accessContext)
 
-            // Enforce stack just in case
             enforceZOrder()
-
             showToast("Trackpad active on Display $displayId")
 
         } catch (e: Exception) {
@@ -714,7 +697,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         
         trackpadParams = WindowManager.LayoutParams(
             400, 300, 
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, // Corrected Type
+            // CHANGED: Revert to Accessibility Overlay to block System UI interaction if needed
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or 
@@ -733,8 +717,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         trackpadLayout?.setOnTouchListener { _, event -> val devId = event.deviceId; val tool = event.getToolType(0); if (tool != MotionEvent.TOOL_TYPE_FINGER) return@setOnTouchListener false; when (event.actionMasked) { MotionEvent.ACTION_DOWN -> activeFingerDeviceId = devId; MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> { if (activeFingerDeviceId > 0 && devId != activeFingerDeviceId) return@setOnTouchListener false } }; gestureDetector.onTouchEvent(event); handleTrackpadTouch(event); true }
         trackpadLayout?.visibility = View.GONE
         
-        // FIX: Use appWindowManager for Application Overlay
-        appWindowManager?.addView(trackpadLayout, trackpadParams)
+        windowManager?.addView(trackpadLayout, trackpadParams)
         updateBorderColor(currentBorderColor)
     }
     
@@ -2010,24 +1993,31 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Z-ORDER ENFORCEMENT
     // Stack: Trackpad (Bottom) -> Keyboard -> Menu -> Bubble -> Cursor (Top)
     // =========================
+    // =========================
+    // ENFORCE Z-ORDER
+    // Stack: Trackpad -> Keyboard -> Menu -> Bubble -> Cursor
+    // This function must be called whenever a lower layer (Keyboard) is toggled
+    // to ensure the upper layers (Menu, Bubble, Cursor) stay visible.
+    // =========================
     fun enforceZOrder() {
         if (windowManager == null) return
 
-        // 1. Bubble (Floating Entry - Above Menu)
-        // We remove and re-add to force it to the top of the window stack
+        // 1. Menu (Must sit above Keyboard)
+        menuManager?.bringToFront()
+
+        // 2. Bubble (Above Menu)
         if (bubbleView != null && bubbleView!!.isAttachedToWindow) {
-            try {
+            try { 
                 windowManager?.removeView(bubbleView)
-                windowManager?.addView(bubbleView, bubbleParams)
+                windowManager?.addView(bubbleView, bubbleParams) 
             } catch (e: Exception) {}
         }
 
-        // 2. Cursor (Visual Feedback - Absolute Top)
-        // Must be added LAST to be visible over everything else
+        // 3. Cursor (Absolute Top)
         if (cursorLayout != null && cursorLayout!!.isAttachedToWindow) {
-            try {
+            try { 
                 windowManager?.removeView(cursorLayout)
-                windowManager?.addView(cursorLayout, cursorParams)
+                windowManager?.addView(cursorLayout, cursorParams) 
             } catch (e: Exception) {}
         }
     }
