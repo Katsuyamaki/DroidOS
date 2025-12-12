@@ -279,12 +279,16 @@ class TrackpadMenuManager(
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         val p = service.prefs
         
-        list.add(TrackpadMenuAdapter.MenuItem("SENSITIVITY", 0, TrackpadMenuAdapter.Type.HEADER))
+        // NEW MAIN HEADER
+        list.add(TrackpadMenuAdapter.MenuItem("TRACKPAD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("SENSITIVITY", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.cursorSpeed * 10).toInt()) { v -> service.updatePref("cursor_speed", (v as Int) / 10f) })
         list.add(TrackpadMenuAdapter.MenuItem("Scroll Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.scrollSpeed * 10).toInt()) { v -> service.updatePref("scroll_speed", (v as Int) / 10f) })
         
-        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.HEADER))
-        // Renamed for clarity, though backend key is still 'alpha' (controls border/stroke context basically)
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         list.add(TrackpadMenuAdapter.MenuItem("Border Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
         
         // NEW: Background Opacity Slider
@@ -294,7 +298,8 @@ class TrackpadMenuManager(
         list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize, 200) { v -> service.updatePref("scroll_size", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })
         
-        list.add(TrackpadMenuAdapter.MenuItem("BEHAVIOR", 0, TrackpadMenuAdapter.Type.HEADER))
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("BEHAVIOR", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         list.add(TrackpadMenuAdapter.MenuItem("Reverse Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefReverseScroll) 1 else 0) { v -> service.updatePref("reverse_scroll", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Tap to Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefTapScroll) 1 else 0) { v -> service.updatePref("tap_scroll", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Haptic Feedback", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefVibrate) 1 else 0) { v -> service.updatePref("vibrate", v) })
@@ -395,8 +400,11 @@ class TrackpadMenuManager(
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
         val p = service.prefs
         
-        // === VOLUME UP SECTION ===
-        list.add(TrackpadMenuAdapter.MenuItem("VOLUME UP", 0, TrackpadMenuAdapter.Type.HEADER))
+        // NEW MAIN HEADER
+        list.add(TrackpadMenuAdapter.MenuItem("KEYBINDS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("VOLUME UP", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         
         list.add(TrackpadMenuAdapter.MenuItem(
             "Tap: ${getActionDisplayName(p.hardkeyVolUpTap)}",
@@ -416,8 +424,8 @@ class TrackpadMenuManager(
             TrackpadMenuAdapter.Type.ACTION
         ) { showActionPicker("hardkey_vol_up_hold", p.hardkeyVolUpHold) })
         
-        // === VOLUME DOWN SECTION ===
-        list.add(TrackpadMenuAdapter.MenuItem("VOLUME DOWN", 0, TrackpadMenuAdapter.Type.HEADER))
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("VOLUME DOWN", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         
         list.add(TrackpadMenuAdapter.MenuItem(
             "Tap: ${getActionDisplayName(p.hardkeyVolDownTap)}",
@@ -437,11 +445,10 @@ class TrackpadMenuManager(
             TrackpadMenuAdapter.Type.ACTION
         ) { showActionPicker("hardkey_vol_down_hold", p.hardkeyVolDownHold) })
         
-        // === TIMING SECTION ===
-        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.HEADER))
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.SUBHEADER))
         
         // Max 500ms
-        // Removed loadTab() call to prevent menu closing/refreshing while dragging
         list.add(TrackpadMenuAdapter.MenuItem(
             "Double-Tap Speed (ms)",
             android.R.drawable.ic_menu_recent_history,
@@ -453,7 +460,6 @@ class TrackpadMenuManager(
         })
         
         // Max 800ms
-        // Removed loadTab() call to prevent menu closing/refreshing while dragging
         list.add(TrackpadMenuAdapter.MenuItem(
             "Hold Duration (ms)",
             android.R.drawable.ic_menu_recent_history,

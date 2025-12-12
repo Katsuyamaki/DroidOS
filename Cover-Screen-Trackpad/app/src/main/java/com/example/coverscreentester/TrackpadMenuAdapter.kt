@@ -1,11 +1,14 @@
 package com.example.coverscreentester
 
+import android.graphics.Color
+import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
@@ -29,7 +32,8 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
         SLIDER, // SeekBar
         DPAD,   // Directional Pad
         INFO,   // Text only
-        HEADER  // Section Header
+        HEADER, // Main Section Header (Bold, White)
+        SUBHEADER // Sub-section Header (Small, Grey)
     }
 
     inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
@@ -59,7 +63,7 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val item = items[position]
         
-        // Reset Visibility
+        // Reset Visibility & Style
         holder.valueText.visibility = View.GONE
         holder.switch.visibility = View.GONE
         holder.actionIcon.visibility = View.GONE
@@ -67,17 +71,25 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
         holder.dpadGrid.visibility = View.GONE
         holder.helpText.visibility = View.GONE
         holder.title.visibility = View.VISIBLE
+        holder.icon.visibility = View.VISIBLE
         
         holder.title.text = item.title
         holder.icon.setImageResource(item.iconRes)
         
-        // Default text style
+        // Default text style (Reset)
         holder.title.setTypeface(null, android.graphics.Typeface.NORMAL)
-        holder.icon.visibility = View.VISIBLE
+        holder.title.setTextColor(Color.WHITE)
+        holder.title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        
+        // Reset Item Background/Padding
+        holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
+        holder.itemView.setPadding(0,0,0,0) // Reset padding
+        
+        // Reset click listener
+        holder.itemView.setOnClickListener(null)
 
         when (item.type) {
             Type.ACTION -> {
-                // CLEANUP: Hide the "Play" icon for action items
                 holder.actionIcon.visibility = View.GONE
                 holder.itemView.setOnClickListener { item.action?.invoke(true) }
             }
@@ -92,11 +104,7 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
             Type.SLIDER -> {
                 holder.valueText.visibility = View.VISIBLE
                 holder.slider.visibility = View.VISIBLE
-                
-                // Set Max FIRST
                 holder.slider.max = item.max
-                
-                // Then set progress
                 holder.valueText.text = "${item.initValue}"
                 holder.slider.progress = item.initValue
                 
@@ -113,7 +121,6 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
             }
             Type.DPAD -> {
                 holder.dpadGrid.visibility = View.VISIBLE
-                // Map strings: "UP", "DOWN", "LEFT", "RIGHT", "CENTER"
                 holder.btnUp.setOnClickListener { item.action?.invoke("UP") }
                 holder.btnDown.setOnClickListener { item.action?.invoke("DOWN") }
                 holder.btnLeft.setOnClickListener { item.action?.invoke("LEFT") }
@@ -122,17 +129,28 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
             }
             Type.INFO -> {
                 holder.helpText.visibility = View.VISIBLE
-                holder.helpText.text = item.title // Title used as help text content
-                holder.title.visibility = View.GONE // Hide standard title
+                holder.helpText.text = item.title 
+                holder.title.visibility = View.GONE 
                 holder.icon.visibility = View.GONE
+                holder.itemView.setBackgroundResource(android.R.color.transparent) // No press effect for INFO
             }
             Type.HEADER -> {
                 holder.title.visibility = View.VISIBLE
                 holder.title.text = item.title
                 holder.title.setTypeface(null, android.graphics.Typeface.BOLD)
-                // Headers have no icon and no click action
+                holder.title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f) // Larger
                 holder.icon.visibility = View.GONE
-                holder.itemView.setOnClickListener(null)
+                holder.itemView.setBackgroundResource(android.R.color.transparent) // No press effect
+            }
+            Type.SUBHEADER -> {
+                holder.title.visibility = View.VISIBLE
+                holder.title.text = item.title
+                holder.title.setTypeface(null, android.graphics.Typeface.NORMAL)
+                holder.title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f) // Small
+                holder.title.setTextColor(Color.parseColor("#AAAAAA")) // Grey
+                holder.icon.visibility = View.GONE
+                holder.itemView.setBackgroundResource(android.R.color.transparent) // No press effect
+                // Optional: Add top margin if possible via params, or just rely on list order
             }
         }
     }

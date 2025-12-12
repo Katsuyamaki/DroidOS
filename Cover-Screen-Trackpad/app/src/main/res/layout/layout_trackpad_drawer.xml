@@ -32,7 +32,7 @@
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="16dp"
-                    android:text="DroidOS Trackpad"
+                    android:text="DroidOS Trackpad Keyboard"
                     android:textColor="#FFFFFF"
                     android:textStyle="bold"
                     android:textSize="16sp" />
