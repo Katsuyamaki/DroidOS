@@ -69,7 +69,7 @@ class TrackpadMenuManager(
     }
 
     private fun setupDrawer() {
-        // Use ContextWrapper to ensure correct theme
+        // Use ContextWrapper to ensure correct theme (Matches Launcher)
         val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)
         val inflater = LayoutInflater.from(themedContext)
         drawerView = inflater.inflate(R.layout.layout_trackpad_drawer, null)
@@ -101,14 +101,13 @@ class TrackpadMenuManager(
         }
 
         // =========================
-        // WINDOW CONFIG
+        // WINDOW CONFIG (MATCHING DROIDOS LAUNCHER)
         // =========================
         drawerParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            // CHANGED: Use Accessibility Overlay to share Z-plane with Bubble/Trackpad
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, // Requires Permission
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,    // Clean Flags
             PixelFormat.TRANSLUCENT
         )
         // Explicitly set Gravity
@@ -119,8 +118,10 @@ class TrackpadMenuManager(
         // =========================
         // INTERACTION LOGIC
         // =========================
-        // 1. Background Click -> REMOVED (Menu is now persistent)
-        // We do NOT set a listener here, so clicks on the dim background will be ignored (consumed but no action)
+        // 1. Background Click -> Close
+        drawerView?.setOnClickListener { 
+            hide() 
+        }
         
         // 2. Menu Card Click -> Block (Consume)
         drawerView?.findViewById<View>(R.id.menu_container)?.setOnClickListener { 
@@ -283,7 +284,12 @@ class TrackpadMenuManager(
         list.add(TrackpadMenuAdapter.MenuItem("Scroll Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.scrollSpeed * 10).toInt()) { v -> service.updatePref("scroll_speed", (v as Int) / 10f) })
         
         list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.HEADER))
-        list.add(TrackpadMenuAdapter.MenuItem("Trackpad Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
+        // Renamed for clarity, though backend key is still 'alpha' (controls border/stroke context basically)
+        list.add(TrackpadMenuAdapter.MenuItem("Border Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
+        
+        // NEW: Background Opacity Slider
+        list.add(TrackpadMenuAdapter.MenuItem("Background Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBgAlpha, 255) { v -> service.updatePref("bg_alpha", v) })
+        
         list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        
         list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize, 200) { v -> service.updatePref("scroll_size", v) })
         list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })

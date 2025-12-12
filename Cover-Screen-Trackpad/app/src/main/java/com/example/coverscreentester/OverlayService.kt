@@ -112,7 +112,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefTapScroll = true 
         var prefVibrate = false
         var prefReverseScroll = true
-        var prefAlpha = 200
+        var prefAlpha = 200             // Used for Border/Stroke (in future updates) or general view alpha
+        var prefBgAlpha = 0             // NEW: Background Fill Opacity (0-255)
         var prefKeyboardAlpha = 200
         var prefHandleSize = 60 
         var prefVPosLeft = false
@@ -127,16 +128,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefAutomationEnabled = true
         var prefBubbleX = 50
         var prefBubbleY = 300
-        var prefAnchored = false  // Anchor mode to disable handle drag/resize
-        var prefBubbleSize = 100        // 50-200 range (percentage, 100 = standard)
-        var prefBubbleIconIndex = 0     // Index into icon array
-        var prefBubbleAlpha = 255       // 0-255 opacity
-        var prefPersistentService = false // Default OFF: Close service when app closes
+        var prefAnchored = false 
+        var prefBubbleSize = 100        
+        var prefBubbleIconIndex = 0     
+        var prefBubbleAlpha = 255       
+        var prefPersistentService = false 
         
-        // =========================
-        // HARDKEY BINDING PREFS - Configurable hardware key actions
-        // Each key combo maps to an action ID string
-        // =========================
+        // Hardkeys
         var hardkeyVolUpTap = "left_click"
         var hardkeyVolUpDouble = "none"
         var hardkeyVolUpHold = "left_click"
@@ -144,12 +142,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var hardkeyVolDownDouble = "display_toggle"
         var hardkeyVolDownHold = "alt_position"
         var hardkeyPowerDouble = "none"
-        var doubleTapMs = 300           // Max time between taps for double-tap (150-500)
-        var holdDurationMs = 400        // Time to trigger hold action (200-800)
-        var displayOffMode = "alternate" // "standard" or "alternate"
-        // =========================
-        // END HARDKEY BINDING PREFS
-        // =========================
+        var doubleTapMs = 300           
+        var holdDurationMs = 400        
+        var displayOffMode = "alternate" 
     }
     // =========================
     // END PREFS CLASS
@@ -1127,12 +1122,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             "vibrate" -> prefs.prefVibrate = parseBoolean(value)
             "reverse_scroll" -> prefs.prefReverseScroll = parseBoolean(value)
             "alpha" -> { prefs.prefAlpha = (value.toString().toIntOrNull() ?: 200); updateBorderColor(currentBorderColor) }
+            "bg_alpha" -> { prefs.prefBgAlpha = (value.toString().toIntOrNull() ?: 0); updateBorderColor(currentBorderColor) } // NEW
             "keyboard_alpha" -> { prefs.prefKeyboardAlpha = (value.toString().toIntOrNull() ?: 200); keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha) }
             "handle_size" -> { 
                 val raw = (value.toString().toIntOrNull() ?: 60)
-                val scaled = raw * 2 // Scale 2x
+                val scaled = raw * 2 
                 prefs.prefHandleSize = scaled
-                prefs.prefHandleTouchSize = scaled + 20 // Auto-sync touch size
+                prefs.prefHandleTouchSize = scaled + 20 
                 updateHandleSize()
                 updateLayoutSizes()
             }
@@ -1155,7 +1151,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             "bubble_size" -> { prefs.prefBubbleSize = (value.toString().toIntOrNull() ?: 100); applyBubbleAppearance() }
             "bubble_icon" -> { cycleBubbleIcon() }
             "bubble_alpha" -> { prefs.prefBubbleAlpha = (value.toString().toIntOrNull() ?: 255); applyBubbleAppearance() }
-            "persistent_service" -> prefs.prefPersistentService = parseBoolean(value) // FIXED: Added missing handler
+            "persistent_service" -> prefs.prefPersistentService = parseBoolean(value)
             
             // Hardkey Timing
             "double_tap_ms" -> { prefs.doubleTapMs = (value.toString().toIntOrNull() ?: 300).coerceIn(150, 500) }
@@ -1294,6 +1290,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefVibrate = p.getBoolean("vibrate", true)
         prefs.prefReverseScroll = p.getBoolean("reverse_scroll", true)
         prefs.prefAlpha = p.getInt("alpha", 200)
+        prefs.prefBgAlpha = p.getInt("bg_alpha", 0) // NEW
         prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 200)
         prefs.prefHandleSize = p.getInt("handle_size", 60)
         prefs.prefHandleTouchSize = p.getInt("handle_touch_size", 80)
@@ -1314,9 +1311,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 8)
         prefs.prefPersistentService = p.getBoolean("persistent_service", false)
         
-        // =========================
-        // LOAD HARDKEY BINDINGS - Action mappings for hardware keys
-        // =========================
+        // Hardkeys
         prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "left_click") ?: "left_click"
         prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "none") ?: "none"
         prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "left_click") ?: "left_click"
@@ -1328,26 +1323,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.holdDurationMs = p.getInt("hold_duration_ms", 400)
         prefs.displayOffMode = p.getString("display_off_mode", "alternate") ?: "alternate"
 
-        // === MIGRATION: Fix invalid action IDs from old versions ===
-        // "left_drag" and "right_drag" don't exist - map to "left_click"/"right_click"
-        if (prefs.hardkeyVolUpHold == "left_drag") {
-            prefs.hardkeyVolUpHold = "left_click"
-            p.edit().putString("hardkey_vol_up_hold", "left_click").apply()
-        }
-        if (prefs.hardkeyVolDownHold == "right_drag") {
-            prefs.hardkeyVolDownHold = "right_click"
-            p.edit().putString("hardkey_vol_down_hold", "right_click").apply()
-        }
-        // === END MIGRATION ===
-        // =========================
-        // END LOAD HARDKEY BINDINGS
-        // =========================
+        // MIGRATION (Keep existing logic)
+        if (prefs.hardkeyVolUpHold == "left_drag") { prefs.hardkeyVolUpHold = "left_click"; p.edit().putString("hardkey_vol_up_hold", "left_click").apply() }
+        if (prefs.hardkeyVolDownHold == "right_drag") { prefs.hardkeyVolDownHold = "right_click"; p.edit().putString("hardkey_vol_down_hold", "right_click").apply() }
         
-        // === CRITICAL: Sync scrollZoneThickness with loaded value ===
         scrollZoneThickness = prefs.prefScrollTouchSize
-        // === END SYNC ===
-        
-        // Reset handles if corrupted or first run
         if (prefs.prefHandleSize > 300) prefs.prefHandleSize = 60
         if (prefs.prefHandleTouchSize > 300) prefs.prefHandleTouchSize = 80
     }
@@ -1358,6 +1338,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
         e.putFloat("cursor_speed", prefs.cursorSpeed)
         e.putInt("alpha", prefs.prefAlpha)
+        e.putInt("bg_alpha", prefs.prefBgAlpha) // NEW
         e.putInt("keyboard_alpha", prefs.prefKeyboardAlpha)
         e.putBoolean("use_alt_screen_off", prefs.prefUseAltScreenOff)
         e.putBoolean("automation_enabled", prefs.prefAutomationEnabled)
@@ -1371,9 +1352,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         e.putInt("scroll_visual_size", prefs.prefScrollVisualSize)
         e.putBoolean("persistent_service", prefs.prefPersistentService)
         
-        // =========================
-        // SAVE HARDKEY BINDINGS - Action mappings for hardware keys
-        // =========================
+        // Hardkeys
         e.putString("hardkey_vol_up_tap", prefs.hardkeyVolUpTap)
         e.putString("hardkey_vol_up_double", prefs.hardkeyVolUpDouble)
         e.putString("hardkey_vol_up_hold", prefs.hardkeyVolUpHold)
@@ -1384,9 +1363,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         e.putInt("double_tap_ms", prefs.doubleTapMs)
         e.putInt("hold_duration_ms", prefs.holdDurationMs)
         e.putString("display_off_mode", prefs.displayOffMode)
-        // =========================
-        // END SAVE HARDKEY BINDINGS
-        // =========================
         
         e.apply() 
     }
@@ -1685,14 +1661,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
     private fun updateBorderColor(strokeColor: Int) { 
         // IGNORE the passed strokeColor (which carries debug/state colors)
-        // Always enforce the standard Grey look
-        currentBorderColor = strokeColor // Keep tracking internal state if needed, but don't show it
+        // Always enforce the standard look with user-defined background opacity
+        currentBorderColor = strokeColor 
         
         val bg = trackpadLayout?.background as? GradientDrawable ?: return
-        bg.setColor(Color.TRANSPARENT)
+        
+        // Apply Background Fill: Black with user alpha
+        // 0 = Transparent, 255 = Opaque Black
+        val fillColor = (prefs.prefBgAlpha shl 24) or 0x000000
+        bg.setColor(fillColor)
         
         // Always use standard Grey Stroke (#44FFFFFF)
-        // This overrides Green (Debug), Orange (Drag), Red (Keyboard Mode), etc.
         bg.setStroke(4, Color.parseColor("#44FFFFFF"))
         
         trackpadLayout?.invalidate() 
