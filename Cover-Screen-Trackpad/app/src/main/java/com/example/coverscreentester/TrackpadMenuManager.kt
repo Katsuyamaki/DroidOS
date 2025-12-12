@@ -69,7 +69,7 @@ class TrackpadMenuManager(
     }
 
     private fun setupDrawer() {
-        // Use ContextWrapper to ensure correct theme (Matches Launcher)
+        // Use ContextWrapper to ensure correct theme
         val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)
         val inflater = LayoutInflater.from(themedContext)
         drawerView = inflater.inflate(R.layout.layout_trackpad_drawer, null)
@@ -101,13 +101,14 @@ class TrackpadMenuManager(
         }
 
         // =========================
-        // WINDOW CONFIG (MATCHING DROIDOS LAUNCHER)
+        // WINDOW CONFIG
         // =========================
         drawerParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, // Requires Permission
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,    // Clean Flags
+            // CHANGED: Use Accessibility Overlay to share Z-plane with Bubble/Trackpad
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
         // Explicitly set Gravity

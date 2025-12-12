@@ -381,6 +381,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         try { createNotification() } catch(e: Exception){ e.printStackTrace() }
         
         try {
+            // STEP 1: Initialize UI / Display Target FIRST
+            if (intent?.hasExtra("DISPLAY_ID") == true) {
+                val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
+                val force = intent.getBooleanExtra("FORCE_MOVE", false)
+                
+                // Always attempt move if ID exists. Logic inside function handles optimization.
+                if (targetId >= 0) {
+                    forceMoveToDisplay(targetId, force)
+                }
+            } else if (windowManager == null) {
+                setupUI(Display.DEFAULT_DISPLAY)
+            }
+
+            // STEP 2: Process Actions (Now that UI is ready)
             when (intent?.action) {
                 "RESET_POSITION" -> resetTrackpadPosition()
                 "ROTATE" -> performRotation()
@@ -405,16 +419,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> {
                     menuManager?.show()
+                    // Z-ORDER FIX: Ensure Bubble/Cursor stay on top of the newly opened Menu
+                    enforceZOrder()
                 }
-            }
-            if (intent?.hasExtra("DISPLAY_ID") == true) {
-                val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
-                val force = intent.getBooleanExtra("FORCE_MOVE", false)
-                if (targetId >= 0 && (targetId != currentDisplayId || force)) {
-                    forceMoveToDisplay(targetId)
-                }
-            } else if (windowManager == null) {
-                setupUI(Display.DEFAULT_DISPLAY)
             }
         } catch (e: Exception) { e.printStackTrace() }
         return START_STICKY
@@ -537,12 +544,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     
     private fun setupUI(displayId: Int) {
         try {
+            // Cleanup existing views
             if (windowManager != null) {
                 if (bubbleView != null) windowManager?.removeView(bubbleView)
                 if (trackpadLayout != null) windowManager?.removeView(trackpadLayout)
                 if (cursorLayout != null) windowManager?.removeView(cursorLayout)
             }
+            
+            // Cleanup Keyboard & Menu
+            keyboardOverlay?.hide()
+            keyboardOverlay = null
             menuManager?.hide()
+            menuManager = null
+            
         } catch (e: Exception) {}
 
         val display = displayManager?.getDisplay(displayId)
@@ -556,36 +570,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             val displayContext = createDisplayContext(display)
 
             // 2. Trackpad Context (Accessibility Overlay) - High Z-Order
-            // We keep this specialized context for the Trackpad to ensure it sits on top
             val trackpadContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                  displayContext.createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
             } else displayContext
+            
+            // Use this WindowManager for EVERYTHING to ensure consistent Z-Ordering capability
             val trackpadWM = trackpadContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
-            // 3. Menu Context (Standard Display Context) - Application Overlay
-            // We use the raw displayContext here, matching FloatingLauncherService.
-            // This avoids BadTokenException when adding TYPE_APPLICATION_OVERLAY windows.
-            val menuWM = displayContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
-            // Set global WindowManager to the Trackpad one (default for bubbles/cursor)
             windowManager = trackpadWM
-
+            
             currentDisplayId = displayId
             inputTargetDisplayId = displayId
 
             updateUiMetrics()
 
-            // Setup Trackpad components using Trackpad Context
-            setupBubble(trackpadContext)
+            // --- Z-ORDER SETUP (Bottom to Top) ---
+            
+            // 1. Trackpad (Bottom-most)
             setupTrackpad(trackpadContext)
+            
+            // 2. Keyboard (Initialized but hidden)
+            // It will add its own window when shown. 
+            if (shellService != null) initCustomKeyboard()
+            
+            // 3. Menu (Initialized but hidden)
+            // Passing trackpadContext/trackpadWM ensures it sits in the same layer as others
+            menuManager = TrackpadMenuManager(trackpadContext, trackpadWM, this)
+
+            // 4. Bubble (Floating above Trackpad/Keyboard)
+            setupBubble(trackpadContext)
+            
+            // 5. Cursor (Absolute Top)
             setupCursor(trackpadContext)
 
-            // CRITICAL: Initialize MenuManager with the Display Context (not WindowContext)
-            menuManager = TrackpadMenuManager(displayContext, menuWM, this)
-
-            if (shellService != null) initCustomKeyboard()
-
-            // Ensure correct initial stack
+            // Enforce stack just in case
             enforceZOrder()
 
             showToast("Trackpad active on Display $displayId")
@@ -1007,8 +1024,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
-    fun forceMoveToDisplay(displayId: Int) { 
-        if (displayId == currentDisplayId) return // Optimization: Don't teardown if already there
+    fun forceMoveToDisplay(displayId: Int, force: Boolean = false) { 
+        // Optimization: Don't teardown if already there, UNLESS forced (e.g. by App Launch)
+        if (!force && displayId == currentDisplayId) return 
         setupUI(displayId) 
     }
     
@@ -1953,21 +1971,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun enforceZOrder() {
         if (windowManager == null) return
 
-        // 1. Bubble (Floating Entry - Above Menu)
-        // We remove and re-add to force it to the top of the window stack
-        if (bubbleView != null && bubbleView!!.isAttachedToWindow) {
-            try {
+        // 1. Bubble (Floating Entry - Above Menu/Keyboard)
+        if (bubbleView != null) {
+            try { 
+                // Simple remove/add bumps it to the top of the Accessibility layer stack
                 windowManager?.removeView(bubbleView)
-                windowManager?.addView(bubbleView, bubbleParams)
+                windowManager?.addView(bubbleView, bubbleParams) 
             } catch (e: Exception) {}
         }
 
         // 2. Cursor (Visual Feedback - Absolute Top)
-        // Must be added LAST to be visible over everything else
-        if (cursorLayout != null && cursorLayout!!.isAttachedToWindow) {
-            try {
+        if (cursorLayout != null) {
+            try { 
                 windowManager?.removeView(cursorLayout)
-                windowManager?.addView(cursorLayout, cursorParams)
+                windowManager?.addView(cursorLayout, cursorParams) 
             } catch (e: Exception) {}
         }
     }
