@@ -295,9 +295,17 @@ class ShellUserService : IShellService.Stub() {
     override fun injectKey(keyCode: Int, action: Int, metaState: Int, displayId: Int) {
         if (!this::inputManager.isInitialized) return
         val now = SystemClock.uptimeMillis()
-        // REVERT: Back to deviceId = -1 (Virtual). 
-        // Spoofing '1' didn't help hide the keyboard and might cause driver confusion.
-        val event = KeyEvent(now, now, action, keyCode, 0, metaState, -1, 0, 0, InputDevice.SOURCE_KEYBOARD)
+        
+        // FIX: Added scanCode=1 and flags=8 (FLAG_FROM_SYSTEM)
+        // scanCode=0 is often treated as "Virtual" by the system, causing it to ignore 
+        // the "show_ime_with_hard_keyboard" setting. 
+        // Setting scanCode=1 and flags=8 simulates a real hardware key press.
+        val event = KeyEvent(
+            now, now, action, keyCode, 0, metaState, 
+            1, 1, 8, // deviceId=1, scancode=1, flags=8
+            InputDevice.SOURCE_KEYBOARD
+        )
+        
         try {
             val method = InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
             method.invoke(event, displayId)
