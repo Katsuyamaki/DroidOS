@@ -115,20 +115,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
     val prefs = Prefs()
 
+    // =========================
+    // KEY INJECTION HELPER
+    // =========================
     private fun injectKey(keyCode: Int, action: Int = KeyEvent.ACTION_DOWN, metaState: Int = 0) {
         if (prefs.prefBlockSoftKeyboard) {
-            // DUAL INJECTION STRATEGY:
-            // 1. "The Blocker" (ID 1): Signals Hardware Keyboard presence. Hides Soft KB.
-            shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, 1)
+            // FIX DOUBLE TYPING: 
+            // 1. "The Blocker" (ID 1): Send UNKNOWN key. 
+            //    It signals "Hardware Activity" to keep Soft KB hidden, but types nothing.
+            shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, action, metaState, inputTargetDisplayId, 1)
             
-            // 2. "The Typer" (ID -1): Trusted Virtual Input. Actually types the text.
+            // 2. "The Typer" (ID -1): Trusted Virtual Input. Types the actual character.
             shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, -1)
         } else {
-            // Standard Virtual Input
+            // Standard Virtual Input (Blocking Off)
             shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, -1)
         }
     }
 
+    // =========================
+    // MANUAL SOFT KEYBOARD BLOCKING
+    // =========================
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
         // 1. Accessibility Method (Cover Screen Only)
         if (Build.VERSION.SDK_INT >= 24) {
@@ -142,18 +149,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             } catch (e: Exception) {}
         }
 
-        // 2. Shell Method (Main Screen Strategy)
+        // 2. Shell Method (Global Strategy)
         Thread {
             val valStr = if (enabled) "0" else "1"
             shellService?.runCommand("settings put secure show_ime_with_hard_keyboard $valStr")
             
+            // Force immediate update
             if (enabled) {
                 try { Thread.sleep(100) } catch(e: Exception){}
                 shellService?.injectDummyHardwareKey(currentDisplayId)
             }
         }.start()
         
-        val statusMsg = if (enabled) "BLOCKED (Dual)" else "ALLOWED"
+        val statusMsg = if (enabled) "BLOCKED (Smart)" else "ALLOWED"
         showToast("Soft Keyboard: $statusMsg")
     }
 
@@ -472,10 +480,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             enforceZOrder()
             showToast("Trackpad active on Display $displayId")
             
-            // Re-assert Hardware Keyboard presence on the new display
+            // FIX: "Cover Screen First" dependency
+            // Immediately fire the hardware trigger when UI loads on ANY screen.
             if (prefs.prefBlockSoftKeyboard && shellService != null) {
                  Thread {
-                     try { Thread.sleep(200) } catch(e: Exception){}
+                     try { Thread.sleep(500) } catch(e: Exception){} // Wait for window focus
                      shellService?.injectDummyHardwareKey(currentDisplayId)
                  }.start()
             }
