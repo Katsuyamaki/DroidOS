@@ -1367,7 +1367,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun initCustomKeyboard() { 
         // FIX: Use appWindowManager for Keyboard (Application Overlay)
         if (appWindowManager == null || shellService == null) return
-        keyboardOverlay = KeyboardOverlay(this, appWindowManager!!, shellService, inputTargetDisplayId, { toggleScreen() }, { toggleScreenMode() })
+        // Updated Constructor: Pass toggleCustomKeyboard as the onCloseAction
+        keyboardOverlay = KeyboardOverlay(this, appWindowManager!!, shellService, inputTargetDisplayId, { toggleScreen() }, { toggleScreenMode() }, { toggleCustomKeyboard() })
         keyboardOverlay?.setScreenDimensions(uiScreenWidth, uiScreenHeight, currentDisplayId) 
     }
 
@@ -1388,6 +1389,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
 
         isCustomKeyboardVisible = isNowVisible
+        
+        // --- IME TOGGLE (PURE ACCESSIBILITY) ---
+        // This is the official API. We removed the Shell 'settings put' commands
+        // because running both caused the system to fight (slide effect) and buffer input.
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                // HIDDEN = Force soft keyboard closed
+                // AUTO = Restore normal behavior
+                val mode = if (isNowVisible) AccessibilityService.SHOW_MODE_HIDDEN else AccessibilityService.SHOW_MODE_AUTO
+                softKeyboardController.showMode = mode
+            } catch (e: Exception) {
+                Log.e(TAG, "A11y Keyboard Toggle Failed", e)
+            }
+        }
         
         // Enforce Stack: Keyboard just added, so move Bubble/Cursor to top
         enforceZOrder()
@@ -2070,7 +2085,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onDisplayAdded(displayId: Int) {}
     override fun onDisplayRemoved(displayId: Int) {}
     override fun onDisplayChanged(displayId: Int) {}
-    override fun onDestroy() { super.onDestroy(); try { unregisterReceiver(switchReceiver) } catch(e: Exception){}; if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection) }
+    override fun onDestroy() { 
+        super.onDestroy()
+        
+        // Restore IME via Accessibility
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+            } catch (e: Exception) {}
+        }
+        
+        try { unregisterReceiver(switchReceiver) } catch(e: Exception){}; 
+        if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection) 
+    }
 
     private fun showToast(msg: String) {
         handler.post { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() }

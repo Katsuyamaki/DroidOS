@@ -295,6 +295,8 @@ class ShellUserService : IShellService.Stub() {
     override fun injectKey(keyCode: Int, action: Int, metaState: Int, displayId: Int) {
         if (!this::inputManager.isInitialized) return
         val now = SystemClock.uptimeMillis()
+        // REVERT: Back to deviceId = -1 (Virtual). 
+        // Spoofing '1' didn't help hide the keyboard and might cause driver confusion.
         val event = KeyEvent(now, now, action, keyCode, 0, metaState, -1, 0, 0, InputDevice.SOURCE_KEYBOARD)
         try {
             val method = InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)

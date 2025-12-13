@@ -20,7 +20,8 @@ class KeyboardOverlay(
     private val shellService: IShellService?,
     private val targetDisplayId: Int,
     private val onScreenToggleAction: () -> Unit,
-    private val onScreenModeChangeAction: () -> Unit
+    private val onScreenModeChangeAction: () -> Unit,
+    private val onCloseAction: () -> Unit // New Parameter
 ) : KeyboardView.KeyboardListener {
 
     private var keyboardContainer: FrameLayout? = null
@@ -333,7 +334,8 @@ class KeyboardOverlay(
     private fun addCloseButton() {
         val button = FrameLayout(context); val buttonParams = FrameLayout.LayoutParams(28, 28); buttonParams.gravity = Gravity.TOP or Gravity.RIGHT; buttonParams.setMargins(0, 2, 4, 0)
         val closeText = TextView(context); closeText.text = "X"; closeText.setTextColor(Color.parseColor("#FF5555")); closeText.textSize = 12f; closeText.gravity = Gravity.CENTER
-        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)); button.setOnClickListener { hide() }
+        // CHANGED: Call onCloseAction to notify Service (handles IME toggle & automation)
+        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)); button.setOnClickListener { onCloseAction() }
         keyboardContainer?.addView(button, buttonParams)
     }
 
