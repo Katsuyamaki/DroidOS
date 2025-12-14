@@ -74,5 +74,16 @@
             android:textStyle="bold"
             android:elevation="6dp"/>
 
+        <Button
+            android:id="@+id/btn_switch_display"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Switch Display"
+            android:backgroundTint="#FFC107"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:layout_marginTop="16dp"
+            android:elevation="4dp"/>
+
     </LinearLayout>
 </ScrollView>

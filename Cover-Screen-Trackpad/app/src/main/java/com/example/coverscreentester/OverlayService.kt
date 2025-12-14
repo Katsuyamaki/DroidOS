@@ -73,6 +73,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     var isScreenOff = false
     private var isPreviewMode = false
     
+    // Heartbeat to keep hardware state alive
+    private val blockingHeartbeat = object : Runnable {
+        override fun run() {
+            if (prefs.prefBlockSoftKeyboard && shellService != null) {
+                // Silent heartbeat (no toasts)
+                try { shellService?.injectDummyHardwareKey(0) } catch(e: Exception){}
+                handler.postDelayed(this, 2000) 
+            }
+        }
+    }
+    
     class Prefs {
         var cursorSpeed = 2.5f
         var scrollSpeed = 1.0f 
@@ -116,55 +127,114 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     val prefs = Prefs()
 
     // =========================
-    // KEY INJECTION HELPER
+    // KEY INJECTION
     // =========================
     private fun injectKey(keyCode: Int, action: Int = KeyEvent.ACTION_DOWN, metaState: Int = 0) {
-        if (prefs.prefBlockSoftKeyboard) {
-            // FIX DOUBLE TYPING: 
-            // 1. "The Blocker" (ID 1): Send UNKNOWN key. 
-            //    It signals "Hardware Activity" to keep Soft KB hidden, but types nothing.
-            shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, action, metaState, inputTargetDisplayId, 1)
-            
-            // 2. "The Typer" (ID -1): Trusted Virtual Input. Types the actual character.
-            shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, -1)
-        } else {
-            // Standard Virtual Input (Blocking Off)
-            shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, -1)
-        }
+        // Use Virtual ID (-1) for text to prevent buffering
+        shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, -1)
     }
 
     // =========================
-    // MANUAL SOFT KEYBOARD BLOCKING
+    // BLOCKING TRIGGER (Global)
     // =========================
+    private fun triggerAggressiveBlocking() {
+        if (!prefs.prefBlockSoftKeyboard || shellService == null) return
+        
+        Thread {
+            try {
+                shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
+                shellService?.injectDummyHardwareKey(0) 
+                if (currentDisplayId != 0) shellService?.injectDummyHardwareKey(currentDisplayId)
+                
+                // Extra ID 1 Pulse for safety
+                shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, KeyEvent.ACTION_DOWN, 0, 0, 1)
+                shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, KeyEvent.ACTION_UP, 0, 0, 1)
+                
+            } catch(e: Exception){}
+        }.start()
+    }
+
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
-        // 1. Accessibility Method (Cover Screen Only)
+        // Accessibility: Force AUTO on Main Screen
         if (Build.VERSION.SDK_INT >= 24) {
             try {
-                if (currentDisplayId != 0) {
-                    val mode = if (enabled) AccessibilityService.SHOW_MODE_HIDDEN else AccessibilityService.SHOW_MODE_AUTO
-                    softKeyboardController.showMode = mode
+                if (currentDisplayId != 0 && enabled) {
+                    softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
                 } else {
                     softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
                 }
             } catch (e: Exception) {}
         }
 
-        // 2. Shell Method (Global Strategy)
-        Thread {
-            val valStr = if (enabled) "0" else "1"
-            shellService?.runCommand("settings put secure show_ime_with_hard_keyboard $valStr")
-            
-            // Force immediate update
-            if (enabled) {
-                try { Thread.sleep(100) } catch(e: Exception){}
-                shellService?.injectDummyHardwareKey(currentDisplayId)
-            }
-        }.start()
+        if (enabled) {
+            triggerAggressiveBlocking()
+            handler.post(blockingHeartbeat)
+        } else {
+            handler.removeCallbacks(blockingHeartbeat)
+            Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()
+        }
         
-        val statusMsg = if (enabled) "BLOCKED (Smart)" else "ALLOWED"
+        val statusMsg = if (enabled) "BLOCKED" else "ALLOWED"
         showToast("Soft Keyboard: $statusMsg")
     }
 
+    // =========================
+    // ACCESSIBILITY EVENT (DEBUG FOCUS WATCHDOG)
+    // =========================
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        
+        // Catch Focus, Window State, and Window Content changes
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
+            event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            
+            if (prefs.prefBlockSoftKeyboard) {
+                // DEBUG: Announce Focus Change
+                val pkgName = event.packageName?.toString() ?: "System/Unknown"
+                // Only toast if it's a significant change to avoid pure spam
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    showToast("Focus: $pkgName")
+                }
+                
+                if (shellService != null) {
+                    Thread {
+                        try {
+                            // Re-assert settings
+                            shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
+                            
+                            // Fire Hardware Signal (ID 0 & ID 1)
+                            shellService?.injectDummyHardwareKey(0)
+                            shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, KeyEvent.ACTION_DOWN, 0, 0, 1)
+                            shellService?.injectKey(KeyEvent.KEYCODE_UNKNOWN, KeyEvent.ACTION_UP, 0, 0, 1)
+                            
+                            if (currentDisplayId != 0) shellService?.injectDummyHardwareKey(currentDisplayId)
+                            
+                            // DEBUG: Confirm Signal Fired
+                            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                                handler.post { showToast("HW Signal: Success") }
+                            }
+                        } catch(e: Exception) {
+                            handler.post { showToast("HW Signal: Failed") }
+                        }
+                    }.start()
+                }
+            }
+            
+            // Anti-Buffering Safety Check
+            if (currentDisplayId == 0 && Build.VERSION.SDK_INT >= 24) {
+                try {
+                    if (softKeyboardController.showMode == AccessibilityService.SHOW_MODE_HIDDEN) {
+                        softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                    }
+                } catch(e: Exception){}
+            }
+        }
+    }
+
+    // =========================
+    // STANDARD OVERRIDES
+    // =========================
     private var uiScreenWidth = 1080
     private var uiScreenHeight = 2640
     private var targetScreenWidth = 1920
@@ -267,6 +337,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     else { if (menuDisplayId == -1 || menuDisplayId == currentDisplayId) setTrackpadVisibility(false) }
                 }
                 "SET_PREVIEW_MODE" -> setPreviewMode(intent.getBooleanExtra("PREVIEW_MODE", false))
+                Intent.ACTION_SCREEN_ON -> triggerAggressiveBlocking()
             }
         }
     }
@@ -288,8 +359,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             shellService = IShellService.Stub.asInterface(binder)
             isBound = true
             updateBubbleStatus()
-            Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()
+            showToast("Shizuku Connected") 
             initCustomKeyboard()
+            
+            if (prefs.prefBlockSoftKeyboard) {
+                triggerAggressiveBlocking()
+                handler.post(blockingHeartbeat)
+            }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             shellService = null
@@ -311,8 +387,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             addAction("SET_TRACKPAD_VISIBILITY")
             addAction("SET_PREVIEW_MODE") 
             addAction("OPEN_MENU")
+            addAction(Intent.ACTION_SCREEN_ON)
         }
         ContextCompat.registerReceiver(this, switchReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        
+        if (Build.VERSION.SDK_INT >= 24) {
+            try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}
+        }
     }
 
     override fun onServiceConnected() {
@@ -361,7 +442,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         return START_STICKY
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
@@ -480,14 +560,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             enforceZOrder()
             showToast("Trackpad active on Display $displayId")
             
-            // FIX: "Cover Screen First" dependency
-            // Immediately fire the hardware trigger when UI loads on ANY screen.
-            if (prefs.prefBlockSoftKeyboard && shellService != null) {
-                 Thread {
-                     try { Thread.sleep(500) } catch(e: Exception){} // Wait for window focus
-                     shellService?.injectDummyHardwareKey(currentDisplayId)
-                 }.start()
-            }
+            if (prefs.prefBlockSoftKeyboard) triggerAggressiveBlocking()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to setup UI on display $displayId", e)
