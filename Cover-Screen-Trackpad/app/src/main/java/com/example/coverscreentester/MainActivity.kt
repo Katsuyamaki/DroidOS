@@ -1,7 +1,5 @@
-
 package com.example.coverscreentester
 
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -18,12 +16,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        // 1. SETUP UI ONLY. NO AUTOMATIC CHECKS.
+        // 1. AUTO-START CHECK
+        // If all permissions are already granted, start service and exit immediately.
+        if (checkAllPermissions()) {
+            startOverlayService()
+            finish()
+            return
+        }
+
+        // 2. Show Landing Page (Only if permissions are missing)
+        setContentView(R.layout.activity_main)
         setupUI()
 
-        // 2. Add Listener safely (optional)
+        // 3. Add Listener to detect Shizuku (if it starts late)
         try {
             Shizuku.addBinderReceivedListener {
                 runOnUiThread {
@@ -32,6 +38,19 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Throwable) {
             // Ignore
+        }
+    }
+
+    // Helper: Returns true ONLY if Overlay + Shizuku are both ready
+    private fun checkAllPermissions(): Boolean {
+        // A. Check Overlay
+        if (!Settings.canDrawOverlays(this)) return false
+        
+        // B. Check Shizuku
+        return try {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Throwable) {
+            false
         }
     }
 
@@ -58,7 +77,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Button 3: Check & Start (The Safe Way)
+        // Button 3: Check & Start (The Manual Way)
         findViewById<Button>(R.id.btn_start_check).setOnClickListener {
             manualStartCheck()
         }
@@ -104,6 +123,7 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {}
 
+        // Send 'OPEN_MENU' + 'FORCE_MOVE' to bring UI to this screen
         val intent = Intent(this, OverlayService::class.java).apply {
             action = "OPEN_MENU"
             putExtra("DISPLAY_ID", targetDisplayId)
