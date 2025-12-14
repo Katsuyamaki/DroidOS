@@ -225,6 +225,13 @@ class TrackpadMenuManager(
         
         list.add(TrackpadMenuAdapter.MenuItem("MAIN CONTROLS", 0, TrackpadMenuAdapter.Type.HEADER))
         
+        // --- NEW SWITCH BUTTON ---
+        list.add(TrackpadMenuAdapter.MenuItem("Switch Screen (0 <-> 1)", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { 
+            service.switchDisplay() 
+            hide()
+        })
+        // -------------------------
+
         list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
             service.resetBubblePosition()
             hide()

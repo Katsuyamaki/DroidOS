@@ -73,12 +73,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     var isScreenOff = false
     private var isPreviewMode = false
     
-    // Heartbeat to keep hardware state alive
+    // Heartbeat to keep hardware state alive AND enforce settings
     private val blockingHeartbeat = object : Runnable {
         override fun run() {
             if (prefs.prefBlockSoftKeyboard && shellService != null) {
-                // Silent heartbeat (no toasts)
+                // 1. Re-enforce the secure setting (The OS resets this often)
+                Thread { try { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0") } catch(e:Exception){} }.start()
+                
+                // 2. Inject dummy key to tell input manager a keyboard is present
                 try { shellService?.injectDummyHardwareKey(0) } catch(e: Exception){}
+                
+                // Repeat every 2 seconds
                 handler.postDelayed(this, 2000) 
             }
         }
@@ -155,10 +160,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
-        // Accessibility: Force AUTO on Main Screen
+        // Accessibility: Force HIDDEN if enabled, regardless of display
         if (Build.VERSION.SDK_INT >= 24) {
             try {
-                if (currentDisplayId != 0 && enabled) {
+                if (enabled) {
                     softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
                 } else {
                     softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
@@ -190,12 +195,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             
             if (prefs.prefBlockSoftKeyboard) {
-                // DEBUG: Announce Focus Change
-                val pkgName = event.packageName?.toString() ?: "System/Unknown"
-                // Only toast if it's a significant change to avoid pure spam
-                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                    showToast("Focus: $pkgName")
-                }
+                // DEBUG: Announce Focus Change (Optional, reduces spam)
+                // val pkgName = event.packageName?.toString() ?: "System/Unknown"
+                // if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                //    showToast("Focus: $pkgName")
+                // }
                 
                 if (shellService != null) {
                     Thread {
@@ -210,24 +214,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                             
                             if (currentDisplayId != 0) shellService?.injectDummyHardwareKey(currentDisplayId)
                             
-                            // DEBUG: Confirm Signal Fired
-                            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                                handler.post { showToast("HW Signal: Success") }
-                            }
                         } catch(e: Exception) {
-                            handler.post { showToast("HW Signal: Failed") }
+                            // handler.post { showToast("HW Signal: Failed") }
                         }
                     }.start()
                 }
-            }
-            
-            // Anti-Buffering Safety Check
-            if (currentDisplayId == 0 && Build.VERSION.SDK_INT >= 24) {
-                try {
-                    if (softKeyboardController.showMode == AccessibilityService.SHOW_MODE_HIDDEN) {
-                        softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
-                    }
-                } catch(e: Exception){}
+                
+                // Re-enforce Accessibility Hidden Mode if it got reset
+                if (Build.VERSION.SDK_INT >= 24) {
+                    try {
+                        if (softKeyboardController.showMode != AccessibilityService.SHOW_MODE_HIDDEN) {
+                            softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
+                        }
+                    } catch(e: Exception){}
+                }
             }
         }
     }
@@ -324,6 +324,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private val switchReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
+                "SWITCH_DISPLAY" -> switchDisplay() // <--- NEW ACTION
                 "CYCLE_INPUT_TARGET" -> cycleInputTarget()
                 "RESET_CURSOR" -> resetCursorCenter()
                 "TOGGLE_DEBUG" -> toggleDebugMode()
@@ -362,6 +363,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             showToast("Shizuku Connected") 
             initCustomKeyboard()
             
+            // CRITICAL FIX: Only apply blocking if EXPLICITLY enabled. 
+            // Do NOT reset to "1" here, as that unblocks the keyboard every time the app opens.
             if (prefs.prefBlockSoftKeyboard) {
                 triggerAggressiveBlocking()
                 handler.post(blockingHeartbeat)
@@ -406,6 +409,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         try { createNotification() } catch(e: Exception){ e.printStackTrace() }
         try {
             when (intent?.action) {
+                "SWITCH_DISPLAY" -> switchDisplay() // <--- NEW ACTION
                 "RESET_POSITION" -> resetTrackpadPosition()
                 "ROTATE" -> performRotation()
                 "SAVE_LAYOUT" -> saveLayout()
@@ -1128,5 +1132,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 injectKey(keyCode, KeyEvent.ACTION_UP, metaState)
             } catch (e: Exception) { Log.e(TAG, "Key injection failed", e) }
         }.start()
+    }
+
+    fun switchDisplay() {
+        val targetId = if (currentDisplayId == 0) 1 else 0
+        val display = displayManager?.getDisplay(targetId)
+        if (display != null) {
+            setupUI(targetId)
+            // Save as preference so it persists restarts
+            prefs.prefBubbleX = 50 // Reset position slightly to ensure visibility
+            prefs.prefBubbleY = 300
+            savePrefs()
+            showToast("Switched to Display $targetId")
+        } else {
+            showToast("Display $targetId unavailable")
+        }
     }
 }
