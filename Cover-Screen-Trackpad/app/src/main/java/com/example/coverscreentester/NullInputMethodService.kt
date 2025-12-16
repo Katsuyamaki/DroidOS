@@ -34,15 +34,17 @@ class NullInputMethodService : InputMethodService() {
                 // COMMAND 2: TYPE KEY (Native Input)
                 "com.example.coverscreentester.INJECT_KEY" -> {
                     val keyCode = intent.getIntExtra("keyCode", 0)
+                    val metaState = intent.getIntExtra("metaState", 0)
+                    
                     if (keyCode != 0 && currentInputConnection != null) {
                         val now = System.currentTimeMillis()
-                        // Send DOWN
+                        // Send DOWN with Meta State
                         currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0)
+                            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState)
                         )
-                        // Send UP
+                        // Send UP with Meta State
                         currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0)
+                            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState)
                         )
                     }
                 }

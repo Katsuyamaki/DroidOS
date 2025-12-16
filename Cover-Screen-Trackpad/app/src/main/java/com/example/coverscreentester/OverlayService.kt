@@ -1225,7 +1225,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun resizeWindow(event: MotionEvent): Boolean { if (prefs.prefAnchored) return true; if (event.action == MotionEvent.ACTION_MOVE) { trackpadParams.width += (event.rawX - lastTouchX).toInt(); trackpadParams.height += (event.rawY - lastTouchY).toInt(); windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }; lastTouchX = event.rawX; lastTouchY = event.rawY; return true }
     private fun keyboardHandle(event: MotionEvent): Boolean { 
         if (event.action == MotionEvent.ACTION_UP) {
-            performSmartHide()
+            // Reverted: Just toggle keyboard visibility
+            toggleCustomKeyboard()
         } 
         return true 
     }
@@ -1391,6 +1392,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     val intent = Intent("com.example.coverscreentester.INJECT_KEY")
                     intent.setPackage(packageName)
                     intent.putExtra("keyCode", keyCode)
+                    intent.putExtra("metaState", metaState) // Pass modifiers (Shift/Alt/etc)
                     sendBroadcast(intent)
                 } else {
                     // STRATEGY B: SHIZUKU INJECTION (Fallback / Gboard Active)
