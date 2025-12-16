@@ -41,7 +41,7 @@ class KeyboardView @JvmOverloads constructor(
         BACKSPACE, ENTER, SPACE, SHIFT, CAPS_LOCK, SYMBOLS, ABC,
         TAB, ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT,
         HOME, END, DELETE, ESCAPE, CTRL, ALT,
-        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT
+        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT, HIDE_KEYBOARD
     }
 
     enum class KeyboardState {
@@ -126,7 +126,7 @@ class KeyboardView @JvmOverloads constructor(
     private val arrowRow = listOf("TAB", "CTRL", "ALT", "←", "↑", "↓", "→", "ESC")
     
     // Row 6 (Moved SCREEN to far left)
-    private val navRow = listOf("SCREEN", "MUTE", "VOL-", "VOL+", "BACK", "FWD", "MIC")
+    private val navRow = listOf("SCREEN", "HIDE_KB", "MUTE", "VOL-", "VOL+", "BACK", "FWD", "MIC")
 
     // Keys allowed to repeat when held
     private val alwaysRepeatable = setOf(
@@ -369,6 +369,7 @@ class KeyboardView @JvmOverloads constructor(
         "MUTE" -> "Mute"; "VOL-" -> "Vol-"; "VOL+" -> "Vol+"
         "BACK" -> "Back"; "FWD" -> "Fwd"; "MIC" -> "🎤"
         "SCREEN" -> if (isSymbolsActive()) "MODE" else "📺"
+        "HIDE_KB" -> "▼"
         else -> key
     }
 
@@ -443,6 +444,7 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
             }
+            "HIDE_KB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.HIDE_KEYBOARD, meta) }
             
             "SYM", "SYM1" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_1; buildKeyboard() } }
             "SYM2" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_2; buildKeyboard() } }

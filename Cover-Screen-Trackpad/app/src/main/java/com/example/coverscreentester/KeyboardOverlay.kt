@@ -426,6 +426,10 @@ class KeyboardOverlay(
             triggerVoiceTyping()
             return
         }
+        if (key == KeyboardView.SpecialKey.HIDE_KEYBOARD) {
+            onCloseAction() // Calls the close/hide action passed from Service
+            return
+        }
         val keyCode = when (key) {
             KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
             KeyboardView.SpecialKey.ENTER -> KeyEvent.KEYCODE_ENTER
