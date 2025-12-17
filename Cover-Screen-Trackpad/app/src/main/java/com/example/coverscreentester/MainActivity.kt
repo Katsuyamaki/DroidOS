@@ -3,142 +3,123 @@ package com.example.coverscreentester
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.Display
 import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import rikka.shizuku.Shizuku
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListener {
 
-    // Listener to handle Shizuku connection asynchronously
-    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        if (checkAllPermissions()) {
-            startOverlayService()
-            finish()
-        }
-    }
+    private lateinit var statusText: TextView
+    private lateinit var btnStart: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_menu)
 
-        // Register the listener immediately
-        Shizuku.addBinderReceivedListener(binderReceivedListener)
-
-        // 1. AUTO-START CHECK (Instant)
-        // Wrapped in try-catch to prevent crashes if Shizuku isn't ready
-        try {
-            if (Shizuku.pingBinder() && checkAllPermissions()) {
-                startOverlayService()
-                finish()
-                return
-            }
-        } catch (e: Exception) {
-            // Ignore error, wait for listener
-        }
-
-        // 2. Show Landing Page (Fallback)
-        setContentView(R.layout.activity_main)
-        setupUI()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        Shizuku.removeBinderReceivedListener(binderReceivedListener)
-    }
-
-    // Helper: Returns true ONLY if Overlay + Shizuku are both ready
-    private fun checkAllPermissions(): Boolean {
-        // A. Check Overlay
-        if (!Settings.canDrawOverlays(this)) return false
+        // UI References
+        val btnRestricted = findViewById<Button>(R.id.btnStep1Restricted)
+        val btnAccessibility = findViewById<Button>(R.id.btnStep2Accessibility)
+        val btnOverlay = findViewById<Button>(R.id.btnStep3Overlay)
+        val btnShizuku = findViewById<Button>(R.id.btnStep4Shizuku)
         
-        // B. Check Shizuku
-        return try {
-            if (!Shizuku.pingBinder()) return false
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Throwable) {
-            false
-        }
-    }
+        btnStart = findViewById(R.id.btnStartApp)
+        statusText = findViewById(R.id.shizukuStatus)
 
-    private fun setupUI() {
-        findViewById<Button>(R.id.btn_fix_restricted).setOnClickListener {
-            try {
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                val uri = Uri.fromParts("package", packageName, null)
-                intent.data = uri
-                startActivity(intent)
-                Toast.makeText(this, "Tap 3 dots (top-right) -> Allow Restricted Settings", Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error opening App Info", Toast.LENGTH_SHORT).show()
-            }
+        // Step 1: Restricted Settings (App Info)
+        btnRestricted.setOnClickListener {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
         }
 
-        findViewById<Button>(R.id.btn_open_accessibility).setOnClickListener {
-            try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error opening Accessibility", Toast.LENGTH_SHORT).show()
-            }
+        // Step 2: Accessibility
+        btnAccessibility.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        findViewById<Button>(R.id.btn_start_check).setOnClickListener {
-            manualStartCheck()
-        }
-    }
-
-    private fun manualStartCheck() {
-        if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "⚠️ Please Grant 'Display Over Apps'", Toast.LENGTH_LONG).show()
-            try {
-                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                startActivity(intent)
-            } catch(e: Exception) {}
-            return
+        // Step 3: Overlay
+        btnOverlay.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
 
-        try {
-            if (!Shizuku.pingBinder()) {
-                Toast.makeText(this, "⚠️ Shizuku Not Running!", Toast.LENGTH_SHORT).show()
-                return
-            }
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                Shizuku.requestPermission(0)
-                return
-            }
-        } catch (e: Throwable) {
-            Toast.makeText(this, "⚠️ Shizuku Error: ${e.message}", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        startOverlayService()
-        finish()
-    }
-
-    private fun startOverlayService() {
-        var targetDisplayId = Display.DEFAULT_DISPLAY
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display?.let { targetDisplayId = it.displayId }
+        // Step 4: Shizuku
+        // Ensure listener is registered immediately
+        Shizuku.addRequestPermissionResultListener(this)
+        
+        btnShizuku.setOnClickListener {
+            if (Shizuku.getBinder() == null) {
+                statusText.text = "Shizuku not running!"
+                Toast.makeText(this, "Please start Shizuku app first", Toast.LENGTH_LONG).show()
             } else {
-                @Suppress("DEPRECATION")
-                targetDisplayId = windowManager.defaultDisplay.displayId
+                Shizuku.requestPermission(0)
             }
-        } catch (e: Exception) {}
-
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = "OPEN_MENU"
-            putExtra("DISPLAY_ID", targetDisplayId)
-            putExtra("FORCE_MOVE", true)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        // Start App
+        btnStart.setOnClickListener {
+            if (checkCriticalPermissions()) {
+                startTrackpadService()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateStatusUI()
+    }
+
+    private fun updateStatusUI() {
+        // Check Shizuku
+        val shizukuOk = try {
+            Shizuku.getBinder() != null && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) { false }
+        
+        if (shizukuOk) {
+            statusText.text = "Shizuku: GRANTED"
+            statusText.setTextColor(getColor(android.R.color.holo_green_light))
+        } else {
+            statusText.text = "Shizuku: Not Granted"
+            statusText.setTextColor(getColor(android.R.color.holo_orange_light))
+        }
+
+        // Enable Start button only if Overlay is granted (Absolute minimum)
+        // Accessibility is harder to check strictly without loop, but we can warn.
+        btnStart.isEnabled = Settings.canDrawOverlays(this)
+    }
+
+    private fun checkCriticalPermissions(): Boolean {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Step 3 (Overlay) is required!", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        // Optional: Check Accessibility enabled via specific service check if desired
+        // For now, we rely on user confirmation or app behavior
+        return true
+    }
+
+    override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+        if (grantResult == PackageManager.PERMISSION_GRANTED) {
+            updateStatusUI()
+            Toast.makeText(this, "Shizuku Granted!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startTrackpadService() {
+        val intent = Intent(this, OverlayService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
         }
+        finish() // Minimize to background
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Shizuku.removeRequestPermissionResultListener(this)
     }
 }

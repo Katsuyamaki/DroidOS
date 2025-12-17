@@ -429,7 +429,7 @@ class TrackpadMenuManager(
     // HARDKEY ACTIONS LIST
     // =========================
     private val hardkeyActions = listOf(
-        "none" to "None",
+        "none" to "None (System Default)",
         "left_click" to "Left Click (Hold to Drag)",
         "right_click" to "Right Click (Hold to Drag)",
         "scroll_up" to "Scroll Up",

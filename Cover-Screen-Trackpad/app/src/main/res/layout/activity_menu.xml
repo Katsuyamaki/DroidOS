@@ -1,32 +1,181 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:background="#121212"
+    android:fillViewport="true">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Checking Shizuku..."
-        android:layout_marginBottom="24dp"
-        android:textSize="16sp" />
-
-    <Button
-        android:id="@+id/btnQuadrant"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="4-App Quadrant"
-        android:enabled="false" />
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:gravity="center_horizontal">
 
-    <Button
-        android:id="@+id/btnSplit"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="2-App Split"
-        android:enabled="false" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Trackpad Setup"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="24dp" />
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Step 1: Unblock Restricted Settings"
+            android:textColor="#3DDC84"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Required for Android 13+. If you cannot enable Accessibility in Step 2, click this button to open App Info. Then tap the 3-dot menu (top right) and select 'Allow Restricted Settings'."
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <Button
+            android:id="@+id/btnStep1Restricted"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Open App Info"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"/>
+        
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Note: You may need to go to Step 2, find it blocked, and come back here."
+            android:textColor="#FF5252"
+            android:textSize="11sp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginBottom="24dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Step 2: Accessibility Service"
+            android:textColor="#3DDC84"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Disclosure: This app uses the AccessibilityService API to function as a trackpad. It simulates touch inputs (clicks and swipes) on the cover screen on your behalf. This app does not collect, store, or transmit any personal user data through this service."
+            android:textColor="#DDDDDD"
+            android:textSize="12sp"
+            android:background="#222222"
+            android:padding="8dp"
+            android:layout_marginBottom="8dp"/>
+
+        <Button
+            android:id="@+id/btnStep2Accessibility"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Accessibility"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Note: After permission granted, press back button until you are back at this page."
+            android:textColor="#AAAAAA"
+            android:textSize="11sp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginBottom="24dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Step 3: Overlay Permission"
+            android:textColor="#3DDC84"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Required to display the mouse cursor and trackpad controls over other apps."
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <Button
+            android:id="@+id/btnStep3Overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Overlay"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="24dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Step 4: Shizuku Permission"
+            android:textColor="#3DDC84"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <Button
+            android:id="@+id/btnStep4Shizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Shizuku"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"/>
+
+        <TextView
+            android:id="@+id/shizukuStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status: Checking..."
+            android:textColor="#FF9800"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:layout_marginTop="8dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Note: If Shizuku permissions are lost, a red dot may appear on Bubble Launcher indicating regrant is needed. Shizuku is required for advanced injection, but basic functions may work without it."
+            android:textColor="#AAAAAA"
+            android:textSize="11sp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="32dp"/>
+
+        <Button
+            android:id="@+id/btnStartApp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="START TRACKPAD"
+            android:backgroundTint="#009688"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:minHeight="60dp"/>
+
+    </LinearLayout>
+</ScrollView>

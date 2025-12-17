@@ -627,83 +627,46 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     override fun onInterrupt() {}
 
+    // Use dispatchKeyEvent to catch BOTH Down and Up events in one place
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        // 1. Identify if this is a "Rescue" capable key (Volume Keys)
-        val isVolKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-        
-        // 2. Guard Clause:
-        // - If in Preview Mode: Block everything (pass to system)
-        // - If Trackpad is HIDDEN: Block everything EXCEPT Volume Keys
-        if (isPreviewMode || (!isTrackpadVisible && !isVolKey)) {
-            return super.onKeyEvent(event)
-        }
-        
-        val action = event.action
         val keyCode = event.keyCode
-        
+        val action = event.action
+
+        // 1. Handle Volume Up
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            when (action) {
-                KeyEvent.ACTION_DOWN -> {
-                    if (!isLeftKeyHeld) {
-                        isLeftKeyHeld = true
-                        volUpHoldTriggered = false
-                        handler.postDelayed(volUpHoldRunnable, prefs.holdDurationMs.toLong())
-                    }
-                }
-                KeyEvent.ACTION_UP -> {
-                    isLeftKeyHeld = false
-                    handler.removeCallbacks(volUpHoldRunnable)
-                    if (volUpHoldTriggered) {
-                        executeHardkeyAction(prefs.hardkeyVolUpHold, KeyEvent.ACTION_UP)
-                    } else {
-                        val timeSinceLastTap = System.currentTimeMillis() - lastVolUpTime
-                        lastVolUpTime = System.currentTimeMillis()
-                        if (timeSinceLastTap < prefs.doubleTapMs && volUpTapCount == 1) {
-                            handler.removeCallbacks(volUpDoubleTapRunnable)
-                            volUpTapCount = 0
-                            executeHardkeyAction(prefs.hardkeyVolUpDouble, KeyEvent.ACTION_UP)
-                        } else {
-                            volUpTapCount = 1
-                            handler.removeCallbacks(volUpDoubleTapRunnable)
-                            handler.postDelayed(volUpDoubleTapRunnable, prefs.doubleTapMs.toLong())
-                        }
-                    }
-                }
+            val bind = prefs.hardkeyVolUpTap // Use string preference
+            
+            // If "none", let the System handle it (return false)
+            if (bind == "none") { // Check for "none" string
+                return super.onKeyEvent(event) 
             }
-            return true
+
+            // If Custom Bind:
+            if (action == KeyEvent.ACTION_DOWN) {
+                // Only run the action on the "Down" press
+                executeHardkeyAction(bind, KeyEvent.ACTION_DOWN) // Pass ACTION_DOWN
+            }
+            
+            // Return TRUE for both DOWN and UP to block the system volume change
+            return true 
         }
 
+        // 2. Handle Volume Down
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            when (action) {
-                KeyEvent.ACTION_DOWN -> {
-                    if (!isRightKeyHeld) {
-                        isRightKeyHeld = true
-                        volDownHoldTriggered = false
-                        handler.postDelayed(volDownHoldRunnable, prefs.holdDurationMs.toLong())
-                    }
-                }
-                KeyEvent.ACTION_UP -> {
-                    isRightKeyHeld = false
-                    handler.removeCallbacks(volDownHoldRunnable)
-                    if (volDownHoldTriggered) {
-                        executeHardkeyAction(prefs.hardkeyVolDownHold, KeyEvent.ACTION_UP)
-                    } else {
-                        val timeSinceLastTap = System.currentTimeMillis() - lastVolDownTime
-                        lastVolDownTime = System.currentTimeMillis()
-                        if (timeSinceLastTap < prefs.doubleTapMs && volDownTapCount == 1) {
-                            handler.removeCallbacks(volDownDoubleTapRunnable)
-                            volDownTapCount = 0
-                            executeHardkeyAction(prefs.hardkeyVolDownDouble, KeyEvent.ACTION_UP)
-                        } else {
-                            volDownTapCount = 1
-                            handler.removeCallbacks(volDownDoubleTapRunnable)
-                            handler.postDelayed(volDownDoubleTapRunnable, prefs.doubleTapMs.toLong())
-                        }
-                    }
-                }
+            val bind = prefs.hardkeyVolDownTap // Use string preference
+            
+            if (bind == "none") { // Check for "none" string
+                return super.onKeyEvent(event)
             }
-            return true
+
+            if (action == KeyEvent.ACTION_DOWN) {
+                executeHardkeyAction(bind, KeyEvent.ACTION_DOWN) // Pass ACTION_DOWN
+            }
+            
+            return true // Block system volume
         }
+
+        // 3. Pass all other keys to default handler
         return super.onKeyEvent(event)
     }
 
