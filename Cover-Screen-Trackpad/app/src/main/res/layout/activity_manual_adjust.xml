@@ -3,155 +3,96 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center"
+    android:padding="16dp"
     android:background="#121212"
-    android:padding="16dp">
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Manual Adjustment"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="16dp"/>
+    android:gravity="center">
 
     <TextView
         android:id="@+id/text_mode"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="TRACKPAD: MOVE"
-        android:textColor="#3DDC84"
-        android:textSize="16sp"
+        android:text="TRACKPAD: POSITION"
+        android:textColor="#00FF00"
+        android:textSize="20sp"
         android:textStyle="bold"
-        android:layout_marginBottom="16dp"/>
+        android:layout_marginBottom="24dp"/>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:layout_marginBottom="8dp">
-        
+        android:layout_marginBottom="16dp">
+
         <Button
             android:id="@+id/btn_toggle_target"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Target: Trackpad"
-            android:backgroundTint="#6200EE"
-            android:textColor="#FFFFFF"/>
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:layout_marginBottom="24dp">
+            android:text="Edit: Trackpad"
+            android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btn_toggle_mode"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Switch Mode"
-            android:backgroundTint="#444444"
-            android:textColor="#FFFFFF"
-            android:layout_marginEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btn_rotate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Rotate 90°"
-            android:backgroundTint="#333333"
-            android:textColor="#FFFFFF"
-            android:layout_marginStart="8dp"/>
+            android:text="Mode: Position"/>
     </LinearLayout>
+
+    <Button
+        android:id="@+id/btn_up"
+        android:layout_width="80dp"
+        android:layout_height="60dp"
+        android:text="UP"/>
 
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center">
+        android:gravity="center"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp">
 
         <Button
-            android:id="@+id/btn_up"
+            android:id="@+id/btn_left"
             android:layout_width="80dp"
             android:layout_height="60dp"
-            android:text="▲"
-            android:textSize="20sp"
-            android:backgroundTint="#333333"
-            android:textColor="#FFFFFF"
-            android:layout_marginBottom="4dp"/>
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_left"
-                android:layout_width="80dp"
-                android:layout_height="60dp"
-                android:text="◄"
-                android:textSize="20sp"
-                android:backgroundTint="#333333"
-                android:textColor="#FFFFFF"
-                android:layout_marginEnd="4dp"/>
-
-            <Button
-                android:id="@+id/btn_center"
-                android:layout_width="80dp"
-                android:layout_height="60dp"
-                android:text="⟲"
-                android:textSize="24sp"
-                android:backgroundTint="#555555"
-                android:textColor="#FFFFFF"
-                android:tooltipText="Reset to Center"/>
-
-            <Button
-                android:id="@+id/btn_right"
-                android:layout_width="80dp"
-                android:layout_height="60dp"
-                android:text="►"
-                android:textSize="20sp"
-                android:backgroundTint="#333333"
-                android:textColor="#FFFFFF"
-                android:layout_marginStart="4dp"/>
-        </LinearLayout>
+            android:text="LEFT"
+            android:layout_marginEnd="16dp"/>
 
         <Button
-            android:id="@+id/btn_down"
+            android:id="@+id/btn_center"
             android:layout_width="80dp"
             android:layout_height="60dp"
-            android:text="▼"
-            android:textSize="20sp"
-            android:backgroundTint="#333333"
-            android:textColor="#FFFFFF"
-            android:layout_marginTop="4dp"/>
+            android:text="RESET"
+            android:textColor="#FF9800"/>
+
+        <Button
+            android:id="@+id/btn_right"
+            android:layout_width="80dp"
+            android:layout_height="60dp"
+            android:text="RIGHT"
+            android:layout_marginStart="16dp"/>
 
     </LinearLayout>
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Center Button resets position/size"
-        android:textColor="#666666"
-        android:textSize="12sp"
-        android:layout_marginTop="16dp"/>
+    <Button
+        android:id="@+id/btn_down"
+        android:layout_width="80dp"
+        android:layout_height="60dp"
+        android:text="DOWN"/>
 
-    <View
+    <Button
+        android:id="@+id/btn_rotate"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"/>
+        android:layout_height="wrap_content"
+        android:text="Rotate 90°"
+        android:layout_marginTop="24dp"/>
 
     <Button
         android:id="@+id/btn_back"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Back to Main Menu"
-        android:backgroundTint="#3DDC84"
-        android:textColor="#000000"
-        android:textStyle="bold"/>
+        android:text="Done / Back"
+        android:backgroundTint="#555555"
+        android:layout_marginTop="16dp"/>
 
 </LinearLayout>

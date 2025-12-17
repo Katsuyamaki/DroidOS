@@ -592,9 +592,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         try {
             when (intent?.action) {
-                "SWITCH_DISPLAY" -> switchDisplay() // <--- NEW ACTION
-                "RESET_POSITION" -> resetTrackpadPosition()
-                "ROTATE" -> performRotation()
+                "SWITCH_DISPLAY" -> switchDisplay()
+                "RESET_POSITION" -> {
+                    val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                    if (target == "KEYBOARD") {
+                        keyboardOverlay?.resetPosition()
+                    } else {
+                        resetTrackpadPosition()
+                    }
+                }
+                "ROTATE" -> {
+                    val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                    if (target == "KEYBOARD") {
+                        keyboardOverlay?.cycleRotation()
+                    } else {
+                        performRotation()
+                    }
+                }
                 "SAVE_LAYOUT" -> saveLayout()
                 "LOAD_LAYOUT" -> loadLayout()
                 "DELETE_PROFILE" -> deleteCurrentProfile()

@@ -231,6 +231,46 @@ class KeyboardOverlay(
         try { windowManager.updateViewLayout(keyboardContainer, keyboardParams) } catch (e: Exception) {}
     }
 
+    // Cycle rotation 0 -> 90 -> 180 -> 270
+    fun cycleRotation() {
+        if (keyboardContainer == null) return
+
+        // Increment rotation
+        currentRotation = (currentRotation + 90) % 360
+
+        // Apply visual rotation to the view
+        keyboardContainer?.rotation = currentRotation.toFloat()
+
+        // Note: For a perfect 90-degree fit, users may need to resize manually
+        // using the "Size" mode in Manual Adjust.
+    }
+
+    // Reset to Middle of Screen (Safe defaults)
+    fun resetPosition() {
+        if (keyboardParams == null) return
+
+        // 1. Reset Rotation
+        currentRotation = 0
+        keyboardContainer?.rotation = 0f
+
+        // 2. Calculate Defaults
+        val defaultWidth = (screenWidth * 0.95f).toInt().coerceIn(300, 800)
+        val defaultHeight = WindowManager.LayoutParams.WRAP_CONTENT
+
+        val defaultX = (screenWidth - defaultWidth) / 2
+        val defaultY = (screenHeight / 2) // Place in middle as requested
+
+        // 3. Apply
+        keyboardParams?.x = defaultX
+        keyboardParams?.y = defaultY
+        keyboardParams?.width = defaultWidth
+        keyboardParams?.height = defaultHeight
+
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+        } catch (e: Exception) {}
+    }
+
     fun show() { 
         if (isVisible) return
         try { 
