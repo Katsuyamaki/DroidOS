@@ -33,7 +33,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Required for Android 13+. If you cannot enable Accessibility in Step 2, click this button to open App Info. Then tap the 3-dot menu (top right) and select 'Allow Restricted Settings'."
+            android:text="Required for Android 13+. If Step 2 fails, click this button to open App Info. Then tap the 3-dot menu (top right) -> 'Allow Restricted Settings'."
             android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
@@ -45,21 +45,13 @@
             android:text="Open App Info"
             android:backgroundTint="#333333"
             android:textColor="#FFFFFF"/>
-        
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Note: You may need to go to Step 2, find it blocked, and come back here."
-            android:textColor="#FF5252"
-            android:textSize="11sp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="24dp"/>
 
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:background="#333333"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"/>
 
         <TextView
             android:id="@+id/tvStep2Title"
@@ -73,7 +65,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Disclosure: This app uses the AccessibilityService API to function as a trackpad. It simulates touch inputs (clicks and swipes) on the cover screen on your behalf. This app does not collect, store, or transmit any personal user data through this service."
+            android:text="Disclosure: Uses AccessibilityService API to simulate touch inputs on the cover screen. No personal data is collected."
             android:textColor="#DDDDDD"
             android:textSize="12sp"
             android:background="#222222"
@@ -88,20 +80,12 @@
             android:backgroundTint="#333333"
             android:textColor="#FFFFFF"/>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Note: After permission granted, press back button until you are back at this page."
-            android:textColor="#AAAAAA"
-            android:textSize="11sp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="24dp"/>
-
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:background="#333333"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"/>
 
         <TextView
             android:id="@+id/tvStep3Title"
@@ -115,7 +99,7 @@
          <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Required to display the mouse cursor and trackpad controls over other apps."
+            android:text="Required to display the mouse cursor over other apps."
             android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
@@ -132,8 +116,8 @@
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:background="#333333"
-            android:layout_marginTop="24dp"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"/>
 
         <TextView
             android:id="@+id/tvStep4Title"
@@ -155,7 +139,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Note: If Shizuku permissions are lost, a red dot may appear on Bubble Launcher indicating regrant is needed. Shizuku is required for advanced injection, but basic functions may work without it."
+            android:text="Note: If Shizuku permissions are lost, a red dot may appear in the app."
             android:textColor="#AAAAAA"
             android:textSize="11sp"
             android:layout_marginTop="8dp"
@@ -170,7 +154,7 @@
             android:textColor="#FFFFFF"
             android:textStyle="bold"
             android:minHeight="60dp"
-            android:layout_marginTop="16dp"/>
+            android:layout_marginTop="8dp"/>
 
         <Button
             android:id="@+id/btnOpenSettings"
