@@ -586,6 +586,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try { createNotification() } catch(e: Exception){ e.printStackTrace() }
+
+        // Re-check Shizuku binding on every start command to ensure connection is alive
+        checkAndBindShizuku()
+
         try {
             when (intent?.action) {
                 "SWITCH_DISPLAY" -> switchDisplay() // <--- NEW ACTION
@@ -1141,7 +1145,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) { e.printStackTrace() } }
-    
+
+    // Helper to retry binding if connection is dead/null
+    private fun checkAndBindShizuku() {
+        // If we think we are bound, but the binder is dead, reset flag
+        if (shellService != null && !shellService!!.asBinder().isBinderAlive) {
+            isBound = false
+            shellService = null
+        }
+
+        // If actually connected, do nothing
+        if (shellService != null) return
+
+        // Otherwise, try to bind
+        bindShizuku()
+    }
+
     private fun createNotification() { 
         try {
             val channel = NotificationChannel("overlay_service", "Trackpad", NotificationManager.IMPORTANCE_LOW)

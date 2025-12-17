@@ -25,7 +25,7 @@
             android:id="@+id/tvStep1Title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Step 1: Unblock Restricted Settings"
+            android:text="Step 1: Initialize Restriction"
             android:textColor="#3DDC84"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
@@ -33,16 +33,16 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Required for Android 13+. If Step 2 fails, click this button to open App Info. Then tap the 3-dot menu (top right) -> 'Allow Restricted Settings'."
+            android:text="Find 'Cover Screen Trackpad' and tap it. If a 'Restricted Setting' dialog appears, click OK and proceed to Step 2. If it enables successfully, you can skip to Step 4."
             android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
 
         <Button
-            android:id="@+id/btnStep1Restricted"
+            android:id="@+id/btnStep1Trigger"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Open App Info"
+            android:text="Open Accessibility"
             android:backgroundTint="#333333"
             android:textColor="#FFFFFF"/>
 
@@ -57,7 +57,7 @@
             android:id="@+id/tvStep2Title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Step 2: Accessibility Service"
+            android:text="Step 2: Allow Restricted Settings"
             android:textColor="#3DDC84"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
@@ -65,18 +65,16 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Disclosure: Uses AccessibilityService API to simulate touch inputs on the cover screen. No personal data is collected."
-            android:textColor="#DDDDDD"
+            android:text="1. Click button below to open App Info.\n2. Tap the 3-dot menu (top right).\n3. Select 'Allow Restricted Settings'."
+            android:textColor="#FF5252"
             android:textSize="12sp"
-            android:background="#222222"
-            android:padding="8dp"
             android:layout_marginBottom="8dp"/>
 
         <Button
-            android:id="@+id/btnStep2Accessibility"
+            android:id="@+id/btnStep2Unblock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Grant Accessibility"
+            android:text="Open App Info"
             android:backgroundTint="#333333"
             android:textColor="#FFFFFF"/>
 
@@ -91,24 +89,24 @@
             android:id="@+id/tvStep3Title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Step 3: Overlay Permission"
+            android:text="Step 3: Enable Accessibility"
             android:textColor="#3DDC84"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
-         <TextView
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Required to display the mouse cursor over other apps."
+            android:text="Go back to Accessibility and enable 'Cover Screen Trackpad'. It should now work."
             android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
 
         <Button
-            android:id="@+id/btnStep3Overlay"
+            android:id="@+id/btnStep3Enable"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Grant Overlay"
+            android:text="Grant Accessibility"
             android:backgroundTint="#333333"
             android:textColor="#FFFFFF"/>
 
@@ -123,13 +121,45 @@
             android:id="@+id/tvStep4Title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Step 4: Shizuku Permission"
+            android:text="Step 4: Overlay Permission"
+            android:textColor="#3DDC84"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Required to display the mouse cursor over other apps."
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <Button
+            android:id="@+id/btnStep4Overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Overlay"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/tvStep5Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Step 5: Shizuku Permission"
             android:textColor="#3DDC84"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
         <Button
-            android:id="@+id/btnStep4Shizuku"
+            android:id="@+id/btnStep5Shizuku"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Grant Shizuku"
