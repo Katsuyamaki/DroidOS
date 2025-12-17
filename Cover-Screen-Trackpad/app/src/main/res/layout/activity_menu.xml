@@ -33,7 +33,17 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Find 'Cover Screen Trackpad' and tap it. If a 'Restricted Setting' dialog appears, click OK and proceed to Step 2. If it enables successfully, you can skip to Step 4."
+            android:text="Disclosure: This app uses the AccessibilityService API to function as a trackpad. It simulates touch inputs (clicks and swipes) on the cover screen on your behalf. This app does not collect, store, or transmit any personal user data through this service."
+            android:textColor="#DDDDDD"
+            android:textSize="12sp"
+            android:background="#222222"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Instructions: Find 'Cover Screen Trackpad' and tap it. If a 'Restricted Setting' dialog appears, click OK and proceed to Step 2. If it enables successfully, you can skip to Step 4."
             android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
@@ -66,7 +76,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="1. Click button below to open App Info.\n2. Tap the 3-dot menu (top right).\n3. Select 'Allow Restricted Settings'."
-            android:textColor="#FF5252"
+            android:textColor="#AAAAAA"
             android:textSize="12sp"
             android:layout_marginBottom="8dp"/>
 
@@ -126,12 +136,14 @@
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
-         <TextView
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Required to display the mouse cursor over other apps."
-            android:textColor="#AAAAAA"
+            android:text="Disclosure: This app requires the 'Display over other apps' permission to render the mouse cursor and trackpad controls on top of your screen."
+            android:textColor="#DDDDDD"
             android:textSize="12sp"
+            android:background="#222222"
+            android:padding="8dp"
             android:layout_marginBottom="8dp"/>
 
         <Button
