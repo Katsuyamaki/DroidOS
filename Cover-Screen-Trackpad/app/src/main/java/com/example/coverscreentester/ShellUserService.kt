@@ -336,14 +336,19 @@ class ShellUserService : IShellService.Stub() {
 
     override fun execClick(x: Float, y: Float, displayId: Int) {
         val now = SystemClock.uptimeMillis()
-        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, now, now, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_PRIMARY)
-        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, now, now+50, InputDevice.SOURCE_MOUSE, 0)
+        // Fix: Use SOURCE_TOUCHSCREEN to mimic a physical Finger tap
+        // This is more reliable than Mouse events for Android UI elements
+        injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, now, now, InputDevice.SOURCE_TOUCHSCREEN, 0)
+        try { Thread.sleep(60) } catch (e: InterruptedException) {}
+        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, now, now+60, InputDevice.SOURCE_TOUCHSCREEN, 0)
     }
 
     override fun execRightClick(x: Float, y: Float, displayId: Int) {
         val now = SystemClock.uptimeMillis()
+        // Right click must remain MOUSE (Android doesn't have right-click for touch)
         injectInternal(MotionEvent.ACTION_DOWN, x, y, displayId, now, now, InputDevice.SOURCE_MOUSE, MotionEvent.BUTTON_SECONDARY)
-        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, now, now+50, InputDevice.SOURCE_MOUSE, 0)
+        try { Thread.sleep(60) } catch (e: InterruptedException) {}
+        injectInternal(MotionEvent.ACTION_UP, x, y, displayId, now, now+60, InputDevice.SOURCE_MOUSE, 0)
     }
 
     private fun injectInternal(action: Int, x: Float, y: Float, displayId: Int, downTime: Long, eventTime: Long, source: Int, buttonState: Int) {
