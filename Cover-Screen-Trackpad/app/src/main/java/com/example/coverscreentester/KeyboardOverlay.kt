@@ -69,7 +69,7 @@ class KeyboardOverlay(
         
         // Only set defaults if nothing is saved
         if (!prefs.contains("keyboard_width_d$displayId")) {
-            keyboardWidth = (width * 0.95f).toInt().coerceIn(300, 650)
+            keyboardWidth = (width * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
             // Keep height as WRAP_CONTENT by default
             keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT
         }
@@ -279,7 +279,7 @@ class KeyboardOverlay(
         keyboardView?.translationY = 0f
 
         // 2. Calculate Defaults
-        val defaultWidth = (screenWidth * 0.95f).toInt().coerceIn(300, 800)
+        val defaultWidth = (screenWidth * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
         val defaultHeight = WindowManager.LayoutParams.WRAP_CONTENT
         val defaultX = (screenWidth - defaultWidth) / 2
         val defaultY = (screenHeight / 2) // Place in middle

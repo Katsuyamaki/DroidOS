@@ -1121,14 +1121,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun loadPrefs() { 
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f)
-        prefs.scrollSpeed = p.getFloat("scroll_speed", 1.0f)
+        prefs.scrollSpeed = p.getFloat("scroll_speed", 6.0f) // CHANGED: Default 6.0
         prefs.prefTapScroll = p.getBoolean("tap_scroll", true)
         prefs.prefVibrate = p.getBoolean("vibrate", true)
-        prefs.prefReverseScroll = p.getBoolean("reverse_scroll", true)
-        prefs.prefAlpha = p.getInt("alpha", 200)
-        prefs.prefBgAlpha = p.getInt("bg_alpha", 0)
-        prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 200)
-        prefs.prefHandleSize = p.getInt("handle_size", 60)
+        prefs.prefReverseScroll = p.getBoolean("reverse_scroll", false) // CHANGED: Default false
+        prefs.prefAlpha = p.getInt("alpha", 50) // CHANGED: Default 50
+        prefs.prefBgAlpha = p.getInt("bg_alpha", 220) // CHANGED: Default 220
+        prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 255) // CHANGED: Default 255
+        prefs.prefHandleSize = p.getInt("handle_size", 14) // CHANGED: Default 14
         prefs.prefVPosLeft = p.getBoolean("v_pos_left", false)
         prefs.prefHPosTop = p.getBoolean("h_pos_top", false)
         prefs.prefAnchored = p.getBoolean("anchored", false)
@@ -1136,9 +1136,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefScrollTouchSize = p.getInt("scroll_touch_size", 80)
         prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 4)
         prefs.prefCursorSize = p.getInt("cursor_size", 50)
-        prefs.prefKeyScale = p.getInt("keyboard_key_scale", 100)
+        prefs.prefKeyScale = p.getInt("keyboard_key_scale", 135) // CHANGED: Default 135
         prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
-        prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", true)
+        prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", false) // CHANGED: Default false
         prefs.prefBubbleX = p.getInt("bubble_x", 50)
         prefs.prefBubbleY = p.getInt("bubble_y", 300)
         prefs.prefBubbleSize = p.getInt("bubble_size", 100)
@@ -1149,11 +1149,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
         
         prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "left_click") ?: "left_click"
-        prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "none") ?: "none"
+        prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "left_click") ?: "left_click" // CHANGED: left_click
         prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "left_click") ?: "left_click"
-        prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "right_click") ?: "right_click"
-        prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "display_toggle") ?: "display_toggle"
-        prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "alt_position") ?: "alt_position"
+        prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "toggle_keyboard") ?: "toggle_keyboard" // CHANGED: toggle_keyboard
+        prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "open_menu") ?: "open_menu" // CHANGED: open_menu
+        prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "action_back") ?: "action_back" // CHANGED: action_back
         prefs.hardkeyPowerDouble = p.getString("hardkey_power_double", "none") ?: "none"
         
         prefs.doubleTapMs = p.getInt("double_tap_ms", 300)

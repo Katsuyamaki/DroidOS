@@ -25,4 +25,5 @@ Operational Guidelines:
 
 After making all instructed changes, build to check if errors. if errors, check if all updates applied correctly based on instructions. In particular check for syntax issues. If build errors seem to be out of scope of instructions, create a repomid with alias CleanBuildTrackpad if we are making updates in /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Trackpad or use alias CleanBuildLauncher for updates in /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Launcher
 After successful build l, install with adb install -r app/build/outputs/apk/debug/app-debug.apk before commit
-If build success, commit to local with appropriate description (refer to instructions for summary if existing)
+qIf build success, commit to local with appropriate description (refer to instructions for summary if existing)
+CleanBuildTrackpad='cd ~/projects/DroidOS/Cover-Screen-Trackpad && ./gradlew clean assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk'

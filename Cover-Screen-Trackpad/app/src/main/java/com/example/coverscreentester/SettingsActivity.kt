@@ -47,23 +47,23 @@ class SettingsActivity : Activity() {
         seekBarCursor.progress = (cSpeed * 10).toInt()
         tvCursor.text = "Cursor Speed: "
 
-        val sSpeed = prefs.getFloat("scroll_speed", 3.0f)
+        val sSpeed = prefs.getFloat("scroll_speed", 6.0f) // CHANGED: Default 6.0
         seekBarScroll.progress = (sSpeed * 10).toInt()
         tvScroll.text = "Scroll Distance: "
 
         swTapScroll.isChecked = prefs.getBoolean("tap_scroll", true)
         swVibrate.isChecked = prefs.getBoolean("vibrate", true)
-        swReverse.isChecked = prefs.getBoolean("reverse_scroll", true)
+        swReverse.isChecked = prefs.getBoolean("reverse_scroll", false) // CHANGED: Default false
         swVPos.isChecked = prefs.getBoolean("v_pos_left", false)
         swHPos.isChecked = prefs.getBoolean("h_pos_top", false)
         
         seekCursorSize.progress = prefs.getInt("cursor_size", 50)
-        seekAlpha.progress = prefs.getInt("alpha", 200)
-        seekHandleSize.progress = prefs.getInt("handle_size", 60)
+        seekAlpha.progress = prefs.getInt("alpha", 50) // CHANGED: Default 50
+        seekHandleSize.progress = prefs.getInt("handle_size", 14) // CHANGED: Default 14
         seekScrollVisual.progress = prefs.getInt("scroll_visual_size", 4)
         seekHandleTouch.progress = prefs.getInt("handle_touch_size", 60)
         seekScrollTouch.progress = prefs.getInt("scroll_touch_size", 60)
-        seekKeyScale.progress = prefs.getInt("keyboard_key_scale", 100)
+        seekKeyScale.progress = prefs.getInt("keyboard_key_scale", 135) // CHANGED: Default 135
 
         // Listeners
         seekBarCursor.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
