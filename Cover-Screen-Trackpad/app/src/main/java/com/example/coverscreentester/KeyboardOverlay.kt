@@ -194,82 +194,121 @@ class KeyboardOverlay(
     fun getViewWidth(): Int = keyboardWidth
     fun getViewHeight(): Int = keyboardHeight
     
+    // [START ROTATION FIX]
     fun setRotation(angle: Int) {
         currentRotation = angle
-        if (!isVisible || keyboardContainer == null || keyboardParams == null) return
+        if (!isVisible || keyboardContainer == null || keyboardParams == null || keyboardView == null) return
 
         val isPortrait = (angle == 90 || angle == 270)
-        // If rotated, we swap dimension constraints roughly
-        val targetW = if (isPortrait) keyboardHeight else keyboardWidth
-        val targetH = if (isPortrait) keyboardWidth else keyboardHeight
-        
-        // Use wrap content if dimensions are unset
-        keyboardParams?.width = if (targetW == -2) WindowManager.LayoutParams.WRAP_CONTENT else targetW
-        keyboardParams?.height = if (targetH == -2) WindowManager.LayoutParams.WRAP_CONTENT else targetH
-        
-        keyboardContainer?.rotation = angle.toFloat()
-        
-        // Adjust inner view translation if needed
-        if (keyboardView != null) {
-            val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
-            if (isPortrait) {
-                // This logic assumes fixed sizes. With WRAP_CONTENT it's tricky.
-                // Resetting to match parent is usually safest for rotation in this simple implementation
-                lp.width = FrameLayout.LayoutParams.WRAP_CONTENT
-                lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
-                keyboardView?.translationX = 0f
-                keyboardView?.translationY = 0f
-            } else {
-                lp.width = FrameLayout.LayoutParams.MATCH_PARENT
-                lp.height = FrameLayout.LayoutParams.MATCH_PARENT
-                keyboardView?.translationX = 0f
-                keyboardView?.translationY = 0f
-            }
-            keyboardView?.layoutParams = lp
+
+        // 1. Determine Logical Dimensions (Unrotated size)
+        // We rely on keyboardWidth/Height being the canonical "Landscape" size.
+        val baseW = keyboardWidth
+        val baseH = keyboardHeight 
+
+        // 2. Configure WINDOW Params (The touchable area on screen)
+        // If rotated, we swap the dimensions passed to WindowManager
+        if (isPortrait) {
+            keyboardParams?.width = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
+            keyboardParams?.height = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
+        } else {
+            keyboardParams?.width = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
+            keyboardParams?.height = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
         }
 
-        try { windowManager.updateViewLayout(keyboardContainer, keyboardParams) } catch (e: Exception) {}
+        // 3. Configure VIEW Params (The Internal Content)
+        // The View must ALWAYS be the logical size (e.g. Wide) to layout keys in rows correctly.
+        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+        lp.width = if (baseW == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseW
+        lp.height = if (baseH == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseH
+        keyboardView!!.layoutParams = lp
+
+        // 4. Apply Rotation to View (Not Container)
+        keyboardView!!.rotation = angle.toFloat()
+        keyboardContainer!!.rotation = 0f // Ensure container is NOT rotated
+
+        // 5. Update Layout
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+        } catch (e: Exception) {}
+
+        // 6. Post-Layout Alignment
+        // We must translate the view to re-center it because rotation happens around the pivot (center).
+        // Since we swapped the Window dimensions, the centers might not align by default without this.
+        keyboardView!!.post { alignRotatedView() }
     }
 
-    // Cycle rotation 0 -> 90 -> 180 -> 270
+    private fun alignRotatedView() {
+        if (keyboardView == null) return
+        
+        val angle = currentRotation
+        val w = keyboardView!!.measuredWidth
+        val h = keyboardView!!.measuredHeight
+        
+        // When rotated 90/270, the "Visual" width matches the View's Height, and vice versa.
+        // We translate the view so its visual center matches the window's center.
+        
+        when (angle) {
+            90, 270 -> {
+                val tx = (h - w) / 2f
+                val ty = (w - h) / 2f
+                keyboardView!!.translationX = tx
+                keyboardView!!.translationY = ty
+            }
+            else -> {
+                keyboardView!!.translationX = 0f
+                keyboardView!!.translationY = 0f
+            }
+        }
+    }
+
     fun cycleRotation() {
         if (keyboardContainer == null) return
-
-        // Increment rotation
-        currentRotation = (currentRotation + 90) % 360
-
-        // Apply visual rotation to the view
-        keyboardContainer?.rotation = currentRotation.toFloat()
-
-        // Note: For a perfect 90-degree fit, users may need to resize manually
-        // using the "Size" mode in Manual Adjust.
+        val nextRotation = (currentRotation + 90) % 360
+        setRotation(nextRotation)
     }
 
-    // Reset to Middle of Screen (Safe defaults)
     fun resetPosition() {
         if (keyboardParams == null) return
-
-        // 1. Reset Rotation
+        
+        // 1. Reset Rotation state
         currentRotation = 0
         keyboardContainer?.rotation = 0f
+        keyboardView?.rotation = 0f
+        keyboardView?.translationX = 0f
+        keyboardView?.translationY = 0f
 
         // 2. Calculate Defaults
         val defaultWidth = (screenWidth * 0.95f).toInt().coerceIn(300, 800)
         val defaultHeight = WindowManager.LayoutParams.WRAP_CONTENT
-
         val defaultX = (screenWidth - defaultWidth) / 2
-        val defaultY = (screenHeight / 2) // Place in middle as requested
+        val defaultY = (screenHeight / 2) // Place in middle
 
-        // 3. Apply
+        // 3. Update State & Params
+        keyboardWidth = defaultWidth
+        keyboardHeight = defaultHeight
+        
         keyboardParams?.x = defaultX
         keyboardParams?.y = defaultY
         keyboardParams?.width = defaultWidth
         keyboardParams?.height = defaultHeight
 
+        // 4. Update View Constraints
+        if (keyboardView != null) {
+            val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+            lp.width = defaultWidth
+            lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
+            keyboardView!!.layoutParams = lp
+        }
+
         try {
             windowManager.updateViewLayout(keyboardContainer, keyboardParams)
         } catch (e: Exception) {}
+        
+        saveKeyboardPosition()
+        saveKeyboardSize()
     }
+    // [END ROTATION FIX]
 
     fun show() { 
         if (isVisible) return
@@ -450,35 +489,69 @@ class KeyboardOverlay(
         return true
     }
 
+    // [START RESIZE FIX]
     private fun handleResize(event: MotionEvent): Boolean {
         if (isAnchored) return true
         when (event.action) {
-            MotionEvent.ACTION_DOWN -> { 
+            MotionEvent.ACTION_DOWN -> {
                 isResizing = true
                 initialTouchX = event.rawX
                 initialTouchY = event.rawY
+                // Capture the current WINDOW dimensions (Visual)
                 initialWidth = keyboardParams?.width ?: keyboardWidth
-                initialHeight = keyboardParams?.height ?: keyboardHeight 
+                initialHeight = keyboardParams?.height ?: keyboardHeight
+                
+                // Handle WRAP_CONTENT case for initial values
+                if (initialWidth < 0) initialWidth = keyboardContainer?.width ?: 300
+                if (initialHeight < 0) initialHeight = keyboardContainer?.height ?: 200
             }
-            MotionEvent.ACTION_MOVE -> { 
-                if (isResizing) { 
-                    val newW = max(280, initialWidth + (event.rawX - initialTouchX).toInt())
-                    val newH = max(180, initialHeight + (event.rawY - initialTouchY).toInt())
+            MotionEvent.ACTION_MOVE -> {
+                if (isResizing) {
+                    val dX = (event.rawX - initialTouchX).toInt()
+                    val dY = (event.rawY - initialTouchY).toInt()
                     
-                    keyboardParams?.width = newW
-                    keyboardParams?.height = newH
-                    keyboardWidth = newW
-                    keyboardHeight = newH
-                    try { windowManager.updateViewLayout(keyboardContainer, keyboardParams) } catch (e: Exception) {} 
-                } 
+                    // 1. Calculate New VISUAL Dimensions (Window Size)
+                    val newVisualW = max(280, initialWidth + dX)
+                    val newVisualH = max(180, initialHeight + dY)
+                    
+                    // 2. Update Window Params
+                    keyboardParams?.width = newVisualW
+                    keyboardParams?.height = newVisualH
+                    
+                    // 3. Update LOGICAL Dimensions (Keyboard State)
+                    // If rotated, dragging "Width" actually changes the Keyboard's "Height" (Rows)
+                    if (currentRotation == 90 || currentRotation == 270) {
+                        keyboardHeight = newVisualW
+                        keyboardWidth = newVisualH
+                    } else {
+                        keyboardWidth = newVisualW
+                        keyboardHeight = newVisualH
+                    }
+                    
+                    // 4. Update Inner View Layout to match Logical Dimensions
+                    if (keyboardView != null) {
+                        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+                        lp.width = keyboardWidth
+                        lp.height = keyboardHeight
+                        keyboardView!!.layoutParams = lp
+                        
+                        // Re-center view if rotation is active
+                        alignRotatedView()
+                    }
+
+                    try {
+                        windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+                    } catch (e: Exception) {}
+                }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { 
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isResizing = false
-                saveKeyboardSize() 
+                saveKeyboardSize()
             }
         }
         return true
     }
+    // [END RESIZE FIX]
 
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
