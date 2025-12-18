@@ -21,6 +21,7 @@ object AppPreferences {
     private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
     private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
     private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
+    private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
     
     // Reorder Methods
     private const val KEY_REORDER_METHOD_DRAG = "KEY_REORDER_METHOD_DRAG"
@@ -275,6 +276,14 @@ object AppPreferences {
     fun getKillOnExecute(context: Context): Boolean {
         // Default is FALSE for Kill On Execute
         return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, false)
+    }
+
+    fun setAutoRestartTrackpad(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_AUTO_RESTART_TRACKPAD, enable).apply()
+    }
+
+    fun getAutoRestartTrackpad(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_AUTO_RESTART_TRACKPAD, false) // Default Off
     }
 
     fun setTargetDisplayIndex(context: Context, index: Int) {

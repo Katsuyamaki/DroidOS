@@ -159,6 +159,7 @@ class FloatingLauncherService : AccessibilityService() {
     private var activeCustomLayoutName: String? = null
     
     private var killAppOnExecute = true
+    private var autoRestartTrackpad = false // NEW VARIABLE
     private var targetDisplayIndex = 1 
     private var isScreenOffState = false
     private var isInstantMode = true 
@@ -233,8 +234,41 @@ class FloatingLauncherService : AccessibilityService() {
     }
 
     private val userServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) { shellService = IShellService.Stub.asInterface(binder); isBound = true; updateExecuteButtonColor(true); updateBubbleIcon(); safeToast("Shizuku Connected") }
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            shellService = IShellService.Stub.asInterface(binder)
+            isBound = true
+            updateExecuteButtonColor(true)
+            updateBubbleIcon()
+            safeToast("Shizuku Connected")
+
+            // NEW: Auto-Restart Trackpad if enabled
+            if (autoRestartTrackpad) {
+                uiHandler.postDelayed({ restartTrackpad() }, 1000) // Delay to ensure stability
+            }
+        }
         override fun onServiceDisconnected(name: ComponentName?) { shellService = null; isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
+    }
+
+    private fun restartTrackpad() {
+        safeToast("Auto-Starting Trackpad...")
+        Thread {
+            try {
+                // 1. Kill existing instance (if any) to reset Z-Order
+                if (shellService != null) {
+                    shellService?.forceStop(PACKAGE_TRACKPAD)
+                    Thread.sleep(800) // Wait for process to die
+                }
+
+                // 2. Launch fresh instance (Will be top of Accessibility Stack)
+                uiHandler.post {
+                    // Bypass the "is running" check by manually calling the launch logic if needed,
+                    // but forceStop should have cleared it, so launchTrackpad() is safe.
+                    launchTrackpad()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to auto-restart trackpad", e)
+            }
+        }.start()
     }
 
     // AccessibilityService required overrides
@@ -267,6 +301,7 @@ class FloatingLauncherService : AccessibilityService() {
         // Load preferences
         loadInstalledApps(); currentFontSize = AppPreferences.getFontSize(this)
         killAppOnExecute = AppPreferences.getKillOnExecute(this); targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
+        autoRestartTrackpad = AppPreferences.getAutoRestartTrackpad(this) // NEW LOAD
         isInstantMode = AppPreferences.getInstantMode(this); showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
@@ -688,7 +723,14 @@ class FloatingLauncherService : AccessibilityService() {
             MODE_PROFILES -> { searchBar.hint = "Enter Profile Name..."; displayList.add(ProfileOption("Save Current as New", true, 0,0,0, emptyList())); val profileNames = AppPreferences.getProfileNames(this).sorted(); for (pName in profileNames) { val data = AppPreferences.getProfileData(this, pName); if (data != null) { try { val parts = data.split("|"); val lay = parts[0].toInt(); val res = parts[1].toInt(); val d = parts[2].toInt(); val pkgs = parts[3].split(",").filter { it.isNotEmpty() }; displayList.add(ProfileOption(pName, false, lay, res, d, pkgs)) } catch(e: Exception) {} } } }
             MODE_SETTINGS -> {
                 searchBar.hint = "Settings"
-                displayList.add(ActionOption("Launch DroidOS Trackpad") { launchTrackpad() }) 
+                displayList.add(ActionOption("Launch DroidOS Trackpad") { launchTrackpad() })
+
+                // NEW TOGGLE
+                displayList.add(ToggleOption("Auto-Start Trackpad (Fix Z-Order)", autoRestartTrackpad) {
+                    autoRestartTrackpad = it
+                    AppPreferences.setAutoRestartTrackpad(this, it)
+                    if (it) safeToast("Trackpad will restart on next Launcher startup")
+                }) 
                 displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { cycleDisplay() })
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
@@ -729,6 +771,13 @@ class FloatingLauncherService : AccessibilityService() {
                 })
                 
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
+
+                // NEW: Kill App Button (Added at the very bottom)
+                displayList.add(ActionOption("Close DroidOS Launcher") {
+                    safeToast("Closing Launcher...")
+                    stopSelf() // Stop the service
+                    android.os.Process.killProcess(android.os.Process.myPid()) // Force kill process
+                })
             }
         }
         drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
