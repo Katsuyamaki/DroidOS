@@ -77,9 +77,52 @@ class FloatingLauncherService : Service() {
     }
 
     private lateinit var windowManager: WindowManager
+    private var displayManager: DisplayManager? = null
     private var displayContext: Context? = null
     private var currentDisplayId = 0
     private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY 
+    
+    // Debounce for display switch to prevent flickering
+    private var lastManualSwitchTime = 0L 
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        
+        override fun onDisplayRemoved(displayId: Int) {
+            if (displayId == currentDisplayId) {
+                // If current display disconnects (e.g. glasses), revert to Default
+                performDisplayChange(Display.DEFAULT_DISPLAY)
+            }
+        }
+        
+        override fun onDisplayChanged(displayId: Int) {
+            // Logic to detect Fold/Unfold events monitoring Display 0 (Main)
+            if (displayId == 0) {
+                val display = displayManager?.getDisplay(0)
+                val isDebounced = (System.currentTimeMillis() - lastManualSwitchTime > 2000)
+                
+                if (display != null && isDebounced) {
+                    // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
+                    if (display.state == Display.STATE_ON && currentDisplayId != 0) {
+                        uiHandler.postDelayed({
+                            try { performDisplayChange(0) } catch(e: Exception) {}
+                        }, 500)
+                    }
+                    // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
+                    else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
+                        uiHandler.postDelayed({
+                            try { 
+                                val d0 = displayManager?.getDisplay(0)
+                                if (d0?.state != Display.STATE_ON) {
+                                    performDisplayChange(1) 
+                                }
+                            } catch(e: Exception) {}
+                        }, 500)
+                    }
+                }
+            }
+        }
+    }
 
     private var bubbleView: View? = null
     private var drawerView: View? = null
@@ -187,6 +230,10 @@ class FloatingLauncherService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForegroundService()
+        
+        displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        displayManager?.registerDisplayListener(displayListener, uiHandler)
+
         try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
         val filter = IntentFilter().apply { 
             addAction(ACTION_OPEN_DRAWER)
@@ -216,6 +263,7 @@ class FloatingLauncherService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        displayManager?.unregisterDisplayListener(displayListener)
         isScreenOffState = false
         wakeUp()
         try { Shizuku.removeBinderReceivedListener(shizukuBinderListener); Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); unregisterReceiver(commandReceiver) } catch (e: Exception) {}
@@ -244,9 +292,22 @@ class FloatingLauncherService : Service() {
     }
 
     private fun setupDisplayContext(displayId: Int) {
-        val displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val display = displayManager.getDisplay(displayId)
-        if (display == null) { windowManager = getSystemService(WINDOW_SERVICE) as WindowManager; return }
-        currentDisplayId = displayId; displayContext = createDisplayContext(display); windowManager = displayContext!!.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        val display = dm.getDisplay(displayId)
+        if (display == null) { 
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            return 
+        }
+        currentDisplayId = displayId
+        
+        val baseContext = createDisplayContext(display)
+        displayContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            baseContext.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+        } else {
+            baseContext
+        }
+        
+        windowManager = displayContext!!.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     }
     private fun refreshDisplayId() { val id = displayContext?.display?.displayId ?: Display.DEFAULT_DISPLAY; currentDisplayId = id }
     private fun startForegroundService() { val channelId = if (android.os.Build.VERSION.SDK_INT >= 26) { val channel = android.app.NotificationChannel(CHANNEL_ID, "Floating Launcher", android.app.NotificationManager.IMPORTANCE_LOW); getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel); CHANNEL_ID } else ""; val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build(); if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification) }
@@ -393,6 +454,7 @@ class FloatingLauncherService : Service() {
         val currentIdx = displays.indexOfFirst { it.displayId == currentDisplayId }; val nextIdx = if (currentIdx == -1) 0 else (currentIdx + 1) % displays.size; performDisplayChange(displays[nextIdx].displayId)
     }
     private fun performDisplayChange(newId: Int) {
+        lastManualSwitchTime = System.currentTimeMillis() // Update timestamp
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val targetDisplay = dm.getDisplay(newId) ?: return; try { if (bubbleView != null && bubbleView!!.isAttachedToWindow) windowManager.removeView(bubbleView); if (drawerView != null && drawerView!!.isAttachedToWindow) windowManager.removeView(drawerView) } catch (e: Exception) {}; currentDisplayId = newId; setupDisplayContext(currentDisplayId); targetDisplayIndex = currentDisplayId; AppPreferences.setTargetDisplayIndex(this, targetDisplayIndex); setupBubble(); setupDrawer(); loadDisplaySettings(currentDisplayId); updateBubbleIcon(); isExpanded = false; safeToast("Switched to Display $currentDisplayId (${targetDisplay.name})")
     }
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
