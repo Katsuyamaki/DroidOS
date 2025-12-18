@@ -1,7 +1,9 @@
 package com.example.quadrantlauncher
 
+import android.accessibilityservice.AccessibilityService
 import android.app.ActivityManager
 import android.app.Service
+import android.view.accessibility.AccessibilityEvent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -49,7 +51,7 @@ import java.io.InputStreamReader
 import kotlin.math.hypot
 import kotlin.math.min
 
-class FloatingLauncherService : Service() {
+class FloatingLauncherService : AccessibilityService() {
 
     companion object {
         const val MODE_SEARCH = 0
@@ -235,38 +237,70 @@ class FloatingLauncherService : Service() {
         override fun onServiceDisconnected(name: ComponentName?) { shellService = null; isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    // AccessibilityService required overrides
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() {}
 
-    override fun onCreate() {
-        super.onCreate()
-        startForegroundService()
-        
+    // AccessibilityService entry point - called when user enables service in Settings
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.d(TAG, "Accessibility Service Connected")
+
+        // Initialize WindowManager
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         displayManager?.registerDisplayListener(displayListener, uiHandler)
 
-        try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
-        val filter = IntentFilter().apply { 
+        // Register receivers
+        val filter = IntentFilter().apply {
             addAction(ACTION_OPEN_DRAWER)
             addAction(ACTION_UPDATE_ICON)
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
+
+        // Shizuku setup
+        try { Shizuku.addBinderReceivedListener(shizukuBinderListener); Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) } catch (e: Exception) {}
         try { if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {}
-        
+
+        // Load preferences
         loadInstalledApps(); currentFontSize = AppPreferences.getFontSize(this)
         killAppOnExecute = AppPreferences.getKillOnExecute(this); targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
         isInstantMode = AppPreferences.getInstantMode(this); showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
         currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
+
+        // Build UI
+        val targetDisplayId = targetDisplayIndex
+        setupDisplayContext(targetDisplayId)
+        setupBubble()
+        setupDrawer()
+        selectedLayoutType = AppPreferences.getLastLayout(this)
+        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
+        if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+            val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+            if (data != null) {
+                val rects = mutableListOf<Rect>()
+                val rectParts = data.split("|")
+                for (rp in rectParts) {
+                    val coords = rp.split(",")
+                    if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+                }
+                activeCustomRects = rects
+            }
+        }
+        updateGlobalFontSize()
+        updateBubbleIcon()
+        loadDisplaySettings(currentDisplayId)
+
+        safeToast("Launcher Ready")
     }
 
+    // AccessibilityService is managed by system - onStartCommand not used for init
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY) ?: Display.DEFAULT_DISPLAY
-        if (bubbleView != null && targetDisplayId != currentDisplayId) { try { windowManager.removeView(bubbleView); if (isExpanded) windowManager.removeView(drawerView) } catch (e: Exception) {}; setupDisplayContext(targetDisplayId); setupBubble(); setupDrawer(); updateBubbleIcon(); loadDisplaySettings(currentDisplayId); isExpanded = false; safeToast("Moved to Display $targetDisplayId") } 
-        else if (bubbleView == null) { try { setupDisplayContext(targetDisplayId); setupBubble(); setupDrawer(); selectedLayoutType = AppPreferences.getLastLayout(this); activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this); updateGlobalFontSize(); updateBubbleIcon(); loadDisplaySettings(currentDisplayId); if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) { val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!); if (data != null) { val rects = mutableListOf<Rect>(); val rectParts = data.split("|"); for (rp in rectParts) { val coords = rp.split(","); if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt())) }; activeCustomRects = rects } }; try { if (shellService == null && rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {} } catch (e: Exception) { stopSelf() } }
-        return START_NOT_STICKY
+        return START_STICKY
     }
     
     private fun loadDisplaySettings(displayId: Int) { selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId); currentDpiSetting = AppPreferences.getDisplayDpi(this, displayId) }
@@ -322,8 +356,9 @@ class FloatingLauncherService : Service() {
         currentDisplayId = displayId
         
         val baseContext = createDisplayContext(display)
+        // Use TYPE_ACCESSIBILITY_OVERLAY (2032) for AccessibilityService
         displayContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            baseContext.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+            baseContext.createWindowContext(2032, null)
         } else {
             baseContext
         }
@@ -338,18 +373,28 @@ class FloatingLauncherService : Service() {
     private fun setupBubble() {
         val context = displayContext ?: this
         val themeContext = ContextThemeWrapper(context, R.style.Theme_QuadrantLauncher)
-        // ... (existing layout params setup) ...
-        
         bubbleView = LayoutInflater.from(themeContext).inflate(R.layout.layout_bubble, null)
         bubbleView?.isClickable = true; bubbleView?.isFocusable = true 
-        bubbleParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH, PixelFormat.TRANSLUCENT)
+        
+        // Z-ORDER UPDATE: Try ACCESSIBILITY_OVERLAY (2032) + FLAG_LAYOUT_NO_LIMITS
+        val targetType = if (Build.VERSION.SDK_INT >= 26) 2032 else WindowManager.LayoutParams.TYPE_PHONE 
+        
+        bubbleParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, 
+            WindowManager.LayoutParams.WRAP_CONTENT, 
+            targetType, 
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or 
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH, 
+            PixelFormat.TRANSLUCENT
+        )
         bubbleParams.gravity = Gravity.TOP or Gravity.START; bubbleParams.x = 50; bubbleParams.y = 200
         
-        // ... (Keep TouchListener logic as is) ...
+        // ... (Keep existing OnTouchListener logic here) ...
         var velocityTracker: VelocityTracker? = null
         bubbleView?.setOnTouchListener(object : View.OnTouchListener {
-             // ... (Keep existing onTouch logic) ...
-             var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
+            var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 if (velocityTracker == null) velocityTracker = VelocityTracker.obtain(); velocityTracker?.addMovement(event)
                 when (event.action) {
@@ -362,12 +407,18 @@ class FloatingLauncherService : Service() {
             }
         })
 
-        // NEW: Add to window and store reference
+        // Z-ORDER UPDATE: Try High Z-Order, Fallback to App Overlay if denied
         try {
             windowManager.addView(bubbleView, bubbleParams)
-            attachedWindowManager = windowManager // Capture the specific instance
+            attachedWindowManager = windowManager
         } catch (e: Exception) {
-            Log.e(TAG, "Error adding bubble", e)
+            try {
+                bubbleParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                windowManager.addView(bubbleView, bubbleParams)
+                attachedWindowManager = windowManager
+            } catch (e2: Exception) {
+                Log.e(TAG, "Error adding bubble", e2)
+            }
         }
     }
     
@@ -380,15 +431,27 @@ class FloatingLauncherService : Service() {
         val themeContext = ContextThemeWrapper(context, R.style.Theme_QuadrantLauncher)
         drawerView = LayoutInflater.from(themeContext).inflate(R.layout.layout_rofi_drawer, null)
         drawerView!!.fitsSystemWindows = true 
-        drawerParams = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT)
+        
+        // Z-ORDER UPDATE: Match Bubble settings
+        val targetType = if (Build.VERSION.SDK_INT >= 26) 2032 else WindowManager.LayoutParams.TYPE_PHONE 
+
+        drawerParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, 
+            WindowManager.LayoutParams.MATCH_PARENT, 
+            targetType, 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, 
+            PixelFormat.TRANSLUCENT
+        )
         drawerParams.gravity = Gravity.TOP or Gravity.START; drawerParams.x = 0; drawerParams.y = 0
         drawerParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
         
+        // FIXED: Ensure container is defined and logical
         val container = drawerView?.findViewById<LinearLayout>(R.id.drawer_container)
-        if (container != null) { 
+        if (container != null) {
             val lp = container.layoutParams as? FrameLayout.LayoutParams
             if (lp != null) { lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; lp.topMargin = 100; container.layoutParams = lp }
-            
+
             debugStatusView = TextView(context)
             debugStatusView?.text = "Ready"
             debugStatusView?.setTextColor(Color.GREEN)
@@ -440,9 +503,19 @@ class FloatingLauncherService : Service() {
             bubbleView?.visibility = View.VISIBLE; 
             isExpanded = false 
         } else { 
-            // FIXED: Removed setupDisplayContext() to stop creating new WindowManagers
+            // Removed setupDisplayContext()
             updateDrawerHeight(false); 
-            try { windowManager.addView(drawerView, drawerParams) } catch(e: Exception) {}; 
+            
+            // Z-ORDER UPDATE: Try adding with High Priority, Fallback if fails
+            try { 
+                windowManager.addView(drawerView, drawerParams) 
+            } catch(e: Exception) {
+                try {
+                    drawerParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    windowManager.addView(drawerView, drawerParams)
+                } catch(e2: Exception) {}
+            }; 
+            
             bubbleView?.visibility = View.GONE; 
             isExpanded = true; 
             switchMode(MODE_SEARCH); 
