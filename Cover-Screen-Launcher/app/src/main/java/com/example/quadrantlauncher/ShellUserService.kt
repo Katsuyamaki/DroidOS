@@ -260,7 +260,10 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     
     override fun forceStop(packageName: String) {
         val token = Binder.clearCallingIdentity()
-        try { Runtime.getRuntime().exec("am force-stop $packageName").waitFor() } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
+        try { 
+            val realPkg = if (packageName.endsWith(":gemini")) packageName.substringBefore(":") else packageName
+            Runtime.getRuntime().exec("am force-stop $realPkg").waitFor() 
+        } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
 
     override fun runCommand(command: String) {
@@ -271,19 +274,35 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     override fun repositionTask(packageName: String, left: Int, top: Int, right: Int, bottom: Int) {
         val token = Binder.clearCallingIdentity()
         try {
-            val p = Runtime.getRuntime().exec("dumpsys activity top")
-            val r = BufferedReader(InputStreamReader(p.inputStream))
+            var searchStr = packageName
+            
+            // GEMINI EXCEPTION: Look for the specific activity, not just the package
+            if (packageName.endsWith(":gemini")) {
+                searchStr = "robin.main.MainActivity"
+            }
+
+            // Using grep to find the Task ID based on the package or activity name
+            val cmd = arrayOf("sh", "-c", "dumpsys activity top | grep -E 'TASK.*id=|ACTIVITY.*$searchStr'")
+            val process = Runtime.getRuntime().exec(cmd)
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
             var line: String?
-            var tid = -1
-            while (r.readLine().also { line = it } != null) {
-                if (line!!.contains(packageName) && line!!.contains("TASK")) { 
-                    val m = Regex("id=(\\d+)").find(line!!)
-                    if (m != null) tid = m.groupValues[1].toInt() 
+            var targetTaskId = -1
+            
+            while (reader.readLine().also { line = it } != null) {
+                if (line!!.contains("TASK") && line!!.contains("id=")) {
+                     val match = Regex("id=(\\d+)").find(line!!)
+                     if (match != null) targetTaskId = match.groupValues[1].toInt()
+                }
+                if (targetTaskId != -1 && line!!.contains(searchStr)) {
+                    break
                 }
             }
-            if (tid != -1) { 
-                Runtime.getRuntime().exec("am task set-windowing-mode $tid 5").waitFor()
-                Runtime.getRuntime().exec("am task resize $tid $left $top $right $bottom").waitFor() 
+            reader.close()
+            process.waitFor()
+            
+            if (targetTaskId != -1) {
+                Runtime.getRuntime().exec("am task set-windowing-mode $targetTaskId 5").waitFor()
+                Runtime.getRuntime().exec("am task resize $targetTaskId $left $top $right $bottom").waitFor()
             }
         } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
@@ -408,12 +427,17 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         var taskId = -1
         val token = Binder.clearCallingIdentity()
         try {
-            val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep -E 'Task id|$packageName'")
+            var searchStr = packageName
+            if (packageName.endsWith(":gemini")) {
+                searchStr = "robin.main.MainActivity"
+            }
+
+            val cmd = arrayOf("sh", "-c", "dumpsys activity activities | grep -E 'Task id|$searchStr'")
             val p = Runtime.getRuntime().exec(cmd)
             val r = BufferedReader(InputStreamReader(p.inputStream))
             var line: String?
             while (r.readLine().also { line = it } != null) {
-                if (line!!.contains(packageName)) {
+                if (line!!.contains(searchStr)) {
                     if (line!!.startsWith("* Task{") || line!!.startsWith("Task{")) { val m = Regex("#(\\d+)").find(line!!); if (m != null) { taskId = m.groupValues[1].toInt(); break } }
                     if (line!!.contains("ActivityRecord")) { val m = Regex("t(\\d+)").find(line!!); if (m != null) { taskId = m.groupValues[1].toInt(); break } }
                 }

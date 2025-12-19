@@ -568,10 +568,20 @@ class FloatingLauncherService : AccessibilityService() {
         val riList = pm.queryIntentActivities(intent, 0); 
         allAppsList.clear(); 
         allAppsList.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)); 
+        
         for (ri in riList) { 
             val pkg = ri.activityInfo.packageName; 
+            val cls = ri.activityInfo.name
+            
             if (pkg == PACKAGE_TRACKPAD || pkg == packageName) continue; 
-            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), pkg, AppPreferences.isFavorite(this, pkg)); 
+            
+            // GEMINI EXCEPTION: Give Gemini a unique ID so it can be tiled separately from Google App
+            var finalPkg = pkg
+            if (pkg == "com.google.android.googlequicksearchbox" && cls.contains("robin.main.MainActivity")) {
+                finalPkg = "com.google.android.googlequicksearchbox:gemini"
+            }
+
+            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), finalPkg, AppPreferences.isFavorite(this, finalPkg)); 
             allAppsList.add(app) 
         }; 
         allAppsList.sortBy { it.label.lowercase() } 
@@ -602,8 +612,51 @@ class FloatingLauncherService : AccessibilityService() {
         else { app.isMinimized = false; selectedAppsQueue.add(app); sortAppQueue(); updateSelectedAppsDock(); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); et.setText(""); if (isInstantMode) { launchViaApi(app.packageName, null); launchViaShell(app.packageName); uiHandler.postDelayed({ applyLayoutImmediate() }, 200); uiHandler.postDelayed({ applyLayoutImmediate() }, 800) } }
     }
     private fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
-    private fun launchViaApi(pkg: String, bounds: Rect?) { try { val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return; intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); if (bounds != null) options.setLaunchBounds(bounds); startActivity(intent, options.toBundle()) } catch (e: Exception) {} }
-    private fun launchViaShell(pkg: String) { try { val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return; if (shellService != null) { val component = intent.component?.flattenToShortString() ?: pkg; val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"; Thread { shellService?.runCommand(cmd) }.start() } } catch (e: Exception) {} }
+    private fun launchViaApi(pkg: String, bounds: Rect?) { 
+        try { 
+            val intent: Intent?
+            
+            // GEMINI EXCEPTION
+            if (pkg.endsWith(":gemini")) {
+                val realPkg = pkg.substringBefore(":")
+                intent = Intent()
+                intent.setClassName(realPkg, "com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity")
+                intent.action = Intent.ACTION_MAIN
+                intent.addCategory(Intent.CATEGORY_LAUNCHER)
+            } else {
+                intent = packageManager.getLaunchIntentForPackage(pkg)
+            }
+            
+            if (intent == null) return; 
+            
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); 
+            val options = android.app.ActivityOptions.makeBasic(); 
+            options.setLaunchDisplayId(currentDisplayId); 
+            if (bounds != null) options.setLaunchBounds(bounds); 
+            startActivity(intent, options.toBundle()) 
+        } catch (e: Exception) {} 
+    }
+    private fun launchViaShell(pkg: String) { 
+        try { 
+            // GEMINI EXCEPTION
+            if (pkg.endsWith(":gemini")) {
+                val realPkg = pkg.substringBefore(":")
+                val component = "$realPkg/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity"
+                val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                if (shellService != null) {
+                    Thread { shellService?.runCommand(cmd) }.start()
+                }
+                return
+            }
+
+            val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return; 
+            if (shellService != null) { 
+                val component = intent.component?.flattenToShortString() ?: pkg; 
+                val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"; 
+                Thread { shellService?.runCommand(cmd) }.start() 
+            } 
+        } catch (e: Exception) {} 
+    }
     
     private fun cycleDisplay() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val displays = dm.displays
@@ -796,7 +849,24 @@ class FloatingLauncherService : AccessibilityService() {
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) { val icon: ImageView = v.findViewById(R.id.selected_app_icon) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
         override fun onBindViewHolder(holder: Holder, position: Int) { 
-            val app = selectedAppsQueue[position]; if (position == reorderSelectionIndex) { holder.icon.setColorFilter(HIGHLIGHT_COLOR); holder.icon.alpha = 1.0f; holder.itemView.scaleX = 1.1f; holder.itemView.scaleY = 1.1f; holder.itemView.background = null } else { holder.icon.clearColorFilter(); holder.itemView.scaleX = 1.0f; holder.itemView.scaleY = 1.0f; holder.itemView.background = null; if (app.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(app.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) }; holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f } }
+            val app = selectedAppsQueue[position]; 
+            if (position == reorderSelectionIndex) { 
+                holder.icon.setColorFilter(HIGHLIGHT_COLOR); holder.icon.alpha = 1.0f; holder.itemView.scaleX = 1.1f; holder.itemView.scaleY = 1.1f; holder.itemView.background = null 
+            } else { 
+                holder.icon.clearColorFilter(); holder.itemView.scaleX = 1.0f; holder.itemView.scaleY = 1.0f; holder.itemView.background = null; 
+                if (app.packageName == PACKAGE_BLANK) { 
+                    holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f 
+                } else { 
+                    try { 
+                        // GEMINI FIX: Strip suffix to get real package for icon
+                        val realPkg = if (app.packageName.endsWith(":gemini")) app.packageName.substringBefore(":") else app.packageName
+                        holder.icon.setImageDrawable(packageManager.getApplicationIcon(realPkg)) 
+                    } catch (e: Exception) { 
+                        holder.icon.setImageResource(R.drawable.ic_launcher_bubble) 
+                    }; 
+                    holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f 
+                } 
+            }
             holder.itemView.setOnClickListener { try { dismissKeyboardAndRestore(); if (reorderSelectionIndex != -1) { if (position == reorderSelectionIndex) { endReorderMode(false) } else { swapReorderItem(position) } } else { if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } } catch(e: Exception) {} }
             holder.itemView.setOnLongClickListener { if (isReorderTapEnabled) { startReorderMode(position); true } else { false } }
         }
