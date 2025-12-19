@@ -562,6 +562,10 @@ class FloatingLauncherService : AccessibilityService() {
         }
     }
     private fun updateGlobalFontSize() { val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); searchBar?.textSize = currentFontSize; drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() }
+
+// This function scans all installed apps. We add logic to distinguish Gemini from the Google App 
+// by checking the specific Activity class name and assigning a unique internal package ID.
+
     private fun loadInstalledApps() { 
         val pm = packageManager; 
         val intent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }; 
@@ -575,17 +579,25 @@ class FloatingLauncherService : AccessibilityService() {
             
             if (pkg == PACKAGE_TRACKPAD || pkg == packageName) continue; 
             
-            // GEMINI EXCEPTION: Give Gemini a unique ID so it can be tiled separately from Google App
+            // GEMINI EXCEPTION: Give Gemini a unique ID and Label so it persists in the queue
             var finalPkg = pkg
-            if (pkg == "com.google.android.googlequicksearchbox" && cls.contains("robin.main.MainActivity")) {
-                finalPkg = "com.google.android.googlequicksearchbox:gemini"
+            var finalLabel = ri.loadLabel(pm).toString()
+            
+            if (pkg == "com.google.android.googlequicksearchbox") {
+                if (cls.contains("robin.main.MainActivity")) {
+                    finalPkg = "com.google.android.googlequicksearchbox:gemini"
+                    finalLabel = "Gemini"
+                } else if (cls.contains("SearchActivity")) {
+                    finalLabel = "Google"
+                }
             }
 
-            val app = MainActivity.AppInfo(ri.loadLabel(pm).toString(), finalPkg, AppPreferences.isFavorite(this, finalPkg)); 
+            val app = MainActivity.AppInfo(finalLabel, finalPkg, AppPreferences.isFavorite(this, finalPkg)); 
             allAppsList.add(app) 
         }; 
         allAppsList.sortBy { it.label.lowercase() } 
     }
+
     
     private fun launchTrackpad() {
         if (isTrackpadRunning()) { safeToast("Trackpad is already active"); return }
@@ -600,23 +612,46 @@ class FloatingLauncherService : AccessibilityService() {
     private fun sortAppQueue() { selectedAppsQueue.sortWith(compareBy { it.isMinimized }) }
     private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty()) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
+
     private fun filterList(query: String) {
         if (currentMode != MODE_SEARCH) return; val actualQuery = query.substringAfterLast(",").trim(); displayList.clear()
-        val filtered = if (actualQuery.isEmpty()) { allAppsList } else { allAppsList.filter { it.label.contains(actualQuery, ignoreCase = true) } }
+        val filtered = if (actualQuery.isEmpty()) { 
+            allAppsList 
+        } else { 
+            allAppsList.filter { 
+                it.label.contains(actualQuery, ignoreCase = true) || 
+                (it.packageName.endsWith(":gemini") && "gemini".contains(actualQuery, ignoreCase = true))
+            } 
+        }
         val sorted = filtered.sortedWith(compareBy<MainActivity.AppInfo> { it.packageName != PACKAGE_BLANK }.thenByDescending { it.isFavorite }.thenBy { it.label.lowercase() }); displayList.addAll(sorted); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
     }
+
+
     private fun addToSelection(app: MainActivity.AppInfo) {
-        dismissKeyboardAndRestore(); val et = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar)
-        if (app.packageName == PACKAGE_BLANK) { selectedAppsQueue.add(app); sortAppQueue(); updateSelectedAppsDock(); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate(); return }
-        val existing = selectedAppsQueue.find { it.packageName == app.packageName }; if (existing != null) { selectedAppsQueue.remove(existing); Thread { try { shellService?.forceStop(app.packageName) } catch(e: Exception) {} }.start(); safeToast("Removed ${app.label}"); sortAppQueue(); updateSelectedAppsDock(); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); et.setText(""); if (isInstantMode) applyLayoutImmediate() } 
-        else { app.isMinimized = false; selectedAppsQueue.add(app); sortAppQueue(); updateSelectedAppsDock(); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); et.setText(""); if (isInstantMode) { launchViaApi(app.packageName, null); launchViaShell(app.packageName); uiHandler.postDelayed({ applyLayoutImmediate() }, 200); uiHandler.postDelayed({ applyLayoutImmediate() }, 800) } }
+        if (app.packageName == PACKAGE_BLANK) {
+            selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK))
+        } else {
+            // Prevent duplicate of the same physical app (Google vs Gemini)
+            val basePkg = if (app.packageName.contains(":")) app.packageName.substringBefore(":") else app.packageName
+            val exists = selectedAppsQueue.any { 
+                val otherBase = if (it.packageName.contains(":")) it.packageName.substringBefore(":") else it.packageName
+                otherBase == basePkg 
+            }
+            if (exists) {
+                safeToast("App already in queue")
+                return
+            }
+            selectedAppsQueue.add(app)
+        }
+        updateSelectedAppsDock()
+        refreshSearchList()
     }
+
     private fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
+
     private fun launchViaApi(pkg: String, bounds: Rect?) { 
         try { 
             val intent: Intent?
-            
-            // GEMINI EXCEPTION
             if (pkg.endsWith(":gemini")) {
                 val realPkg = pkg.substringBefore(":")
                 intent = Intent()
@@ -628,7 +663,6 @@ class FloatingLauncherService : AccessibilityService() {
             }
             
             if (intent == null) return; 
-            
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP); 
             val options = android.app.ActivityOptions.makeBasic(); 
             options.setLaunchDisplayId(currentDisplayId); 
@@ -636,19 +670,17 @@ class FloatingLauncherService : AccessibilityService() {
             startActivity(intent, options.toBundle()) 
         } catch (e: Exception) {} 
     }
+
+
     private fun launchViaShell(pkg: String) { 
         try { 
-            // GEMINI EXCEPTION
             if (pkg.endsWith(":gemini")) {
                 val realPkg = pkg.substringBefore(":")
                 val component = "$realPkg/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity"
                 val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                if (shellService != null) {
-                    Thread { shellService?.runCommand(cmd) }.start()
-                }
+                if (shellService != null) Thread { shellService?.runCommand(cmd) }.start()
                 return
             }
-
             val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return; 
             if (shellService != null) { 
                 val component = intent.component?.flattenToShortString() ?: pkg; 
@@ -657,6 +689,7 @@ class FloatingLauncherService : AccessibilityService() {
             } 
         } catch (e: Exception) {} 
     }
+
     
     private fun cycleDisplay() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val displays = dm.displays
@@ -738,7 +771,59 @@ class FloatingLauncherService : AccessibilityService() {
     }
 
     private fun applyLayoutImmediate() { executeLaunch(selectedLayoutType, closeDrawer = false) }
-    private fun fetchRunningApps() { if (shellService == null) return; Thread { try { val visiblePackages = shellService!!.getVisiblePackages(currentDisplayId); val allRunning = shellService!!.getAllRunningPackages(); val lastQueue = AppPreferences.getLastQueue(this); uiHandler.post { selectedAppsQueue.clear(); for (pkg in lastQueue) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)) } else if (allRunning.contains(pkg)) { val appInfo = allAppsList.find { it.packageName == pkg }; if (appInfo != null) { appInfo.isMinimized = !visiblePackages.contains(pkg); selectedAppsQueue.add(appInfo) } } }; for (pkg in visiblePackages) { if (!lastQueue.contains(pkg)) { val appInfo = allAppsList.find { it.packageName == pkg }; if (appInfo != null) { appInfo.isMinimized = false; selectedAppsQueue.add(appInfo) } } }; sortAppQueue(); updateSelectedAppsDock(); drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); safeToast("Instant Mode: Active") } } catch (e: Exception) { Log.e(TAG, "Error fetching apps", e) } }.start() }
+
+// This function restores the app queue from saved state or running tasks. 
+// We must update the '.find' logic so it recognizes our custom Gemini package ID.
+
+    private fun fetchRunningApps() { 
+        if (shellService == null) return; 
+        Thread { 
+            try { 
+                val visiblePackages = shellService!!.getVisiblePackages(currentDisplayId); 
+                val allRunning = shellService!!.getAllRunningPackages(); 
+                val lastQueue = AppPreferences.getLastQueue(this); 
+                uiHandler.post { 
+                    selectedAppsQueue.clear(); 
+                    for (pkg in lastQueue) { 
+                        if (pkg == PACKAGE_BLANK) { 
+                            selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)) 
+                        } else {
+                            // GEMINI FIX: Find app by matching full package ID (including :gemini)
+                            val appInfo = allAppsList.find { it.packageName == pkg }; 
+                            if (appInfo != null) { 
+                                // Check if running (strip suffix for shell check)
+                                val realPkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+                                if (allRunning.contains(realPkg)) {
+                                    appInfo.isMinimized = !visiblePackages.contains(realPkg); 
+                                    selectedAppsQueue.add(appInfo) 
+                                }
+                            } 
+                        }
+                    }; 
+                    for (pkg in visiblePackages) { 
+                        // If it's a visible Google search box, we check if it's the Gemini activity
+                        var lookupPkg = pkg
+                        if (pkg == "com.google.android.googlequicksearchbox") {
+                           // If Gemini is already in queue via lastQueue, skip adding again
+                           if (selectedAppsQueue.any { it.packageName.endsWith(":gemini") }) continue
+                        }
+
+                        if (!selectedAppsQueue.any { it.packageName == lookupPkg }) { 
+                            val appInfo = allAppsList.find { it.packageName == lookupPkg }; 
+                            if (appInfo != null) { 
+                                appInfo.isMinimized = false; 
+                                selectedAppsQueue.add(appInfo) 
+                            } 
+                        } 
+                    }; 
+                    sortAppQueue(); 
+                    updateSelectedAppsDock(); 
+                    drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); 
+                } 
+            } catch (e: Exception) { Log.e(TAG, "Error fetching apps", e) } 
+        }.start() 
+    }
+
     private fun selectLayout(opt: LayoutOption) { dismissKeyboardAndRestore(); selectedLayoutType = opt.type; activeCustomRects = opt.customRects; if (opt.type == LAYOUT_CUSTOM_DYNAMIC) { activeCustomLayoutName = opt.name; AppPreferences.saveLastCustomLayoutName(this, opt.name) } else { activeCustomLayoutName = null; AppPreferences.saveLastCustomLayoutName(this, null) }; AppPreferences.saveLastLayout(this, opt.type); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() }
     private fun saveCurrentAsCustom() { Thread { try { val rawLayouts = shellService!!.getWindowLayouts(currentDisplayId); if (rawLayouts.isEmpty()) { safeToast("Found 0 active app windows"); return@Thread }; val rectStrings = mutableListOf<String>(); for (line in rawLayouts) { val parts = line.split("|"); if (parts.size == 2) { rectStrings.add(parts[1]) } }; if (rectStrings.isEmpty()) { safeToast("Found 0 valid frames"); return@Thread }; val count = rectStrings.size; var baseName = "$count Apps - Custom"; val existingNames = AppPreferences.getCustomLayoutNames(this); var counter = 1; var finalName = "$baseName $counter"; while (existingNames.contains(finalName)) { counter++; finalName = "$baseName $counter" }; AppPreferences.saveCustomLayout(this, finalName, rectStrings.joinToString("|")); safeToast("Saved: $finalName"); uiHandler.post { switchMode(MODE_LAYOUTS) } } catch (e: Exception) { Log.e(TAG, "Failed to save custom layout", e); safeToast("Error saving: ${e.message}") } }.start() }
     private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
@@ -748,7 +833,32 @@ class FloatingLauncherService : AccessibilityService() {
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
-    private fun loadProfile(name: String) { val data = AppPreferences.getProfileData(this, name) ?: return; try { val parts = data.split("|"); selectedLayoutType = parts[0].toInt(); selectedResolutionIndex = parts[1].toInt(); currentDpiSetting = parts[2].toInt(); val pkgList = parts[3].split(","); selectedAppsQueue.clear(); for (pkg in pkgList) { if (pkg.isNotEmpty()) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)) } else { val app = allAppsList.find { it.packageName == pkg }; if (app != null) selectedAppsQueue.add(app) } } }; AppPreferences.saveLastLayout(this, selectedLayoutType); AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); activeProfileName = name; updateSelectedAppsDock(); safeToast("Loaded: $name"); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } }
+
+    private fun loadProfile(name: String) { 
+        val data = AppPreferences.getProfileData(this, name) ?: return; 
+        try { 
+            val parts = data.split("|"); 
+            selectedLayoutType = parts[0].toInt(); 
+            selectedAppsQueue.clear(); 
+            val pkgList = parts[3].split(","); 
+            for (pkg in pkgList) { 
+                if (pkg.isNotEmpty()) { 
+                    if (pkg == PACKAGE_BLANK) { 
+                        selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK)) 
+                    } else { 
+                        // GEMINI FIX: Ensure profile loader recognizes the :gemini suffix
+                        val app = allAppsList.find { it.packageName == pkg }; 
+                        if (app != null) selectedAppsQueue.add(app) 
+                    } 
+                } 
+            }; 
+            activeProfileName = name; 
+            updateSelectedAppsDock(); 
+            drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); 
+            if (isInstantMode) applyLayoutImmediate() 
+        } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } 
+    }
+
     
     private fun executeLaunch(layoutType: Int, closeDrawer: Boolean) { 
         if (closeDrawer) toggleDrawer(); refreshDisplayId(); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this, pkgs)
@@ -848,6 +958,7 @@ class FloatingLauncherService : AccessibilityService() {
     inner class SelectedAppsAdapter : RecyclerView.Adapter<SelectedAppsAdapter.Holder>() {
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) { val icon: ImageView = v.findViewById(R.id.selected_app_icon) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
+
         override fun onBindViewHolder(holder: Holder, position: Int) { 
             val app = selectedAppsQueue[position]; 
             if (position == reorderSelectionIndex) { 
@@ -858,18 +969,16 @@ class FloatingLauncherService : AccessibilityService() {
                     holder.icon.setImageResource(R.drawable.ic_box_outline); holder.icon.alpha = 1.0f 
                 } else { 
                     try { 
-                        // GEMINI FIX: Strip suffix to get real package for icon
                         val realPkg = if (app.packageName.endsWith(":gemini")) app.packageName.substringBefore(":") else app.packageName
                         holder.icon.setImageDrawable(packageManager.getApplicationIcon(realPkg)) 
-                    } catch (e: Exception) { 
-                        holder.icon.setImageResource(R.drawable.ic_launcher_bubble) 
-                    }; 
+                    } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) }; 
                     holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f 
                 } 
             }
             holder.itemView.setOnClickListener { try { dismissKeyboardAndRestore(); if (reorderSelectionIndex != -1) { if (position == reorderSelectionIndex) { endReorderMode(false) } else { swapReorderItem(position) } } else { if (app.packageName != PACKAGE_BLANK) { app.isMinimized = !app.isMinimized; notifyItemChanged(position); if (isInstantMode) applyLayoutImmediate() } } } catch(e: Exception) {} }
             holder.itemView.setOnLongClickListener { if (isReorderTapEnabled) { startReorderMode(position); true } else { false } }
         }
+
         override fun getItemCount() = selectedAppsQueue.size
     }
 
@@ -889,36 +998,27 @@ class FloatingLauncherService : AccessibilityService() {
         private fun startRename(editText: EditText) { editText.isEnabled = true; editText.isFocusable = true; editText.isFocusableInTouchMode = true; editText.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) }
         private fun endRename(editText: EditText) { editText.isFocusable = false; editText.isFocusableInTouchMode = false; editText.isEnabled = false; val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(editText.windowToken, 0) }
 
+
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val item = displayList[position]
-            if (holder is AppHolder) holder.text.textSize = currentFontSize
-            if (holder is LayoutHolder) holder.nameInput.textSize = currentFontSize
-            if (holder is ProfileRichHolder) holder.name.textSize = currentFontSize
-
-            if (holder is AppHolder && item is MainActivity.AppInfo) { holder.text.text = item.label; if (item.packageName == PACKAGE_BLANK) { holder.icon.setImageResource(R.drawable.ic_box_outline) } else { try { holder.icon.setImageDrawable(packageManager.getApplicationIcon(item.packageName)) } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) } }; val isSelected = selectedAppsQueue.any { it.packageName == item.packageName }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.star.visibility = if (item.isFavorite) View.VISIBLE else View.GONE; holder.itemView.setOnClickListener { addToSelection(item) }; holder.itemView.setOnLongClickListener { toggleFavorite(item); refreshSearchList(); true } }
-            else if (holder is ProfileRichHolder && item is ProfileOption) { holder.name.setText(item.name); holder.iconsContainer.removeAllViews(); if (!item.isCurrent) { for (pkg in item.apps.take(5)) { val iv = ImageView(holder.itemView.context); val lp = LinearLayout.LayoutParams(60, 60); lp.marginEnd = 8; iv.layoutParams = lp; if (pkg == PACKAGE_BLANK) { iv.setImageResource(R.drawable.ic_box_outline) } else { try { iv.setImageDrawable(packageManager.getApplicationIcon(pkg)) } catch (e: Exception) { iv.setImageResource(R.drawable.ic_launcher_bubble) } }; holder.iconsContainer.addView(iv) }; val info = "${getLayoutName(item.layout)} | ${getRatioName(item.resIndex)} | ${item.dpi}dpi"; holder.details.text = info; holder.details.visibility = View.VISIBLE; holder.btnSave.visibility = View.GONE; if (activeProfileName == item.name) { holder.itemView.setBackgroundResource(R.drawable.bg_item_active) } else { holder.itemView.setBackgroundResource(0) }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); loadProfile(item.name) }; holder.itemView.setOnLongClickListener { startRename(holder.name); true }; val saveProfileName = { val newName = holder.name.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameProfile(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); switchMode(MODE_PROFILES) } }; endRename(holder.name) }; holder.name.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveProfileName(); holder.name.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(holder.name.windowToken, 0); updateDrawerHeight(false); true } else false }; holder.name.setOnFocusChangeListener { v, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) saveProfileName() } } else { holder.iconsContainer.removeAllViews(); holder.details.visibility = View.GONE; holder.btnSave.visibility = View.VISIBLE; holder.itemView.setBackgroundResource(0); holder.name.isEnabled = true; holder.name.isFocusable = true; holder.name.isFocusableInTouchMode = true; holder.itemView.setOnClickListener { saveProfile() }; holder.btnSave.setOnClickListener { saveProfile() } } }
-            else if (holder is LayoutHolder) {
-                holder.btnSave.visibility = View.GONE; holder.btnExtinguish.visibility = View.GONE
-                if (item is LayoutOption) { holder.nameInput.setText(item.name); val isSelected = if (item.type == LAYOUT_CUSTOM_DYNAMIC) { item.type == selectedLayoutType && item.name == activeCustomLayoutName } else { item.type == selectedLayoutType && activeCustomLayoutName == null }; if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { selectLayout(item) }; if (item.isCustomSaved) { holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveLayoutName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); if (activeCustomLayoutName == item.name) { activeCustomLayoutName = newName; AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName) }; switchMode(MODE_LAYOUTS) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveLayoutName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveLayoutName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) } }
-                else if (item is ResolutionOption) { 
-                    holder.nameInput.setText(item.name); if (item.index >= 100) { holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveResName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomResolution(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); switchMode(MODE_RESOLUTION) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveResName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveResName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) }; val isSelected = (item.index == selectedResolutionIndex); if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { applyResolution(item) } 
-                }
-                else if (item is IconOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { pickIcon() } }
-                else if (item is ToggleOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if (item.isEnabled) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); notifyItemChanged(position) } } 
-                else if (item is ActionOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.action() } }
+            if (holder is AppHolder && item is MainActivity.AppInfo) { 
+                holder.text.text = item.label; 
+                if (item.packageName == PACKAGE_BLANK) { 
+                    holder.icon.setImageResource(R.drawable.ic_box_outline) 
+                } else { 
+                    try { 
+                        val realPkg = if (item.packageName.endsWith(":gemini")) item.packageName.substringBefore(":") else item.packageName
+                        holder.icon.setImageDrawable(packageManager.getApplicationIcon(realPkg)) 
+                    } catch (e: Exception) { holder.icon.setImageResource(R.drawable.ic_launcher_bubble) } 
+                }; 
+                val isSelected = selectedAppsQueue.any { it.packageName == item.packageName }; 
+                if (isSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); 
+                holder.star.visibility = if (item.isFavorite) View.VISIBLE else View.GONE; 
+                holder.itemView.setOnClickListener { addToSelection(item) }; 
+                holder.itemView.setOnLongClickListener { toggleFavorite(item); refreshSearchList(); true } 
             }
-            else if (holder is CustomResInputHolder) {
-                holder.btnSave.setOnClickListener { val wStr = holder.inputW.text.toString().trim(); val hStr = holder.inputH.text.toString().trim(); if (wStr.isNotEmpty() && hStr.isNotEmpty()) { val w = wStr.toIntOrNull(); val h = hStr.toIntOrNull(); if (w != null && h != null && w > 0 && h > 0) { val gcdVal = calculateGCD(w, h); val wRatio = w / gcdVal; val hRatio = h / gcdVal; val resString = "${w}x${h}"; val name = "$wRatio:$hRatio Custom ($resString)"; AppPreferences.saveCustomResolution(holder.itemView.context, name, resString); safeToast("Added $name"); dismissKeyboardAndRestore(); switchMode(MODE_RESOLUTION) } else { safeToast("Invalid numbers") } } else { safeToast("Input W and H") } }
-                holder.inputW.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }; holder.inputH.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus) }
-            }
-            else if (holder is IconSettingHolder && item is IconOption) { try { val uriStr = AppPreferences.getIconUri(holder.itemView.context); if (uriStr != null) { val uri = Uri.parse(uriStr); val input = contentResolver.openInputStream(uri); val bitmap = BitmapFactory.decodeStream(input); input?.close(); holder.preview.setImageBitmap(bitmap) } else { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) } } catch(e: Exception) { holder.preview.setImageResource(R.drawable.ic_launcher_bubble) }; holder.itemView.setOnClickListener { pickIcon() } }
-            else if (holder is DpiHolder && item is DpiOption) { 
-                holder.input.setText(item.currentDpi.toString()); holder.input.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { val valInt = v.text.toString().toIntOrNull(); if (valInt != null) { selectDpi(valInt); safeToast("DPI set to $valInt") }; dismissKeyboardAndRestore(); true } else false }; holder.input.setOnFocusChangeListener { _, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) { val valInt = holder.input.text.toString().toIntOrNull(); if (valInt != null && valInt != item.currentDpi) { selectDpi(valInt) } } }; holder.btnMinus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v - 5).coerceAtLeast(50); holder.input.setText(newVal.toString()); selectDpi(newVal) }; holder.btnPlus.setOnClickListener { val v = holder.input.text.toString().toIntOrNull() ?: 160; val newVal = (v + 5).coerceAtMost(600); holder.input.setText(newVal.toString()); selectDpi(newVal) } 
-            }
-            else if (holder is FontSizeHolder && item is FontSizeOption) { holder.textVal.text = item.currentSize.toInt().toString(); holder.btnMinus.setOnClickListener { changeFontSize(item.currentSize - 1) }; holder.btnPlus.setOnClickListener { changeFontSize(item.currentSize + 1) } }
-            else if (holder is HeightHolder && item is HeightOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerHeight(-5) }; holder.btnPlus.setOnClickListener { changeDrawerHeight(5) } }
-            else if (holder is WidthHolder && item is WidthOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerWidth(-5) }; holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } }
         }
+
         override fun getItemCount() = displayList.size
     }
 }
