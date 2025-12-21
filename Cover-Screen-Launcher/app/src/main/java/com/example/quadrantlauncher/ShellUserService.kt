@@ -431,15 +431,14 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 
 
         // === GET TASK ID - START ===
-        // Uses 'am stack list' to find task ID - works on Samsung devices
-        // Format: "taskId=12345: com.package/com.package.Activity bounds=..."
+        // Uses 'am stack list' to find task ID
+        // Handles trampolining apps like Gemini which redirect to different packages
         override fun getTaskId(packageName: String, className: String?): Int {
             var taskId = -1
             val token = Binder.clearCallingIdentity()
             try {
                 Log.d(TAG, "getTaskId: Looking for pkg=$packageName cls=$className")
 
-                // Use 'am stack list' which gives clean task info
                 val cmd = arrayOf("sh", "-c", "am stack list")
                 val p = Runtime.getRuntime().exec(cmd)
                 val r = BufferedReader(InputStreamReader(p.inputStream))
@@ -448,35 +447,41 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 // Build search targets
                 val searchTargets = mutableListOf<String>()
 
-                // Add package/activity component format (most precise)
+                // Primary targets: exact package/activity
                 if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                    // Full component: "com.termux/com.termux.app.TermuxActivity"
                     searchTargets.add("$packageName/$className")
-                    // Also try short activity name
                     searchTargets.add(className.substringAfterLast("."))
                 }
-                // Add package name
                 searchTargets.add(packageName)
+
+                // === TRAMPOLINE HANDLING ===
+                // Gemini (com.google.android.apps.bard) redirects to Google Quick Search Box
+                if (packageName == "com.google.android.apps.bard" ||
+                    (className?.contains("Bard") == true) ||
+                    (className?.contains("bard") == true)) {
+                    // Add Google Assistant fallback targets
+                    searchTargets.add("com.google.android.googlequicksearchbox")
+                    searchTargets.add("robin.main.MainActivity")
+                    searchTargets.add("AssistantActivity")
+                    Log.d(TAG, "getTaskId: Added Gemini trampoline targets")
+                }
+                // === END TRAMPOLINE HANDLING ===
 
                 Log.d(TAG, "getTaskId: Search targets = $searchTargets")
 
                 while (r.readLine().also { line = it } != null) {
                     val l = line!!.trim()
 
-                    // Look for lines with taskId=XXXXX:
-                    // Format: "taskId=18989: com.termux/com.termux.app.TermuxActivity bounds=..."
                     if (l.contains("taskId=") && l.contains(":")) {
-                        // Check if this line contains any of our search targets
                         for (target in searchTargets) {
                             if (l.contains(target)) {
-                                // Extract task ID
                                 val match = Regex("taskId=(\\d+):").find(l)
                                 if (match != null) {
                                     val foundId = match.groupValues[1].toIntOrNull()
                                     if (foundId != null && foundId > 0) {
-                                        Log.d(TAG, "getTaskId: MATCH found! taskId=$foundId target='$target' line=$l")
+                                        Log.d(TAG, "getTaskId: MATCH found! taskId=$foundId target='$target'")
                                         taskId = foundId
-                                        // Don't break - keep looking for most recent (last) match
+                                        // Keep searching to get most recent task
                                     }
                                 }
                             }

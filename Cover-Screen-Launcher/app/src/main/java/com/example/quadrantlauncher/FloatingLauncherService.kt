@@ -95,6 +95,12 @@ class FloatingLauncherService : AccessibilityService() {
     private var lastManualSwitchTime = 0L
     private var switchRunnable: Runnable? = null
 
+    // === EXECUTION DEBOUNCE - START ===
+    // Prevents multiple rapid executions
+    private var lastExecuteTime = 0L
+    private val EXECUTE_DEBOUNCE_MS = 2000L  // 2 second minimum between executions
+    // === EXECUTION DEBOUNCE - END ===
+
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {}
         override fun onDisplayRemoved(displayId: Int) {
@@ -1116,7 +1122,15 @@ class FloatingLauncherService : AccessibilityService() {
     
     // === EXECUTE LAUNCH - START ===
     // Main execution function that launches and tiles all selected apps
-    private fun executeLaunch(layoutType: Int, closeDrawer: Boolean) { 
+    private fun executeLaunch(layoutType: Int, closeDrawer: Boolean) {
+        // Debounce - prevent rapid re-execution
+        val now = System.currentTimeMillis()
+        if (now - lastExecuteTime < EXECUTE_DEBOUNCE_MS) {
+            Log.d(TAG, "executeLaunch: DEBOUNCED (too soon since last execution)")
+            return
+        }
+        lastExecuteTime = now
+
         if (closeDrawer) toggleDrawer()
         refreshDisplayId()
         
@@ -1263,53 +1277,47 @@ class FloatingLauncherService : AccessibilityService() {
                     val basePkg = app.getBasePackage()
                     val cls = app.className
 
-                    Log.d(TAG, "=== TILE[$i] ===")
-                    Log.d(TAG, "  ${app.label}: $basePkg/$cls -> $bounds")
+                    Log.d(TAG, "=== TILE[$i]: ${app.label} -> $bounds ===")
 
                     uiHandler.post {
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
 
-                    // Stagger app launches by 600ms
-                    val baseDelay = i * 600L
+                    // Stagger app launches by 800ms
+                    val baseDelay = i * 800L
 
                     // Launch the app
                     uiHandler.postDelayed({
-                        Log.d(TAG, "Tile[$i]: Launching $basePkg")
                         launchViaShell(basePkg, cls, bounds)
                     }, baseDelay)
 
-                    // Reposition attempt 1 - 2.5 seconds after launch
+                    // Single reposition after app has time to start (3 seconds)
+                    // For trampolining apps like Gemini, we need more time
+                    val repositionDelay = if (basePkg.contains("bard") || basePkg.contains("gemini")) {
+                        5000L  // 5 seconds for Gemini
+                    } else {
+                        3000L  // 3 seconds for normal apps
+                    }
+
                     uiHandler.postDelayed({
                         Thread {
                             try {
-                                Log.d(TAG, "Tile[$i]: Reposition #1")
+                                Log.d(TAG, "Tile[$i]: Repositioning ${app.label}")
                                 shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
                             } catch (e: Exception) {
-                                Log.e(TAG, "Tile[$i]: Reposition #1 failed", e)
+                                Log.e(TAG, "Tile[$i]: Reposition failed", e)
                             }
                         }.start()
-                    }, baseDelay + 2500L)
+                    }, baseDelay + repositionDelay)
 
-                    // Reposition attempt 2 - 4 seconds after launch
+                    // Second attempt for stubborn apps
                     uiHandler.postDelayed({
                         Thread {
                             try {
-                                Log.d(TAG, "Tile[$i]: Reposition #2")
                                 shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
                             } catch (e: Exception) {}
                         }.start()
-                    }, baseDelay + 4000L)
-
-                    // Reposition attempt 3 - 6 seconds after launch
-                    uiHandler.postDelayed({
-                        Thread {
-                            try {
-                                Log.d(TAG, "Tile[$i]: Reposition #3")
-                                shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                            } catch (e: Exception) {}
-                        }.start()
-                    }, baseDelay + 6000L)
+                    }, baseDelay + repositionDelay + 2000L)
                 }
                 
                 // Clear queue after execution if closing drawer
