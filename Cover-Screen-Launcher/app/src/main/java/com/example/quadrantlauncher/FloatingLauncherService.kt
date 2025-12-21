@@ -874,7 +874,7 @@ class FloatingLauncherService : AccessibilityService() {
             if (isInstantMode) { 
                 // Launch using both API and Shell for reliability
                 launchViaApi(app.packageName, app.className, null)
-                launchViaShell(app.packageName, app.className)
+                launchViaShell(app.packageName, app.className, null)
                 
                 // Delayed layout application to allow app to start
                 uiHandler.postDelayed({ applyLayoutImmediate() }, 200)
@@ -888,97 +888,87 @@ class FloatingLauncherService : AccessibilityService() {
 
 
     // === LAUNCH VIA API - START ===
-    // Launches app using Android API with proper package and className handling
+    // Launches app using Android API with launch bounds
     private fun launchViaApi(pkg: String, className: String?, bounds: Rect?) {
         try {
-            // Extract base package name (remove ":suffix" if present)
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-            
-            // Debug output to show what we're launching
-            debugShowAppIdentification("LAUNCH_API", pkg, className)
-            
+
+            debugShowAppIdentification("LAUNCH_API", basePkg, className)
+
             val intent: Intent?
-            
-            // Only use explicit component if we have a valid, non-null className
+
             if (!className.isNullOrEmpty() && className != "null" && className != "default") {
                 intent = Intent()
                 intent.setClassName(basePkg, className)
                 intent.action = Intent.ACTION_MAIN
                 intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                Log.d(TAG, "launchViaApi: Using explicit component $basePkg/$className")
+                Log.d(TAG, "launchViaApi: explicit component $basePkg/$className")
             } else {
-                // Fallback to default launch intent for package
                 intent = packageManager.getLaunchIntentForPackage(basePkg)
-                Log.d(TAG, "launchViaApi: Using default launch intent for $basePkg")
+                Log.d(TAG, "launchViaApi: default intent for $basePkg")
             }
 
             if (intent == null) {
-                Log.w(TAG, "launchViaApi: No intent for pkg=$basePkg cls=$className")
-                safeToast("Cannot launch $basePkg")
+                Log.w(TAG, "launchViaApi: No intent for $basePkg, trying shell")
+                launchViaShell(basePkg, className, bounds)
                 return
             }
-            
+
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
             val options = android.app.ActivityOptions.makeBasic()
             options.setLaunchDisplayId(currentDisplayId)
+
             if (bounds != null) {
                 options.setLaunchBounds(bounds)
                 Log.d(TAG, "launchViaApi: bounds=$bounds")
             }
-            
-            // Try to set freeform windowing mode
-            try {
-                val method = android.app.ActivityOptions::class.java.getMethod(
-                    "setLaunchWindowingMode", Int::class.javaPrimitiveType
-                )
-                method.invoke(options, 5) // 5 = WINDOWING_MODE_FREEFORM
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not set freeform mode", e)
-            }
-            
+
             startActivity(intent, options.toBundle())
-            Log.d(TAG, "launchViaApi: SUCCESS pkg=$basePkg")
-            
+            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
+
         } catch (e: Exception) {
-            Log.e(TAG, "launchViaApi FAILED: pkg=$pkg cls=$className", e)
-            safeToast("Launch failed: ${e.message}")
+            Log.e(TAG, "launchViaApi FAILED, trying shell", e)
+            launchViaShell(pkg, className, bounds)
         }
     }
     // === LAUNCH VIA API - END ===
 
 
     // === LAUNCH VIA SHELL - START ===
-    // Launches app using shell command (am start) with proper package name extraction
-    // Shell commands require base package name without ":suffix"
-    private fun launchViaShell(pkg: String, className: String?) {
+    // Launches app via shell with freeform windowing mode
+    private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
         try {
-            // Extract base package name (remove ":suffix" if present)
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-            
-            // Debug output to show what we're launching via shell
-            debugShowAppIdentification("LAUNCH_SHELL", pkg, className)
-            
-            if (!className.isNullOrEmpty()) {
-                // Use explicit component: basePkg/className
-                val component = "$basePkg/$className"
-                val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                Log.d(TAG, "launchViaShell: cmd=$cmd")
-                if (shellService != null) {
-                    Thread { shellService?.runCommand(cmd) }.start()
-                }
-                return
+
+            debugShowAppIdentification("LAUNCH_SHELL", basePkg, className)
+
+            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                "$basePkg/$className"
+            } else {
+                null
             }
 
-            // Fallback: get default launch intent for package
-            val intent = packageManager.getLaunchIntentForPackage(basePkg) ?: return
-            if (shellService != null) {
-                val component = intent.component?.flattenToShortString() ?: basePkg
-                val cmd = "am start -n $component -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                Log.d(TAG, "launchViaShell (fallback): cmd=$cmd")
-                Thread { shellService?.runCommand(cmd) }.start()
+            // Build launch command with freeform mode (--windowingMode 5)
+            val cmd = if (component != null) {
+                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+            } else {
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
             }
+
+            Log.d(TAG, "launchViaShell: $cmd")
+
+            Thread {
+                try {
+                    shellService?.runCommand(cmd)
+                    Log.d(TAG, "launchViaShell: SUCCESS")
+                } catch (e: Exception) {
+                    Log.e(TAG, "launchViaShell: FAILED", e)
+                }
+            }.start()
+
         } catch (e: Exception) {
-            Log.e(TAG, "launchViaShell failed: pkg=$pkg cls=$className", e)
+            Log.e(TAG, "launchViaShell FAILED: $pkg", e)
         }
     }
     // === LAUNCH VIA SHELL - END ===
@@ -1260,70 +1250,66 @@ class FloatingLauncherService : AccessibilityService() {
                     Thread.sleep(100) 
                 }
                 
-                // Launch and tile each app
-                for (i in 0 until minOf(activeApps.size, rects.size)) { 
+                // Launch and tile each active app
+                for (i in 0 until minOf(activeApps.size, rects.size)) {
                     val app = activeApps[i]
                     val bounds = rects[i]
-                    
+
                     if (app.packageName == PACKAGE_BLANK) {
-                        Log.d(TAG, "Tile[$i]: Skipping blank space")
+                        Log.d(TAG, "Tile[$i]: Skipping blank")
                         continue
                     }
-                    
+
                     val basePkg = app.getBasePackage()
                     val cls = app.className
-                    
-                    Log.d(TAG, "=== TILE[$i] START ===")
-                    Log.d(TAG, "  Label: ${app.label}")
-                    Log.d(TAG, "  Package: $basePkg")
-                    Log.d(TAG, "  ClassName: $cls")
-                    Log.d(TAG, "  Bounds: $bounds")
-                    
-                    uiHandler.post { 
-                        debugShowAppIdentification("TILE[$i]", basePkg, cls) 
+
+                    Log.d(TAG, "=== TILE[$i] ===")
+                    Log.d(TAG, "  ${app.label}: $basePkg/$cls -> $bounds")
+
+                    uiHandler.post {
+                        debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
-                    
-                    // Launch with more delay between apps
-                    val baseDelay = i * 500L
-                    
-                    uiHandler.postDelayed({ 
-                        Log.d(TAG, "Tile[$i]: Launching via API")
-                        launchViaApi(basePkg, cls, bounds) 
+
+                    // Stagger app launches by 600ms
+                    val baseDelay = i * 600L
+
+                    // Launch the app
+                    uiHandler.postDelayed({
+                        Log.d(TAG, "Tile[$i]: Launching $basePkg")
+                        launchViaShell(basePkg, cls, bounds)
                     }, baseDelay)
-                    
-                    // First reposition attempt - after 2 seconds
-                    uiHandler.postDelayed({ 
-                        Thread { 
-                            try { 
-                                Log.d(TAG, "Tile[$i]: Reposition attempt 1")
+
+                    // Reposition attempt 1 - 2.5 seconds after launch
+                    uiHandler.postDelayed({
+                        Thread {
+                            try {
+                                Log.d(TAG, "Tile[$i]: Reposition #1")
                                 shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
                             } catch (e: Exception) {
-                                Log.e(TAG, "Tile[$i]: Reposition 1 failed", e)
-                            } 
-                        }.start() 
-                    }, baseDelay + 2000L)
-                    
-                    // Second reposition attempt - after 4 seconds
-                    uiHandler.postDelayed({ 
-                        Thread { 
-                            try { 
-                                Log.d(TAG, "Tile[$i]: Reposition attempt 2")
+                                Log.e(TAG, "Tile[$i]: Reposition #1 failed", e)
+                            }
+                        }.start()
+                    }, baseDelay + 2500L)
+
+                    // Reposition attempt 2 - 4 seconds after launch
+                    uiHandler.postDelayed({
+                        Thread {
+                            try {
+                                Log.d(TAG, "Tile[$i]: Reposition #2")
                                 shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                            } catch (e: Exception) {} 
-                        }.start() 
+                            } catch (e: Exception) {}
+                        }.start()
                     }, baseDelay + 4000L)
-                    
-                    // Third reposition attempt - after 6 seconds
-                    uiHandler.postDelayed({ 
-                        Thread { 
-                            try { 
-                                Log.d(TAG, "Tile[$i]: Reposition attempt 3")
+
+                    // Reposition attempt 3 - 6 seconds after launch
+                    uiHandler.postDelayed({
+                        Thread {
+                            try {
+                                Log.d(TAG, "Tile[$i]: Reposition #3")
                                 shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                            } catch (e: Exception) {} 
-                        }.start() 
+                            } catch (e: Exception) {}
+                        }.start()
                     }, baseDelay + 6000L)
-                    
-                    Log.d(TAG, "=== TILE[$i] SCHEDULED ===")
                 }
                 
                 // Clear queue after execution if closing drawer
