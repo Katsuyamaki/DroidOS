@@ -405,9 +405,65 @@ class FloatingLauncherService : AccessibilityService() {
         safeToast("Launcher Ready")
     }
 
-    // AccessibilityService is managed by system - onStartCommand not used for init
+    /* * FUNCTION: onStartCommand
+     * SUMMARY: Updated to strictly handle display migration. If an ID is passed,
+     * it forces the bubble to move to that display context immediately.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
+        // Priority: 1. Explicit ID from Intent (Triggered by Icon Click) 2. Last saved Physical ID
+        val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", currentDisplayId) ?: currentDisplayId
+
+        Log.d(TAG, "onStartCommand: Target Display $targetDisplayId (Current: $currentDisplayId)")
+
+        if (bubbleView != null) {
+            // If we are already running but the target display changed, move the bubble
+            if (targetDisplayId != currentDisplayId) {
+                try {
+                    windowManager.removeView(bubbleView)
+                    if (isExpanded) windowManager.removeView(drawerView)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error removing views for migration", e)
+                }
+                setupDisplayContext(targetDisplayId)
+                setupBubble()
+                setupDrawer()
+                updateBubbleIcon()
+                loadDisplaySettings(currentDisplayId)
+                isExpanded = false
+                safeToast("Recalled to Display $targetDisplayId")
+            }
+        } else {
+            // First time initialization
+            try {
+                setupDisplayContext(targetDisplayId)
+                setupBubble()
+                setupDrawer()
+                selectedLayoutType = AppPreferences.getLastLayout(this)
+                activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
+                updateGlobalFontSize()
+                updateBubbleIcon()
+                loadDisplaySettings(currentDisplayId)
+
+                if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+                    val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+                    if (data != null) {
+                        val rects = mutableListOf<Rect>()
+                        val rectParts = data.split("|")
+                        for (rp in rectParts) {
+                            val coords = rp.split(",")
+                            if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+                        }
+                        activeCustomRects = rects
+                    }
+                }
+
+                if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku()
+            } catch (e: Exception) {
+                Log.e(TAG, "Setup failed", e)
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
     }
     
     private fun loadDisplaySettings(displayId: Int) { selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId); currentDpiSetting = AppPreferences.getDisplayDpi(this, displayId) }
