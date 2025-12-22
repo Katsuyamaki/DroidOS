@@ -278,16 +278,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 // FUNCTION: onAccessibilityEvent
-// SUMMARY: Monitors system events. Now includes Display Check (Main Screen Fix) and Throttle (Lag Fix).
+// SUMMARY: Monitors system events.
+// CHANGES: Added logic to FORCE UNBLOCK the keyboard when an event is detected on
+//          the Main Screen (Display 0), provided the Trackpad is not currently running there.
 // =================================================================================
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        
-        // [FIX 1] Multi-Display Protection (API 30+)
-        // If the event happened on a different screen (e.g. Main Screen), ignore it.
-        // We only want to block the keyboard if the user is interacting with OUR screen.
+
+        // [FIX 1] Keyboard Restoration Logic
+        // If we detect activity on the Main Screen (Display 0), and our Trackpad is
+        // NOT currently set to the Main Screen, we must ensure the keyboard is UNBLOCKED.
         if (Build.VERSION.SDK_INT >= 30) {
-            // 'currentDisplayId' is an existing variable tracking where our UI is
+            val isMainScreenEvent = (event.displayId == Display.DEFAULT_DISPLAY)
+            // 'currentDisplayId' tracks where our Trackpad UI is currently placed
+            val isTrackpadOnMain = (currentDisplayId == Display.DEFAULT_DISPLAY)
+
+            if (isMainScreenEvent && !isTrackpadOnMain) {
+                // We are on Main Screen, but Trackpad is on Cover (or elsewhere).
+                // Ensure we don't accidentally leave the keyboard blocked.
+                if (Build.VERSION.SDK_INT >= 24) {
+                    try {
+                        if (softKeyboardController.showMode == AccessibilityService.SHOW_MODE_HIDDEN) {
+                            softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                        }
+                    } catch (e: Exception) {
+                        // Ignore controller errors
+                    }
+                }
+                // Stop processing to prevent Lag Loop on Main Screen
+                return
+            }
+
+            // [FIX 2] Standard Multi-Display Filter
+            // Ignore events from displays we aren't managing
             if (event.displayId != currentDisplayId) {
                 return
             }
@@ -295,44 +318,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         val eventPkg = event.packageName?.toString() ?: ""
 
-        // [FIX 2] Anti-Loop (Ignore Self)
-        // If WE caused the event (by moving windows), ignore it.
+        // [FIX 3] Anti-Loop (Ignore Self)
         if (eventPkg == packageName) return
 
-        // [FIX 3] Allow Voice Input
-        if (eventPkg.contains("google.android.googlequicksearchbox") || 
-            eventPkg.contains("com.google.android.voicesearch") || 
+        // [FIX 4] Allow Voice Input
+        if (eventPkg.contains("google.android.googlequicksearchbox") ||
+            eventPkg.contains("com.google.android.voicesearch") ||
             eventPkg.contains("com.google.android.tts")) {
-            
+
             if (prefs.prefBlockSoftKeyboard && shellService != null) {
                  Thread { try { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") } catch(e: Exception){} }.start()
             }
             return
         }
 
-        // [FIX 4] Throttle & Execute
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
-            event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED || 
+        // [FIX 5] Throttle & Execute Blocking
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            
+
             if (prefs.prefBlockSoftKeyboard && !isVoiceActive) {
                  val currentTime = System.currentTimeMillis()
-                 
-                 // [CRITICAL] Throttle: Only run max once every 500ms
+
+                 // Throttle: Only run max once every 500ms
                  if (currentTime - lastBlockTime > 500) {
                      lastBlockTime = currentTime
-                     
+
                      triggerAggressiveBlocking()
-                     
+
+                     // Enforce Hidden Mode
                      if (Build.VERSION.SDK_INT >= 24) {
                          try {
                              if (softKeyboardController.showMode != AccessibilityService.SHOW_MODE_HIDDEN) {
                                  softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
                              }
-                         } catch(e: Exception) {
-                             // Ignore controller errors if not ready
+                         } catch(e: Exception) {}
                          }
-                     }
                  }
             }
         }
