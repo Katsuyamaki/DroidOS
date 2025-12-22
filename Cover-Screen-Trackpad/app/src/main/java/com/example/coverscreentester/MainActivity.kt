@@ -28,91 +28,21 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_menu)
 
-        // UI Binding
-        tvStep1 = findViewById(R.id.tvStep1Title)
-        tvStep2 = findViewById(R.id.tvStep2Title)
-        tvStep3 = findViewById(R.id.tvStep3Title)
-        tvStep4 = findViewById(R.id.tvStep4Title)
-        tvStep5 = findViewById(R.id.tvStep5Title)
-        tvStepNullKeyboardTitle = findViewById(R.id.tvStepNullKeyboardTitle)
-
-        val btnStep1 = findViewById<Button>(R.id.btnStep1Trigger)
-        val btnStep2 = findViewById<Button>(R.id.btnStep2Unblock)
-        val btnStep3 = findViewById<Button>(R.id.btnStep3Enable)
-        val btnStep4 = findViewById<Button>(R.id.btnStep4Overlay)
-        val btnStep5 = findViewById<Button>(R.id.btnStep5Shizuku)
-        val btnStepNullKeyboardEnable = findViewById<Button>(R.id.btnStepNullKeyboardEnable)
-
-        btnStart = findViewById(R.id.btnStartApp)
-        btnSettings = findViewById(R.id.btnOpenSettings)
-
-        // Step 1: Trigger (Open Accessibility)
-        btnStep1.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        val displayId = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
         }
 
-        // Step 2: Unblock (Open App Info)
-        btnStep2.setOnClickListener {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            intent.data = Uri.parse("package:$packageName")
-            startActivity(intent)
-        }
+        android.util.Log.d("DroidOS_Trackpad_Main", "Triggering Trackpad on Display $displayId")
 
-        // Step 3: Enable (Open Accessibility)
-        btnStep3.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        // Step 3.5: Enable Null Keyboard (NEW)
-        btnStepNullKeyboardEnable.setOnClickListener {
-            val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-            startActivity(intent)
-        }
-
-        // Step 4: Overlay
-        btnStep4.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        }
-
-        // Step 5: Shizuku
-        try {
-            Shizuku.addRequestPermissionResultListener(this)
-        } catch (e: Exception) {}
+        val intent = Intent(this, TrackpadService::class.java)
+        intent.putExtra("TARGET_DISPLAY_ID", displayId)
+        startService(intent)
         
-        btnStep5.setOnClickListener {
-            try {
-                if (Shizuku.getBinder() == null) {
-                    Toast.makeText(this, "Shizuku not running!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Shizuku.requestPermission(0)
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Shizuku Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // LAUNCH BUTTON
-        btnStart.setOnClickListener {
-            if (checkCriticalPermissions()) {
-                launchOverlayService()
-            }
-        }
-
-        // SETTINGS BUTTON
-        btnSettings.setOnClickListener {
-            if (checkCriticalPermissions()) {
-                val intent = Intent(this, OverlayService::class.java)
-                intent.action = "OPEN_MENU"
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-                finish()
-            }
-        }
+        finish()
     }
 
     override fun onResume() {
