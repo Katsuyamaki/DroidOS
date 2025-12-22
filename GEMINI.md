@@ -6,7 +6,7 @@ Project Root: /data/data/com.termux/files/home/projects/DroidOS
 ​File Editing Strategy:
 ​Full File Replacement: If a code block is long and appears to contain the complete file content (imports, class declaration, closing braces), overwrite the entire file. This is the preferred method to avoid partial merge errors.
 Operational Guidelines:
-​ANCHOR & REPLACE: When adding new methods or variables, find a specific existing line (an "anchor") and replace that line with itself plus the new code.
+​ANCHOR & REPLACE: When adding new methods or variables, find a specific existing line (an "anchor") and replace that line with itself plus the new code. When searching for an anchor point, firet try fun FUNCTIONNAME - replafing FUNCTIONNAME with the actual funtion we are replacing accorring to the instructions.
 ​Block Replacement: If the code block is a specific function or section, find the matching section in the existing file and replace it entirely. Replace or include any code block proceeding and ending comments in the existing code with the new/updated proceeding and ending comment blocks, if any.
 ​Creation: If the file does not exist, create it including any necessary parent directories.
 ​Navigation & commands:

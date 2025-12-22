@@ -4957,86 +4957,6 @@ object ShizukuInputHandler {
 }
 ```
 
-## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadService.kt
-```kotlin
-package com.example.coverscreentester
-
-import android.app.Service
-import android.content.Intent
-import android.graphics.PixelFormat
-import android.os.IBinder
-import android.view.LayoutInflater
-import android.view.View
-import android.view.WindowManager
-import android.widget.Button
-import android.widget.Toast
-
-class TrackpadService : Service() {
-
-    private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
-
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-
-        // Layout Params: TYPE_APPLICATION_OVERLAY is crucial for Android 8.0+
-        // FLAG_NOT_FOCUSABLE ensures the overlay doesn't eat physical button presses (like Power/Vol)
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-
-        try {
-            val inflater = LayoutInflater.from(this)
-            overlayView = inflater.inflate(R.layout.service_overlay, null)
-
-            // Setup Safety Exit Button
-            val closeBtn = overlayView?.findViewById<Button>(R.id.btn_close)
-            closeBtn?.setOnClickListener {
-                stopSelf()
-            }
-
-            // Setup Trackpad Touch Listener
-            val trackpadView = overlayView?.findViewById<View>(R.id.view_trackpad)
-            trackpadView?.setOnTouchListener { _, _ ->
-                // This consumes the touch event so it doesn't pass through to the launcher
-                // We will add the Shizuku injection logic here next.
-                true
-            }
-
-            windowManager.addView(overlayView, params)
-            Toast.makeText(this, "Trackpad Overlay Started", Toast.LENGTH_SHORT).show()
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (overlayView != null) {
-            try {
-                windowManager.removeView(overlayView)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            overlayView = null
-        }
-        Toast.makeText(this, "Trackpad Overlay Stopped", Toast.LENGTH_SHORT).show()
-    }
-}
-```
-
 ## File: Cover-Screen-Trackpad/app/src/main/res/drawable/bg_item_active.xml
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -7582,6 +7502,141 @@ class ManualAdjustActivity : Activity() {
             intent.putExtra("DH", yChange)
         }
         startService(intent)
+    }
+}
+```
+
+## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadService.kt
+```kotlin
+package com.example.coverscreentester
+
+import android.app.Service
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.IBinder
+import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.Toast
+import android.hardware.display.DisplayManager
+import android.os.Build
+import android.util.Log
+import android.content.Context
+
+class TrackpadService : Service() {
+
+    private val TAG = "TrackpadService" // Define TAG
+
+    private lateinit var windowManager: WindowManager
+    private var trackpadView: View? = null 
+    private var currentDisplayId: Int = 0
+
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
+
+    /* * FUNCTION: onStartCommand
+     * SUMMARY: Handles the "Recall" logic. If the service is already running but 
+     * receives a different display ID, it destroys the old view and recreates 
+     * it on the new display context.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val targetDisplayId = intent?.getIntExtra("TARGET_DISPLAY_ID", currentDisplayId) ?: currentDisplayId
+        android.util.Log.d("TrackpadService", "onStartCommand: Target=$targetDisplayId, Current=$currentDisplayId")
+
+        if (trackpadView != null) {
+            // If display has changed, migrate the view
+            if (targetDisplayId != currentDisplayId) {
+                android.util.Log.d("TrackpadService", "Migrating Trackpad to Display $targetDisplayId")
+                try {
+                    windowManager.removeView(trackpadView)
+                } catch (e: Exception) {
+                    android.util.Log.e("TrackpadService", "Migration removeView failed", e)
+                }
+                trackpadView = null
+                setupUI(targetDisplayId)
+            }
+        } else {
+            // First time initialization
+            android.util.Log.d("TrackpadService", "Initial setup on Display $targetDisplayId")
+            setupUI(targetDisplayId)
+        }
+        
+        return START_STICKY
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        android.util.Log.d("TrackpadService", "Service Created")
+        setupShizuku() // This will be defined later
+    }
+
+    /* * FUNCTION: setupUI
+     * SUMMARY: Creates a WindowManager context bound specifically to the 
+     * requested displayId. This forces the view to the physical screen.
+     */
+    private fun setupUI(displayId: Int) {
+        currentDisplayId = displayId
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val targetDisplay = dm.getDisplay(displayId) ?: dm.getDisplay(0)
+        
+        // CRITICAL: Create context for the specific physical display
+        val displayContext = createDisplayContext(targetDisplay)
+        windowManager = displayContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        val inflater = android.view.LayoutInflater.from(displayContext)
+        trackpadView = inflater.inflate(R.layout.layout_trackpad, null)
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) 
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
+            else 
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            android.graphics.PixelFormat.TRANSLUCENT
+        )
+
+        setupTrackpadLogic(trackpadView!!)
+        windowManager.addView(trackpadView, params)
+    }
+
+    private fun setupTrackpadLogic(view: View) {
+        // Setup Safety Exit Button
+        val closeBtn = view.findViewById<Button>(R.id.btn_close)
+        closeBtn?.setOnClickListener {
+            stopSelf()
+        }
+
+        // Setup Trackpad Touch Listener
+        val trackpadArea = view.findViewById<View>(R.id.view_trackpad)
+        trackpadArea?.setOnTouchListener { _, _ ->
+            // This consumes the touch event so it doesn't pass through to the launcher
+            // We will add the Shizuku injection logic here next.
+            true
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (trackpadView != null) {
+            try {
+                windowManager.removeView(trackpadView)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            trackpadView = null
+        }
+        Toast.makeText(this, "Trackpad Overlay Stopped", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setupShizuku() {
+        // Placeholder for Shizuku setup logic
+        // This will be implemented when Shizuku functionality is added.
+        Log.d(TAG, "setupShizuku: Placeholder called.")
     }
 }
 ```
@@ -12807,128 +12862,6 @@ class NullInputMethodService : InputMethodService() {
 </FrameLayout>
 ```
 
-## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
-```kotlin
-package com.example.quadrantlauncher
-
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Bundle
-import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import rikka.shizuku.Shizuku
-
-class MainActivity : AppCompatActivity() {
-
-    companion object {
-        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
-    }
-
-    // === APP INFO DATA CLASS - START ===
-    // Represents an installed app with package name, activity class, and state info
-    // getIdentifier() returns a unique string for app identification including className when needed
-    data class AppInfo(
-        val label: String,
-        val packageName: String,
-        val className: String? = null,
-        var isFavorite: Boolean = false,
-        var isMinimized: Boolean = false
-    ) {
-        // Returns unique identifier for the app
-        fun getIdentifier(): String {
-            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
-                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
-                    "$packageName:gemini"
-                } else {
-                    packageName
-                }
-            } else {
-                packageName
-            }
-        }
-        
-        // === GET BASE PACKAGE - START ===
-        // Returns the base package name without any suffix
-        // Use this for shell commands that need the actual Android package name
-        fun getBasePackage(): String {
-            return if (packageName.contains(":")) {
-                packageName.substringBefore(":")
-            } else {
-                packageName
-            }
-        }
-        // === GET BASE PACKAGE - END ===
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is AppInfo) return false
-            return packageName == other.packageName && className == other.className && label == other.label
-        }
-
-        override fun hashCode(): Int {
-            var result = packageName.hashCode()
-            result = 31 * result + (className?.hashCode() ?: 0)
-            result = 31 * result + label.hashCode()
-            return result
-        }
-    }
-    // === APP INFO DATA CLASS - END ===
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Redirect to PermissionActivity if essential permissions are missing
-        if (!hasAllPermissions()) {
-            val intent = Intent(this, PermissionActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
-            return
-        }
-
-        // If all good, show status
-        Toast.makeText(this, "Launcher is active", Toast.LENGTH_SHORT).show()
-        finish()
-    }
-
-    private fun hasAllPermissions(): Boolean {
-        // 1. Overlay
-        if (!Settings.canDrawOverlays(this)) return false
-
-        // 2. Shizuku
-        val shizukuGranted = try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            false
-        }
-        if (!shizukuGranted) return false
-
-        // 3. Accessibility
-        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
-
-        // 4. Notifications removed (Not strictly required for service to run)
-
-        return true
-    }
-
-    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        for (enabledService in enabledServices) {
-            val serviceInfo = enabledService.resolveInfo.serviceInfo
-            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
-                return true
-            }
-        }
-        return false
-    }
-}
-```
-
 ## File: Cover-Screen-Trackpad/app/src/main/res/layout/activity_menu.xml
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -13177,6 +13110,148 @@ class MainActivity : AppCompatActivity() {
 
     </LinearLayout>
 </ScrollView>
+```
+
+## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
+```kotlin
+package com.example.quadrantlauncher
+
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityManager
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import rikka.shizuku.Shizuku
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
+    }
+
+    // === APP INFO DATA CLASS - START ===
+    // Represents an installed app with package name, activity class, and state info
+    // getIdentifier() returns a unique string for app identification including className when needed
+    data class AppInfo(
+        val label: String,
+        val packageName: String,
+        val className: String? = null,
+        var isFavorite: Boolean = false,
+        var isMinimized: Boolean = false
+    ) {
+        // Returns unique identifier for the app
+        fun getIdentifier(): String {
+            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
+                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
+                    "$packageName:gemini"
+                } else {
+                    packageName
+                }
+            } else {
+                packageName
+            }
+        }
+        
+        // === GET BASE PACKAGE - START ===
+        // Returns the base package name without any suffix
+        // Use this for shell commands that need the actual Android package name
+        fun getBasePackage(): String {
+            return if (packageName.contains(":")) {
+                packageName.substringBefore(":")
+            } else {
+                packageName
+            }
+        }
+        // === GET BASE PACKAGE - END ===
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is AppInfo) return false
+            return packageName == other.packageName && className == other.className && label == other.label
+        }
+
+        override fun hashCode(): Int {
+            var result = packageName.hashCode()
+            result = 31 * result + (className?.hashCode() ?: 0)
+            result = 31 * result + label.hashCode()
+            return result
+        }
+    }
+    // === APP INFO DATA CLASS - END ===
+
+    /* * FUNCTION: onCreate
+     * SUMMARY: Detects the display ID where the app icon was clicked and
+     * passes it to the service to ensure the bubble follows the user.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Redirect to PermissionActivity if essential permissions are missing
+        if (!hasAllPermissions()) {
+            val intent = Intent(this, PermissionActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Determine which display this activity is running on
+        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
+        }
+
+        Log.d("DroidOS_Main", "Launched on Display $displayId")
+
+        // Start service and pass the current display ID to recall the bubble
+        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
+        serviceIntent.putExtra("DISPLAY_ID", displayId)
+        startService(serviceIntent)
+
+        // Finish immediately so the launcher remains a service-only overlay
+        finish()
+    }
+
+    private fun hasAllPermissions(): Boolean {
+        // 1. Overlay
+        if (!Settings.canDrawOverlays(this)) return false
+
+        // 2. Shizuku
+        val shizukuGranted = try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+        if (!shizukuGranted) return false
+
+        // 3. Accessibility
+        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
+
+        // 4. Notifications removed (Not strictly required for service to run)
+
+        return true
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        for (enabledService in enabledServices) {
+            val serviceInfo = enabledService.resolveInfo.serviceInfo
+            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
+                return true
+            }
+        }
+        return false
+    }
+}
 ```
 
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/ShellUserService.kt
@@ -13571,2187 +13646,6 @@ class ShellUserService : IShellService.Stub() {
         return output.toString()
     }
 }
-```
-
-## File: logcat.md
-```markdown
---------- beginning of system
-12-22 20:14:58.970  1423  1554 I ActivityManager: Changes in 10053 6 to 15, 128 to 0
-12-22 20:14:58.980  1423  1549 D WindowManager: onStateChanged, state=2
-12-22 20:14:59.279  1423  1423 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
---------- beginning of main
-12-22 20:14:59.370  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31058972596000, f=0x0, d=1 dsdx=1.000000 dtdx=0.000000
-12-22 20:14:59.374  1423  1695 I InputDispatcher: No new touched window at (87.7, 495.1) in display 1
-12-22 20:14:59.374  1423  1695 I InputDispatcher: Dropping event because there is no touchable window at (87.7178, 495.088) on display 1: MotionEvent
-12-22 20:14:59.377  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:14:59.384  1423  1473 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19124)/@0xb4feb99} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
-12-22 20:14:59.387  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31058983385000, f=0x0, d=1 dsdx=1.000000 dtdx=0.000000
-12-22 20:14:59.397  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:14:59.614  1423  1549 D WindowManager: onStateChanged, state=0
-12-22 20:14:59.623  1423  1549 D WindowManager: Changing focus from Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity} to null displayId=0 Callers=com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 com.android.server.wm.RootWindowContainer.positionChildAt:8 com.android.server.wm.WindowManagerServiceExt.moveDisplayToTop:37 
-12-22 20:14:59.624  1423  1549 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, navColorWin=Window{82d55a2 u0 InputMethod}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 
-12-22 20:14:59.624  1423  1549 D WindowManager: updateSystemBarAttributes, bhv=2, apr=0, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-9
-12-22 20:14:59.625  1423  1549 D InputDispatcher: Focused display: 0 -> 1
-12-22 20:14:59.625  1423  1549 W InputDispatcher: Focused display #1 does not have a focused window.
-12-22 20:14:59.625  1423  1549 E InputDispatcher: But another display has a focused window
-12-22 20:14:59.625  1423  1549 E InputDispatcher:   FocusedWindows:
-12-22 20:14:59.625  1423  1549 E InputDispatcher:     displayId=0, name='67a5228 com.termux/com.termux.app.TermuxActivity'
-12-22 20:14:59.637  1423  4811 I ActivityManager: Changes in 10210 19 to 5, 0 to 144
-12-22 20:14:59.645  1423  2267 D InputDispatcher: Once focus requested (0): <null>
-12-22 20:14:59.645  1423  2267 D InputDispatcher: Focus request (0): <null> but waiting because NO_WINDOW
-12-22 20:14:59.645  1423  2267 D InputDispatcher: Focus left window (0): 67a5228 com.termux/com.termux.app.TermuxActivity
-12-22 20:14:59.661  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:14:59.661  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:14:59.680  1423  1604 D WindowManager: Create SleepToken: tag=Display-off, displayId=0
-12-22 20:14:59.689  1423  1473 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:14:59.693  1423  2267 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:14:59.697  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2024, view=com.android.systemui.navigationbar.gestural.SamsungBackPanel{e24fbc1 G.ED..... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.gestural.BackPanelController.setLayoutParams:7 com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler.setEdgeBackPlugin:20 
-12-22 20:14:59.697  1423  1635 I WindowManager: Relayout Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}: viewVisibility=8 req=1080x1260 ty=1 d0
-12-22 20:14:59.697  2022  2022 D ViewRootImpl: desktopMode is false
-12-22 20:14:59.697  2022  2022 I ViewRootImpl: dVRR is disabled
-12-22 20:14:59.698  1423  2230 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:14:59.699  1423  1635 I WindowManager: Relayout hash=67a5228, pid=22381, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION wanim=0x1030317
-12-22 20:14:59.699  1423  1635 I WindowManager:   fl=8d810100
-12-22 20:14:59.699  1423  1635 I WindowManager:   pfl=10008040
-12-22 20:14:59.699  1423  1635 I WindowManager:   vsysui=700
-12-22 20:14:59.699  1423  1635 I WindowManager:   bhv=1
-12-22 20:14:59.699  1423  1635 I WindowManager:   fitSides=0
-12-22 20:14:59.699  1423  1635 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.699  1423  1635 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.699  1423  4811 I WindowManager: Relayout Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}: viewVisibility=8 req=1080x2520 ty=1 d0
-12-22 20:14:59.699  1423  4811 I WindowManager: Relayout hash=64185e1, pid=2712, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT wanim=0x1030306
-12-22 20:14:59.699  1423  4811 I WindowManager:   fl=81910100
-12-22 20:14:59.699  1423  4811 I WindowManager:   pfl=10008840
-12-22 20:14:59.699  1423  4811 I WindowManager:   bhv=2
-12-22 20:14:59.699  1423  4811 I WindowManager:   fitSides=0
-12-22 20:14:59.699  1423  4811 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.699  1423  4811 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=200000 naviIconColor=0}
-12-22 20:14:59.703  1423  1423 I ActivityManager: Changes in 10516 5 to 6, 255 to 239
-12-22 20:14:59.704  1423  1423 I ActivityManager: Changes in 10375 2 to 12, 255 to 0
-12-22 20:14:59.704  1423  1423 I ActivityManager: Changes in 10342 2 to 4, 255 to 254
-12-22 20:14:59.704  1423  1423 I ActivityManager: Changes in 10155 2 to 5, 255 to 184
-12-22 20:14:59.704  1423  1423 I ActivityManager: Changes in 10122 3 to 12, 184 to 128
-12-22 20:14:59.705  1423  1473 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:14:59.706  1423  2934 I WindowManager: Relayout Window{db572d5 u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity}: viewVisibility=8 req=1080x1260 ty=1 d0
-12-22 20:14:59.707  1423  2934 I WindowManager: Relayout hash=db572d5, pid=14008, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION wanim=0x1030317
-12-22 20:14:59.707  1423  2934 I WindowManager:   fl=80810100
-12-22 20:14:59.707  1423  2934 I WindowManager:   pfl=10008840
-12-22 20:14:59.707  1423  2934 I WindowManager:   bhv=1
-12-22 20:14:59.707  1423  2934 I WindowManager:   fitSides=0
-12-22 20:14:59.707  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.707  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.715  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2019, view=com.android.systemui.navigationbar.views.NavigationBarFrame{d6824b5 V.E...... ......I. 0,0-0,0 #7f0a083a app:id/navigation_bar_frame}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.views.NavigationBar.onInit:237 com.android.systemui.util.ViewController.init:6 
-12-22 20:14:59.716  2022  2022 D ViewRootImpl: desktopMode is false
-12-22 20:14:59.716  2022  2022 I ViewRootImpl: dVRR is disabled
-12-22 20:14:59.723  1423  1473 I ActivityManager: Changes in 10122 12 to 10, 128 to 0
-12-22 20:14:59.731  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:14:59.736  1423  2270 I ActivityManager: Changes in 10122 10 to 15, 0 to 128
-12-22 20:14:59.743  1423  2697 E WindowManager: win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:14:59.750  1423  2933 E WindowManager: win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:14:59.781  1423  2886 E WindowManager: win=Window{db572d5 u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:14:59.787  1423  2886 I ActivityManager: Changes in 10122 15 to 19, 128 to 0
-12-22 20:14:59.860  1423  1855 I WindowManager: Relayout Window{4fc6b6b u0 EdgeBackGestureHandler1}: viewVisibility=8 req=164x419 ty=2024 d1
-12-22 20:14:59.861  1423  1855 I WindowManager: Relayout hash=4fc6b6b, pid=2022, syncId=-1: mAttrs={(0,0)(164x419) sim={adjust=pan} ty=NAVIGATION_BAR_PANEL fmt=TRANSLUCENT
-12-22 20:14:59.861  1423  1855 I WindowManager:   fl=1000118
-12-22 20:14:59.861  1423  1855 I WindowManager:   pfl=30200010
-12-22 20:14:59.861  1423  1855 I WindowManager:   bhv=1
-12-22 20:14:59.861  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.861  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.878  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2024, view=com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle{11c299a V.E...... ......I. 0,0-0,0 #7f0a0b72 app:id/secondary_home_handle}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.views.NavigationBar.initSecondaryHomeHandleForRotation:87 com.android.systemui.navigationbar.views.NavigationBar.onViewAttached:417 
-12-22 20:14:59.878  2022  2022 D ViewRootImpl: desktopMode is false
-12-22 20:14:59.878  2022  2022 I ViewRootImpl: dVRR is disabled
-12-22 20:14:59.885  1423  2270 I WindowManager: Relayout Window{a93450e u0 NavigationBar1}: viewVisibility=0 req=1422x75 ty=2019 d1
-12-22 20:14:59.885  1423  2270 D WindowManager: makeSurface duration=1 name=NavigationBar1$_2022
-12-22 20:14:59.890  1423  2270 I WindowManager: Relayout hash=a93450e, pid=2022, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.890  1423  2270 I WindowManager:   fl=20040028
-12-22 20:14:59.890  1423  2270 I WindowManager:   pfl=31000000
-12-22 20:14:59.890  1423  2270 I WindowManager:   bhv=1
-12-22 20:14:59.890  1423  2270 I WindowManager:   providedInsets:
-12-22 20:14:59.890  1423  2270 I WindowManager:     InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.890  1423  2270 I WindowManager:     InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:     InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.890  1423  2270 I WindowManager:     InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:     InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.890  1423  2270 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:14:59.890  1423  2270 I WindowManager:   paramsForRotation:
-12-22 20:14:59.890  1423  2270 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.890  1423  2270 I WindowManager:       fl=20040028
-12-22 20:14:59.890  1423  2270 I WindowManager:       pfl=31000000
-12-22 20:14:59.890  1423  2270 I WindowManager:       bhv=1
-12-22 20:14:59.890  1423  2270 I WindowManager:       providedInsets:
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.890  1423  2270 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.890  1423  2270 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.890  1423  2270 I WindowManager:       fl=20040028
-12-22 20:14:59.890  1423  2270 I WindowManager:       pfl=31000000
-12-22 20:14:59.890  1423  2270 I WindowManager:       bhv=1
-12-22 20:14:59.890  1423  2270 I WindowManager:       providedInsets:
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.890  1423  2270 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.890  1423  2270 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.890  1423  2270 I WindowManager:       fl=20040028
-12-22 20:14:59.890  1423  2270 I WindowManager:       pfl=31000000
-12-22 20:14:59.890  1423  2270 I WindowManager:       bhv=1
-12-22 20:14:59.890  1423  2270 I WindowManager:       providedInsets:
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.890  1423  2270 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.890  1423  2270 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.890  1423  2270 I WindowManager:       fl=20040028
-12-22 20:14:59.890  1423  2270 I WindowManager:       pfl=31000000
-12-22 20:14:59.890  1423  2270 I WindowManager:       bhv=1
-12-22 20:14:59.890  1423  2270 I WindowManager:       providedInsets:
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.890  1423  2270 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.890  1423  2270 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:14:59.896  1423  2229 D WindowManager: finishDrawingWindow: Window{a93450e u0 NavigationBar1} mDrawState=DRAW_PENDING seqId=0
-12-22 20:14:59.953  1423  2933 I WindowManager: Relayout Window{a93450e u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
-12-22 20:14:59.954  1423  2933 I WindowManager: Relayout hash=a93450e, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.954  1423  2933 I WindowManager:   fl=20040028
-12-22 20:14:59.954  1423  2933 I WindowManager:   pfl=31000000
-12-22 20:14:59.954  1423  2933 I WindowManager:   bhv=1
-12-22 20:14:59.954  1423  2933 I WindowManager:   providedInsets:
-12-22 20:14:59.954  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.954  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.954  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.954  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:14:59.954  1423  2933 I WindowManager:   paramsForRotation:
-12-22 20:14:59.954  1423  2933 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.954  1423  2933 I WindowManager:       fl=20040028
-12-22 20:14:59.954  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:14:59.954  1423  2933 I WindowManager:       bhv=1
-12-22 20:14:59.954  1423  2933 I WindowManager:       providedInsets:
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.954  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.954  1423  2933 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.954  1423  2933 I WindowManager:       fl=20040028
-12-22 20:14:59.954  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:14:59.954  1423  2933 I WindowManager:       bhv=1
-12-22 20:14:59.954  1423  2933 I WindowManager:       providedInsets:
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.954  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.954  1423  2933 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.954  1423  2933 I WindowManager:       fl=20040028
-12-22 20:14:59.954  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:14:59.954  1423  2933 I WindowManager:       bhv=1
-12-22 20:14:59.954  1423  2933 I WindowManager:       providedInsets:
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.954  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.954  1423  2933 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:14:59.954  1423  2933 I WindowManager:       fl=20040028
-12-22 20:14:59.954  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:14:59.954  1423  2933 I WindowManager:       bhv=1
-12-22 20:14:59.954  1423  2933 I WindowManager:       providedInsets:
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:14:59.954  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:14:59.954  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:14:59.958  1423  2886 I WindowManager: Relayout Window{58eab59 u0 SecondaryHomeHandle1}: viewVisibility=8 req=0x0 ty=2024 d1
-12-22 20:14:59.958  1423  2886 I WindowManager: Relayout hash=58eab59, pid=2022, syncId=-1: mAttrs={(0,0)(0x0) sim={adjust=pan} ty=NAVIGATION_BAR_PANEL fmt=TRANSLUCENT
-12-22 20:14:59.958  1423  2886 I WindowManager:   fl=21000138
-12-22 20:14:59.958  1423  2886 I WindowManager:   pfl=1040
-12-22 20:14:59.958  1423  2886 I WindowManager:   bhv=1
-12-22 20:14:59.958  1423  2886 I WindowManager:   fitTypes=206
-12-22 20:14:59.958  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:14:59.958  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:14:59.958  1423  2933 D WindowManager: finishDrawingWindow: Window{a93450e u0 NavigationBar1} mDrawState=READY_TO_SHOW seqId=0
-12-22 20:14:59.968  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:14:59.969  1423  1754 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
-12-22 20:14:59.971  1423  1604 D WindowManager: Remove SleepToken: tag=Display-off, displayId=1
-12-22 20:14:59.971  1423  1604 D WindowManager: Transition is created, t=TransitionRecord{e86f73d id=-1 type=WAKE flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.RootWindowContainer.applySleepTokens:209 com.android.server.wm.ActivityTaskManagerService.updateSleepIfNeededLocked:90 com.android.server.wm.RootWindowContainer.removeSleepToken:131 
-12-22 20:14:59.972  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:14:59.973  1423  1604 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:14:59.974  1423  1604 I WindowManager: Waiting for transition
-12-22 20:14:59.976  1423  1550 I WindowManager: Waiting for transition
-12-22 20:14:59.980  1423  1423 I ActivityManager: Changes in 10516 6 to 5, 239 to 255
-12-22 20:14:59.980  1423  1423 I ActivityManager: updateOomAdj start time is before than pendingPid added, don't delete it
-12-22 20:14:59.981  1423  1423 D InputDispatcher: Inject key (0/0): action=0, f=0x8, d=-1, time=31059566473000
-12-22 20:14:59.984  1423  2189 D WindowManager: Create SleepToken: tag=keyguard, displayId=0
-12-22 20:14:59.988  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:14:59.988  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:14:59.989  1423  1549 I ActivityManager: Changes in 10375 12 to 2, 0 to 255
-12-22 20:14:59.996  1423  1555 I ActivityManager: Changes in 10384 19 to 11, 0 to 128
-12-22 20:15:00.003  1423  1555 I ActivityManager: Changes in 10176 19 to 11, 0 to 128
-12-22 20:15:00.003  1423  4811 I ActivityManager: Changes in 10384 11 to 19, 128 to 0
-12-22 20:15:00.008  1423  4811 I ActivityManager: Changes in 10176 11 to 19, 128 to 0
-12-22 20:15:00.021  1423  1555 I ActivityManager: Changes in 10329 8 to 8, 0 to 128
-12-22 20:15:00.028  1423  2266 I WindowManager: Relayout Window{9f6c9d1 u0 ThumbsUpHandler_L}: viewVisibility=8 req=41x2520 ty=2601 d0
-12-22 20:15:00.028  1423  2266 E WindowManager: win=Window{9f6c9d1 u0 ThumbsUpHandler_L} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-12-22 20:15:00.029  1423  2266 I WindowManager: Waiting for transition
-12-22 20:15:00.030  1423  2266 I WindowManager: Relayout hash=9f6c9d1, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP LEFT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
-12-22 20:15:00.030  1423  2266 I WindowManager:   fl=5800528
-12-22 20:15:00.030  1423  2266 I WindowManager:   pfl=10000050
-12-22 20:15:00.030  1423  2266 I WindowManager:   vsysui=500
-12-22 20:15:00.030  1423  2266 I WindowManager:   bhv=2
-12-22 20:15:00.030  1423  2266 I WindowManager:   fitTypes=207
-12-22 20:15:00.030  1423  2266 I WindowManager:   fitSides=0
-12-22 20:15:00.030  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.030  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:00.030  1423  2266 I WindowManager:   sfl=20000}
-12-22 20:15:00.032  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.033  1423  2230 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x20df05f
-12-22 20:15:00.033  1423  2230 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599, destroy=false, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0
-12-22 20:15:00.033  1423  2230 I WindowManager: Reparenting to leash, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0, leashParent=Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599
-12-22 20:15:00.033  1423  2230 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x3a79843
-12-22 20:15:00.034  1423  2784 I WindowManager: Relayout Window{7aff3c3 u0 ThumbsUpHandler_R}: viewVisibility=8 req=41x2520 ty=2601 d0
-12-22 20:15:00.034  1423  2784 E WindowManager: win=Window{7aff3c3 u0 ThumbsUpHandler_R} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-12-22 20:15:00.035  1423  2784 I WindowManager: Waiting for transition
-12-22 20:15:00.036  1423  2784 I WindowManager: Relayout hash=7aff3c3, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP RIGHT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
-12-22 20:15:00.036  1423  2784 I WindowManager:   fl=5800528
-12-22 20:15:00.036  1423  2784 I WindowManager:   pfl=10000050
-12-22 20:15:00.036  1423  2784 I WindowManager:   vsysui=500
-12-22 20:15:00.036  1423  2784 I WindowManager:   bhv=2
-12-22 20:15:00.036  1423  2784 I WindowManager:   fitTypes=207
-12-22 20:15:00.036  1423  2784 I WindowManager:   fitSides=0
-12-22 20:15:00.036  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.036  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:00.036  1423  2784 I WindowManager:   sfl=20000}
-12-22 20:15:00.037  1423  2109 I ActivityManager: Changes in 10329 8 to 8, 128 to 0
-12-22 20:15:00.038  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:00.039  1423  1547 I WindowManager: Waiting for transition
-12-22 20:15:00.040  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.042  1423  1555 I ActivityManager: Changes in 5006 8 to 8, 0 to 128
-12-22 20:15:00.044  1423  2109 I ActivityManager: Changes in 5006 8 to 8, 128 to 0
-12-22 20:15:00.051  1423  1555 I ActivityManager: Changes in 10373 16 to 11, 0 to 128
-12-22 20:15:00.060  1423  2264 I ActivityManager: Changes in 10373 11 to 16, 128 to 0
-12-22 20:15:00.066  1423  4808 I InputMethodManagerService: isInputMethodShown: isShown=true
-12-22 20:15:00.066  1423  4808 I InputMethodManagerService: fhsi
-12-22 20:15:00.070  1423  4806 I WindowManager: Waiting for transition
-12-22 20:15:00.072  1423  1555 I ActivityManager: Changes in 10113 10 to 10, 0 to 128
-12-22 20:15:00.074  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.079  1423  1549 I ActivityManager: Changes in 10332 5 to 7, 255 to 128
-12-22 20:15:00.080  1423  2228 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:15:00.080  1423  2228 I InputMethodManagerService: setImeWindowStatus: vis=0, backDisposition=0
-12-22 20:15:00.087  1423  1555 I ActivityManager: Changes in 10386 19 to 11, 0 to 128
-12-22 20:15:00.087  1423  1555 I ActivityManager: Changes in 10362 16 to 11, 0 to 128
-12-22 20:15:00.093  1423  4807 I WindowManager: Relayout Window{82d55a2 u0 InputMethod}: viewVisibility=0 req=1080x2404 ty=2011 d0
-12-22 20:15:00.093  1423  4807 I WindowManager: Waiting for transition
-12-22 20:15:00.093  1423  4807 I WindowManager: Relayout hash=82d55a2, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
-12-22 20:15:00.093  1423  4807 I WindowManager:   fl=81800108
-12-22 20:15:00.093  1423  4807 I WindowManager:   pfl=14000000
-12-22 20:15:00.093  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:00.093  1423  4807 I WindowManager:   fitTypes=3
-12-22 20:15:00.093  1423  4807 I WindowManager:   fitSides=7
-12-22 20:15:00.093  1423  4807 I WindowManager:   fitIgnoreVis
-12-22 20:15:00.093  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.093  1423  4807 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
-12-22 20:15:00.093  1423  4807 D WindowManager: setInsetsWindow Window{82d55a2 u0 InputMethod}, contentInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 1904 - 0, 0), visibleInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 1904 - 0, 0), touchableRegion=SkRegion((0,1904,1080,2404)) -> SkRegion((0,1904,1080,2404)), touchableInsets 3 -> 3
-12-22 20:15:00.094  1423  4807 I WindowManager: Waiting for transition
-12-22 20:15:00.097  1423  4800 I ActivityManager: Changes in 10362 11 to 16, 128 to 0
-12-22 20:15:00.099  1423  2230 I ActivityManager: Changes in 10386 11 to 19, 128 to 0
-12-22 20:15:00.104  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
-12-22 20:15:00.106  1423  2784 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
-12-22 20:15:00.108  1423  2784 I ActivityManager: Changes in 10113 10 to 10, 128 to 0
-12-22 20:15:00.117  1423  2230 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
-12-22 20:15:00.118  1423  2230 D WindowManager: makeSurface duration=0 name=NotificationShade$_2022
-12-22 20:15:00.118  1423  2230 I WindowManager: Waiting for transition
-12-22 20:15:00.119  1423  2230 I WindowManager: Relayout hash=b5eb294, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT or=SCREEN_ORIENTATION_NOSENSOR if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=5000
-12-22 20:15:00.119  1423  2230 I WindowManager:   fl=81160040
-12-22 20:15:00.119  1423  2230 I WindowManager:   pfl=10000200
-12-22 20:15:00.119  1423  2230 I WindowManager:   bhv=2
-12-22 20:15:00.119  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.119  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0
-12-22 20:15:00.119  1423  2230 I WindowManager:   sfl=40000}
-12-22 20:15:00.121  1423  2230 I WindowManager: Relayout Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService}: viewVisibility=8 req=0x0 ty=2226 d0
-12-22 20:15:00.121  1423  2230 E WindowManager: win=Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-12-22 20:15:00.123  1423  2230 I WindowManager: Waiting for transition
-12-22 20:15:00.123  1423  2230 I WindowManager: Waiting for transition
-12-22 20:15:00.125  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.125  1423  1555 I ActivityManager: Changes in 10384 19 to 11, 0 to 128
-12-22 20:15:00.126  1423  2230 I WindowManager: Relayout hash=41abd5c, pid=2712, syncId=-1: mAttrs={(0,628)(0x0) gr=TOP RIGHT CENTER sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=2226 fmt=TRANSPARENT
-12-22 20:15:00.126  1423  2230 I WindowManager:   fl=81800108
-12-22 20:15:00.126  1423  2230 I WindowManager:   pfl=10000070
-12-22 20:15:00.126  1423  2230 I WindowManager:   apr=10
-12-22 20:15:00.126  1423  2230 I WindowManager:   bhv=1
-12-22 20:15:00.126  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.126  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.126  1423  2230 I WindowManager:  dimAmount=0.0 dimDuration=0 naviIconColor=0
-12-22 20:15:00.126  1423  2230 I WindowManager:   sfl=420000}
-12-22 20:15:00.128  1423  2784 I WindowManager: Waiting for transition
-12-22 20:15:00.131  1423  2264 W ActivityManager: Background start not allowed: service Intent { xflg=0x4 cmp=com.facebook.katana/com.facebook.mqtt.service.MqttServiceV2 (has extras) } to com.facebook.katana/com.facebook.mqtt.service.MqttServiceV2 from pid=12897 uid=10384 pkg=com.facebook.katana startFg?=false
-12-22 20:15:00.132  1423  4799 I ActivityManager: Changes in 10384 11 to 19, 128 to 0
-12-22 20:15:00.132  1423  2697 I WindowManager: Waiting for transition
-12-22 20:15:00.134  1423  1555 I ActivityManager: Changes in 10176 19 to 11, 0 to 128
-12-22 20:15:00.140  1423  1855 I WindowManager: Relayout Window{9f6c9d1 u0 ThumbsUpHandler_L}: viewVisibility=0 req=41x2520 ty=2601 d0
-12-22 20:15:00.140  1423  2264 I ActivityManager: Changes in 10176 11 to 19, 128 to 0
-12-22 20:15:00.141  1423  1855 D WindowManager: makeSurface duration=0 name=ThumbsUpHandler_L$_6554
-12-22 20:15:00.141  1423  1855 I WindowManager: Waiting for transition
-12-22 20:15:00.141  1423  2697 I WindowManager: Relayout Window{4ad78ec u0 Bouncer}: viewVisibility=4 req=1080x0 ty=2009 d0
-12-22 20:15:00.142  1423  2697 I WindowManager: Waiting for transition
-12-22 20:15:00.142  1423  1855 I WindowManager: Relayout hash=9f6c9d1, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP LEFT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
-12-22 20:15:00.142  1423  1855 I WindowManager:   fl=5800528
-12-22 20:15:00.142  1423  1855 I WindowManager:   pfl=10000050
-12-22 20:15:00.142  1423  1855 I WindowManager:   vsysui=500
-12-22 20:15:00.142  1423  1855 I WindowManager:   bhv=2
-12-22 20:15:00.142  1423  1855 I WindowManager:   fitTypes=207
-12-22 20:15:00.142  1423  1855 I WindowManager:   fitSides=0
-12-22 20:15:00.142  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.142  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:00.142  1423  1855 I WindowManager:   sfl=20000}
-12-22 20:15:00.142  1423  2784 D WindowManager: finishDrawingWindow: Window{b5eb294 u0 NotificationShade} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.142  1423  2697 I WindowManager: Relayout hash=4ad78ec, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=resize} layoutInDisplayCutoutMode=shortEdges ty=KEYGUARD_DIALOG fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=10000
-12-22 20:15:00.142  1423  2697 I WindowManager:   fl=85000548
-12-22 20:15:00.142  1423  2697 I WindowManager:   pfl=10000000
-12-22 20:15:00.142  1423  2697 I WindowManager:   vsysui=500
-12-22 20:15:00.142  1423  2697 I WindowManager:   bhv=2
-12-22 20:15:00.142  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.142  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.142  1423  2697 I WindowManager:  dimAmount=0.0 screenDimDuration=0 naviIconColor=0
-12-22 20:15:00.142  1423  2697 I WindowManager:   sfl=40000}
-12-22 20:15:00.143  1423  2784 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:00.145  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.145  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.145  1423  2220 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
-12-22 20:15:00.145  1423  2220 I WindowManager: Waiting for transition
-12-22 20:15:00.146  1423  1855 I WindowManager: Waiting for transition
-12-22 20:15:00.146  1423  2933 I WindowManager: Relayout Window{a93450e u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
-12-22 20:15:00.146  1423  2933 I WindowManager: Waiting for transition
-12-22 20:15:00.146  1423  2886 I WindowManager: Relayout Window{7aff3c3 u0 ThumbsUpHandler_R}: viewVisibility=0 req=41x2520 ty=2601 d0
-12-22 20:15:00.147  1423  2886 D WindowManager: makeSurface duration=0 name=ThumbsUpHandler_R$_6554
-12-22 20:15:00.147  1423  2220 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.147  1423  2220 I WindowManager:   fl=20040028
-12-22 20:15:00.147  1423  2220 I WindowManager:   pfl=31001000
-12-22 20:15:00.147  1423  2220 I WindowManager:   bhv=1
-12-22 20:15:00.147  1423  2220 I WindowManager:   providedInsets:
-12-22 20:15:00.147  1423  2220 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.147  1423  2220 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.147  1423  2220 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2220 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.147  1423  2220 I WindowManager:   paramsForRotation:
-12-22 20:15:00.147  1423  2220 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.147  1423  2220 I WindowManager:       fl=20040028
-12-22 20:15:00.147  1423  2220 I WindowManager:       pfl=31001000
-12-22 20:15:00.147  1423  2220 I WindowManager:       bhv=1
-12-22 20:15:00.147  1423  2220 I WindowManager:       providedInsets:
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2220 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.147  1423  2220 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.147  1423  2220 I WindowManager:       fl=20040028
-12-22 20:15:00.147  1423  2220 I WindowManager:       pfl=31001000
-12-22 20:15:00.147  1423  2220 I WindowManager:       bhv=1
-12-22 20:15:00.147  1423  2220 I WindowManager:       providedInsets:
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2220 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.147  1423  2220 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.147  1423  2220 I WindowManager:       fl=20040028
-12-22 20:15:00.147  1423  2220 I WindowManager:       pfl=31001000
-12-22 20:15:00.147  1423  2220 I WindowManager:       bhv=1
-12-22 20:15:00.147  1423  2220 I WindowManager:       providedInsets:
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2220 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.147  1423  2220 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.147  1423  2220 I WindowManager:       fl=20040028
-12-22 20:15:00.147  1423  2220 I WindowManager:       pfl=31001000
-12-22 20:15:00.147  1423  2220 I WindowManager:       bhv=1
-12-22 20:15:00.147  1423  2220 I WindowManager:       providedInsets:
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.147  1423  2220 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2220 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:00.147  1423  2886 I WindowManager: Waiting for transition
-12-22 20:15:00.147  1423  1855 D WindowManager: finishDrawingWindow: Window{9f6c9d1 u0 ThumbsUpHandler_L} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.147  1423  2886 I WindowManager: Relayout hash=7aff3c3, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP RIGHT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
-12-22 20:15:00.147  1423  2886 I WindowManager:   fl=5800528
-12-22 20:15:00.147  1423  2886 I WindowManager:   pfl=10000050
-12-22 20:15:00.147  1423  2886 I WindowManager:   vsysui=500
-12-22 20:15:00.147  1423  2886 I WindowManager:   bhv=2
-12-22 20:15:00.147  1423  2886 I WindowManager:   fitTypes=207
-12-22 20:15:00.147  1423  2886 I WindowManager:   fitSides=0
-12-22 20:15:00.147  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.147  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:00.147  1423  2886 I WindowManager:   sfl=20000}
-12-22 20:15:00.148  1423  2933 I WindowManager: Relayout hash=a93450e, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.148  1423  2933 I WindowManager:   fl=20040028
-12-22 20:15:00.148  1423  2933 I WindowManager:   pfl=31000000
-12-22 20:15:00.148  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:00.148  1423  2933 I WindowManager:   providedInsets:
-12-22 20:15:00.148  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.148  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.148  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:     InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.148  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.148  1423  2933 I WindowManager:   paramsForRotation:
-12-22 20:15:00.148  1423  2933 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.148  1423  2933 I WindowManager:       fl=20040028
-12-22 20:15:00.148  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:15:00.148  1423  2933 I WindowManager:       bhv=1
-12-22 20:15:00.148  1423  2933 I WindowManager:       providedInsets:
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.148  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.148  1423  2933 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.148  1423  2933 I WindowManager:       fl=20040028
-12-22 20:15:00.148  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:15:00.148  1423  2933 I WindowManager:       bhv=1
-12-22 20:15:00.148  1423  2933 I WindowManager:       providedInsets:
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.148  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.148  1423  2933 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.148  1423  2933 I WindowManager:       fl=20040028
-12-22 20:15:00.148  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:15:00.148  1423  2933 I WindowManager:       bhv=1
-12-22 20:15:00.148  1423  2933 I WindowManager:       providedInsets:
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.148  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.148  1423  2933 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:00.148  1423  2933 I WindowManager:       fl=20040028
-12-22 20:15:00.148  1423  2933 I WindowManager:       pfl=31000000
-12-22 20:15:00.148  1423  2933 I WindowManager:       bhv=1
-12-22 20:15:00.148  1423  2933 I WindowManager:       providedInsets:
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:00.148  1423  2933 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:00.148  1423  2933 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:00.148  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.150  1423  4799 D WindowManager: finishDrawingWindow: Window{a93450e u0 NavigationBar1} mDrawState=READY_TO_SHOW seqId=0
-12-22 20:15:00.150  1423  2697 I WindowManager: Waiting for transition
-12-22 20:15:00.150  1423  4807 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
-12-22 20:15:00.151  1423  4807 D WindowManager: makeSurface duration=0 name=SubLauncherWindow$_2022
-12-22 20:15:00.151  1423  4807 I WindowManager: Waiting for transition
-12-22 20:15:00.152  1423  4807 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:00.152  1423  4807 I WindowManager:   fl=81080278
-12-22 20:15:00.152  1423  4807 I WindowManager:   vsysui=1600400
-12-22 20:15:00.152  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:00.152  1423  4807 I WindowManager:   fitTypes=206
-12-22 20:15:00.152  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.152  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.153  1423  4799 D WindowManager: finishDrawingWindow: Window{7aff3c3 u0 ThumbsUpHandler_R} mDrawState=DRAW_PENDING seqId=14
-12-22 20:15:00.154  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.155  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.156  1423  4799 D WindowManager: finishDrawingWindow: Window{e382cc2 u0 SubLauncherWindow} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.157  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.159  1423  4799 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:00.159  1423  4799 D WindowManager: makeSurface duration=0 name=com.android.systemui/com.android.systemui.subscreen.SubHomeActivity$_2022
-12-22 20:15:00.159  1423  1555 I ActivityManager: Changes in 10329 8 to 8, 0 to 128
-12-22 20:15:00.159  1423  4799 I WindowManager: Waiting for transition
-12-22 20:15:00.160  1423  4799 D WindowManager: Changing focus from null to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:00.160  1423  4799 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:00.160  1423  4799 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xf5b6c0f
-12-22 20:15:00.160  1423  4799 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:00.160  1423  4799 I WindowManager:   fl=81910100
-12-22 20:15:00.160  1423  4799 I WindowManager:   pfl=10008850
-12-22 20:15:00.160  1423  4799 I WindowManager:   vsysui=1600000
-12-22 20:15:00.160  1423  4799 I WindowManager:   bhv=1
-12-22 20:15:00.160  1423  4799 I WindowManager:   fitSides=0
-12-22 20:15:00.160  1423  4799 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.160  1423  4799 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:00.163  1423  1555 I ActivityManager: Changes in 5006 8 to 8, 0 to 128
-12-22 20:15:00.165  1423  2230 I ActivityManager: Changes in 5006 8 to 8, 128 to 0
-12-22 20:15:00.169  1423  1550 W WindowManager: Don't apply multiCrop on extra display
-12-22 20:15:00.169  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.169  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:00.172  1423  2933 D WindowManager: finishDrawingWindow: Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.172  1423  1423 D InputDispatcher: Inject key (0/0): action=1, f=0x8, d=-1, time=31059776182000
-12-22 20:15:00.176  1423  1550 D WindowManager: All windows drawn!
-12-22 20:15:00.177  1423  4807 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:00.178  1423  1555 I ActivityManager: Changes in 10373 16 to 11, 0 to 128
-12-22 20:15:00.181  1423  2264 I ActivityManager: Changes in 10373 11 to 16, 128 to 0
-12-22 20:15:00.182  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:00.185  1423  2886 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_FOCUS_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:00.185  1423  2886 E ActivityManager: java.lang.Throwable
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:00.185  1423  2886 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:00.186  1423  2697 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_FLOATING_SHORTCUT_AVAILABLE_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:00.186  1423  2697 E ActivityManager: java.lang.Throwable
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:00.186  1423  2697 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:00.187  1423  2264 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:00.187  1423  2264 E ActivityManager: java.lang.Throwable
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:00.187  1423  2264 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:00.189  1423  2229 I ActivityManager: Changes in 10329 8 to 8, 128 to 0
-12-22 20:15:00.198  1423  4794 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:00.198  1423  4794 D InputDispatcher: Focus request (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity but waiting because NO_WINDOW
-12-22 20:15:00.198  1423  2230 D InputDispatcher: Focus entered window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:00.200  1423  1555 I ActivityManager: Changes in 10386 19 to 11, 0 to 128
-12-22 20:15:00.200  1423  1555 I ActivityManager: Changes in 10361 19 to 11, 0 to 128
-12-22 20:15:00.200  1423  1555 I ActivityManager: Changes in 10113 10 to 10, 0 to 128
-12-22 20:15:00.207  1423  2933 I ActivityManager: Changes in 5009 6 to 5, 128 to 144
-12-22 20:15:00.210  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
-12-22 20:15:00.213  1423  1555 I ActivityManager: Changes in 10362 16 to 11, 0 to 128
-12-22 20:15:00.214  1423  4800 I ActivityManager: Changes in 10386 11 to 19, 128 to 0
-12-22 20:15:00.215  1423  2784 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:00.216  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:00.221  1423  4806 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:00.221  1423  2697 I ActivityManager: Changes in 10361 11 to 19, 128 to 0
-12-22 20:15:00.221  1423  2697 I ActivityManager: Changes in 10113 10 to 10, 128 to 0
-12-22 20:15:00.221  1423  2697 I ActivityManager: Changes in 10362 11 to 16, 128 to 0
-12-22 20:15:00.225  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
-12-22 20:15:00.227  1423  4806 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
-12-22 20:15:00.241 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{acd2d5d VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:00.243 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{bcd8e1e V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:00.245  1423  2697 I WindowManager: Relayout Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService}: viewVisibility=0 req=67x342 ty=2226 d0
-12-22 20:15:00.245 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{6d6b021 G.E...... ......ID 0,0-527,444}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:00.245  1423  2697 D WindowManager: makeSurface duration=0 name=com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService$_2712
-12-22 20:15:00.246  1423  2697 I WindowManager: Relayout hash=41abd5c, pid=2712, syncId=-1: mAttrs={(0,628)(67x342) gr=TOP RIGHT CENTER sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=2226 fmt=TRANSPARENT
-12-22 20:15:00.246  1423  2697 I WindowManager:   fl=81800108
-12-22 20:15:00.246  1423  2697 I WindowManager:   pfl=10000070
-12-22 20:15:00.246  1423  2697 I WindowManager:   apr=10
-12-22 20:15:00.246  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:00.246  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.246  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.246  1423  2697 I WindowManager:  dimAmount=0.0 dimDuration=0 naviIconColor=0
-12-22 20:15:00.246  1423  2697 I WindowManager:   sfl=420000}
-12-22 20:15:00.248 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{de1e98d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:00.249 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.249 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.249  1423  4806 D WindowManager: finishDrawingWindow: Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService} mDrawState=DRAW_PENDING seqId=53
-12-22 20:15:00.253 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{56631af VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:00.253 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.253 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.256 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{ee39cb V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:00.256 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.256 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.259 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{56631af VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:00.260 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{ee39cb V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:00.260 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{de1e98d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:00.263 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{1854f2 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:00.263 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.263 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.267 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{3d2ce3e VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:00.267 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.267 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.272 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{529904a V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:00.272 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.272 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.281 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{3d2ce3e VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:00.282 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{529904a V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:00.282 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{1854f2 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:00.285 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{f97326d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:00.285 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.285 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.289 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{6018869 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:00.289 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.289 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.293 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{fa14225 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:00.293 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.293 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.300  1423  2697 I WindowManager: Relayout Window{9c80bf4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
-12-22 20:15:00.301  1423  2697 I WindowManager: Relayout hash=9c80bf4, pid=26287, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.301  1423  2697 I WindowManager:   fl=1040228
-12-22 20:15:00.301  1423  2697 I WindowManager:   pfl=40000000
-12-22 20:15:00.301  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:00.301  1423  2697 I WindowManager:   fitTypes=207
-12-22 20:15:00.301  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.301  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.301  1423  4806 I WindowManager: Relayout Window{f7e94d5 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
-12-22 20:15:00.302  1423  4806 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.303  1423  4806 I WindowManager: Relayout hash=f7e94d5, pid=26287, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.303  1423  4806 I WindowManager:   fl=1000308
-12-22 20:15:00.303  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:00.303  1423  4806 I WindowManager:   fitTypes=206
-12-22 20:15:00.303  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.303  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.314  1423  2220 D WindowManager: finishDrawingWindow: Window{f7e94d5 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.315  1423  2697 I WindowManager: Relayout Window{682b742 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
-12-22 20:15:00.316  1423  2697 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.316  1423  2697 I WindowManager: Relayout hash=682b742, pid=26287, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.316  1423  2697 I WindowManager:   fl=1000318
-12-22 20:15:00.316  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:00.316  1423  2697 I WindowManager:   fitTypes=206
-12-22 20:15:00.316  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.316  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.319  1423  2220 I WindowManager: Relayout Window{550c5a8 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
-12-22 20:15:00.320  1423  2697 D WindowManager: finishDrawingWindow: Window{682b742 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.320  1423  2220 I WindowManager: Relayout hash=550c5a8, pid=26287, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.320  1423  2220 I WindowManager:   fl=1040228
-12-22 20:15:00.320  1423  2220 I WindowManager:   pfl=40000000
-12-22 20:15:00.320  1423  2220 I WindowManager:   bhv=1
-12-22 20:15:00.320  1423  2220 I WindowManager:   fitTypes=207
-12-22 20:15:00.320  1423  2220 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.320  1423  2220 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.321  1423  2229 I WindowManager: Relayout Window{e198ef9 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
-12-22 20:15:00.321  1423  2229 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.322  1423  2229 I WindowManager: Relayout hash=e198ef9, pid=26287, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.322  1423  2229 I WindowManager:   fl=1000308
-12-22 20:15:00.322  1423  2229 I WindowManager:   bhv=1
-12-22 20:15:00.322  1423  2229 I WindowManager:   fitTypes=206
-12-22 20:15:00.322  1423  2229 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.322  1423  2229 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.334  1423  2229 D WindowManager: finishDrawingWindow: Window{e198ef9 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.334  1423  2933 I WindowManager: Relayout Window{75bba84 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
-12-22 20:15:00.335  1423  2933 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.336  1423  2933 I WindowManager: Relayout hash=75bba84, pid=26287, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.336  1423  2933 I WindowManager:   fl=1000318
-12-22 20:15:00.336  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:00.336  1423  2933 I WindowManager:   fitTypes=206
-12-22 20:15:00.336  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.336  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.339  1423  2229 D WindowManager: finishDrawingWindow: Window{75bba84 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.340  1423  2933 I WindowManager: Relayout Window{25c0020 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
-12-22 20:15:00.340  1423  2933 I WindowManager: Relayout hash=25c0020, pid=26287, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.340  1423  2933 I WindowManager:   fl=1040228
-12-22 20:15:00.340  1423  2933 I WindowManager:   pfl=40000000
-12-22 20:15:00.340  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:00.340  1423  2933 I WindowManager:   fitTypes=207
-12-22 20:15:00.340  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.340  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.342  1423  2229 I WindowManager: Relayout Window{fa24876 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
-12-22 20:15:00.342  1423  2229 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.343  1423  2229 I WindowManager: Relayout hash=fa24876, pid=26287, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.343  1423  2229 I WindowManager:   fl=1000308
-12-22 20:15:00.343  1423  2229 I WindowManager:   bhv=1
-12-22 20:15:00.343  1423  2229 I WindowManager:   fitTypes=206
-12-22 20:15:00.343  1423  2229 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.343  1423  2229 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.358  1423  2229 D WindowManager: finishDrawingWindow: Window{fa24876 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.359  1423  4806 I WindowManager: Relayout Window{a13456f u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
-12-22 20:15:00.360  1423  4806 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.361  1423  4806 I WindowManager: Relayout hash=a13456f, pid=26287, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.361  1423  4806 I WindowManager:   fl=1000318
-12-22 20:15:00.361  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:00.361  1423  4806 I WindowManager:   fitTypes=206
-12-22 20:15:00.361  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.361  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.365  1423  4806 D WindowManager: finishDrawingWindow: Window{a13456f u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.413  1423  2229 D WindowManager: finishDrawingWindow: Window{fa24876 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:00.413  1423  2229 D WindowManager: finishDrawingWindow: Window{a13456f u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:00.602  1423  2220 I WindowManager: Relayout Window{82d55a2 u0 InputMethod}: viewVisibility=8 req=1080x2404 ty=2011 d0
-12-22 20:15:00.602  1423  2220 E WindowManager: win=Window{82d55a2 u0 InputMethod} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:15:00.604  1423  2220 I WindowManager: Relayout hash=82d55a2, pid=4255, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
-12-22 20:15:00.604  1423  2220 I WindowManager:   fl=81800108
-12-22 20:15:00.604  1423  2220 I WindowManager:   pfl=14000000
-12-22 20:15:00.604  1423  2220 I WindowManager:   bhv=1
-12-22 20:15:00.604  1423  2220 I WindowManager:   fitTypes=3
-12-22 20:15:00.604  1423  2220 I WindowManager:   fitSides=7
-12-22 20:15:00.604  1423  2220 I WindowManager:   fitIgnoreVis
-12-22 20:15:00.604  1423  2220 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:00.604  1423  2220 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
-12-22 20:15:00.607  1423  2220 D WindowManager: setInsetsWindow Window{82d55a2 u0 InputMethod}, contentInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 2329 - 0, 0), visibleInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 2329 - 0, 0), touchableRegion=SkRegion((0,1904,1080,2404)) -> SkRegion(), touchableInsets 3 -> 3
-12-22 20:15:00.610  1423  4806 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
-12-22 20:15:00.612  1423  4806 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:00.612  1423  4806 I WindowManager:   fl=14318
-12-22 20:15:00.612  1423  4806 I WindowManager:   pfl=14
-12-22 20:15:00.612  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:00.612  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.612  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:00.612  1423  4806 I WindowManager:   sfl=8}
-12-22 20:15:00.656 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{6018869 VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:00.658 16182 16182 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{315e86 VFE...C.. ........ 0,0-63,63}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:998 
-12-22 20:15:00.660 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{fa14225 V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:00.662 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{f97326d G.E...... ......ID 0,0-681,551}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:00.675 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{b520d09 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:00.676 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.677 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.689 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{617d94b VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:00.690 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.690 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.694 16182 16182 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{5c104c0 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.quadrantlauncher.FloatingLauncherService.setupBubble:551 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1015 
-12-22 20:15:00.694 16182 16182 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.695 16182 16182 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.697 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{488bf27 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:00.697 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:00.697 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:00.717  1423  2697 W WindowManager: Failed looking up window session=Session{298fe90 26287:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:00.717  1423  2697 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
-12-22 20:15:00.717  1423  2697 W WindowManager: Failed looking up window session=Session{298fe90 26287:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:00.717  1423  2697 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
-12-22 20:15:00.718  1423  4806 I WindowManager: Relayout Window{fcde5e u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
-12-22 20:15:00.719  1423  2697 W WindowManager: Failed looking up window session=Session{298fe90 26287:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:00.719  1423  2697 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
-12-22 20:15:00.719  1423  4806 I WindowManager: Relayout hash=fcde5e, pid=26287, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.719  1423  4806 I WindowManager:   fl=1040228
-12-22 20:15:00.719  1423  4806 I WindowManager:   pfl=40000000
-12-22 20:15:00.719  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:00.719  1423  4806 I WindowManager:   fitTypes=207
-12-22 20:15:00.719  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.719  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.721  1423  4806 I WindowManager: Relayout Window{7057a37 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
-12-22 20:15:00.721  1423  4806 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.722  1423  4806 I WindowManager: Relayout hash=7057a37, pid=26287, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.722  1423  4806 I WindowManager:   fl=1000308
-12-22 20:15:00.722  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:00.722  1423  4806 I WindowManager:   fitTypes=206
-12-22 20:15:00.722  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.722  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.724  1423  2697 I WindowManager: Relayout Window{3d2f441 u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=63x63 ty=2032 d1
-12-22 20:15:00.724  1423  2697 D WindowManager: makeSurface duration=1 name=$_16182
-12-22 20:15:00.726  1423  2697 I WindowManager: Relayout hash=3d2f441, pid=16182, syncId=-1: mAttrs={(50,200)(wrapxwrap) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.726  1423  2697 I WindowManager:   fl=1040308
-12-22 20:15:00.726  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:00.726  1423  2697 I WindowManager:   fitTypes=206
-12-22 20:15:00.726  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.726  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.740  1423  2697 I WindowManager: Relayout Window{a4795d4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
-12-22 20:15:00.741  1423  2697 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:00.742  1423  2697 I WindowManager: Relayout hash=a4795d4, pid=26287, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:00.742  1423  2697 I WindowManager:   fl=1000318
-12-22 20:15:00.742  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:00.742  1423  2697 I WindowManager:   fitTypes=206
-12-22 20:15:00.742  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:00.742  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:00.742  1423  2933 D WindowManager: finishDrawingWindow: Window{7057a37 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.747  1423  4800 D WindowManager: finishDrawingWindow: Window{a4795d4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.750  1423  2220 D WindowManager: finishDrawingWindow: Window{3d2f441 u0 com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:00.754  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:00.755  1423  1855 D WindowManager: finishDrawingWindow: Window{7057a37 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:00.762  1423  2220 D WindowManager: finishDrawingWindow: Window{a4795d4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:00.770  1423  2220 D WindowManager: finishDrawingWindow: Window{3d2f441 u0 com.katsuyamaki.DroidOSLauncher} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:02.017  1423  2220 W ActivityManager: Background start not allowed: service Intent { act=com.whatsapp.messageservice.messaging.MessageService.START xflg=0x4 cmp=com.whatsapp/.messageservice.messaging.MessageService } to com.whatsapp/.messageservice.messaging.MessageService from pid=8940 uid=10373 pkg=com.whatsapp startFg?=false
-12-22 20:15:02.961  1423  2220 I ActivityManager: Changes in 10373 16 to 8, 0 to 128
-12-22 20:15:03.000  1423  1855 I ActivityManager: Changes in 10373 8 to 10, 128 to 0
-12-22 20:15:03.909  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31063502981000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:03.911  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x0, f=0x0, d=1, '3d2f441', t=1 +(-50,-236)*(1.50)
-12-22 20:15:03.941  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:03.969  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:03.976  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31063578361000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:03.976  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x1, f=0x0, d=1, '3d2f441', t=1 +(-50,-236)*(1.50)
-12-22 20:15:03.978 16182 16182 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{a86cb4e VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.quadrantlauncher.FloatingLauncherService.toggleDrawer:655 com.example.quadrantlauncher.FloatingLauncherService.access$toggleDrawer:54 
-12-22 20:15:03.978 16182 16182 D ViewRootImpl: desktopMode is false
-12-22 20:15:03.979 16182 16182 I ViewRootImpl: dVRR is disabled
-12-22 20:15:03.984  1423  4806 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to Window{4e263fc u0 com.katsuyamaki.DroidOSLauncher} displayId=1 Callers=com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 com.android.server.wm.Session.addToDisplayAsUser:24 android.view.IWindowSession$Stub.onTransact:757 
-12-22 20:15:03.984  1423  4806 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xf5b6c0f
-12-22 20:15:03.984  1423  4806 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:03.984  1423  4806 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:03.984  1423  4806 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x7f13694
-12-22 20:15:03.985  1423  4806 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{4e263fc u0 com.katsuyamaki.DroidOSLauncher}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 
-12-22 20:15:03.985  1423  4806 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
-12-22 20:15:04.000  1423  4806 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
-12-22 20:15:04.002  1423  4806 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:04.002  1423  4806 I WindowManager:   fl=10318
-12-22 20:15:04.002  1423  4806 I WindowManager:   pfl=14
-12-22 20:15:04.002  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:04.002  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:04.002  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:04.002  1423  4807 I WindowManager: Relayout Window{4e263fc u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=1422x1169 ty=2032 d1
-12-22 20:15:04.002  1423  4807 D WindowManager: makeSurface duration=1 name=$_16182
-12-22 20:15:04.004  1423  4807 I WindowManager: Relayout hash=4e263fc, pid=16182, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER sim={adjust=nothing} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:04.004  1423  4807 I WindowManager:   fl=1000300
-12-22 20:15:04.004  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:04.004  1423  4807 I WindowManager:   fitTypes=206
-12-22 20:15:04.004  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:04.004  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:04.023  1423  4807 D InputDispatcher: Once focus requested (1): 4e263fc com.katsuyamaki.DroidOSLauncher
-12-22 20:15:04.024  1423  4807 D InputDispatcher: Focus request (1): 4e263fc com.katsuyamaki.DroidOSLauncher but waiting because NOT_VISIBLE
-12-22 20:15:04.024  1423  4807 D InputDispatcher: Focus left window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:04.262  1423  1855 I WindowManager: Relayout Window{3d2f441 u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=8 req=63x63 ty=2032 d1
-12-22 20:15:04.262  1423  1855 E WindowManager: win=Window{3d2f441 u0 com.katsuyamaki.DroidOSLauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-12-22 20:15:04.264  1423  1855 I WindowManager: Relayout hash=3d2f441, pid=16182, syncId=-1: mAttrs={(50,200)(wrapxwrap) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:04.264  1423  1855 I WindowManager:   fl=1040308
-12-22 20:15:04.264  1423  1855 I WindowManager:   bhv=1
-12-22 20:15:04.264  1423  1855 I WindowManager:   fitTypes=206
-12-22 20:15:04.264  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:04.264  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:04.265  1423  4807 D WindowManager: finishDrawingWindow: Window{4e263fc u0 com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:04.280  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:04.295  1423  2229 D InputDispatcher: Focus entered window (1): 4e263fc com.katsuyamaki.DroidOSLauncher
-12-22 20:15:04.340  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
-12-22 20:15:04.341  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:05.117  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31064716172000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:05.118  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x0, f=0x0, d=1, '4e263fc', t=1 +(0,-35)*(1.50)
-12-22 20:15:05.149  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:05.199  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31064803086000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:05.199  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x1, f=0x0, d=1, '4e263fc', t=1 +(0,-35)*(1.50)
-12-22 20:15:05.738  1423  1554 I ActivityManager: Changes in 10210 5 to 15, 144 to 0
-12-22 20:15:06.218  1423  1554 I ActivityManager: Changes in 5009 5 to 6, 144 to 128
-12-22 20:15:07.489  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
-12-22 20:15:07.496  1423  2697 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
-12-22 20:15:08.440  1423  1555 I ActivityManager: Changes in 10277 19 to 11, 0 to 128
-12-22 20:15:08.516  1423  2784 I ActivityManager: Changes in 10277 11 to 19, 128 to 0
-12-22 20:15:11.372  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31070961557000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:11.372  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x0, f=0x0, d=1, '4e263fc', t=1 +(0,-35)*(1.50)
-12-22 20:15:11.375  1423  2697 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:11.377  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:11.410  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:11.467  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31071070472000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:11.467  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x1, f=0x0, d=1, '4e263fc', t=1 +(0,-35)*(1.50)
-12-22 20:15:11.478 16182 16182 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{5c104c0 GFE...C.. ......ID 0,0-63,63}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:998 
-12-22 20:15:11.479 16182 16182 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{a86cb4e VFE...C.. ........ 0,0-1422,1169 aid=182}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1004 
-12-22 20:15:11.503 16182 16182 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{90c9fa2 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.quadrantlauncher.FloatingLauncherService.setupBubble:551 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1015 
-12-22 20:15:11.504 16182 16182 D ViewRootImpl: desktopMode is false
-12-22 20:15:11.504 16182 16182 I ViewRootImpl: dVRR is disabled
-12-22 20:15:11.535  1423  2784 D WindowManager: Changing focus from Window{4e263fc u0 com.katsuyamaki.DroidOSLauncher} to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.wm.Session.remove:16 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:11.535  1423  2784 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x7f13694
-12-22 20:15:11.535  1423  2784 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:11.535  1423  2784 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:11.536  1423  2784 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xc453275
-12-22 20:15:11.536  1423  2784 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.wm.Session.remove:16 
-12-22 20:15:11.536  1423  2784 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-11
-12-22 20:15:11.539  1423  4806 I WindowManager: Relayout Window{e3ea267 u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=63x63 ty=2032 d0
-12-22 20:15:11.539  1423  4806 D WindowManager: makeSurface duration=1 name=$_16182
-12-22 20:15:11.541  1423  4806 I WindowManager: Relayout hash=e3ea267, pid=16182, syncId=-1: mAttrs={(50,200)(wrapxwrap) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:11.541  1423  4806 I WindowManager:   fl=1040308
-12-22 20:15:11.541  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:11.541  1423  4806 I WindowManager:   fitTypes=206
-12-22 20:15:11.541  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:11.541  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:11.545  1423  1855 D InputDispatcher: Focus left window (1): 4e263fc com.katsuyamaki.DroidOSLauncher
-12-22 20:15:11.551  1423  4806 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:11.551  1423  4806 D InputDispatcher: Focus entered window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:11.555  1423  4806 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
-12-22 20:15:11.556  1423  4806 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:11.556  1423  4806 I WindowManager:   fl=10318
-12-22 20:15:11.556  1423  4806 I WindowManager:   pfl=14
-12-22 20:15:11.556  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:11.556  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:11.556  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:11.558  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
-12-22 20:15:11.559  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:11.568  1423  2784 D WindowManager: finishDrawingWindow: Window{e3ea267 u0 com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:13.129  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31072712446000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:13.132  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'a93450e', t=1 
-12-22 20:15:13.132  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
-12-22 20:15:13.151  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:13.172  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:13.183  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31072787083000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:13.183  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
-12-22 20:15:14.064  1423  1423 D InputDispatcher: Inject key (0/0): action=0, f=0x8, d=-1, time=31073661692000
-12-22 20:15:14.191  1423  1423 D InputDispatcher: Inject key (0/0): action=1, f=0x8, d=-1, time=31073792392000
-12-22 20:15:14.275  1423  1423 D InputDispatcher: Inject key (0/0): action=0, f=0x8, d=-1, time=31073876336000
-12-22 20:15:14.417  1423  1423 D InputDispatcher: Inject key (0/0): action=1, f=0x8, d=-1, time=31074017750000
-12-22 20:15:14.594  1423  2230 D WindowManager: Transition is created, t=TransitionRecord{a356df3 id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityStartController.startActivityInPackage:33 
-12-22 20:15:14.603  1423  2230 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:14.603  1423  2230 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:14.603  1423  2230 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:14.606  2022  2160 D ViewRootImpl: desktopMode is false
-12-22 20:15:14.606  2022  2160 I ViewRootImpl: dVRR is disabled
-12-22 20:15:14.612  1423  2784 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{a876af8 u0 Splash Screen com.katsuyamaki.DroidOSLauncher}
-12-22 20:15:14.617  1423  2784 D WindowManager: App launched activity=ActivityRecord{221383344 u0 com.katsuyamaki.DroidOSLauncher/com.example.quadrantlauncher.MainActivity t19239}, state=1
-12-22 20:15:14.617  1423  2784 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:14.618  1423  2784 D InputDispatcher: Focused application(1): ActivityRecord{221383344 u0 com.katsuyamaki.DroidOSLauncher/com.example.quadrantlauncher.MainActivity t19239}
-12-22 20:15:14.618  1423  2784 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to null displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:14.619  1423  1549 I ActivityManager: updateOomAdj start time is before than pendingPid added, don't delete it
-12-22 20:15:14.619  1423  4806 I WindowManager: Relayout Window{a876af8 u0 Splash Screen com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=1422x1169 ty=3 d1
-12-22 20:15:14.620  1423  4806 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSLauncher$_2022
-12-22 20:15:14.621  1423  4806 I WindowManager: Relayout hash=a876af8, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
-12-22 20:15:14.621  1423  4806 I WindowManager:   fl=81030118
-12-22 20:15:14.621  1423  4806 I WindowManager:   pfl=10000010
-12-22 20:15:14.621  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:14.621  1423  4806 I WindowManager:   fitSides=0
-12-22 20:15:14.621  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.621  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.622  1423  4806 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:14.622  1423  4806 E ActivityManager: java.lang.Throwable
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:14.622  1423  4806 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:14.622  1423  2230 D InputDispatcher: Focus left window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:14.630  1423  1635 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
-12-22 20:15:14.630  1423  1635 D WindowManager: Changing focus from null to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:14.630  1423  1635 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:14.633  1423  1549 I ActivityManager: updateOomAdj start time is before than pendingPid added, don't delete it
-12-22 20:15:14.633  1423  4806 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:14.636  1423  2784 D WindowManager: finishDrawingWindow: Window{a876af8 u0 Splash Screen com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:14.641  1423  2784 D WindowManager: Starting window removed Window{a876af8 u0 Splash Screen com.katsuyamaki.DroidOSLauncher}
-12-22 20:15:14.646  1423  2784 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
-12-22 20:15:14.647  1423  2229 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:14.647  1423  2229 D InputDispatcher: Focus request (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity but waiting because NO_WINDOW
-12-22 20:15:14.647  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2005, view=android.widget.LinearLayout{43951ee V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 android.widget.ToastPresenter.addToastView:424 android.widget.ToastPresenter.show:325 
-12-22 20:15:14.647  2022  2022 D ViewRootImpl: desktopMode is false
-12-22 20:15:14.647  2022  2022 I ViewRootImpl: dVRR is disabled
-12-22 20:15:14.649  1423  2784 D InputDispatcher: Focus entered window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:14.650  1423  2230 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:14.650  1423  2228 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:14.651  1423  2697 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:14.651  1423  2697 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
-12-22 20:15:14.653  1423  2266 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:14.653  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:14.653  1423  2784 I WindowManager: Relayout Window{52cdc35 u0 Toast}: viewVisibility=0 req=343x69 ty=2005 d1
-12-22 20:15:14.654  1423  2784 D WindowManager: makeSurface duration=0 name=Toast$_2022
-12-22 20:15:14.654  1423  2784 I WindowManager: Relayout hash=52cdc35, pid=2022, syncId=-1: mAttrs={(0,50)(wrapxwrap) gr=BOTTOM CENTER sim={adjust=pan} ty=TOAST fmt=TRANSLUCENT wanim=0x1030004 receive insets ignoring z-order
-12-22 20:15:14.654  1423  2784 I WindowManager:   fl=1000098
-12-22 20:15:14.654  1423  2784 I WindowManager:   pfl=30000000
-12-22 20:15:14.654  1423  2784 I WindowManager:   bhv=1
-12-22 20:15:14.654  1423  2784 I WindowManager:   fitTypes=20f
-12-22 20:15:14.654  1423  2784 I WindowManager:   fitIgnoreVis
-12-22 20:15:14.654  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.654  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.674  1423  2228 D WindowManager: finishDrawingWindow: Window{52cdc35 u0 Toast} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:14.674  1423  2784 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:14.675  1423  2784 I WindowManager: Reparenting to leash, surface=Surface(name=52cdc35 Toast)/@0x4e3ca5, leashParent=Surface(name=WindowToken{fa577c5 type=2005 android.os.Binder@10ebe3c})/@0x468487a
-12-22 20:15:14.676  1423  2784 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=52cdc35 Toast)/@0x4e3ca5 - animation-leash of window_animation)/@0xed8382b
-12-22 20:15:14.677  1423  2784 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:14.677  1423  2784 I WindowManager:   fl=81910100
-12-22 20:15:14.677  1423  2784 I WindowManager:   pfl=10008850
-12-22 20:15:14.677  1423  2784 I WindowManager:   vsysui=1600000
-12-22 20:15:14.677  1423  2784 I WindowManager:   bhv=1
-12-22 20:15:14.677  1423  2784 I WindowManager:   fitSides=0
-12-22 20:15:14.677  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.677  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:14.681  1423  2697 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_FOCUS_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:14.681  1423  2697 E ActivityManager: java.lang.Throwable
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:14.681  1423  2697 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:14.682  1423  2229 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_FLOATING_SHORTCUT_AVAILABLE_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:14.682  1423  2229 E ActivityManager: java.lang.Throwable
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:14.682  1423  2229 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:14.682  1423  2230 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:14.682  1423  2230 E ActivityManager: java.lang.Throwable
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:14.682  1423  2230 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:14.768  1423  2229 D WindowManager: Remove SleepToken: tag=keyguard, displayId=0
-12-22 20:15:14.769  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:15:14.770  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:15:14.770  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:15:14.770  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
-12-22 20:15:14.771  1423  1855 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
-12-22 20:15:14.773  1423  2266 I WindowManager: Relayout Window{a93450e u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
-12-22 20:15:14.773  1423  1855 I WindowManager: Relayout hash=b5eb294, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT
-12-22 20:15:14.773  1423  1855 I WindowManager:   fl=81040048
-12-22 20:15:14.773  1423  1855 I WindowManager:   pfl=10000200
-12-22 20:15:14.773  1423  1855 I WindowManager:   bhv=2
-12-22 20:15:14.773  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.773  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:14.773  1423  1855 I WindowManager:   sfl=40000}
-12-22 20:15:14.773  1423  1855 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
-12-22 20:15:14.774  1423  2266 I WindowManager: Relayout hash=a93450e, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.774  1423  2266 I WindowManager:   fl=20040028
-12-22 20:15:14.774  1423  2266 I WindowManager:   pfl=31000000
-12-22 20:15:14.774  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:14.774  1423  2266 I WindowManager:   providedInsets:
-12-22 20:15:14.774  1423  2266 I WindowManager:     InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.774  1423  2266 I WindowManager:     InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:     InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.774  1423  2266 I WindowManager:     InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:     InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.774  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:14.774  1423  2266 I WindowManager:   paramsForRotation:
-12-22 20:15:14.774  1423  2266 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.774  1423  2266 I WindowManager:       fl=20040028
-12-22 20:15:14.774  1423  2266 I WindowManager:       pfl=31000000
-12-22 20:15:14.774  1423  2266 I WindowManager:       bhv=1
-12-22 20:15:14.774  1423  2266 I WindowManager:       providedInsets:
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.774  1423  2266 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.774  1423  2266 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.774  1423  2266 I WindowManager:       fl=20040028
-12-22 20:15:14.774  1423  2266 I WindowManager:       pfl=31000000
-12-22 20:15:14.774  1423  2266 I WindowManager:       bhv=1
-12-22 20:15:14.774  1423  2266 I WindowManager:       providedInsets:
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.774  1423  2266 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.774  1423  2266 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.774  1423  2266 I WindowManager:       fl=20040028
-12-22 20:15:14.774  1423  2266 I WindowManager:       pfl=31000000
-12-22 20:15:14.774  1423  2266 I WindowManager:       bhv=1
-12-22 20:15:14.774  1423  2266 I WindowManager:       providedInsets:
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.774  1423  2266 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.774  1423  2266 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.774  1423  2266 I WindowManager:       fl=20040028
-12-22 20:15:14.774  1423  2266 I WindowManager:       pfl=31000000
-12-22 20:15:14.774  1423  2266 I WindowManager:       bhv=1
-12-22 20:15:14.774  1423  2266 I WindowManager:       providedInsets:
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.774  1423  2266 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.774  1423  2266 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:14.775  1423  1855 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.775  1423  1855 I WindowManager:   fl=20040028
-12-22 20:15:14.775  1423  1855 I WindowManager:   pfl=31001000
-12-22 20:15:14.775  1423  1855 I WindowManager:   bhv=1
-12-22 20:15:14.775  1423  1855 I WindowManager:   providedInsets:
-12-22 20:15:14.775  1423  1855 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.775  1423  1855 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.775  1423  1855 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.775  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:14.775  1423  1855 I WindowManager:   paramsForRotation:
-12-22 20:15:14.775  1423  1855 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.775  1423  1855 I WindowManager:       fl=20040028
-12-22 20:15:14.775  1423  1855 I WindowManager:       pfl=31001000
-12-22 20:15:14.775  1423  1855 I WindowManager:       bhv=1
-12-22 20:15:14.775  1423  1855 I WindowManager:       providedInsets:
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.775  1423  1855 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.775  1423  1855 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.775  1423  1855 I WindowManager:       fl=20040028
-12-22 20:15:14.775  1423  1855 I WindowManager:       pfl=31001000
-12-22 20:15:14.775  1423  1855 I WindowManager:       bhv=1
-12-22 20:15:14.775  1423  1855 I WindowManager:       providedInsets:
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.775  1423  1855 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.775  1423  1855 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.775  1423  1855 I WindowManager:       fl=20040028
-12-22 20:15:14.775  1423  1855 I WindowManager:       pfl=31001000
-12-22 20:15:14.775  1423  1855 I WindowManager:       bhv=1
-12-22 20:15:14.775  1423  1855 I WindowManager:       providedInsets:
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.775  1423  1855 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.775  1423  1855 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.775  1423  1855 I WindowManager:       fl=20040028
-12-22 20:15:14.775  1423  1855 I WindowManager:       pfl=31001000
-12-22 20:15:14.775  1423  1855 I WindowManager:       bhv=1
-12-22 20:15:14.775  1423  1855 I WindowManager:       providedInsets:
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.775  1423  1855 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.775  1423  1855 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:14.778  1423  1555 I ActivityManager: Changes in 10228 19 to 11, 0 to 128
-12-22 20:15:14.780  1423  1555 I ActivityManager: Changes in 10213 19 to 11, 0 to 128
-12-22 20:15:14.781  1423  1855 I ActivityManager: Changes in 10228 11 to 19, 128 to 0
-12-22 20:15:14.784  1423  1892 W ActivityManager: ProcessListener no registered
-12-22 20:15:14.784  1423  2228 I ActivityManager: Changes in 10213 11 to 19, 128 to 0
-12-22 20:15:14.785  1423  1892 W ActivityManager: ProcessListener no registered
-12-22 20:15:14.785  1423  1892 W ActivityManager: ProcessListener no registered
-12-22 20:15:14.802  1423  4806 I ActivityManager: Changes in 10122 10 to 5, 0 to 184
-12-22 20:15:14.805  1423  2266 D WindowManager: finishDrawingWindow: Window{a93450e u0 NavigationBar1} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:14.808  1423  4806 I WindowManager: Relayout Window{4ad78ec u0 Bouncer}: viewVisibility=4 req=1080x0 ty=2009 d0
-12-22 20:15:14.809  1423  4806 I WindowManager: Relayout hash=4ad78ec, pid=2022, syncId=-1: mAttrs={(0,0)(fillx0) gr=TOP CENTER_VERTICAL sim={adjust=resize} layoutInDisplayCutoutMode=shortEdges ty=KEYGUARD_DIALOG fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=10000
-12-22 20:15:14.809  1423  4806 I WindowManager:   fl=85000548
-12-22 20:15:14.809  1423  4806 I WindowManager:   pfl=10000000
-12-22 20:15:14.809  1423  4806 I WindowManager:   vsysui=500
-12-22 20:15:14.809  1423  4806 I WindowManager:   bhv=2
-12-22 20:15:14.809  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.809  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:14.809  1423  4806 I WindowManager:  dimAmount=0.0 screenDimDuration=0 naviIconColor=0
-12-22 20:15:14.809  1423  4806 I WindowManager:   sfl=40000}
-12-22 20:15:14.810  1423  2266 I InputMethodManagerService: isInputMethodShown: isShown=false
-12-22 20:15:14.840  1423  2886 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
-12-22 20:15:14.841  1423  4807 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
-12-22 20:15:14.842  1423  4807 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:14.842  1423  4807 I WindowManager:   fl=14318
-12-22 20:15:14.842  1423  4807 I WindowManager:   pfl=14
-12-22 20:15:14.842  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:14.842  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:14.842  1423  4807 I WindowManager:   sfl=8}
-12-22 20:15:14.842  1423  2886 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.842  1423  2886 I WindowManager:   fl=40028
-12-22 20:15:14.842  1423  2886 I WindowManager:   pfl=31001000
-12-22 20:15:14.842  1423  2886 I WindowManager:   bhv=1
-12-22 20:15:14.842  1423  2886 I WindowManager:   providedInsets:
-12-22 20:15:14.842  1423  2886 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.842  1423  2886 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.842  1423  2886 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:14.842  1423  2886 I WindowManager:   paramsForRotation:
-12-22 20:15:14.842  1423  2886 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.842  1423  2886 I WindowManager:       fl=20040028
-12-22 20:15:14.842  1423  2886 I WindowManager:       pfl=31001000
-12-22 20:15:14.842  1423  2886 I WindowManager:       bhv=1
-12-22 20:15:14.842  1423  2886 I WindowManager:       providedInsets:
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  2886 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.842  1423  2886 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.842  1423  2886 I WindowManager:       fl=20040028
-12-22 20:15:14.842  1423  2886 I WindowManager:       pfl=31001000
-12-22 20:15:14.842  1423  2886 I WindowManager:       bhv=1
-12-22 20:15:14.842  1423  2886 I WindowManager:       providedInsets:
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  2886 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.842  1423  2886 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.842  1423  2886 I WindowManager:       fl=20040028
-12-22 20:15:14.842  1423  2886 I WindowManager:       pfl=31001000
-12-22 20:15:14.842  1423  2886 I WindowManager:       bhv=1
-12-22 20:15:14.842  1423  2886 I WindowManager:       providedInsets:
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  2886 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:14.842  1423  2886 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:14.842  1423  2886 I WindowManager:       fl=20040028
-12-22 20:15:14.842  1423  2886 I WindowManager:       pfl=31001000
-12-22 20:15:14.842  1423  2886 I WindowManager:       bhv=1
-12-22 20:15:14.842  1423  2886 I WindowManager:       providedInsets:
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:14.842  1423  2886 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:14.842  1423  2886 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:14.845  1423  2697 D WindowManager: finishDrawingWindow: Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper} mDrawState=HAS_DRAWN seqId=2147483647
-12-22 20:15:14.849  1423  2230 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=4 req=1080x2520 ty=2040 d0
-12-22 20:15:14.849  1423  2230 E WindowManager: win=Window{b5eb294 u0 NotificationShade} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=4 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:15:14.850  1423  2230 I WindowManager: Relayout hash=b5eb294, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT
-12-22 20:15:14.850  1423  2230 I WindowManager:   fl=81040048
-12-22 20:15:14.850  1423  2230 I WindowManager:   pfl=11000200
-12-22 20:15:14.850  1423  2230 I WindowManager:   bhv=2
-12-22 20:15:14.850  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:14.850  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:14.850  1423  2230 I WindowManager:   sfl=40000}
-12-22 20:15:15.179  1423  1550 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{fa577c5 type=2005 android.os.Binder@10ebe3c})/@0x468487a, destroy=true, surface=Surface(name=52cdc35 Toast)/@0x4e3ca5
-12-22 20:15:16.714  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31076307148000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:16.716  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'a93450e', t=1 
-12-22 20:15:16.716  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
-12-22 20:15:16.729  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:16.746  1423  1855 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:16.746  1423  1855 E ActivityManager: java.lang.Throwable
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:16.746  1423  1855 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:16.758  1423  1855 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
-12-22 20:15:16.759  1423  1855 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:16.759  1423  1855 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xc453275
-12-22 20:15:16.759  1423  1855 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:16.759  1423  1855 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:16.759  1423  1855 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x5ec8430
-12-22 20:15:16.760  1423  1855 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:16.760  1423  1855 I WindowManager:   fl=80080260
-12-22 20:15:16.760  1423  1855 I WindowManager:   vsysui=1600400
-12-22 20:15:16.760  1423  1855 I WindowManager:   bhv=1
-12-22 20:15:16.760  1423  1855 I WindowManager:   fitTypes=206
-12-22 20:15:16.760  1423  1855 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:16.760  1423  1855 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:16.765  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:16.783  1423  1855 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
-12-22 20:15:16.783  1423  1855 D InputDispatcher: Focus left window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
-12-22 20:15:16.783  1423  1855 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
-12-22 20:15:16.800  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
-12-22 20:15:16.800  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:16.832  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31076436227000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:16.833  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
-12-22 20:15:16.839  1423  2886 I ActivityManager: Changes in 5009 6 to 5, 128 to 144
-12-22 20:15:16.845  1423  2886 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_FOCUS_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:16.845  1423  2886 E ActivityManager: java.lang.Throwable
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:16.845  1423  2886 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:16.846  1423  4806 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_FLOATING_SHORTCUT_AVAILABLE_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
-12-22 20:15:16.846  1423  4806 E ActivityManager: java.lang.Throwable
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
-12-22 20:15:16.846  1423  4806 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
-12-22 20:15:16.967  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2005, view=android.widget.LinearLayout{43951ee V.E...... ........ 0,0-343,69}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeViewImmediate:216 android.widget.ToastPresenter.hide:348 
-12-22 20:15:16.974  1423  2886 I WindowManager: Reparenting to leash, surface=Surface(name=52cdc35 Toast)/@0x4e3ca5, leashParent=Surface(name=WindowToken{fa577c5 type=2005 android.os.Binder@10ebe3c})/@0x468487a
-12-22 20:15:16.974  1423  2886 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=52cdc35 Toast)/@0x4e3ca5 - animation-leash of window_animation)/@0x6e4b7c7
-12-22 20:15:16.979  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:17.153  1423  2886 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{e382cc2 u0 SubLauncherWindow}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.InsetsStateController.onRequestedVisibleTypesChanged:86 com.android.server.wm.InsetsPolicy.onRequestedVisibleTypesChanged:3 com.android.server.wm.Session.updateRequestedVisibleTypes:37 
-12-22 20:15:17.153  1423  2886 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
-12-22 20:15:17.158  1423  2229 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
-12-22 20:15:17.162  1423  2229 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:17.162  1423  2229 I WindowManager:   fl=80080260
-12-22 20:15:17.162  1423  2229 I WindowManager:   vsysui=400
-12-22 20:15:17.162  1423  2229 I WindowManager:   bhv=1
-12-22 20:15:17.162  1423  2229 I WindowManager:   fitTypes=206
-12-22 20:15:17.162  1423  2229 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:17.162  1423  2229 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:17.165  1423  4807 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:17.166  1423  4807 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:17.166  1423  4807 I WindowManager:   fl=81910100
-12-22 20:15:17.166  1423  4807 I WindowManager:   pfl=10008850
-12-22 20:15:17.166  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:17.166  1423  4807 I WindowManager:   fitSides=0
-12-22 20:15:17.166  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:17.166  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:17.169  1423  4807 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
-12-22 20:15:17.171  1423  4807 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:17.171  1423  4807 I WindowManager:   fl=10318
-12-22 20:15:17.171  1423  4807 I WindowManager:   pfl=14
-12-22 20:15:17.171  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:17.171  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:17.171  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:17.173  1423  4807 I WindowManager: Relayout Window{a93450e u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
-12-22 20:15:17.176  1423  4807 I WindowManager: Relayout hash=a93450e, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:17.176  1423  4807 I WindowManager:   fl=40028
-12-22 20:15:17.176  1423  4807 I WindowManager:   pfl=31000000
-12-22 20:15:17.176  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:17.176  1423  4807 I WindowManager:   providedInsets:
-12-22 20:15:17.176  1423  4807 I WindowManager:     InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:17.176  1423  4807 I WindowManager:     InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:     InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:17.176  1423  4807 I WindowManager:     InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:     InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:17.176  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:17.176  1423  4807 I WindowManager:   paramsForRotation:
-12-22 20:15:17.176  1423  4807 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:17.176  1423  4807 I WindowManager:       fl=20040028
-12-22 20:15:17.176  1423  4807 I WindowManager:       pfl=31000000
-12-22 20:15:17.176  1423  4807 I WindowManager:       bhv=1
-12-22 20:15:17.176  1423  4807 I WindowManager:       providedInsets:
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:17.176  1423  4807 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:17.176  1423  4807 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:17.176  1423  4807 I WindowManager:       fl=20040028
-12-22 20:15:17.176  1423  4807 I WindowManager:       pfl=31000000
-12-22 20:15:17.176  1423  4807 I WindowManager:       bhv=1
-12-22 20:15:17.176  1423  4807 I WindowManager:       providedInsets:
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:17.176  1423  4807 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:17.176  1423  4807 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:17.176  1423  4807 I WindowManager:       fl=20040028
-12-22 20:15:17.176  1423  4807 I WindowManager:       pfl=31000000
-12-22 20:15:17.176  1423  4807 I WindowManager:       bhv=1
-12-22 20:15:17.176  1423  4807 I WindowManager:       providedInsets:
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:17.176  1423  4807 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:17.176  1423  4807 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
-12-22 20:15:17.176  1423  4807 I WindowManager:       fl=20040028
-12-22 20:15:17.176  1423  4807 I WindowManager:       pfl=31000000
-12-22 20:15:17.176  1423  4807 I WindowManager:       bhv=1
-12-22 20:15:17.176  1423  4807 I WindowManager:       providedInsets:
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:         InsetsFrameProvider: {id=#e0c00024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
-12-22 20:15:17.176  1423  4807 I WindowManager:       frameRateBoostOnTouch=true
-12-22 20:15:17.176  1423  4807 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
-12-22 20:15:17.356  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
-12-22 20:15:17.359  1423  2230 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
-12-22 20:15:17.480  1423  1550 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{fa577c5 type=2005 android.os.Binder@10ebe3c})/@0x468487a, destroy=true, surface=Surface(name=52cdc35 Toast)/@0x4e3ca5
-12-22 20:15:18.652  1423  1549 W WindowManager: Unable to start animation, surface is null or no children.
-12-22 20:15:19.831  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31079433407000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:19.831  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'a93450e', t=1 
-12-22 20:15:19.831  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:19.916  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31079519891000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:19.916  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:20.005  1423  4807 D WindowManager: Transition is created, t=TransitionRecord{aa0f543 id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityTaskManagerService.startActivityAsUser:87 
-12-22 20:15:20.013  2022  2160 D ViewRootImpl: desktopMode is false
-12-22 20:15:20.014  2022  2160 I ViewRootImpl: dVRR is disabled
-12-22 20:15:20.014  1423  4807 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:20.014  1423  4807 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:20.016  1423  4807 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.021  1423  2886 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{b0c97ab u0 Splash Screen com.katsuyamaki.DroidOSLauncher}
-12-22 20:15:20.023  1423  1855 I ActivityManager: Changes in 10333 19 to 6, 0 to 128
-12-22 20:15:20.024  1423  2229 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.026  1423  2229 D InputDispatcher: Focused application(1): ActivityRecord{102041536 u0 com.katsuyamaki.DroidOSLauncher/com.example.quadrantlauncher.MainActivity t19240}
-12-22 20:15:20.026  1423  2229 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:20.026  1423  2229 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x5ec8430
-12-22 20:15:20.026  1423  2229 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.026  1423  2229 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.026  1423  2229 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xa7fca52
-12-22 20:15:20.029  1423  2697 I WindowManager: Relayout Window{b0c97ab u0 Splash Screen com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=1422x1169 ty=3 d1
-12-22 20:15:20.030  1423  2697 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSLauncher$_2022
-12-22 20:15:20.031  1423  2697 I WindowManager: Relayout hash=b0c97ab, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
-12-22 20:15:20.031  1423  2697 I WindowManager:   fl=81030118
-12-22 20:15:20.031  1423  2697 I WindowManager:   pfl=10000010
-12-22 20:15:20.031  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:20.031  1423  2697 I WindowManager:   fitSides=0
-12-22 20:15:20.031  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:20.031  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:20.032  1423  2229 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.037  1423  2784 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
-12-22 20:15:20.037  1423  2784 D WindowManager: Changing focus from null to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:20.037  1423  2784 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xa7fca52
-12-22 20:15:20.037  1423  2784 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.037  1423  2784 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.038  1423  2784 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xabeec95
-12-22 20:15:20.038  1423  2784 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.040  1423  4806 D WindowManager: finishDrawingWindow: Window{b0c97ab u0 Splash Screen com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:20.041  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2005, view=android.widget.LinearLayout{7acabe3 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 android.widget.ToastPresenter.addToastView:424 android.widget.ToastPresenter.show:325 
-12-22 20:15:20.041  2022  2022 D ViewRootImpl: desktopMode is false
-12-22 20:15:20.041  2022  2022 I ViewRootImpl: dVRR is disabled
-12-22 20:15:20.048  1423  4807 I WindowManager: Relayout Window{745dc77 u0 Toast}: viewVisibility=0 req=343x69 ty=2005 d1
-12-22 20:15:20.048  1423  4807 D WindowManager: makeSurface duration=0 name=Toast$_2022
-12-22 20:15:20.049  1423  4807 I WindowManager: Relayout hash=745dc77, pid=2022, syncId=-1: mAttrs={(0,50)(wrapxwrap) gr=BOTTOM CENTER sim={adjust=pan} ty=TOAST fmt=TRANSLUCENT wanim=0x1030004 receive insets ignoring z-order
-12-22 20:15:20.049  1423  4807 I WindowManager:   fl=1000098
-12-22 20:15:20.049  1423  4807 I WindowManager:   pfl=30000000
-12-22 20:15:20.049  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:20.049  1423  4807 I WindowManager:   fitTypes=20f
-12-22 20:15:20.049  1423  4807 I WindowManager:   fitIgnoreVis
-12-22 20:15:20.049  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:20.049  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:20.053  1423  1635 D WindowManager: Starting window removed Window{b0c97ab u0 Splash Screen com.katsuyamaki.DroidOSLauncher}
-12-22 20:15:20.055  1423  4807 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
-12-22 20:15:20.057  1423  2784 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.057  1423  2784 D InputDispatcher: Focus request (1): e382cc2 SubLauncherWindow but waiting because NO_WINDOW
-12-22 20:15:20.057  1423  1635 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.058  1423  2784 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:20.058  1423  2784 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
-12-22 20:15:20.058  1423  4807 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:20.058  1423  2784 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:20.070  1423  4807 D WindowManager: finishDrawingWindow: Window{745dc77 u0 Toast} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:20.070  1423  1550 I WindowManager: Reparenting to leash, surface=Surface(name=745dc77 Toast)/@0xd680c81, leashParent=Surface(name=WindowToken{82c399e type=2005 android.os.Binder@5fc6bd9})/@0x5e2d126
-12-22 20:15:20.070  1423  1550 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=745dc77 Toast)/@0xd680c81 - animation-leash of window_animation)/@0x6b0d167
-12-22 20:15:20.072  1423  4807 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:20.072  1423  4807 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:20.072  1423  4807 I WindowManager:   fl=81910100
-12-22 20:15:20.072  1423  4807 I WindowManager:   pfl=10008850
-12-22 20:15:20.072  1423  4807 I WindowManager:   bhv=1
-12-22 20:15:20.072  1423  4807 I WindowManager:   fitSides=0
-12-22 20:15:20.072  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:20.072  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:20.075  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:20.580  1423  1550 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{82c399e type=2005 android.os.Binder@5fc6bd9})/@0x5e2d126, destroy=true, surface=Surface(name=745dc77 Toast)/@0xd680c81
-12-22 20:15:20.708  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31080310883000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:20.709  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'a93450e', t=1 
-12-22 20:15:20.709  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:20.792  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31080395234000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:20.792  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:20.888  1423  2266 D WindowManager: Transition is created, t=TransitionRecord{84d297b id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityTaskManagerService.startActivityAsUser:87 
-12-22 20:15:20.900  1423  2266 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:20.900  1423  2266 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:20.901  1423  2266 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.902  2022  2160 D ViewRootImpl: desktopMode is false
-12-22 20:15:20.902  2022  2160 I ViewRootImpl: dVRR is disabled
-12-22 20:15:20.905  1423  1635 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:20.913  1423  2228 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.915  1423  2228 D InputDispatcher: Focused application(1): ActivityRecord{195056536 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19241}
-12-22 20:15:20.915  1423  2228 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:20.915  1423  2228 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xabeec95
-12-22 20:15:20.915  1423  2228 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.915  1423  2228 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.915  1423  2228 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x63ca03f
-12-22 20:15:20.918  1423  2266 I WindowManager: Relayout Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=1422x1169 ty=3 d1
-12-22 20:15:20.918  1423  2266 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard$_2022
-12-22 20:15:20.919  1423  2266 I WindowManager: Relayout hash=aa1da86, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
-12-22 20:15:20.919  1423  2266 I WindowManager:   fl=81030118
-12-22 20:15:20.919  1423  2266 I WindowManager:   pfl=10000010
-12-22 20:15:20.919  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:20.919  1423  2266 I WindowManager:   fitSides=0
-12-22 20:15:20.919  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:20.919  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:20.924  1423  1635 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.925  1423  1635 D WindowManager: finishDrawingWindow: Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:20.935  1423  1550 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x63ca03f
-12-22 20:15:20.935  1423  1550 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.936  1423  1550 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.936  1423  1550 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x3edeac2
-12-22 20:15:20.936  1423  1550 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}, navColorWin=Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
-12-22 20:15:20.936  1423  1550 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
-12-22 20:15:20.936  1423  2229 D WindowManager: Transition is created, t=TransitionRecord{de040d3 id=-1 type=CLOSE flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.TransitionController.requestCloseTransitionIfNeeded:73 com.android.server.wm.ActivityRecord.finishIfPossible:38 com.android.server.wm.ActivityClientController.finishActivity:268 
-12-22 20:15:20.937  1423  2229 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:20.937  1423  2229 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x3edeac2
-12-22 20:15:20.937  1423  2229 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.937  1423  2229 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.937  1423  2229 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x75b9b09
-12-22 20:15:20.937  1423  2229 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
-12-22 20:15:20.937  1423  2229 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
-12-22 20:15:20.939  1423  4807 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:20.939  1423  4807 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:20.939  1423  4807 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
-12-22 20:15:20.939  1423  4807 D WindowManager: Changing focus from null to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:20.939  1423  4807 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x75b9b09
-12-22 20:15:20.939  1423  4807 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:20.939  1423  4807 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:20.939  1423  4807 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x164172f
-12-22 20:15:20.940  1423  4807 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:20.955  1423  1550 I WindowManager: notifyInsetsControlChanged, removed=false, win=Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}, caller=com.android.server.wm.InsetsStateController$$ExternalSyntheticLambda1.run:137 com.android.server.wm.WindowAnimator$$ExternalSyntheticLambda2.onTransactionCommitted:26 android.view.SurfaceControl$Transaction$$ExternalSyntheticLambda4.run:0 android.os.Handler.handleCallback:995 android.os.Handler.dispatchMessage:103 android.os.Looper.loopOnce:273 
-12-22 20:15:20.956  1423  2266 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:20.956  1423  2266 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:20.956  1423  2266 I WindowManager:   fl=81910100
-12-22 20:15:20.956  1423  2266 I WindowManager:   pfl=10008850
-12-22 20:15:20.956  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:20.956  1423  2266 I WindowManager:   fitSides=0
-12-22 20:15:20.956  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:20.956  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:20.965  1423  2784 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.965  1423  2784 D InputDispatcher: Focus request (1): e382cc2 SubLauncherWindow but waiting because NO_WINDOW
-12-22 20:15:20.965  1423  2266 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
-12-22 20:15:20.972  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:21.363  1423  2697 D WindowManager: Starting window removed Window{aa1da86 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:21.371  1423  2784 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
-12-22 20:15:21.375  1423  2266 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:21.375  1423  2229 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:21.375  1423  2228 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:21.375  1423  2228 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
-12-22 20:15:22.371  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2005, view=android.widget.LinearLayout{7acabe3 V.E...... ........ 0,0-343,69}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeViewImmediate:216 android.widget.ToastPresenter.hide:348 
-12-22 20:15:22.384  1423  2266 I WindowManager: Reparenting to leash, surface=Surface(name=745dc77 Toast)/@0xd680c81, leashParent=Surface(name=WindowToken{82c399e type=2005 android.os.Binder@5fc6bd9})/@0x5e2d126
-12-22 20:15:22.385  1423  2266 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=745dc77 Toast)/@0xd680c81 - animation-leash of window_animation)/@0xec58788
-12-22 20:15:22.851  1423  1554 I ActivityManager: Changes in 5009 5 to 6, 144 to 128
-12-22 20:15:22.900  1423  1550 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{82c399e type=2005 android.os.Binder@5fc6bd9})/@0x5e2d126, destroy=true, surface=Surface(name=745dc77 Toast)/@0xd680c81
-12-22 20:15:23.657  1423  1555 I ActivityManager: Changes in 10277 19 to 11, 0 to 128
-12-22 20:15:23.742  1423  2266 I ActivityManager: Changes in 10277 11 to 19, 128 to 0
-12-22 20:15:24.032  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31083625614000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:24.034  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'a93450e', t=1 
-12-22 20:15:24.034  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:24.037  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:24.051  1423  1549 W WindowManager: Unable to start animation, surface is null or no children.
-12-22 20:15:24.056  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:24.091  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31083695403000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
-12-22 20:15:24.091  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
-12-22 20:15:24.166  1423  4807 I ActivityManager: Changes in 5009 6 to 5, 128 to 144
-12-22 20:15:24.186  1423  2266 D WindowManager: Transition is created, t=TransitionRecord{3ac7893 id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityTaskManagerService.startActivityAsUser:87 
-12-22 20:15:24.196  2022  2160 D ViewRootImpl: desktopMode is false
-12-22 20:15:24.197  2022  2160 I ViewRootImpl: dVRR is disabled
-12-22 20:15:24.198  1423  2266 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:24.198  1423  2266 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:24.199  1423  2266 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:24.208  1423  2784 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{6423a8a u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:24.209  1423  4806 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:24.210  1423  4806 D InputDispatcher: Focused application(1): ActivityRecord{31346896 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19242}
-12-22 20:15:24.210  1423  4806 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:24.210  1423  4806 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x164172f
-12-22 20:15:24.210  1423  4806 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:24.211  1423  4806 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:24.211  1423  4806 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xc36e371
-12-22 20:15:24.215  1423  1635 I WindowManager: Relayout Window{6423a8a u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=1422x1169 ty=3 d1
-12-22 20:15:24.216  1423  1635 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard$_2022
-12-22 20:15:24.216  1423  1635 I WindowManager: Relayout hash=6423a8a, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
-12-22 20:15:24.216  1423  1635 I WindowManager:   fl=81030118
-12-22 20:15:24.216  1423  1635 I WindowManager:   pfl=10000010
-12-22 20:15:24.216  1423  1635 I WindowManager:   bhv=1
-12-22 20:15:24.216  1423  1635 I WindowManager:   fitSides=0
-12-22 20:15:24.216  1423  1635 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:24.216  1423  1635 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:24.217  1423  2229 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
-12-22 20:15:24.222  1423  2266 D WindowManager: finishDrawingWindow: Window{6423a8a u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:24.226  1423  2230 D WindowManager: Transition is created, t=TransitionRecord{d1d92e id=-1 type=CLOSE flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.TransitionController.requestCloseTransitionIfNeeded:73 com.android.server.wm.ActivityRecord.finishIfPossible:38 com.android.server.wm.ActivityClientController.finishActivity:268 
-12-22 20:15:24.227  1423  2230 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{6423a8a u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:24.228  1423  4806 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:24.228  1423  4806 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:24.229  1423  4806 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
-12-22 20:15:24.229  1423  4806 D WindowManager: Changing focus from null to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
-12-22 20:15:24.229  1423  4806 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xc36e371
-12-22 20:15:24.229  1423  4806 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:24.229  1423  4806 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:24.229  1423  4806 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x2567d65
-12-22 20:15:24.229  1423  4806 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:24.240  1423  4806 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
-12-22 20:15:24.240  1423  4806 D InputDispatcher: Focus request (1): e382cc2 SubLauncherWindow but waiting because NO_WINDOW
-12-22 20:15:24.251  1423  2229 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
-12-22 20:15:24.257  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
-12-22 20:15:24.655  1423  2266 D WindowManager: Starting window removed Window{6423a8a u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
-12-22 20:15:24.663  1423  1635 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
-12-22 20:15:24.667  1423  2229 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:24.667  1423  2229 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
-12-22 20:15:24.667  1423  2784 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:24.667  1423  2229 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:25.637  1423  1549 D WindowManager: onStateChanged, state=1
-12-22 20:15:25.638  1423  1549 D WindowManager: rotationForOrientation, orientationSource=DefaultTaskDisplayArea_d0@131230281
-12-22 20:15:25.646  1423  1549 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:25.967  1423  1549 D WindowManager: onStateChanged, state=2
-12-22 20:15:25.969  1423  1549 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 com.android.server.wm.RootWindowContainer.positionChildAt:8 com.android.server.wm.WindowManagerServiceExt.moveDisplayToTop:37 
-12-22 20:15:25.969  1423  1549 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0x2567d65
-12-22 20:15:25.969  1423  1549 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e, destroy=false, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9
-12-22 20:15:25.970  1423  1549 I WindowManager: Reparenting to leash, surface=Surface(name=a93450e NavigationBar1)/@0xe8ece9, leashParent=Surface(name=WindowToken{413bf09 type=2019 android.os.BinderProxy@2eac4d3})/@0x920d6e
-12-22 20:15:25.970  1423  1549 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xdf9d54
-12-22 20:15:25.971  1423  1549 D InputDispatcher: Focused display: 1 -> 0
-12-22 20:15:25.971  1423  1549 W InputDispatcher: Focused display #0 does not have a focused window.
-12-22 20:15:25.971  1423  1549 E InputDispatcher: But another display has a focused window
-12-22 20:15:25.971  1423  1549 E InputDispatcher:   FocusedWindows:
-12-22 20:15:25.971  1423  1549 E InputDispatcher:     displayId=1, name='e382cc2 SubLauncherWindow'
-12-22 20:15:25.973  1423  1549 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:25.976  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2019, view=com.android.systemui.navigationbar.views.NavigationBarFrame{d6824b5 V.E...... ......I. 0,0-1422,66 #7f0a083a app:id/navigation_bar_frame}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeViewImmediate:216 com.android.systemui.navigationbar.views.NavigationBar.destroyView:32 
-12-22 20:15:25.977  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2024, view=com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle{11c299a G.E...... ......I. 0,0-0,0 #7f0a0b72 app:id/secondary_home_handle}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.android.systemui.navigationbar.views.NavigationBar.onViewDetached:75 
-12-22 20:15:25.980  1423  1604 D WindowManager: Create SleepToken: tag=Display-off, displayId=1
-12-22 20:15:25.983  1423  4807 I WindowManager: Cancelling animation restarting=false, leash=Surface(name=Surface(name=a93450e NavigationBar1)/@0xe8ece9 - animation-leash of insets_animation)/@0xdf9d54
-12-22 20:15:25.986  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2024, view=com.android.systemui.navigationbar.gestural.SamsungBackPanel{e24fbc1 G.ED..... ......I. 0,0-164,419}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.android.systemui.navigationbar.gestural.BackPanelController.onDestroy:12 
-12-22 20:15:25.992  1423  2784 D InputDispatcher: Once focus requested (1): <null>
-12-22 20:15:25.992  1423  2784 D InputDispatcher: Focus request (1): <null> but waiting because NO_WINDOW
-12-22 20:15:25.992  1423  2784 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
-12-22 20:15:26.005  1423  4806 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
-12-22 20:15:26.005  1423  4806 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=null, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
-12-22 20:15:26.005  1423  4806 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-11
-12-22 20:15:26.005  1423  1549 I ActivityManager: Changes in 10375 2 to 12, 255 to 0
-12-22 20:15:26.006  1423  4806 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:26.006  1423  4806 I WindowManager:   fl=81910100
-12-22 20:15:26.006  1423  4806 I WindowManager:   pfl=10008850
-12-22 20:15:26.006  1423  4806 I WindowManager:   vsysui=1600000
-12-22 20:15:26.006  1423  4806 I WindowManager:   bhv=1
-12-22 20:15:26.006  1423  4806 I WindowManager:   fitSides=0
-12-22 20:15:26.006  1423  4806 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.006  1423  4806 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:26.008  1423  2886 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
-12-22 20:15:26.009  1423  2886 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:26.009  1423  2886 I WindowManager:   fl=80080260
-12-22 20:15:26.009  1423  2886 I WindowManager:   vsysui=1600400
-12-22 20:15:26.009  1423  2886 I WindowManager:   bhv=1
-12-22 20:15:26.009  1423  2886 I WindowManager:   fitTypes=206
-12-22 20:15:26.009  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.009  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.011  1423  1604 D WindowManager: Remove SleepToken: tag=Display-off, displayId=0
-12-22 20:15:26.013  1423  1604 D WindowManager: Transition is created, t=TransitionRecord{d676816 id=-1 type=WAKE flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.RootWindowContainer.applySleepTokens:209 com.android.server.wm.ActivityTaskManagerService.updateSleepIfNeededLocked:90 com.android.server.wm.RootWindowContainer.removeSleepToken:131 
-12-22 20:15:26.014  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}
-12-22 20:15:26.016  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{db572d5 u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity}
-12-22 20:15:26.017  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}
-12-22 20:15:26.017  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
-12-22 20:15:26.017  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
-12-22 20:15:26.018  1423  1604 D WindowManager: rotationForOrientation, orientationSource=ActivityRecord{127106347 u0 com.sec.android.app.launcher/.activities.LauncherActivity t18982}
-12-22 20:15:26.025  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
-12-22 20:15:26.025 22381 22381 D ViewRootImpl: Skipping stats log for color mode
-12-22 20:15:26.028  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.034  1423  1855 I ActivityManager: Changes in 10395 19 to 3, 0 to 144
-12-22 20:15:26.034  1423  2784 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
-12-22 20:15:26.035  1423  1855 I ActivityManager: Changes in 10342 4 to 2, 254 to 255
-12-22 20:15:26.035  1423  1855 I ActivityManager: Changes in 10155 5 to 2, 184 to 255
-12-22 20:15:26.036  1423  2784 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:26.036  1423  2784 I WindowManager:   fl=10318
-12-22 20:15:26.036  1423  2784 I WindowManager:   pfl=14
-12-22 20:15:26.036  1423  2784 I WindowManager:   bhv=1
-12-22 20:15:26.036  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.036  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.042  1423  1547 I WindowManager: Waiting for transition
-12-22 20:15:26.044  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.051  1423  1549 I ActivityManager: Changes in 10375 12 to 2, 0 to 255
-12-22 20:15:26.058  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.059 14008 14008 D ViewRootImpl: Skipping stats log for color mode
-12-22 20:15:26.059  1423  1547 I WindowManager: Waiting for transition
-12-22 20:15:26.062  1423  2266 I WindowManager: Relayout Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}: viewVisibility=0 req=1080x1260 ty=1 d0
-12-22 20:15:26.062  1423  2266 D WindowManager: makeSurface duration=1 name=com.termux/com.termux.app.TermuxActivity$_22381
-12-22 20:15:26.063  1423  2266 I WindowManager: Waiting for transition
-12-22 20:15:26.063  1423  2266 D WindowManager: Changing focus from null to Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity} displayId=0 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:26.063  1423  2266 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x3a79843
-12-22 20:15:26.063  1423  2266 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599, destroy=false, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0
-12-22 20:15:26.063  1423  2266 I WindowManager: Reparenting to leash, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0, leashParent=Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599
-12-22 20:15:26.063  1423  2266 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0xf5ca976
-12-22 20:15:26.063  1423  2266 I WindowManager: Cancelling animation restarting=false, leash=Surface(name=Surface(name=88c439 StatusBar)/@0x6820c3f - animation-leash of insets_animation)/@0x7a67aac
-12-22 20:15:26.063  1423  2266 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{9be6400 type=2000 android.os.BinderProxy@ec85d32})/@0xcd4990c, destroy=false, surface=Surface(name=88c439 StatusBar)/@0x6820c3f
-12-22 20:15:26.064  1423  2266 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=null, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 
-12-22 20:15:26.064  1423  2266 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
-12-22 20:15:26.064  1423  2266 I WindowManager: Relayout hash=67a5228, pid=22381, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} ty=BASE_APPLICATION wanim=0x1030317
-12-22 20:15:26.064  1423  2266 I WindowManager:   fl=8d810100
-12-22 20:15:26.064  1423  2266 I WindowManager:   pfl=10008040
-12-22 20:15:26.064  1423  2266 I WindowManager:   vsysui=700
-12-22 20:15:26.064  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.064  1423  2266 I WindowManager:   fitSides=0
-12-22 20:15:26.064  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.064  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.073  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.079  1423  4807 D WindowManager: finishDrawingWindow: Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.080  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.080  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.085  1423  2784 I WindowManager: Relayout Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}: viewVisibility=0 req=1080x2520 ty=1 d0
-12-22 20:15:26.085  1423  2784 D WindowManager: makeSurface duration=1 name=com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity$_2712
-12-22 20:15:26.086  1423  2784 I WindowManager: Waiting for transition
-12-22 20:15:26.086  1423  2784 I WindowManager: Relayout hash=64185e1, pid=2712, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT wanim=0x1030306
-12-22 20:15:26.086  1423  2784 I WindowManager:   fl=81910100
-12-22 20:15:26.086  1423  2784 I WindowManager:   pfl=10008840
-12-22 20:15:26.086  1423  2784 I WindowManager:   bhv=2
-12-22 20:15:26.086  1423  2784 I WindowManager:   fitSides=0
-12-22 20:15:26.086  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.086  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=200000 naviIconColor=0}
-12-22 20:15:26.087  1423  2784 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
-12-22 20:15:26.088  1423  2784 I WindowManager: Waiting for transition
-12-22 20:15:26.088  1423  2784 I WindowManager: Waiting for transition
-12-22 20:15:26.090  1423  2784 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:26.090  1423  2784 I WindowManager:   fl=81080278
-12-22 20:15:26.090  1423  2784 I WindowManager:   vsysui=1600400
-12-22 20:15:26.090  1423  2784 I WindowManager:   bhv=1
-12-22 20:15:26.090  1423  2784 I WindowManager:   fitTypes=206
-12-22 20:15:26.090  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.090  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.090  1423  2220 D InputDispatcher: Once focus requested (0): 67a5228 com.termux/com.termux.app.TermuxActivity
-12-22 20:15:26.090  1423  2220 D InputDispatcher: Focus request (0): 67a5228 com.termux/com.termux.app.TermuxActivity but waiting because NO_WINDOW
-12-22 20:15:26.093  1423  2220 I WindowManager: Relayout Window{db572d5 u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity}: viewVisibility=0 req=1080x1260 ty=1 d0
-12-22 20:15:26.094  1423  2220 D WindowManager: makeSurface duration=0 name=com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity$_14008
-12-22 20:15:26.094  1423  2220 I WindowManager: Waiting for transition
-12-22 20:15:26.095  1423  2266 D WindowManager: finishDrawingWindow: Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.095  1423  2220 I WindowManager: Relayout hash=db572d5, pid=14008, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION wanim=0x1030317
-12-22 20:15:26.095  1423  2220 I WindowManager:   fl=80810100
-12-22 20:15:26.095  1423  2220 I WindowManager:   pfl=10008840
-12-22 20:15:26.095  1423  2220 I WindowManager:   bhv=1
-12-22 20:15:26.095  1423  2220 I WindowManager:   fitSides=0
-12-22 20:15:26.095  1423  2220 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.095  1423  2220 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.095  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.096  1423  1550 I WindowManager: Waiting for transition
-12-22 20:15:26.122  1423  2230 D WindowManager: finishDrawingWindow: Window{db572d5 u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.128  1423  1550 D WindowManager: All windows drawn!
-12-22 20:15:26.128  1423  1550 I WindowManager: Reparenting to leash, surface=Surface(name=88c439 StatusBar)/@0x6820c3f, leashParent=Surface(name=WindowToken{9be6400 type=2000 android.os.BinderProxy@ec85d32})/@0xcd4990c
-12-22 20:15:26.128  1423  1550 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=88c439 StatusBar)/@0x6820c3f - animation-leash of insets_animation)/@0xf5a5099
-12-22 20:15:26.128  1423  1550 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
-12-22 20:15:26.129  1423  1550 D WindowManager: updateSystemBarAttributes, bhv=1, apr=1048576, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-9
-12-22 20:15:26.129  1423  1547 D WindowManager: finishScreenTurningOn: mAwake=true, mScreenOnEarly=true, mScreenOnFully=false, mKeyguardDrawComplete=true, mWindowManagerDrawComplete=true
-12-22 20:15:26.133  2022  2106 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.133  2022  2106 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.134  1423  1549 D WindowManager: onStateChanged, state=3
-12-22 20:15:26.157  1423  2266 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:26.159  1423  4807 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:26.160  1423  2886 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:26.160  2022  2106 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.160  2022  2106 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.168  1423  2886 W WindowManager: Cannot find window which accessibility connection is added to
-12-22 20:15:26.169  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.171  1423  2220 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:26.172  1423  2220 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
-12-22 20:15:26.172  1423  2220 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
-12-22 20:15:26.173  1423  2220 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:26.173  1423  2220 I WindowManager:   fl=14318
-12-22 20:15:26.173  1423  2220 I WindowManager:   pfl=14
-12-22 20:15:26.173  1423  2220 I WindowManager:   bhv=1
-12-22 20:15:26.173  1423  2220 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.173  1423  2220 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:26.173  1423  2220 I WindowManager:   sfl=8}
-12-22 20:15:26.174  1423  2229 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19124)/@0x958b23f} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
-12-22 20:15:26.176  1423  2230 D WindowManager: finishDrawingWindow: Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper} mDrawState=HAS_DRAWN seqId=2147483647
-12-22 20:15:26.186  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.196  1423  2266 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=8 req=1422x1500 ty=1 d1
-12-22 20:15:26.197  1423  1635 D InputDispatcher: Focus entered window (0): 67a5228 com.termux/com.termux.app.TermuxActivity
-12-22 20:15:26.197  1423  2266 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
-12-22 20:15:26.197  1423  2266 I WindowManager:   fl=81910100
-12-22 20:15:26.197  1423  2266 I WindowManager:   pfl=10008850
-12-22 20:15:26.197  1423  2266 I WindowManager:   vsysui=1600000
-12-22 20:15:26.197  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.197  1423  2266 I WindowManager:   fitSides=0
-12-22 20:15:26.197  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.197  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
-12-22 20:15:26.202  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:15:26.202  1423  1754 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
-12-22 20:15:26.202  1423  1754 D InputMethodManagerService: checkDisplayOfStartInputAndUpdateKeyboard: displayId=0, mFocusedDisplayId=0
-12-22 20:15:26.202  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.203  1423  1754 D InputMethodManagerService: ACCESS_CONTROL_ENABLED = false, ACCESS_CONTROL_KEYBOARD_BLOCK = true
-12-22 20:15:26.204  1423  1754 I ActivityManager: Changes in 10332 7 to 5, 128 to 255
-12-22 20:15:26.205  1423  4807 I InputMethodManagerService: isAccessoryKeyboard 0
-12-22 20:15:26.205  1423  1754 I InputMethodManagerService: attachNewInputLocked: showCurrentInputInternal, softInputModeState=STATE_UNSPECIFIED|ADJUST_RESIZE
-12-22 20:15:26.206  1423  4812 I InputMethodManagerService: isAccessoryKeyboard 0
-12-22 20:15:26.207  1423  1473 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, caller=com.android.server.wm.InsetsStateController.onRequestedVisibleTypesChanged:86 com.android.server.wm.WindowManagerService.updateDisplayWindowRequestedVisibleTypes:148 android.view.IWindowManager$Stub.onTransact:3601 
-12-22 20:15:26.207  1423  1473 D WindowManager: updateSystemBarAttributes, bhv=1, apr=1048576, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-1
-12-22 20:15:26.209  1423  1549 D InputMethodManagerService: ACCESS_CONTROL_ENABLED = false, ACCESS_CONTROL_KEYBOARD_BLOCK = true
-12-22 20:15:26.214  1423  1474 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=8 req=1422x1500 ty=1000 d1
-12-22 20:15:26.215  1423  1474 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:26.215  1423  1474 I WindowManager:   fl=81080278
-12-22 20:15:26.215  1423  1474 I WindowManager:   vsysui=1600400
-12-22 20:15:26.215  1423  1474 I WindowManager:   bhv=1
-12-22 20:15:26.215  1423  1474 I WindowManager:   fitTypes=206
-12-22 20:15:26.215  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.215  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.229  1423  4812 E WindowManager: win=Window{e382cc2 u0 SubLauncherWindow} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowState.destroySurface:24 com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 
-12-22 20:15:26.230  1423  4812 E WindowManager: win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
-12-22 20:15:26.230  1423  2697 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
-12-22 20:15:26.231  1423  2697 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:26.231  1423  2697 I WindowManager:   fl=14318
-12-22 20:15:26.231  1423  2697 I WindowManager:   pfl=14
-12-22 20:15:26.231  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:26.231  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.231  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:26.231  1423  2697 I WindowManager:   sfl=8}
-12-22 20:15:26.234  1423  4812 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
-12-22 20:15:26.234  1423  4812 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
-12-22 20:15:26.234  1423  4812 I InputMethodManagerService: setImeWindowStatus: vis=3, backDisposition=0
-12-22 20:15:26.237  1423  2933 I InputMethodManagerService: isAccessoryKeyboard 0
-12-22 20:15:26.237  1423  2189 I InputMethodManagerService: isAccessoryKeyboard 0
-12-22 20:15:26.238  1423  2266 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=8 req=1422x1500 ty=1000 d1
-12-22 20:15:26.240  1423  2266 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
-12-22 20:15:26.240  1423  2266 I WindowManager:   fl=81080278
-12-22 20:15:26.240  1423  2266 I WindowManager:   vsysui=1600400
-12-22 20:15:26.240  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.240  1423  2266 I WindowManager:   fitTypes=206
-12-22 20:15:26.240  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.240  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.240  1423  1473 I WindowManager: Relayout Window{82d55a2 u0 InputMethod}: viewVisibility=0 req=1080x2404 ty=2011 d0
-12-22 20:15:26.240  1423  1473 D WindowManager: makeSurface duration=0 name=InputMethod$_4255
-12-22 20:15:26.241  1423  1473 I WindowManager: Relayout hash=82d55a2, pid=4255, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
-12-22 20:15:26.241  1423  1473 I WindowManager:   fl=81800108
-12-22 20:15:26.241  1423  1473 I WindowManager:   pfl=14000000
-12-22 20:15:26.241  1423  1473 I WindowManager:   bhv=1
-12-22 20:15:26.241  1423  1473 I WindowManager:   fitTypes=3
-12-22 20:15:26.241  1423  1473 I WindowManager:   fitSides=7
-12-22 20:15:26.241  1423  1473 I WindowManager:   fitIgnoreVis
-12-22 20:15:26.241  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true
-12-22 20:15:26.241  1423  1473 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
-12-22 20:15:26.244  1423  1473 D WindowManager: setInsetsWindow Window{82d55a2 u0 InputMethod}, contentInsets=Rect(0, 2329 - 0, 0) -> Rect(0, 1904 - 0, 0), visibleInsets=Rect(0, 2329 - 0, 0) -> Rect(0, 1904 - 0, 0), touchableRegion=SkRegion() -> SkRegion((0,1904,1080,2404)), touchableInsets 3 -> 3
-12-22 20:15:26.248  1423  2697 D WindowManager: finishDrawingWindow: Window{82d55a2 u0 InputMethod} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.267  1423  2697 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
-12-22 20:15:26.271  1423  2697 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
-12-22 20:15:26.271  1423  2697 I WindowManager:   fl=14318
-12-22 20:15:26.271  1423  2697 I WindowManager:   pfl=14
-12-22 20:15:26.271  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:26.271  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.271  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
-12-22 20:15:26.271  1423  2697 I WindowManager:   sfl=8}
-12-22 20:15:26.277  1423  1473 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=Window{82d55a2 u0 InputMethod}, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
-12-22 20:15:26.277  1423  1473 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-1
-12-22 20:15:26.281  1423  1474 D WindowManager: finishDrawingWindow: Window{82d55a2 u0 InputMethod} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:26.307  1423  1473 I WindowManager: Relayout Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity}: viewVisibility=0 req=1080x1260 ty=1 d0
-12-22 20:15:26.311  1423  1473 I WindowManager: Relayout hash=67a5228, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} ty=BASE_APPLICATION wanim=0x1030317
-12-22 20:15:26.311  1423  1473 I WindowManager:   fl=8d810100
-12-22 20:15:26.311  1423  1473 I WindowManager:   pfl=10008040
-12-22 20:15:26.311  1423  1473 I WindowManager:   vsysui=700
-12-22 20:15:26.311  1423  1473 I WindowManager:   bhv=1
-12-22 20:15:26.311  1423  1473 I WindowManager:   fitSides=0
-12-22 20:15:26.311  1423  1473 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.311  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.312  1423  1473 D WindowManager: finishDrawingWindow: Window{67a5228 u0 com.termux/com.termux.app.TermuxActivity} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.450  1423  1423 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
-12-22 20:15:26.453  1423  1473 I ActivityManager: Changes in 10053 19 to 6, 0 to 128
-12-22 20:15:26.561 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{617d94b VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.562 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{488bf27 V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.564 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{b520d09 G.E...... ......ID 0,0-681,551}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.570 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{7dbaa3b G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.570 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.570 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.582 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{955bced VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.582 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.582 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.588 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{15e3ae9 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.588 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.588 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.597  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:26.601  1423  4800 W WindowManager: Failed looking up window session=Session{298fe90 26287:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
-12-22 20:15:26.601  1423  4800 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
-12-22 20:15:26.606  1423  4799 I WindowManager: Relayout Window{69854de u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.607  1423  4799 I WindowManager: Relayout hash=69854de, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.607  1423  4799 I WindowManager:   fl=1040228
-12-22 20:15:26.607  1423  4799 I WindowManager:   pfl=40000000
-12-22 20:15:26.607  1423  4799 I WindowManager:   bhv=1
-12-22 20:15:26.607  1423  4799 I WindowManager:   fitTypes=207
-12-22 20:15:26.607  1423  4799 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.607  1423  4799 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.609  1423  4799 I WindowManager: Relayout Window{4dbfeb7 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.609  1423  4799 D WindowManager: makeSurface duration=1 name=$_26287
-12-22 20:15:26.611  1423  4799 I WindowManager: Relayout hash=4dbfeb7, pid=26287, syncId=-1: mAttrs={(50,1260)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.611  1423  4799 I WindowManager:   fl=1000308
-12-22 20:15:26.611  1423  4799 I WindowManager:   bhv=1
-12-22 20:15:26.611  1423  4799 I WindowManager:   fitTypes=206
-12-22 20:15:26.611  1423  4799 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.611  1423  4799 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.626  1423  4799 D WindowManager: finishDrawingWindow: Window{4dbfeb7 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.628  1423  2227 I WindowManager: Relayout Window{a2955bc u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.628  1423  2227 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.629  1423  2227 I WindowManager: Relayout hash=a2955bc, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.629  1423  2227 I WindowManager:   fl=1000318
-12-22 20:15:26.629  1423  2227 I WindowManager:   bhv=1
-12-22 20:15:26.629  1423  2227 I WindowManager:   fitTypes=206
-12-22 20:15:26.629  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.629  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.634  1423  1473 D WindowManager: finishDrawingWindow: Window{a2955bc u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.642  1423  1473 D WindowManager: finishDrawingWindow: Window{4dbfeb7 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:26.647  1423  2227 D WindowManager: finishDrawingWindow: Window{a2955bc u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:26.667 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{955bced VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.669 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{15e3ae9 V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.670 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{7dbaa3b G.E...... ......ID 0,0-527,444}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.675 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{b043b00 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.676 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.676 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.684 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{d497f8a VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.685 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.685 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.691 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{7c80a56 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.691 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.691 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.703 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{d497f8a VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.704 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{7c80a56 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.704 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{b043b00 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.707 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{6bd78a9 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.707 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.707 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.712 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{9cbf665 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.712 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.712 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.718 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{88a93e1 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.718 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.718 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.732  1423  4799 I WindowManager: Relayout Window{44ba5ec u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.735  1423  4799 I WindowManager: Relayout hash=44ba5ec, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.735  1423  4799 I WindowManager:   fl=1040228
-12-22 20:15:26.735  1423  4799 I WindowManager:   pfl=40000000
-12-22 20:15:26.735  1423  4799 I WindowManager:   bhv=1
-12-22 20:15:26.735  1423  4799 I WindowManager:   fitTypes=207
-12-22 20:15:26.735  1423  4799 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.735  1423  4799 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.738  1423  4799 I WindowManager: Relayout Window{262ee6d u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.739  1423  4799 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.740  1423  4799 I WindowManager: Relayout hash=262ee6d, pid=26287, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.740  1423  4799 I WindowManager:   fl=1000308
-12-22 20:15:26.740  1423  4799 I WindowManager:   bhv=1
-12-22 20:15:26.740  1423  4799 I WindowManager:   fitTypes=206
-12-22 20:15:26.740  1423  4799 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.740  1423  4799 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.754  1423  4799 D WindowManager: finishDrawingWindow: Window{262ee6d u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.754  1423  1473 I WindowManager: Relayout Window{3cb2bfa u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.755  1423  1473 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.756  1423  1473 I WindowManager: Relayout hash=3cb2bfa, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.756  1423  1473 I WindowManager:   fl=1000318
-12-22 20:15:26.756  1423  1473 I WindowManager:   bhv=1
-12-22 20:15:26.756  1423  1473 I WindowManager:   fitTypes=206
-12-22 20:15:26.756  1423  1473 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.756  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.761  1423  2227 I WindowManager: Relayout Window{5d5fa7f u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.762  1423  4799 D WindowManager: finishDrawingWindow: Window{3cb2bfa u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.762  1423  2227 I WindowManager: Relayout hash=5d5fa7f, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.762  1423  2227 I WindowManager:   fl=1040228
-12-22 20:15:26.762  1423  2227 I WindowManager:   pfl=40000000
-12-22 20:15:26.762  1423  2227 I WindowManager:   bhv=1
-12-22 20:15:26.762  1423  2227 I WindowManager:   fitTypes=207
-12-22 20:15:26.762  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.762  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.765  1423  2227 I WindowManager: Relayout Window{5246202 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.765  1423  2227 D WindowManager: makeSurface duration=1 name=$_26287
-12-22 20:15:26.766  1423  2227 I WindowManager: Relayout hash=5246202, pid=26287, syncId=-1: mAttrs={(50,1260)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.766  1423  2227 I WindowManager:   fl=1000308
-12-22 20:15:26.766  1423  2227 I WindowManager:   bhv=1
-12-22 20:15:26.766  1423  2227 I WindowManager:   fitTypes=206
-12-22 20:15:26.766  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.766  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.783  1423  2886 I WindowManager: Relayout Window{7e5c58b u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.784  1423  2886 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.785  1423  2886 I WindowManager: Relayout hash=7e5c58b, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.785  1423  2886 I WindowManager:   fl=1000318
-12-22 20:15:26.785  1423  2886 I WindowManager:   bhv=1
-12-22 20:15:26.785  1423  2886 I WindowManager:   fitTypes=206
-12-22 20:15:26.785  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.785  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.786  1423  4800 D WindowManager: finishDrawingWindow: Window{5246202 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.790 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{9cbf665 VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.791 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{88a93e1 V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.792  1423  4800 D WindowManager: finishDrawingWindow: Window{7e5c58b u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.792 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{6bd78a9 G.E...... ......ID 0,0-527,444}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.797 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{b53406d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.797 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.797 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.806 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{5a9d18f VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.806 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.806 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.811 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{fbf7ab V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.811 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.811 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.815 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{5a9d18f VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.816 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{fbf7ab V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.816 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{b53406d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.820 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{44caa52 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.820 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.820 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.826 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{1e7199e VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.826 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.826 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.831 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{a2731aa V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.831 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.831 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.836 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{1e7199e VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.837 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{a2731aa V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.837 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{44caa52 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.841 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{cbd794d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.841 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.841 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.846 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{bf55d49 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.846 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.846 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.850 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{8ad8505 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.851 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.851 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.869 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{bf55d49 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
-12-22 20:15:26.869 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{8ad8505 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
-12-22 20:15:26.870 26287 26287 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{cbd794d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
-12-22 20:15:26.873 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{d3a9b14 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
-12-22 20:15:26.873 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.873 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.878 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{4b05480 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
-12-22 20:15:26.878 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.878 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.884 26287 26287 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{b0638ac V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
-12-22 20:15:26.884 26287 26287 D ViewRootImpl: desktopMode is false
-12-22 20:15:26.884 26287 26287 I ViewRootImpl: dVRR is disabled
-12-22 20:15:26.897  1423  2933 I WindowManager: Relayout Window{5246202 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.898  1423  2933 I WindowManager: Relayout hash=5246202, pid=0, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.898  1423  2933 I WindowManager:   fl=1000308
-12-22 20:15:26.898  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.898  1423  2933 I WindowManager:   fitTypes=206
-12-22 20:15:26.898  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.898  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.908  1423  2933 I WindowManager: Relayout Window{c9065d6 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.909  1423  2933 I WindowManager: Relayout hash=c9065d6, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.909  1423  2933 I WindowManager:   fl=1040228
-12-22 20:15:26.909  1423  2933 I WindowManager:   pfl=40000000
-12-22 20:15:26.909  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.909  1423  2933 I WindowManager:   fitTypes=207
-12-22 20:15:26.909  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.909  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.910  1423  2933 I WindowManager: Relayout Window{5a3634f u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.910  1423  2933 D WindowManager: makeSurface duration=1 name=$_26287
-12-22 20:15:26.911  1423  2933 I WindowManager: Relayout hash=5a3634f, pid=26287, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.911  1423  2933 I WindowManager:   fl=1000308
-12-22 20:15:26.911  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.911  1423  2933 I WindowManager:   fitTypes=206
-12-22 20:15:26.911  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.911  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.916  1423  1554 I ActivityManager: Changes in 10333 6 to 15, 128 to 0
-12-22 20:15:26.924  1423  4800 I WindowManager: Relayout Window{79e5974 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.924  1423  4800 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.926  1423  4800 I WindowManager: Relayout hash=79e5974, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.926  1423  4800 I WindowManager:   fl=1000318
-12-22 20:15:26.926  1423  4800 I WindowManager:   bhv=1
-12-22 20:15:26.926  1423  4800 I WindowManager:   fitTypes=206
-12-22 20:15:26.926  1423  4800 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.926  1423  4800 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.926  1423  2266 D WindowManager: finishDrawingWindow: Window{5a3634f u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.928  1423  2266 D WindowManager: finishDrawingWindow: Window{79e5974 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.931  1423  2697 I WindowManager: Relayout Window{e20ee6a u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.933  1423  2697 I WindowManager: Relayout hash=e20ee6a, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.933  1423  2697 I WindowManager:   fl=1040228
-12-22 20:15:26.933  1423  2697 I WindowManager:   pfl=40000000
-12-22 20:15:26.933  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:26.933  1423  2697 I WindowManager:   fitTypes=207
-12-22 20:15:26.933  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.933  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.935  1423  2266 I WindowManager: Relayout Window{e82fed3 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.935  1423  2266 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.937  1423  2266 I WindowManager: Relayout hash=e82fed3, pid=26287, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.937  1423  2266 I WindowManager:   fl=1000308
-12-22 20:15:26.937  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.937  1423  2266 I WindowManager:   fitTypes=206
-12-22 20:15:26.937  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.937  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.951  1423  2697 D WindowManager: finishDrawingWindow: Window{e82fed3 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.951  1423  4800 I WindowManager: Relayout Window{ffdfb28 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.951  1423  4800 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.952  1423  4800 I WindowManager: Relayout hash=ffdfb28, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.952  1423  4800 I WindowManager:   fl=1000318
-12-22 20:15:26.952  1423  4800 I WindowManager:   bhv=1
-12-22 20:15:26.952  1423  4800 I WindowManager:   fitTypes=206
-12-22 20:15:26.952  1423  4800 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.952  1423  4800 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.955  1423  2933 D WindowManager: finishDrawingWindow: Window{ffdfb28 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.955  1423  2697 I WindowManager: Relayout Window{25e8fbe u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.956  1423  2697 I WindowManager: Relayout hash=25e8fbe, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.956  1423  2697 I WindowManager:   fl=1040228
-12-22 20:15:26.956  1423  2697 I WindowManager:   pfl=40000000
-12-22 20:15:26.956  1423  2697 I WindowManager:   bhv=1
-12-22 20:15:26.956  1423  2697 I WindowManager:   fitTypes=207
-12-22 20:15:26.956  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.956  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.957  1423  2933 I WindowManager: Relayout Window{a201c17 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.957  1423  2933 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.958  1423  2933 I WindowManager: Relayout hash=a201c17, pid=26287, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.958  1423  2933 I WindowManager:   fl=1000308
-12-22 20:15:26.958  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.958  1423  2933 I WindowManager:   fitTypes=206
-12-22 20:15:26.958  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.958  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.970  1423  4799 D WindowManager: finishDrawingWindow: Window{a201c17 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.970  1423  2266 I WindowManager: Relayout Window{c17739c u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.971  1423  2266 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.972  1423  2266 I WindowManager: Relayout hash=c17739c, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.972  1423  2266 I WindowManager:   fl=1000318
-12-22 20:15:26.972  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.972  1423  2266 I WindowManager:   fitTypes=206
-12-22 20:15:26.972  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.972  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.975  1423  4799 D WindowManager: finishDrawingWindow: Window{c17739c u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.975  1423  2933 I WindowManager: Relayout Window{f0741ff u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
-12-22 20:15:26.976  1423  2933 I WindowManager: Relayout hash=f0741ff, pid=26287, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.976  1423  2933 I WindowManager:   fl=1040228
-12-22 20:15:26.976  1423  2933 I WindowManager:   pfl=40000000
-12-22 20:15:26.976  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.976  1423  2933 I WindowManager:   fitTypes=207
-12-22 20:15:26.976  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.976  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.977  1423  2266 I WindowManager: Relayout Window{39cf864 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
-12-22 20:15:26.977  1423  2266 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.979  1423  2266 I WindowManager: Relayout hash=39cf864, pid=26287, syncId=-1: mAttrs={(50,1260)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.979  1423  2266 I WindowManager:   fl=1000308
-12-22 20:15:26.979  1423  2266 I WindowManager:   bhv=1
-12-22 20:15:26.979  1423  2266 I WindowManager:   fitTypes=206
-12-22 20:15:26.979  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.979  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.991  1423  2933 I WindowManager: Relayout Window{e892685 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
-12-22 20:15:26.992  1423  2933 D WindowManager: makeSurface duration=0 name=$_26287
-12-22 20:15:26.993  1423  2266 D WindowManager: finishDrawingWindow: Window{39cf864 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:26.993  1423  2933 I WindowManager: Relayout hash=e892685, pid=26287, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
-12-22 20:15:26.993  1423  2933 I WindowManager:   fl=1000318
-12-22 20:15:26.993  1423  2933 I WindowManager:   bhv=1
-12-22 20:15:26.993  1423  2933 I WindowManager:   fitTypes=206
-12-22 20:15:26.993  1423  2933 I WindowManager:   frameRateBoostOnTouch=true
-12-22 20:15:26.993  1423  2933 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
-12-22 20:15:26.997  1423  4800 D WindowManager: finishDrawingWindow: Window{e892685 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
-12-22 20:15:27.055  1423  2697 D WindowManager: finishDrawingWindow: Window{39cf864 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:27.056  1423  4799 D WindowManager: finishDrawingWindow: Window{e892685 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
-12-22 20:15:27.059  1423  2266 W ActivityManager: Receiver with filter android.content.IntentFilter@9d72977 already registered for pid 28918, callerPackage is com.samsung.android.rubin.app
-12-22 20:15:27.874  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:28.011  1423  4799 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19124)/@0x958b23f} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
-12-22 20:15:30.083  1423  1473 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19124)/@0x958b23f} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
-12-22 20:15:30.223  1423  1554 I ActivityManager: Changes in 5009 5 to 6, 144 to 128
-12-22 20:15:30.379  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31089976259000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
-12-22 20:15:30.381  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x4, f=0x0, d=0, 'e3ea267', t=1 
-12-22 20:15:30.381  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=0, '6146b28', t=1 
-12-22 20:15:30.381  1423  1695 I InputDispatcher: Delivering touch to (22381): action: 0x0, f=0x0, d=0, '67a5228', t=1 +(0,-760)
-12-22 20:15:30.414  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
-12-22 20:15:30.463  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=31090066857000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
-12-22 20:15:30.463  1423  1695 I InputDispatcher: Delivering touch to (22381): action: 0x1, f=0x0, d=0, '67a5228', t=1 +(0,-760)
-12-22 20:15:30.780  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=31090383466000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
-12-22 20:15:30.781  1423  1695 I InputDispatcher: Delivering touch to (16182): action: 0x4, f=0x0, d=0, 'e3ea267', t=1 
-12-22 20:15:30.781  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=0, '6146b28', t=1 
-12-22 20:15:30.781  1423  1695 I InputDispatcher: Delivering touch to (4255): action: 0x0, f=0x0, d=0, '82d55a2', t=1 +(0,-116)
 ```
 
 ## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/ShellUserService.kt
@@ -16358,6 +14252,1741 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 }
 ```
 
+## File: logcat.md
+```markdown
+--------- beginning of system
+12-22 20:59:08.661  1423  1549 D WindowManager: onStateChanged, state=2
+12-22 20:59:08.858  1423  1423 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:09.098  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:09.218  1423  1549 D WindowManager: onStateChanged, state=0
+12-22 20:59:09.230  1423  1549 D WindowManager: Changing focus from Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity} to null displayId=0 Callers=com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 com.android.server.wm.RootWindowContainer.positionChildAt:8 com.android.server.wm.WindowManagerServiceExt.moveDisplayToTop:37 
+12-22 20:59:09.230  1423  1549 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, navColorWin=Window{f748235 u0 InputMethod}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 
+12-22 20:59:09.230  1423  1549 D WindowManager: updateSystemBarAttributes, bhv=2, apr=0, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-9
+--------- beginning of main
+12-22 20:59:09.230  1423  1549 D InputDispatcher: Focused display: 0 -> 1
+12-22 20:59:09.230  1423  1549 W InputDispatcher: Focused display #1 does not have a focused window.
+12-22 20:59:09.230  1423  1549 E InputDispatcher: But another display has a focused window
+12-22 20:59:09.230  1423  1549 E InputDispatcher:   FocusedWindows:
+12-22 20:59:09.230  1423  1549 E InputDispatcher:     displayId=0, name='f704bfc com.termux/com.termux.app.TermuxActivity'
+12-22 20:59:09.233  1423  2229 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19260)/@0xcf8efbb} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
+12-22 20:59:09.264  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:09.264  1423  2227 D InputDispatcher: Once focus requested (0): <null>
+12-22 20:59:09.264  1423  2227 D InputDispatcher: Focus request (0): <null> but waiting because NO_WINDOW
+12-22 20:59:09.264  1423  2227 D InputDispatcher: Focus left window (0): f704bfc com.termux/com.termux.app.TermuxActivity
+12-22 20:59:09.276  1423  1604 D WindowManager: Create SleepToken: tag=Display-off, displayId=0
+12-22 20:59:09.281  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.282  1423  1754 I WindowManager: Attempted to take screenshot while display was off.
+12-22 20:59:09.282  1423  2230 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:09.282  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2024, view=com.android.systemui.navigationbar.gestural.SamsungBackPanel{3740d0b G.ED..... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.gestural.BackPanelController.setLayoutParams:7 com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler.setEdgeBackPlugin:20 
+12-22 20:59:09.282  2022  2022 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.282  2022  2022 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.287  1423  1423 I ActivityManager: Changes in 10516 5 to 6, 255 to 239
+12-22 20:59:09.287  1423  1423 I ActivityManager: Changes in 10515 5 to 6, 255 to 239
+12-22 20:59:09.287  1423  1423 I ActivityManager: Changes in 10375 2 to 12, 255 to 0
+12-22 20:59:09.287  1423  1423 I ActivityManager: Changes in 10342 2 to 4, 255 to 254
+12-22 20:59:09.287  1423  1423 I ActivityManager: Changes in 10155 2 to 5, 255 to 184
+12-22 20:59:09.294  1423  2267 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:09.295  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:09.303  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:09.304  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2019, view=com.android.systemui.navigationbar.views.NavigationBarFrame{7824b18 V.E...... ......I. 0,0-0,0 #7f0a083a app:id/navigation_bar_frame}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.views.NavigationBar.onInit:237 com.android.systemui.util.ViewController.init:6 
+12-22 20:59:09.305  2022  2022 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.305  2022  2022 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.319  1423  4812 I WindowManager: Relayout Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}: viewVisibility=8 req=1080x1260 ty=1 d0
+12-22 20:59:09.321  1423  2886 I WindowManager: Relayout Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}: viewVisibility=8 req=1080x2520 ty=1 d0
+12-22 20:59:09.322  1423  4812 I WindowManager: Relayout hash=f704bfc, pid=22381, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION wanim=0x1030317
+12-22 20:59:09.322  1423  4812 I WindowManager:   fl=8d810100
+12-22 20:59:09.322  1423  4812 I WindowManager:   pfl=10008040
+12-22 20:59:09.322  1423  4812 I WindowManager:   vsysui=700
+12-22 20:59:09.322  1423  4812 I WindowManager:   bhv=1
+12-22 20:59:09.322  1423  4812 I WindowManager:   fitSides=0
+12-22 20:59:09.322  1423  4812 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.322  1423  4812 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.323  1423  2886 I WindowManager: Relayout hash=64185e1, pid=2712, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT wanim=0x1030306
+12-22 20:59:09.323  1423  2886 I WindowManager:   fl=81910100
+12-22 20:59:09.323  1423  2886 I WindowManager:   pfl=10008840
+12-22 20:59:09.323  1423  2886 I WindowManager:   bhv=2
+12-22 20:59:09.323  1423  2886 I WindowManager:   fitSides=0
+12-22 20:59:09.323  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.323  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=200000 naviIconColor=0}
+12-22 20:59:09.346  1423  4808 E WindowManager: win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
+12-22 20:59:09.349  1423  4808 E WindowManager: win=Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
+12-22 20:59:09.407  1423  2265 I WindowManager: Relayout Window{6933967 u0 EdgeBackGestureHandler1}: viewVisibility=8 req=164x419 ty=2024 d1
+12-22 20:59:09.407  1423  2265 I WindowManager: Relayout hash=6933967, pid=2022, syncId=-1: mAttrs={(0,0)(164x419) sim={adjust=pan} ty=NAVIGATION_BAR_PANEL fmt=TRANSLUCENT
+12-22 20:59:09.407  1423  2265 I WindowManager:   fl=1000118
+12-22 20:59:09.407  1423  2265 I WindowManager:   pfl=30200010
+12-22 20:59:09.407  1423  2265 I WindowManager:   bhv=1
+12-22 20:59:09.407  1423  2265 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.407  1423  2265 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.423  2022  2022 I WindowManager: WindowManagerGlobal#addView, ty=2024, view=com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle{2671829 V.E...... ......I. 0,0-0,0 #7f0a0b72 app:id/secondary_home_handle}, caller=android.view.WindowManagerImpl.addView:158 com.android.systemui.navigationbar.views.NavigationBar.initSecondaryHomeHandleForRotation:87 com.android.systemui.navigationbar.views.NavigationBar.onViewAttached:417 
+12-22 20:59:09.423  2022  2022 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.423  2022  2022 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.427  1423  4808 I WindowManager: Relayout Window{e983ff1 u0 NavigationBar1}: viewVisibility=0 req=1422x75 ty=2019 d1
+12-22 20:59:09.428  1423  4808 D WindowManager: makeSurface duration=0 name=NavigationBar1$_2022
+12-22 20:59:09.431  1423  4808 I WindowManager: Relayout hash=e983ff1, pid=2022, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.431  1423  4808 I WindowManager:   fl=20040028
+12-22 20:59:09.431  1423  4808 I WindowManager:   pfl=31000000
+12-22 20:59:09.431  1423  4808 I WindowManager:   bhv=1
+12-22 20:59:09.431  1423  4808 I WindowManager:   providedInsets:
+12-22 20:59:09.431  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.431  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.431  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.431  1423  4808 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.431  1423  4808 I WindowManager:   paramsForRotation:
+12-22 20:59:09.431  1423  4808 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.431  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.431  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.431  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.431  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.431  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.431  1423  4808 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.431  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.431  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.431  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.431  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.431  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.431  1423  4808 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.431  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.431  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.431  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.431  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.431  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.431  1423  4808 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.431  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.431  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.431  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.431  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.431  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.431  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:09.435  1423  1855 D WindowManager: finishDrawingWindow: Window{e983ff1 u0 NavigationBar1} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.540  1423  4794 I WindowManager: Relayout Window{e983ff1 u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
+12-22 20:59:09.542  1423  4794 I WindowManager: Relayout hash=e983ff1, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.542  1423  4794 I WindowManager:   fl=20040028
+12-22 20:59:09.542  1423  4794 I WindowManager:   pfl=31000000
+12-22 20:59:09.542  1423  4794 I WindowManager:   bhv=1
+12-22 20:59:09.542  1423  4794 I WindowManager:   providedInsets:
+12-22 20:59:09.542  1423  4794 I WindowManager:     InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.542  1423  4794 I WindowManager:     InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:     InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.542  1423  4794 I WindowManager:     InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:     InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.542  1423  4794 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.542  1423  4794 I WindowManager:   paramsForRotation:
+12-22 20:59:09.542  1423  4794 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.542  1423  4794 I WindowManager:       fl=20040028
+12-22 20:59:09.542  1423  4794 I WindowManager:       pfl=31000000
+12-22 20:59:09.542  1423  4794 I WindowManager:       bhv=1
+12-22 20:59:09.542  1423  4794 I WindowManager:       providedInsets:
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.542  1423  4794 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.542  1423  4794 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.542  1423  4794 I WindowManager:       fl=20040028
+12-22 20:59:09.542  1423  4794 I WindowManager:       pfl=31000000
+12-22 20:59:09.542  1423  4794 I WindowManager:       bhv=1
+12-22 20:59:09.542  1423  4794 I WindowManager:       providedInsets:
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.542  1423  4794 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.542  1423  4794 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.542  1423  4794 I WindowManager:       fl=20040028
+12-22 20:59:09.542  1423  4794 I WindowManager:       pfl=31000000
+12-22 20:59:09.542  1423  4794 I WindowManager:       bhv=1
+12-22 20:59:09.542  1423  4794 I WindowManager:       providedInsets:
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.542  1423  4794 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.542  1423  4794 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.542  1423  4794 I WindowManager:       fl=20040028
+12-22 20:59:09.542  1423  4794 I WindowManager:       pfl=31000000
+12-22 20:59:09.542  1423  4794 I WindowManager:       bhv=1
+12-22 20:59:09.542  1423  4794 I WindowManager:       providedInsets:
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.542  1423  4794 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.542  1423  4794 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:09.547  1423  1635 I WindowManager: Relayout Window{e733bca u0 SecondaryHomeHandle1}: viewVisibility=8 req=0x0 ty=2024 d1
+12-22 20:59:09.547  1423  2933 D WindowManager: finishDrawingWindow: Window{e983ff1 u0 NavigationBar1} mDrawState=READY_TO_SHOW seqId=0
+12-22 20:59:09.547  1423  1635 I WindowManager: Relayout hash=e733bca, pid=2022, syncId=-1: mAttrs={(0,0)(0x0) sim={adjust=pan} ty=NAVIGATION_BAR_PANEL fmt=TRANSLUCENT
+12-22 20:59:09.547  1423  1635 I WindowManager:   fl=21000138
+12-22 20:59:09.547  1423  1635 I WindowManager:   pfl=1040
+12-22 20:59:09.547  1423  1635 I WindowManager:   bhv=1
+12-22 20:59:09.547  1423  1635 I WindowManager:   fitTypes=206
+12-22 20:59:09.547  1423  1635 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.547  1423  1635 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.587  1423  2886 I WindowManager: Relayout Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService}: viewVisibility=8 req=0x0 ty=2226 d0
+12-22 20:59:09.587  1423  2886 E WindowManager: win=Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
+12-22 20:59:09.589  1423  2886 I WindowManager: Relayout hash=41abd5c, pid=2712, syncId=-1: mAttrs={(0,628)(0x0) gr=TOP RIGHT CENTER sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=2226 fmt=TRANSPARENT
+12-22 20:59:09.589  1423  2886 I WindowManager:   fl=81800108
+12-22 20:59:09.589  1423  2886 I WindowManager:   pfl=10000070
+12-22 20:59:09.589  1423  2886 I WindowManager:   apr=10
+12-22 20:59:09.589  1423  2886 I WindowManager:   bhv=1
+12-22 20:59:09.589  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.589  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.589  1423  2886 I WindowManager:  dimAmount=0.0 dimDuration=0 naviIconColor=0
+12-22 20:59:09.589  1423  2886 I WindowManager:   sfl=420000}
+12-22 20:59:09.591  1423  4807 D WindowManager: Transition is created, t=TransitionRecord{3c4fc43 id=-1 type=TO_FRONT flags=0x8000}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 com.android.server.wm.KeyguardController.setKeyguardShown:257 com.android.server.wm.ActivityTaskManagerService$$ExternalSyntheticLambda13.accept:13 
+12-22 20:59:09.593  1423  4807 D WindowManager: Create SleepToken: tag=keyguard, displayId=0
+12-22 20:59:09.593  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:09.598  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.598  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:09.601  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.601  1423  1473 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x7d1fda5
+12-22 20:59:09.601  1423  1473 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599, destroy=false, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0
+12-22 20:59:09.601  1423  1473 I WindowManager: Reparenting to leash, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0, leashParent=Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599
+12-22 20:59:09.601  1423  1473 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x1073eb5
+12-22 20:59:09.606  1423  1473 D WindowManager: Transition is created, t=TransitionRecord{3879bf0 id=-1 type=TO_FRONT flags=0x800}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 com.android.server.wm.KeyguardController.setKeyguardShown:238 com.android.server.wm.ActivityTaskManagerService$$ExternalSyntheticLambda13.accept:13 
+12-22 20:59:09.608  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.609  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.624  1423  1555 I ActivityManager: Changes in 10362 16 to 11, 0 to 128
+12-22 20:59:09.633  1423  1474 I ActivityManager: Changes in 10362 11 to 16, 128 to 0
+12-22 20:59:09.655  1423  2886 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
+12-22 20:59:09.655  1423  2886 D WindowManager: makeSurface duration=1 name=NotificationShade$_2022
+12-22 20:59:09.657  1423  2886 I WindowManager: Relayout hash=b5eb294, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT or=SCREEN_ORIENTATION_NOSENSOR if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=5000
+12-22 20:59:09.657  1423  2886 I WindowManager:   fl=81160040
+12-22 20:59:09.657  1423  2886 I WindowManager:   pfl=10080200
+12-22 20:59:09.657  1423  2886 I WindowManager:   bhv=2
+12-22 20:59:09.657  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.657  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0
+12-22 20:59:09.657  1423  2886 I WindowManager:   sfl=40000}
+12-22 20:59:09.660  1423  2266 I WindowManager: Relayout Window{9f6c9d1 u0 ThumbsUpHandler_L}: viewVisibility=8 req=41x2520 ty=2601 d0
+12-22 20:59:09.660  1423  2266 E WindowManager: win=Window{9f6c9d1 u0 ThumbsUpHandler_L} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
+12-22 20:59:09.662  1423  2266 I WindowManager: Relayout hash=9f6c9d1, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP LEFT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
+12-22 20:59:09.662  1423  2266 I WindowManager:   fl=5800528
+12-22 20:59:09.662  1423  2266 I WindowManager:   pfl=10000050
+12-22 20:59:09.662  1423  2266 I WindowManager:   vsysui=500
+12-22 20:59:09.662  1423  2266 I WindowManager:   bhv=2
+12-22 20:59:09.662  1423  2266 I WindowManager:   fitTypes=207
+12-22 20:59:09.662  1423  2266 I WindowManager:   fitSides=0
+12-22 20:59:09.662  1423  2266 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.662  1423  2266 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:09.662  1423  2266 I WindowManager:   sfl=20000}
+12-22 20:59:09.667  1423  1555 I ActivityManager: Changes in 10176 19 to 11, 0 to 128
+12-22 20:59:09.672  1423  1474 I WindowManager: Relayout Window{7aff3c3 u0 ThumbsUpHandler_R}: viewVisibility=8 req=41x2520 ty=2601 d0
+12-22 20:59:09.672  1423  1474 E WindowManager: win=Window{7aff3c3 u0 ThumbsUpHandler_R} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
+12-22 20:59:09.673  1423  1474 I WindowManager: Relayout hash=7aff3c3, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP RIGHT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
+12-22 20:59:09.673  1423  1474 I WindowManager:   fl=5800528
+12-22 20:59:09.673  1423  1474 I WindowManager:   pfl=10000050
+12-22 20:59:09.673  1423  1474 I WindowManager:   vsysui=500
+12-22 20:59:09.673  1423  1474 I WindowManager:   bhv=2
+12-22 20:59:09.673  1423  1474 I WindowManager:   fitTypes=207
+12-22 20:59:09.673  1423  1474 I WindowManager:   fitSides=0
+12-22 20:59:09.673  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.673  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:09.673  1423  1474 I WindowManager:   sfl=20000}
+12-22 20:59:09.681  1423  2229 D WindowManager: finishDrawingWindow: Window{b5eb294 u0 NotificationShade} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.684  1423  2267 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=8 req=1422x1500 ty=1 d1
+12-22 20:59:09.684  1423  2267 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:09.684  1423  2267 I WindowManager:   fl=81810100
+12-22 20:59:09.684  1423  2267 I WindowManager:   pfl=10008850
+12-22 20:59:09.684  1423  2267 I WindowManager:   vsysui=1600000
+12-22 20:59:09.684  1423  2267 I WindowManager:   bhv=1
+12-22 20:59:09.684  1423  2267 I WindowManager:   fitSides=0
+12-22 20:59:09.684  1423  2267 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.684  1423  2267 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:09.685  1423  2934 I ActivityManager: Changes in 10176 11 to 19, 128 to 0
+12-22 20:59:09.685  1423  2886 I WindowManager: Relayout Window{4ad78ec u0 Bouncer}: viewVisibility=4 req=1080x0 ty=2009 d0
+12-22 20:59:09.685  1423  2886 I WindowManager: Relayout hash=4ad78ec, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=resize} layoutInDisplayCutoutMode=shortEdges ty=KEYGUARD_DIALOG fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=10000
+12-22 20:59:09.685  1423  2886 I WindowManager:   fl=85000548
+12-22 20:59:09.685  1423  2886 I WindowManager:   pfl=10000000
+12-22 20:59:09.685  1423  2886 I WindowManager:   vsysui=500
+12-22 20:59:09.685  1423  2886 I WindowManager:   bhv=2
+12-22 20:59:09.685  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.685  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.685  1423  2886 I WindowManager:  dimAmount=0.0 screenDimDuration=0 naviIconColor=0
+12-22 20:59:09.685  1423  2886 I WindowManager:   sfl=40000}
+12-22 20:59:09.686  1423  2886 I InputMethodManagerService: isInputMethodShown: isShown=true
+12-22 20:59:09.690  1423  2886 I InputMethodManagerService: isInputMethodShown: isShown=true
+12-22 20:59:09.691  1423  4808 I WindowManager: Relayout Window{e983ff1 u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
+12-22 20:59:09.692  1423  2934 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
+12-22 20:59:09.692  1423  4808 I WindowManager: Relayout hash=e983ff1, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.692  1423  4808 I WindowManager:   fl=20040028
+12-22 20:59:09.692  1423  4808 I WindowManager:   pfl=31000000
+12-22 20:59:09.692  1423  4808 I WindowManager:   bhv=1
+12-22 20:59:09.692  1423  4808 I WindowManager:   providedInsets:
+12-22 20:59:09.692  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.692  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.692  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:     InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.692  1423  4808 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.692  1423  4808 I WindowManager:   paramsForRotation:
+12-22 20:59:09.692  1423  4808 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.692  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.692  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.692  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.692  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.692  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.692  1423  4808 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.692  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.692  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.692  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.692  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.692  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.692  1423  4808 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.692  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.692  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.692  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.692  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.692  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.692  1423  4808 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.692  1423  4808 I WindowManager:       fl=20040028
+12-22 20:59:09.692  1423  4808 I WindowManager:       pfl=31000000
+12-22 20:59:09.692  1423  4808 I WindowManager:       bhv=1
+12-22 20:59:09.692  1423  4808 I WindowManager:       providedInsets:
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.692  1423  4808 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.692  1423  4808 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:09.698  1423  1604 D WindowManager: Remove SleepToken: tag=Display-off, displayId=1
+12-22 20:59:09.699  1423  1604 D WindowManager: Transition is created, t=TransitionRecord{4df3957 id=-1 type=WAKE flags=0x1000}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.RootWindowContainer.applySleepTokens:209 com.android.server.wm.ActivityTaskManagerService.updateSleepIfNeededLocked:90 com.android.server.wm.RootWindowContainer.removeSleepToken:131 
+12-22 20:59:09.700  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
+12-22 20:59:09.701  1423  1604 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:09.702  1423  1604 I WindowManager: Waiting for transition
+12-22 20:59:09.703  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.704  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.705  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.706  1423  2934 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.706  1423  2934 I WindowManager:   fl=20040028
+12-22 20:59:09.706  1423  2934 I WindowManager:   pfl=31001000
+12-22 20:59:09.706  1423  2934 I WindowManager:   bhv=1
+12-22 20:59:09.706  1423  2934 I WindowManager:   providedInsets:
+12-22 20:59:09.706  1423  2934 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.706  1423  2934 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.706  1423  2934 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.706  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.706  1423  2934 I WindowManager:   paramsForRotation:
+12-22 20:59:09.706  1423  2934 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.706  1423  2934 I WindowManager:       fl=20040028
+12-22 20:59:09.706  1423  2934 I WindowManager:       pfl=31001000
+12-22 20:59:09.706  1423  2934 I WindowManager:       bhv=1
+12-22 20:59:09.706  1423  2934 I WindowManager:       providedInsets:
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.706  1423  2934 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.706  1423  2934 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.706  1423  2934 I WindowManager:       fl=20040028
+12-22 20:59:09.706  1423  2934 I WindowManager:       pfl=31001000
+12-22 20:59:09.706  1423  2934 I WindowManager:       bhv=1
+12-22 20:59:09.706  1423  2934 I WindowManager:       providedInsets:
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.706  1423  2934 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.706  1423  2934 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.706  1423  2934 I WindowManager:       fl=20040028
+12-22 20:59:09.706  1423  2934 I WindowManager:       pfl=31001000
+12-22 20:59:09.706  1423  2934 I WindowManager:       bhv=1
+12-22 20:59:09.706  1423  2934 I WindowManager:       providedInsets:
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.706  1423  2934 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.706  1423  2934 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.706  1423  2934 I WindowManager:       fl=20040028
+12-22 20:59:09.706  1423  2934 I WindowManager:       pfl=31001000
+12-22 20:59:09.706  1423  2934 I WindowManager:       bhv=1
+12-22 20:59:09.706  1423  2934 I WindowManager:       providedInsets:
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.706  1423  2934 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.706  1423  2934 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:09.706  1423  2934 D WindowManager: finishDrawingWindow: Window{e983ff1 u0 NavigationBar1} mDrawState=READY_TO_SHOW seqId=0
+12-22 20:59:09.707  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.714  1423  1423 I ActivityManager: Changes in 10516 6 to 5, 239 to 255
+12-22 20:59:09.714  1423  1423 I ActivityManager: Changes in 10515 6 to 5, 239 to 255
+12-22 20:59:09.714  1423  1423 I ActivityManager: Changes in 10375 12 to 2, 0 to 255
+12-22 20:59:09.714  1423  1423 D InputDispatcher: Inject key (0/0): action=0, f=0x8, d=-1, time=33709295782000
+12-22 20:59:09.720  1423  2934 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
+12-22 20:59:09.721  1423  2934 I WindowManager: Waiting for transition
+12-22 20:59:09.721  1423  2934 I WindowManager: Relayout hash=b5eb294, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT or=SCREEN_ORIENTATION_NOSENSOR if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=5000
+12-22 20:59:09.721  1423  2934 I WindowManager:   fl=81060040
+12-22 20:59:09.721  1423  2934 I WindowManager:   pfl=10080200
+12-22 20:59:09.721  1423  2934 I WindowManager:   bhv=2
+12-22 20:59:09.721  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.721  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0
+12-22 20:59:09.721  1423  2934 I WindowManager:   sfl=40000}
+12-22 20:59:09.728  1423  2229 I InputMethodManagerService: isInputMethodShown: isShown=true
+12-22 20:59:09.728  1423  1636 I InputMethodManagerService: fhsi
+12-22 20:59:09.730  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.732  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.733  1423  1555 I ActivityManager: Changes in 10329 8 to 8, 0 to 128
+12-22 20:59:09.736  1423  1555 I ActivityManager: Changes in 5006 8 to 8, 0 to 128
+12-22 20:59:09.738  1423  2267 I WindowManager: Waiting for transition
+12-22 20:59:09.738  1423  2267 I WindowManager: Waiting for transition
+12-22 20:59:09.739  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.740  1423  1549 I ActivityManager: Changes in 10332 5 to 7, 255 to 128
+12-22 20:59:09.740  1423  1549 I ActivityManager: Changes in 10122 5 to 7, 184 to 128
+12-22 20:59:09.741  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.742  1423  2886 I ActivityManager: Changes in 5006 8 to 8, 128 to 0
+12-22 20:59:09.743  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.743  1423  2227 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:09.743  1423  2227 I InputMethodManagerService: setImeWindowStatus: vis=0, backDisposition=0
+12-22 20:59:09.751  1423  2934 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:09.755  1423  2934 I WindowManager: Relayout Window{f748235 u0 InputMethod}: viewVisibility=0 req=1080x2404 ty=2011 d0
+12-22 20:59:09.756  1423  2934 I WindowManager: Waiting for transition
+12-22 20:59:09.756  1423  2934 I WindowManager: Relayout hash=f748235, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
+12-22 20:59:09.756  1423  2934 I WindowManager:   fl=81800108
+12-22 20:59:09.756  1423  2934 I WindowManager:   pfl=14000000
+12-22 20:59:09.756  1423  2934 I WindowManager:   bhv=1
+12-22 20:59:09.756  1423  2934 I WindowManager:   fitTypes=3
+12-22 20:59:09.756  1423  2934 I WindowManager:   fitSides=7
+12-22 20:59:09.756  1423  2934 I WindowManager:   fitIgnoreVis
+12-22 20:59:09.756  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.756  1423  2934 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
+12-22 20:59:09.756  1423  2934 D WindowManager: setInsetsWindow Window{f748235 u0 InputMethod}, contentInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 1904 - 0, 0), visibleInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 1904 - 0, 0), touchableRegion=SkRegion((0,1904,1080,2404)) -> SkRegion((0,1904,1080,2404)), touchableInsets 3 -> 3
+12-22 20:59:09.757  1423  2934 I WindowManager: Waiting for transition
+12-22 20:59:09.768  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:09.770  1423  1547 I WindowManager: Waiting for transition
+12-22 20:59:09.773  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.773  1423  1555 I ActivityManager: Changes in 10373 16 to 11, 0 to 128
+12-22 20:59:09.776  1423  2267 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_FOCUS_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:09.776  1423  2267 E ActivityManager: java.lang.Throwable
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:09.776  1423  2267 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:09.777  1423  2229 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_FLOATING_SHORTCUT_AVAILABLE_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:09.777  1423  2229 E ActivityManager: java.lang.Throwable
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:09.777  1423  2229 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:09.778  1423  2886 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:09.778  1423  2886 E ActivityManager: java.lang.Throwable
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:09.778  1423  2886 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:09.782  1423  2266 I ActivityManager: Changes in 10373 11 to 16, 128 to 0
+12-22 20:59:09.796  1423  1555 I ActivityManager: Changes in 10113 10 to 10, 0 to 128
+12-22 20:59:09.800  7845  7845 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{dfd1384 VFE...C.. ........ 0,0-63,63}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1054 
+12-22 20:59:09.801  1423  2227 I ActivityManager: Changes in 10329 8 to 8, 128 to 0
+12-22 20:59:09.805 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{c47052b VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
+12-22 20:59:09.806  1423  1474 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
+12-22 20:59:09.806 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{d15ea34 V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
+12-22 20:59:09.807  1423  1474 I WindowManager: Waiting for transition
+12-22 20:59:09.807  1423  1474 I WindowManager: Relayout hash=b5eb294, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT or=SCREEN_ORIENTATION_NOSENSOR if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=5000
+12-22 20:59:09.807  1423  1474 I WindowManager:   fl=81160040
+12-22 20:59:09.807  1423  1474 I WindowManager:   pfl=10000200
+12-22 20:59:09.807  1423  1474 I WindowManager:   bhv=2
+12-22 20:59:09.807  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.807  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0
+12-22 20:59:09.807  1423  1474 I WindowManager:   sfl=40000}
+12-22 20:59:09.809 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{5dca76c G.E...... ......ID 0,0-527,444}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
+12-22 20:59:09.814  7845  7845 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{d4e1542 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.quadrantlauncher.FloatingLauncherService.setupBubble:607 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1071 
+12-22 20:59:09.814  7845  7845 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.815  7845  7845 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.815  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.815  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.822 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{1b6ce99 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
+12-22 20:59:09.823 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.823 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.825  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.826  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
+12-22 20:59:09.830  1423  4808 D WindowManager: finishDrawingWindow: Window{b5eb294 u0 NotificationShade} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:09.830  1423  4812 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:09.830  1423  4812 D WindowManager: makeSurface duration=0 name=SubLauncherWindow$_2022
+12-22 20:59:09.831  1423  4812 I WindowManager: Waiting for transition
+12-22 20:59:09.831  1423  4812 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:09.831  1423  4812 I WindowManager:   fl=81080278
+12-22 20:59:09.831  1423  4812 I WindowManager:   vsysui=1600400
+12-22 20:59:09.831  1423  4812 I WindowManager:   bhv=1
+12-22 20:59:09.831  1423  4812 I WindowManager:   fitTypes=206
+12-22 20:59:09.831  1423  4812 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.831  1423  4812 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.832  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.834  1423  2230 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
+12-22 20:59:09.837  1423  2230 I WindowManager: Waiting for transition
+12-22 20:59:09.839  1423  2267 I WindowManager: Relayout Window{2a89570 u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=63x63 ty=2032 d1
+12-22 20:59:09.839  1423  2267 D WindowManager: makeSurface duration=0 name=$_7845
+12-22 20:59:09.840  1423  2267 I WindowManager: Waiting for transition
+12-22 20:59:09.841 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{dbb9009 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
+12-22 20:59:09.841 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.842 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.843  1423  2267 I WindowManager: Relayout hash=2a89570, pid=7845, syncId=-1: mAttrs={(50,200)(wrapxwrap) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.843  1423  2267 I WindowManager:   fl=1040308
+12-22 20:59:09.843  1423  2267 I WindowManager:   bhv=1
+12-22 20:59:09.843  1423  2267 I WindowManager:   fitTypes=206
+12-22 20:59:09.843  1423  2267 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.843  1423  2267 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.844  1423  4808 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
+12-22 20:59:09.844  1423  4808 D WindowManager: makeSurface duration=1 name=com.android.systemui/com.android.systemui.subscreen.SubHomeActivity$_2022
+12-22 20:59:09.845  1423  4808 I WindowManager: Waiting for transition
+12-22 20:59:09.845  1423  4808 D WindowManager: Changing focus from null to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:09.845  1423  4808 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:09.846  1423  4808 D WindowManager: makeSurface duration=2 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xa7dc9da
+12-22 20:59:09.847  1423  4808 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:09.847  1423  4808 I WindowManager:   fl=81910100
+12-22 20:59:09.847  1423  4808 I WindowManager:   pfl=10008850
+12-22 20:59:09.847  1423  4808 I WindowManager:   vsysui=1600000
+12-22 20:59:09.847  1423  4808 I WindowManager:   bhv=1
+12-22 20:59:09.847  1423  4808 I WindowManager:   fitSides=0
+12-22 20:59:09.847  1423  4808 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.847  1423  4808 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:09.847  1423  2230 D WindowManager: finishDrawingWindow: Window{e382cc2 u0 SubLauncherWindow} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.849 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{c87711a V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
+12-22 20:59:09.849  1423  1550 W WindowManager: Don't apply multiCrop on extra display
+12-22 20:59:09.849 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.850 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.850  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.850  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.854 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{dbb9009 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:790 
+12-22 20:59:09.854  1423  1474 I ActivityManager: Changes in 10113 10 to 10, 128 to 0
+12-22 20:59:09.856 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{c87711a V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:791 
+12-22 20:59:09.858 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{1b6ce99 G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.setupUI:794 
+12-22 20:59:09.863 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{f60067d G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
+12-22 20:59:09.864 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.864 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.867  1423  4812 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:09.867  1423  4812 D InputDispatcher: Focus request (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity but waiting because NO_WINDOW
+12-22 20:59:09.869  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:09.869  1423  1636 D WindowManager: finishDrawingWindow: Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.878  1423  1550 D WindowManager: All windows drawn!
+12-22 20:59:09.883  1423  2267 D WindowManager: finishDrawingWindow: Window{2a89570 u0 com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.884 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
+12-22 20:59:09.885 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.885 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.897 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
+12-22 20:59:09.897 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:09.898 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:09.899  1423  1423 D InputDispatcher: Inject key (0/0): action=1, f=0x8, d=-1, time=33709502637000
+12-22 20:59:09.905  1423  2886 W WindowManager: Failed looking up window session=Session{9d5656e 28700:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:09.905  1423  2886 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:09.910  1423  2886 D WindowManager: finishDrawingWindow: Window{2a89570 u0 com.katsuyamaki.DroidOSLauncher} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:09.911  1423  2267 W WindowManager: Failed looking up window session=Session{9d5656e 28700:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:09.911  1423  2267 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:09.918  1423  1474 D InputDispatcher: Focus entered window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:09.933  1423  1555 I ActivityManager: Changes in 10176 19 to 11, 0 to 128
+12-22 20:59:09.934  1423  4808 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:09.936  1423  1474 I WindowManager: Relayout Window{e983ff1 u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
+12-22 20:59:09.936  1423  2934 I WindowManager: Relayout Window{e30915d u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
+12-22 20:59:09.937  1423  1474 I WindowManager: Relayout hash=e983ff1, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  1474 I WindowManager:   fl=20040028
+12-22 20:59:09.937  1423  1474 I WindowManager:   pfl=31000000
+12-22 20:59:09.937  1423  1474 I WindowManager:   bhv=1
+12-22 20:59:09.937  1423  1474 I WindowManager:   providedInsets:
+12-22 20:59:09.937  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.937  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.937  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:09.937  1423  1474 I WindowManager:   paramsForRotation:
+12-22 20:59:09.937  1423  1474 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:09.937  1423  1474 I WindowManager:       pfl=31000000
+12-22 20:59:09.937  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:09.937  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.937  1423  1474 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:09.937  1423  1474 I WindowManager:       pfl=31000000
+12-22 20:59:09.937  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:09.937  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.937  1423  1474 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:09.937  1423  1474 I WindowManager:       pfl=31000000
+12-22 20:59:09.937  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:09.937  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.937  1423  1474 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:09.937  1423  1474 I WindowManager:       pfl=31000000
+12-22 20:59:09.937  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:09.937  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:09.937  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:09.937  1423  2934 I WindowManager: Relayout hash=e30915d, pid=28700, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.937  1423  2934 I WindowManager:   fl=1040228
+12-22 20:59:09.937  1423  2934 I WindowManager:   pfl=40000000
+12-22 20:59:09.937  1423  2934 I WindowManager:   bhv=1
+12-22 20:59:09.937  1423  2934 I WindowManager:   fitTypes=207
+12-22 20:59:09.937  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.937  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.938  1423  2230 I ActivityManager: Changes in 10176 11 to 19, 128 to 0
+12-22 20:59:09.938  1423  2230 I WindowManager: Relayout Window{a5d8bcd u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
+12-22 20:59:09.938  1423  2230 D WindowManager: makeSurface duration=1 name=$_28700
+12-22 20:59:09.939  1423  1555 I ActivityManager: Changes in 10329 8 to 8, 0 to 128
+12-22 20:59:09.939  1423  2230 I WindowManager: Relayout hash=a5d8bcd, pid=28700, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.939  1423  2230 I WindowManager:   fl=1000308
+12-22 20:59:09.939  1423  2230 I WindowManager:   bhv=1
+12-22 20:59:09.939  1423  2230 I WindowManager:   fitTypes=206
+12-22 20:59:09.939  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.939  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.940  1423  2934 D WindowManager: finishDrawingWindow: Window{e983ff1 u0 NavigationBar1} mDrawState=READY_TO_SHOW seqId=0
+12-22 20:59:09.940  1423  1555 I ActivityManager: Changes in 5006 8 to 8, 0 to 128
+12-22 20:59:09.944  1423  2886 I ActivityManager: Changes in 5006 8 to 8, 128 to 0
+12-22 20:59:09.950  1423  1474 I WindowManager: Relayout Window{9f6c9d1 u0 ThumbsUpHandler_L}: viewVisibility=0 req=41x2520 ty=2601 d0
+12-22 20:59:09.950  1423  1474 D WindowManager: makeSurface duration=1 name=ThumbsUpHandler_L$_6554
+12-22 20:59:09.951  1423  1474 I WindowManager: Relayout hash=9f6c9d1, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP LEFT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
+12-22 20:59:09.951  1423  1474 I WindowManager:   fl=5800528
+12-22 20:59:09.951  1423  1474 I WindowManager:   pfl=10000050
+12-22 20:59:09.951  1423  1474 I WindowManager:   vsysui=500
+12-22 20:59:09.951  1423  1474 I WindowManager:   bhv=2
+12-22 20:59:09.951  1423  1474 I WindowManager:   fitTypes=207
+12-22 20:59:09.951  1423  1474 I WindowManager:   fitSides=0
+12-22 20:59:09.951  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.951  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:09.951  1423  1474 I WindowManager:   sfl=20000}
+12-22 20:59:09.953  1423  2227 I ActivityManager: Changes in 5009 6 to 5, 128 to 144
+12-22 20:59:09.955  1423  2266 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:09.956  1423  2230 D WindowManager: finishDrawingWindow: Window{a5d8bcd u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.957  1423  4812 I WindowManager: Relayout Window{e82ffe7 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
+12-22 20:59:09.957  1423  4812 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:09.958  1423  4812 I WindowManager: Relayout hash=e82ffe7, pid=28700, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.958  1423  4812 I WindowManager:   fl=1000318
+12-22 20:59:09.958  1423  4812 I WindowManager:   bhv=1
+12-22 20:59:09.958  1423  4812 I WindowManager:   fitTypes=206
+12-22 20:59:09.958  1423  4812 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.958  1423  4812 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.958  1423  2886 I WindowManager: Relayout Window{7aff3c3 u0 ThumbsUpHandler_R}: viewVisibility=0 req=41x2520 ty=2601 d0
+12-22 20:59:09.958  1423  2886 D WindowManager: makeSurface duration=0 name=ThumbsUpHandler_R$_6554
+12-22 20:59:09.959  1423  1555 I ActivityManager: Changes in 10373 16 to 11, 0 to 128
+12-22 20:59:09.959  1423  2886 I WindowManager: Relayout hash=7aff3c3, pid=6554, syncId=-1: mAttrs={(0,0)(41x2520) gr=TOP RIGHT CENTER sim={state=hidden adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=2601 fmt=TRANSLUCENT alpha=0.0
+12-22 20:59:09.959  1423  2886 I WindowManager:   fl=5800528
+12-22 20:59:09.959  1423  2886 I WindowManager:   pfl=10000050
+12-22 20:59:09.959  1423  2886 I WindowManager:   vsysui=500
+12-22 20:59:09.959  1423  2886 I WindowManager:   bhv=2
+12-22 20:59:09.959  1423  2886 I WindowManager:   fitTypes=207
+12-22 20:59:09.959  1423  2886 I WindowManager:   fitSides=0
+12-22 20:59:09.959  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.959  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:09.959  1423  2886 I WindowManager:   sfl=20000}
+12-22 20:59:09.960  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
+12-22 20:59:09.961  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:09.963  1423  4812 D WindowManager: finishDrawingWindow: Window{9f6c9d1 u0 ThumbsUpHandler_L} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.965  1423  2267 I WindowManager: Relayout Window{b6fe3cf u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=681x551 ty=2032 d1
+12-22 20:59:09.967  1423  2265 D WindowManager: finishDrawingWindow: Window{e82ffe7 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.968  1423  2267 I WindowManager: Relayout hash=b6fe3cf, pid=28700, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.968  1423  2267 I WindowManager:   fl=1040228
+12-22 20:59:09.968  1423  2267 I WindowManager:   pfl=40000000
+12-22 20:59:09.968  1423  2267 I WindowManager:   bhv=1
+12-22 20:59:09.968  1423  2267 I WindowManager:   fitTypes=207
+12-22 20:59:09.968  1423  2267 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.968  1423  2267 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.969  1423  4812 D WindowManager: finishDrawingWindow: Window{7aff3c3 u0 ThumbsUpHandler_R} mDrawState=DRAW_PENDING seqId=14
+12-22 20:59:09.969  1423  1555 I ActivityManager: Changes in 10362 16 to 11, 0 to 128
+12-22 20:59:09.969  1423  2230 I WindowManager: Relayout Window{5112d51 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
+12-22 20:59:09.970  1423  2230 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:09.970  1423  2230 I WindowManager: Relayout hash=5112d51, pid=28700, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.970  1423  2230 I WindowManager:   fl=1000308
+12-22 20:59:09.970  1423  2230 I WindowManager:   bhv=1
+12-22 20:59:09.970  1423  2230 I WindowManager:   fitTypes=206
+12-22 20:59:09.970  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.970  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.973  1423  4808 I ActivityManager: Changes in 10373 11 to 16, 128 to 0
+12-22 20:59:09.976  1423  4808 I ActivityManager: Changes in 10362 11 to 16, 128 to 0
+12-22 20:59:09.981  1423  1555 I ActivityManager: Changes in 10113 10 to 10, 0 to 128
+12-22 20:59:09.986  1423  1700 I ActivityManager: Changes in 10329 8 to 8, 128 to 0
+12-22 20:59:09.986  1423  1700 D WindowManager: finishDrawingWindow: Window{5112d51 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.986  1423  2227 I WindowManager: Relayout Window{2fbb98e u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
+12-22 20:59:09.987  1423  1555 I ActivityManager: Changes in 10100 19 to 11, 0 to 128
+12-22 20:59:09.987  1423  2227 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:09.988  1423  2227 I WindowManager: Relayout hash=2fbb98e, pid=28700, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:09.988  1423  2227 I WindowManager:   fl=1000318
+12-22 20:59:09.988  1423  2227 I WindowManager:   bhv=1
+12-22 20:59:09.988  1423  2227 I WindowManager:   fitTypes=206
+12-22 20:59:09.988  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:09.988  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:09.988  1423  4808 I ActivityManager: Changes in 10113 10 to 10, 128 to 0
+12-22 20:59:09.993  1423  4811 D WindowManager: finishDrawingWindow: Window{2fbb98e u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:09.995  1423  4808 I ActivityManager: Changes in 10100 11 to 19, 128 to 0
+12-22 20:59:10.001  1423  2886 W WindowManager: Failed looking up window session=Session{9d5656e 28700:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:10.001  1423  2886 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:10.001  1423  2886 W WindowManager: Failed looking up window session=Session{9d5656e 28700:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:10.001  1423  2886 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:10.002  1423  4807 I WindowManager: Relayout Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService}: viewVisibility=0 req=67x342 ty=2226 d0
+12-22 20:59:10.002  1423  4807 D WindowManager: makeSurface duration=0 name=com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService$_2712
+12-22 20:59:10.003  1423  4807 I WindowManager: Relayout hash=41abd5c, pid=2712, syncId=-1: mAttrs={(0,628)(67x342) gr=TOP RIGHT CENTER sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=2226 fmt=TRANSPARENT
+12-22 20:59:10.003  1423  4807 I WindowManager:   fl=81800108
+12-22 20:59:10.003  1423  4807 I WindowManager:   pfl=10000070
+12-22 20:59:10.003  1423  4807 I WindowManager:   apr=10
+12-22 20:59:10.003  1423  4807 I WindowManager:   bhv=1
+12-22 20:59:10.003  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:10.003  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:10.003  1423  4807 I WindowManager:  dimAmount=0.0 dimDuration=0 naviIconColor=0
+12-22 20:59:10.003  1423  4807 I WindowManager:   sfl=420000}
+12-22 20:59:10.010  1423  2230 D WindowManager: finishDrawingWindow: Window{41abd5c u0 com.sec.android.app.launcher/com.samsung.app.honeyspace.edge.edgepanel.app.CocktailBarService} mDrawState=DRAW_PENDING seqId=57
+12-22 20:59:10.019  1423  2230 D WindowManager: finishDrawingWindow: Window{5112d51 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:10.020  1423  4807 D WindowManager: finishDrawingWindow: Window{2fbb98e u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:10.262  1423  2230 I WindowManager: Relayout Window{f748235 u0 InputMethod}: viewVisibility=8 req=1080x2404 ty=2011 d0
+12-22 20:59:10.263  1423  2230 E WindowManager: win=Window{f748235 u0 InputMethod} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
+12-22 20:59:10.279  1423  2230 I WindowManager: Relayout hash=f748235, pid=4255, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
+12-22 20:59:10.279  1423  2230 I WindowManager:   fl=81800108
+12-22 20:59:10.279  1423  2230 I WindowManager:   pfl=14000000
+12-22 20:59:10.279  1423  2230 I WindowManager:   bhv=1
+12-22 20:59:10.279  1423  2230 I WindowManager:   fitTypes=3
+12-22 20:59:10.279  1423  2230 I WindowManager:   fitSides=7
+12-22 20:59:10.279  1423  2230 I WindowManager:   fitIgnoreVis
+12-22 20:59:10.279  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:10.279  1423  2230 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
+12-22 20:59:10.288  1423  2227 D WindowManager: setInsetsWindow Window{f748235 u0 InputMethod}, contentInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 2329 - 0, 0), visibleInsets=Rect(0, 1904 - 0, 0) -> Rect(0, 2329 - 0, 0), touchableRegion=SkRegion((0,1904,1080,2404)) -> SkRegion(), touchableInsets 3 -> 3
+12-22 20:59:10.292  1423  2227 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:10.294  1423  2227 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:10.294  1423  2227 I WindowManager:   fl=14318
+12-22 20:59:10.294  1423  2227 I WindowManager:   pfl=14
+12-22 20:59:10.294  1423  2227 I WindowManager:   bhv=1
+12-22 20:59:10.294  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:10.294  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:10.294  1423  2227 I WindowManager:   sfl=8}
+12-22 20:59:10.396  1423  2230 D WindowManager: finishDrawingWindow: Window{b5eb294 u0 NotificationShade} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:11.025  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33710627084000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:11.027  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x0, f=0x0, d=1, '5112d51', t=1 +(-95,-1094)*(1.50)
+12-22 20:59:11.076  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:11.088  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33710692369000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:11.088  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x1, f=0x0, d=1, '5112d51', t=1 +(-95,-1094)*(1.50)
+12-22 20:59:11.095 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1588 
+12-22 20:59:11.097 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1588 com.example.coverscreentester.OverlayService.setupBubble$lambda$24$lambda$23:897 
+12-22 20:59:11.100 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:11.101 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:11.107 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1589 
+12-22 20:59:11.112 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1589 com.example.coverscreentester.OverlayService.setupBubble$lambda$24$lambda$23:897 
+12-22 20:59:11.115 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:11.115 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:11.121  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:11.122  1423  2230 I WindowManager: Relayout Window{7a9e9d4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
+12-22 20:59:11.123  1423  2230 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:11.124  1423  2230 I WindowManager: Relayout hash=7a9e9d4, pid=28700, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.124  1423  2230 I WindowManager:   fl=1000308
+12-22 20:59:11.124  1423  2230 I WindowManager:   bhv=1
+12-22 20:59:11.124  1423  2230 I WindowManager:   fitTypes=206
+12-22 20:59:11.124  1423  2230 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.124  1423  2230 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.131  1423  4807 D WindowManager: finishDrawingWindow: Window{7a9e9d4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:11.131  1423  2227 I WindowManager: Relayout Window{a5c2f3b u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
+12-22 20:59:11.131  1423  2227 D WindowManager: makeSurface duration=1 name=$_28700
+12-22 20:59:11.132  1423  2227 I WindowManager: Relayout hash=a5c2f3b, pid=28700, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.132  1423  2227 I WindowManager:   fl=1000318
+12-22 20:59:11.132  1423  2227 I WindowManager:   bhv=1
+12-22 20:59:11.132  1423  2227 I WindowManager:   fitTypes=206
+12-22 20:59:11.132  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.132  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.144  1423  1700 D WindowManager: finishDrawingWindow: Window{a5c2f3b u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:11.152  1423  1700 D WindowManager: finishDrawingWindow: Window{a5c2f3b u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:11.701  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33711294047000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:11.703  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x0, f=0x0, d=1, '7a9e9d4', t=1 +(-95,-1094)*(1.50)
+12-22 20:59:11.741  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:11.744  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33711342421000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:11.744  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x1, f=0x0, d=1, '7a9e9d4', t=1 +(-95,-1094)*(1.50)
+12-22 20:59:11.754  1423  4807 I WindowManager: Relayout Window{b6fe3cf u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=681x551 ty=2032 d1
+12-22 20:59:11.755  1423  4807 D WindowManager: makeSurface duration=1 name=$_28700
+12-22 20:59:11.756  1423  4807 I WindowManager: Relayout hash=b6fe3cf, pid=28700, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.756  1423  4807 I WindowManager:   fl=1040228
+12-22 20:59:11.756  1423  4807 I WindowManager:   pfl=40000000
+12-22 20:59:11.756  1423  4807 I WindowManager:   bhv=1
+12-22 20:59:11.756  1423  4807 I WindowManager:   fitTypes=207
+12-22 20:59:11.756  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.756  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.768 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1588 
+12-22 20:59:11.768  1423  4807 D WindowManager: finishDrawingWindow: Window{b6fe3cf u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:11.769 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1588 com.example.coverscreentester.OverlayService.setupBubble$lambda$24$lambda$23:897 
+12-22 20:59:11.774  1423  4807 W WindowManager: Failed looking up window session=Session{9d5656e 28700:u0a10515} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:11.774  1423  4807 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:11.775 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:11.775 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:11.782 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1589 
+12-22 20:59:11.783 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1589 com.example.coverscreentester.OverlayService.setupBubble$lambda$24$lambda$23:897 
+12-22 20:59:11.788 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:11.788 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:11.798  1423  2189 I WindowManager: Relayout Window{b6fe3cf u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=681x551 ty=2032 d1
+12-22 20:59:11.799  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:11.799  1423  2189 I WindowManager: Relayout hash=b6fe3cf, pid=28700, syncId=-1: mAttrs={(683,640)(681x551) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.799  1423  2189 I WindowManager:   fl=1040228
+12-22 20:59:11.799  1423  2189 I WindowManager:   pfl=40000000
+12-22 20:59:11.799  1423  2189 I WindowManager:   bhv=1
+12-22 20:59:11.799  1423  2189 I WindowManager:   fitTypes=207
+12-22 20:59:11.799  1423  2189 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.799  1423  2189 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.801  1423  2886 I WindowManager: Relayout Window{f54e17a u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
+12-22 20:59:11.801  1423  2886 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:11.802  1423  2886 I WindowManager: Relayout hash=f54e17a, pid=28700, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.802  1423  2886 I WindowManager:   fl=1000308
+12-22 20:59:11.802  1423  2886 I WindowManager:   bhv=1
+12-22 20:59:11.802  1423  2886 I WindowManager:   fitTypes=206
+12-22 20:59:11.802  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.802  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.807  1423  4811 D WindowManager: finishDrawingWindow: Window{f54e17a u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:11.807  1423  2189 I WindowManager: Relayout Window{411d59 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
+12-22 20:59:11.807  1423  2189 D WindowManager: makeSurface duration=1 name=$_28700
+12-22 20:59:11.809  1423  2189 I WindowManager: Relayout hash=411d59, pid=28700, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:11.809  1423  2189 I WindowManager:   fl=1000318
+12-22 20:59:11.809  1423  2189 I WindowManager:   bhv=1
+12-22 20:59:11.809  1423  2189 I WindowManager:   fitTypes=206
+12-22 20:59:11.809  1423  2189 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:11.809  1423  2189 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:11.814  1423  2189 D WindowManager: finishDrawingWindow: Window{411d59 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:11.818  1423  4812 D WindowManager: finishDrawingWindow: Window{411d59 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:12.576  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33712175402000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:12.577  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x0, f=0x0, d=1, 'b6fe3cf', t=1 +(-682,-676)*(1.50)
+12-22 20:59:12.629 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{4228daa V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.TrackpadMenuManager.show:49 com.example.coverscreentester.TrackpadMenuManager.toggle:75 
+12-22 20:59:12.629 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:12.629 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:12.633  1423  4811 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to Window{a0ecd0b u0 com.katsuyamaki.DroidOSTrackpadKeyboard} displayId=1 Callers=com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 com.android.server.wm.Session.addToDisplayAsUser:24 android.view.IWindowSession$Stub.onTransact:757 
+12-22 20:59:12.633  1423  4811 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{a0ecd0b u0 com.katsuyamaki.DroidOSTrackpadKeyboard}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 
+12-22 20:59:12.633  1423  4811 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
+12-22 20:59:12.638 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{4228daa V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.TrackpadMenuManager.bringToFront:82 
+12-22 20:59:12.639 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{4228daa V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.TrackpadMenuManager.bringToFront:83 com.example.coverscreentester.OverlayService.enforceZOrder:1587 
+12-22 20:59:12.641  1423  2886 D WindowManager: Changing focus from Window{a0ecd0b u0 com.katsuyamaki.DroidOSTrackpadKeyboard} to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.wm.Session.remove:16 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:12.641  1423  2886 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.wm.Session.remove:16 
+12-22 20:59:12.641  1423  2886 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-11
+12-22 20:59:12.642 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:12.642 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:12.647  1423  4807 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} displayId=1 Callers=com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 com.android.server.wm.Session.addToDisplayAsUser:24 android.view.IWindowSession$Stub.onTransact:757 
+12-22 20:59:12.647  1423  4807 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowManagerService.addWindowInner:565 com.android.server.wm.WindowManagerService.addWindow:1842 
+12-22 20:59:12.647  1423  4807 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
+12-22 20:59:12.649 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1588 
+12-22 20:59:12.651 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{cfc4abe VFE...C.. ........ 0,0-93,93}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1588 com.example.coverscreentester.TrackpadMenuManager.show:56 
+12-22 20:59:12.655 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:12.655 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:12.660 28700 28700 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.coverscreentester.OverlayService.enforceZOrder:1589 
+12-22 20:59:12.662 28700 28700 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{ae54ca V.E...... ........ 0,0-50,50}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.enforceZOrder:1589 com.example.coverscreentester.TrackpadMenuManager.show:56 
+12-22 20:59:12.664  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33712267612000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:12.665  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x1, f=0x0, d=1, 'b6fe3cf', t=1 +(-682,-676)*(1.50)
+12-22 20:59:12.666 28700 28700 D ViewRootImpl: desktopMode is false
+12-22 20:59:12.666 28700 28700 I ViewRootImpl: dVRR is disabled
+12-22 20:59:12.671  1423  2886 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:12.685  1423  2189 I WindowManager: Relayout Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=500x625 ty=2032 d1
+12-22 20:59:12.686  1423  2189 D WindowManager: makeSurface duration=1 name=$_28700
+12-22 20:59:12.687  1423  2189 I WindowManager: Relayout hash=4443c39, pid=28700, syncId=-1: mAttrs={(430,437)(wrapxwrap) gr=TOP START CENTER sim={adjust=resize} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:12.687  1423  2189 I WindowManager:   fl=1000120
+12-22 20:59:12.687  1423  2189 I WindowManager:   bhv=1
+12-22 20:59:12.687  1423  2189 I WindowManager:   fitTypes=206
+12-22 20:59:12.687  1423  2189 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:12.687  1423  2189 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:12.701  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:12.711  1423  4807 D InputDispatcher: Once focus requested (1): 4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:12.711  1423  4807 D InputDispatcher: Focus request (1): 4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard but waiting because NO_WINDOW
+12-22 20:59:12.711  1423  4807 D InputDispatcher: Focus left window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:12.806  1423  2189 D WindowManager: finishDrawingWindow: Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:12.806  1423  4807 I WindowManager: Relayout Window{c2cc0c4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d1
+12-22 20:59:12.807  1423  4807 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:12.809  1423  4807 I WindowManager: Relayout hash=c2cc0c4, pid=28700, syncId=-1: mAttrs={(95,1058)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:12.809  1423  4807 I WindowManager:   fl=1000308
+12-22 20:59:12.809  1423  4807 I WindowManager:   bhv=1
+12-22 20:59:12.809  1423  4807 I WindowManager:   fitTypes=206
+12-22 20:59:12.809  1423  4807 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:12.809  1423  4807 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:12.815  1423  1700 D WindowManager: finishDrawingWindow: Window{c2cc0c4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:12.816  1423  2886 I WindowManager: Relayout Window{e9faceb u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d1
+12-22 20:59:12.816  1423  2886 D WindowManager: makeSurface duration=0 name=$_28700
+12-22 20:59:12.817  1423  2886 I WindowManager: Relayout hash=e9faceb, pid=28700, syncId=-1: mAttrs={(711,750)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:12.817  1423  2886 I WindowManager:   fl=1000318
+12-22 20:59:12.817  1423  2886 I WindowManager:   bhv=1
+12-22 20:59:12.817  1423  2886 I WindowManager:   fitTypes=206
+12-22 20:59:12.817  1423  2886 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:12.817  1423  2886 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:12.822  1423  2886 D WindowManager: finishDrawingWindow: Window{e9faceb u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:12.826  1423  2886 D WindowManager: finishDrawingWindow: Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:12.827  1423  2886 D WindowManager: finishDrawingWindow: Window{e9faceb u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:12.829  1423  4807 D InputDispatcher: Focus entered window (1): 4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:12.836  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
+12-22 20:59:12.836  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:12.858  1423  2886 I ActivityManager: Changes in 10122 7 to 10, 128 to 0
+12-22 20:59:13.452  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33713051322000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:13.454  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x0, f=0x0, d=1, '4443c39', t=1 +(-430,-472)*(1.50)
+12-22 20:59:13.538  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33713142593000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:13.539  1423  1695 I InputDispatcher: Delivering touch to (28700): action: 0x1, f=0x0, d=1, '4443c39', t=1 +(-430,-472)*(1.50)
+12-22 20:59:13.608  1423  1695 W InputDispatcher: channel '4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Consumer closed input channel or an error occurred.  events=0x9
+12-22 20:59:13.609  1423  1695 E InputDispatcher: channel '4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Channel is unrecoverably broken and will be disposed!
+12-22 20:59:13.609  1423  1695 I WindowManager: WINDOW DIED Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:13.610  1423  1695 D WindowManager: Changing focus from Window{4443c39 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} to Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} displayId=1 Callers=com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.input.InputManagerService.notifyInputChannelBroken:72 <bottom of call stack> <bottom of call stack> 
+12-22 20:59:13.610  1423  1695 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowState.removeIfPossible:647 com.android.server.input.InputManagerService.notifyInputChannelBroken:72 
+12-22 20:59:13.610  1423  1695 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-11
+12-22 20:59:13.611  1423  1695 W InputDispatcher: channel 'b6fe3cf com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Consumer closed input channel or an error occurred.  events=0x9
+12-22 20:59:13.611  1423  1695 E InputDispatcher: channel 'b6fe3cf com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Channel is unrecoverably broken and will be disposed!
+12-22 20:59:13.611  1423  1695 I WindowManager: WINDOW DIED Window{b6fe3cf u0 com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:13.612  1423  1695 W InputDispatcher: channel 'e9faceb com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Consumer closed input channel or an error occurred.  events=0x9
+12-22 20:59:13.612  1423  1695 E InputDispatcher: channel 'e9faceb com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Channel is unrecoverably broken and will be disposed!
+12-22 20:59:13.612  1423  1695 W InputDispatcher: channel 'c2cc0c4 com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Consumer closed input channel or an error occurred.  events=0x9
+12-22 20:59:13.612  1423  1695 E InputDispatcher: channel 'c2cc0c4 com.katsuyamaki.DroidOSTrackpadKeyboard' ~ Channel is unrecoverably broken and will be disposed!
+12-22 20:59:13.612  1423  1695 I WindowManager: WINDOW DIED Window{e9faceb u0 com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:13.612  1423  1700 D InputDispatcher: Focus left window (1): 4443c39 com.katsuyamaki.DroidOSTrackpadKeyboard
+12-22 20:59:13.613  1423  1695 I WindowManager: WINDOW DIED Window{c2cc0c4 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:13.615  1423  2267 I ActivityManager: Process com.katsuyamaki.DroidOSTrackpadKeyboard (pid 28700) has died: vis BFGS(819,1740)
+12-22 20:59:13.616  1423  2267 W ActivityManager: Scheduling restart of crashed service com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.OverlayService in 1000ms for connection
+12-22 20:59:13.619  1423  2697 D InputMethodManagerService: onClientRemovedInternalLocked
+12-22 20:59:13.621  1423  2227 D InputMethodManagerService: onClientRemovedInternalLocked
+12-22 20:59:13.622  1423  2109 W ActivityManager: pid 1423 system sent binder code 1 with flags 1 to frozen apps and got error -32
+12-22 20:59:13.626  1423  2270 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:13.626  1423  1636 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:13.627  1423  4812 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:13.628  1423  1549 W ActivityManager: setHasOverlayUi called on unknown pid: 28700
+12-22 20:59:13.629  1423  4800 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:13.634  1423  2228 D InputDispatcher: Once focus requested (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:13.634  1423  2228 D InputDispatcher: Focus entered window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:13.639  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
+12-22 20:59:13.639  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:14.417  1423  1554 W ActivityManager: Rescheduling restart of crashed service com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.OverlayService in 29202ms for mem-pressure-event
+12-22 20:59:14.657  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33714242798000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:14.657  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:14.658  1423  1695 I InputDispatcher: Delivering touch to (7845): action: 0x4, f=0x0, d=1, '2a89570', t=1 
+12-22 20:59:14.658  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'e983ff1', t=1 
+12-22 20:59:14.658  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
+12-22 20:59:14.689  1423  1700 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:14.690  1423  1700 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:14.690  1423  1700 I WindowManager:   fl=81080278
+12-22 20:59:14.690  1423  1700 I WindowManager:   vsysui=1600400
+12-22 20:59:14.690  1423  1700 I WindowManager:   bhv=1
+12-22 20:59:14.690  1423  1700 I WindowManager:   fitTypes=206
+12-22 20:59:14.690  1423  1700 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:14.690  1423  1700 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:14.694  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:14.707  1423  2228 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:14.708  1423  2228 D WindowManager: Changing focus from Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:14.708  1423  2228 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xa7dc9da
+12-22 20:59:14.708  1423  2228 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:14.708  1423  2228 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:14.708  1423  2228 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xaef8cb5
+12-22 20:59:14.709  1423  2228 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:14.709  1423  2228 I WindowManager:   fl=80080260
+12-22 20:59:14.709  1423  2228 I WindowManager:   vsysui=1600400
+12-22 20:59:14.709  1423  2228 I WindowManager:   bhv=1
+12-22 20:59:14.709  1423  2228 I WindowManager:   fitTypes=206
+12-22 20:59:14.709  1423  2228 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:14.709  1423  2228 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:14.713  1423  2228 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_QUICK_PANEL_TOUCH_AREA_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:14.713  1423  2228 E ActivityManager: java.lang.Throwable
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:14.713  1423  2228 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:14.728  1423  1700 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
+12-22 20:59:14.728  1423  1700 D InputDispatcher: Focus left window (1): 9a3d1c6 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity
+12-22 20:59:14.728  1423  1700 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
+12-22 20:59:14.743  1423  1754 I InputMethodManagerService: startInputOrWindowGainedFocusInternalLocked: Rejecting unbind in case of no editor in cover screen.
+12-22 20:59:14.743  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:14.747  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33714351020000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:14.747  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, '9a3d1c6', t=1 +(0,-35)*(1.50)
+12-22 20:59:14.815  1423  1636 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_COVER_HOME_FOCUS_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:14.815  1423  1636 E ActivityManager: java.lang.Throwable
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:14.815  1423  1636 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:14.815  1423  1700 E ActivityManager: Sending non-protected broadcast com.samsung.android.app.aodservice.ACTION_FLOATING_SHORTCUT_AVAILABLE_CHANGED from system 2022:com.android.systemui/u0a55 pkg com.android.systemui
+12-22 20:59:14.815  1423  1700 E ActivityManager: java.lang.Throwable
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at com.android.server.am.BroadcastController.checkBroadcastFromSystem(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:252)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLockedTraced(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:344)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at com.android.server.am.BroadcastController.broadcastIntentLocked(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:18)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:149)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact$broadcastIntentWithFeature$(IActivityManager.java:12241)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:3154)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(qb/103888019 03a5a67e5cf815856c8cb02a780996d8495d88e5abfc1f4625d73e5d10674898:425)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1462)
+12-22 20:59:14.815  1423  1700 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1401)
+12-22 20:59:14.875  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:15.058  1423  1700 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{e382cc2 u0 SubLauncherWindow}, navColorWin=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, caller=com.android.server.wm.InsetsStateController.onRequestedVisibleTypesChanged:86 com.android.server.wm.InsetsPolicy.onRequestedVisibleTypesChanged:3 com.android.server.wm.Session.updateRequestedVisibleTypes:37 
+12-22 20:59:15.058  1423  1700 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
+12-22 20:59:15.063  1423  1636 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:15.066  1423  1636 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:15.066  1423  1636 I WindowManager:   fl=80080260
+12-22 20:59:15.066  1423  1636 I WindowManager:   vsysui=400
+12-22 20:59:15.066  1423  1636 I WindowManager:   bhv=1
+12-22 20:59:15.066  1423  1636 I WindowManager:   fitTypes=206
+12-22 20:59:15.066  1423  1636 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.066  1423  1636 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.068  1423  1700 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
+12-22 20:59:15.070  1423  1700 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:15.070  1423  1700 I WindowManager:   fl=81910100
+12-22 20:59:15.070  1423  1700 I WindowManager:   pfl=10008850
+12-22 20:59:15.070  1423  1700 I WindowManager:   bhv=1
+12-22 20:59:15.070  1423  1700 I WindowManager:   fitSides=0
+12-22 20:59:15.070  1423  1700 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.070  1423  1700 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:15.073  1423  1700 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
+12-22 20:59:15.074  1423  1700 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:15.074  1423  1700 I WindowManager:   fl=10318
+12-22 20:59:15.074  1423  1700 I WindowManager:   pfl=14
+12-22 20:59:15.074  1423  1700 I WindowManager:   bhv=1
+12-22 20:59:15.074  1423  1700 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.074  1423  1700 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.638  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33715241033000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:15.638  1423  1695 I InputDispatcher: Delivering touch to (7845): action: 0x4, f=0x0, d=1, '2a89570', t=1 
+12-22 20:59:15.638  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'e983ff1', t=1 
+12-22 20:59:15.638  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
+12-22 20:59:15.714  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33715317529000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:15.714  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
+12-22 20:59:15.809  1423  1700 D WindowManager: Transition is created, t=TransitionRecord{50f1623 id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityTaskManagerService.startActivityAsUser:87 
+12-22 20:59:15.810  1423  4800 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:15.818  1423  2270 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:15.823  1423  1700 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
+12-22 20:59:15.823  1423  1700 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
+12-22 20:59:15.823  1423  1700 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:15.826  2022  2160 D ViewRootImpl: desktopMode is false
+12-22 20:59:15.826  2022  2160 I ViewRootImpl: dVRR is disabled
+12-22 20:59:15.830  1423  1700 I ActivityManager: Changes in 10333 19 to 6, 0 to 128
+12-22 20:59:15.833  1423  1700 D WindowManager: App launched activity=ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}, state=1
+12-22 20:59:15.833  1423  1700 D WindowManager: App launched activity=ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}, state=1
+12-22 20:59:15.833  1423  1700 D WindowManager: App launched activity=ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}, state=1
+12-22 20:59:15.836  1423  1636 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{2134168 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:15.842  1423  1636 I WindowManager: Relayout Window{2134168 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=1422x1169 ty=3 d1
+12-22 20:59:15.843  1423  1636 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard$_2022
+12-22 20:59:15.843  1423  1636 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:15.843  1423  1636 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xaef8cb5
+12-22 20:59:15.843  1423  1636 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:15.843  1423  1636 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:15.844  1423  1636 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xf7412b2
+12-22 20:59:15.844  1423  1636 D WindowManager: App launched activity=ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}, state=1
+12-22 20:59:15.844  1423  1636 I WindowManager: Relayout hash=2134168, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
+12-22 20:59:15.844  1423  1636 I WindowManager:   fl=81030118
+12-22 20:59:15.844  1423  1636 I WindowManager:   pfl=10000010
+12-22 20:59:15.844  1423  1636 I WindowManager:   bhv=1
+12-22 20:59:15.844  1423  1636 I WindowManager:   fitSides=0
+12-22 20:59:15.844  1423  1636 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.844  1423  1636 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.845  1423  1556 I ActivityManager: Start proc 31283:com.katsuyamaki.DroidOSTrackpadKeyboard/u0a515 for next-top-activity {com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity}
+12-22 20:59:15.845  1423  1556 I ActivityManager: ProcessObserver broadcast disabled
+12-22 20:59:15.849  1423  1636 D WindowManager: finishDrawingWindow: Window{2134168 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:15.853  1423  1636 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
+12-22 20:59:15.877  1423  1636 I ActivityManager: Changes in 10515 19 to 2, 0 to 255
+12-22 20:59:15.952  1423  1554 W ActivityManager: Rescheduling restart of crashed service com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.OverlayService in 7663ms for mem-pressure-event
+12-22 20:59:15.953  1423  2228 D WindowManager: App launched activity=ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}, state=1
+12-22 20:59:15.953  1423  2228 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:15.954  1423  2228 D InputDispatcher: Focused application(1): ActivityRecord{37570336 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19274}
+12-22 20:59:15.959  1423  2270 D WindowManager: Remove SleepToken: tag=keyguard, displayId=0
+12-22 20:59:15.960  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:15.962  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:15.962  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:15.963  1423  1754 W InputMethodManagerService: callbackImeWindowStatus: skipped topFocusedDisplayId=1, curTokenDisplayId=0
+12-22 20:59:15.966  1423  2267 I WindowManager: Relayout Window{e983ff1 u0 NavigationBar1}: viewVisibility=0 req=1422x66 ty=2019 d1
+12-22 20:59:15.968  1423  2267 I WindowManager: Relayout hash=e983ff1, pid=2022, syncId=-1: mAttrs={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.968  1423  2267 I WindowManager:   fl=20040028
+12-22 20:59:15.968  1423  2267 I WindowManager:   pfl=31000000
+12-22 20:59:15.968  1423  2267 I WindowManager:   bhv=1
+12-22 20:59:15.968  1423  2267 I WindowManager:   providedInsets:
+12-22 20:59:15.968  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.968  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.968  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.968  1423  2267 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:15.968  1423  2267 I WindowManager:   paramsForRotation:
+12-22 20:59:15.968  1423  2267 I WindowManager:     ROTATION_0={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.968  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.968  1423  2267 I WindowManager:       pfl=31000000
+12-22 20:59:15.968  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.968  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=66}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.968  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.968  1423  2267 I WindowManager:     ROTATION_90={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.968  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.968  1423  2267 I WindowManager:       pfl=31000000
+12-22 20:59:15.968  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.968  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.968  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.968  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.969  1423  2267 I WindowManager:     ROTATION_180={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.969  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.969  1423  2267 I WindowManager:       pfl=31000000
+12-22 20:59:15.969  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.969  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.969  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.969  1423  2267 I WindowManager:     ROTATION_270={(0,0)(fillx66) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.969  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.969  1423  2267 I WindowManager:       pfl=31000000
+12-22 20:59:15.969  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.969  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=38}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=38}}]}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#53df0024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.969  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.969  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:15.971  1423  2227 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=0 req=1080x2520 ty=2040 d0
+12-22 20:59:15.971  1423  2227 I WindowManager: Relayout hash=b5eb294, pid=0, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT
+12-22 20:59:15.971  1423  2227 I WindowManager:   fl=81040048
+12-22 20:59:15.971  1423  2227 I WindowManager:   pfl=10000200
+12-22 20:59:15.971  1423  2227 I WindowManager:   bhv=2
+12-22 20:59:15.971  1423  2227 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.971  1423  2227 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:15.971  1423  2227 I WindowManager:   sfl=40000}
+12-22 20:59:15.972  1423  2267 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
+12-22 20:59:15.974  1423  2267 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.974  1423  2267 I WindowManager:   fl=20040028
+12-22 20:59:15.974  1423  2267 I WindowManager:   pfl=31001000
+12-22 20:59:15.974  1423  2267 I WindowManager:   bhv=1
+12-22 20:59:15.974  1423  2267 I WindowManager:   providedInsets:
+12-22 20:59:15.974  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.974  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.974  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:15.974  1423  2267 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:15.974  1423  2267 I WindowManager:   paramsForRotation:
+12-22 20:59:15.974  1423  2267 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.974  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.974  1423  2267 I WindowManager:       pfl=31001000
+12-22 20:59:15.974  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.974  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.974  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.974  1423  2267 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.974  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.974  1423  2267 I WindowManager:       pfl=31001000
+12-22 20:59:15.974  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.974  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.974  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.974  1423  2267 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.974  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.974  1423  2267 I WindowManager:       pfl=31001000
+12-22 20:59:15.974  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.974  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.974  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:15.974  1423  2267 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:15.974  1423  2267 I WindowManager:       fl=20040028
+12-22 20:59:15.974  1423  2267 I WindowManager:       pfl=31001000
+12-22 20:59:15.974  1423  2267 I WindowManager:       bhv=1
+12-22 20:59:15.974  1423  2267 I WindowManager:       providedInsets:
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:15.974  1423  2267 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:15.974  1423  2267 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:15.982  1423  1555 I ActivityManager: Changes in 10228 19 to 11, 0 to 128
+12-22 20:59:15.982  1423  1555 I ActivityManager: Changes in 10213 19 to 11, 0 to 128
+12-22 20:59:15.991  1423  4799 I ActivityManager: Changes in 10228 11 to 19, 128 to 0
+12-22 20:59:15.993  1423  1636 W ActivityManager: Unable to start service Intent { xflg=0x4 cmp=com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.TrackpadService (has extras) } U=0: not found
+12-22 20:59:15.996  1423  4799 I ActivityManager: Changes in 10213 11 to 19, 128 to 0
+12-22 20:59:16.008  1423  1473 I WindowManager: Relayout Window{4ad78ec u0 Bouncer}: viewVisibility=4 req=1080x0 ty=2009 d0
+12-22 20:59:16.008  1423  1473 I WindowManager: Relayout hash=4ad78ec, pid=2022, syncId=-1: mAttrs={(0,0)(fillx0) gr=TOP CENTER_VERTICAL sim={adjust=resize} layoutInDisplayCutoutMode=shortEdges ty=KEYGUARD_DIALOG fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=10000
+12-22 20:59:16.008  1423  1473 I WindowManager:   fl=85000548
+12-22 20:59:16.008  1423  1473 I WindowManager:   pfl=10000000
+12-22 20:59:16.008  1423  1473 I WindowManager:   vsysui=500
+12-22 20:59:16.008  1423  1473 I WindowManager:   bhv=2
+12-22 20:59:16.008  1423  1473 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.008  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:16.008  1423  1473 I WindowManager:  dimAmount=0.0 screenDimDuration=0 naviIconColor=0
+12-22 20:59:16.008  1423  1473 I WindowManager:   sfl=40000}
+12-22 20:59:16.009  1423  2265 I InputMethodManagerService: isInputMethodShown: isShown=false
+12-22 20:59:16.010  1423  4808 I ActivityManager: Changes in 10122 10 to 5, 0 to 184
+12-22 20:59:16.018  1423  4807 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
+12-22 20:59:16.019  1423  4807 D WindowManager: Changing focus from null to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
+12-22 20:59:16.019  1423  4807 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xf7412b2
+12-22 20:59:16.019  1423  4807 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:16.019  1423  4807 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:16.019  1423  4807 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0x2522e3b
+12-22 20:59:16.019  1423  4807 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:16.036  1423  2109 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
+12-22 20:59:16.036  1423  2267 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
+12-22 20:59:16.042 31283 31283 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{7bda02c G.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupTrackpad:938 com.example.coverscreentester.OverlayService.setupUI:822 
+12-22 20:59:16.046  1423  1474 I WindowManager: Relayout Window{6146b28 u0 NavigationBar0}: viewVisibility=0 req=1080x75 ty=2019 d0
+12-22 20:59:16.046 31283 31283 D ViewRootImpl: desktopMode is false
+12-22 20:59:16.047  1423  2109 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:16.048  1423  1474 I WindowManager: Relayout hash=6146b28, pid=0, syncId=-1: mAttrs={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:16.048  1423  1474 I WindowManager:   fl=40028
+12-22 20:59:16.048  1423  1474 I WindowManager:   pfl=31001000
+12-22 20:59:16.048  1423  1474 I WindowManager:   bhv=1
+12-22 20:59:16.048  1423  1474 I WindowManager:   providedInsets:
+12-22 20:59:16.048  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:16.048  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:16.048  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:     InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.048  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:16.048  1423  1474 I WindowManager:   paramsForRotation:
+12-22 20:59:16.048  1423  1474 I WindowManager:     ROTATION_0={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:16.048  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:16.048  1423  1474 I WindowManager:       pfl=31001000
+12-22 20:59:16.048  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:16.048  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:16.048  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.048  1423  1474 I WindowManager:     ROTATION_90={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:16.048  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:16.048  1423  1474 I WindowManager:       pfl=31001000
+12-22 20:59:16.048  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:16.048  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:16.048  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.048  1423  1474 I WindowManager:     ROTATION_180={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:16.048  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:16.048  1423  1474 I WindowManager:       pfl=31001000
+12-22 20:59:16.048  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:16.048  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=null}]}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:16.048  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.048  1423  1474 I WindowManager:     ROTATION_270={(0,0)(fillx75) gr=BOTTOM CENTER_VERTICAL layoutInDisplayCutoutMode=always ty=NAVIGATION_BAR fmt=TRANSLUCENT
+12-22 20:59:16.048  1423  1474 I WindowManager:       fl=20040028
+12-22 20:59:16.048  1423  1474 I WindowManager:       pfl=31001000
+12-22 20:59:16.048  1423  1474 I WindowManager:       bhv=1
+12-22 20:59:16.048  1423  1474 I WindowManager:       providedInsets:
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140001, index=0, type=navigationBars, source=FRAME, flags=[SUPPRESS_SCRIM], insetsSize=Insets{left=0, top=0, right=0, bottom=23}, insetsSizeOverrides=[TypedInsetsSize: {windowType=INPUT_METHOD, insetsSize=Insets{left=0, top=0, right=0, bottom=23}}]}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140006, index=0, type=tappableElement, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140005, index=0, type=mandatorySystemGestures, source=FRAME, flags=[], insetsSize=Insets{left=0, top=0, right=0, bottom=50}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140004, index=0, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=46, top=0, right=0, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=46, top=0, right=0, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:         InsetsFrameProvider: {id=#44140024, index=1, type=systemGestures, source=DISPLAY, flags=[], insetsSize=Insets{left=0, top=0, right=46, bottom=0}, mMinimalInsetsSizeInDisplayCutoutSafe=Insets{left=0, top=0, right=46, bottom=0}}
+12-22 20:59:16.048  1423  1474 I WindowManager:       frameRateBoostOnTouch=true
+12-22 20:59:16.048  1423  1474 I WindowManager:       dvrrWindowFrameRateHint=true naviIconColor=0} naviIconColor=0}
+12-22 20:59:16.050 31283 31283 I ViewRootImpl: dVRR is disabled
+12-22 20:59:16.052  1423  2109 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:16.052  1423  2109 I WindowManager:   fl=14318
+12-22 20:59:16.052  1423  2109 I WindowManager:   pfl=14
+12-22 20:59:16.052  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:16.052  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.052  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:16.052  1423  2109 I WindowManager:   sfl=8}
+12-22 20:59:16.058  1423  2109 D WindowManager: finishDrawingWindow: Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper} mDrawState=HAS_DRAWN seqId=2147483647
+12-22 20:59:16.069  1423  2934 I WindowManager: Relayout Window{b5eb294 u0 NotificationShade}: viewVisibility=4 req=1080x2520 ty=2040 d0
+12-22 20:59:16.069  1423  2934 E WindowManager: win=Window{b5eb294 u0 NotificationShade} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=4 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
+12-22 20:59:16.070  1423  2934 I WindowManager: Relayout hash=b5eb294, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP CENTER_VERTICAL sim={adjust=pan} layoutInDisplayCutoutMode=always ty=NOTIFICATION_SHADE fmt=TRANSLUCENT
+12-22 20:59:16.070  1423  2934 I WindowManager:   fl=81040048
+12-22 20:59:16.070  1423  2934 I WindowManager:   pfl=11000200
+12-22 20:59:16.070  1423  2934 I WindowManager:   bhv=2
+12-22 20:59:16.070  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.070  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:16.070  1423  2934 I WindowManager:   sfl=40000}
+12-22 20:59:16.072  1423  2109 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
+12-22 20:59:16.072  1423  2109 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:16.072  1423  2109 I WindowManager:   fl=81910100
+12-22 20:59:16.072  1423  2109 I WindowManager:   pfl=10008850
+12-22 20:59:16.072  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:16.072  1423  2109 I WindowManager:   fitSides=0
+12-22 20:59:16.072  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.072  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:16.072 31283 31283 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{6c4f248 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupBubble:903 com.example.coverscreentester.OverlayService.setupUI:825 
+12-22 20:59:16.073 31283 31283 D ViewRootImpl: desktopMode is false
+12-22 20:59:16.073 31283 31283 I ViewRootImpl: dVRR is disabled
+12-22 20:59:16.077  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:16.084 31283 31283 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{604921d V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.coverscreentester.OverlayService.setupCursor:957 com.example.coverscreentester.OverlayService.setupUI:826 
+12-22 20:59:16.084 31283 31283 D ViewRootImpl: desktopMode is false
+12-22 20:59:16.085 31283 31283 I ViewRootImpl: dVRR is disabled
+12-22 20:59:16.094  1423  2934 D WindowManager: Starting window removed Window{2134168 u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:16.101  1423  2109 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
+12-22 20:59:16.104  1423  2934 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:16.104  1423  2934 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
+12-22 20:59:16.105  1423  2697 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:16.105  1423  2109 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:16.105  1423  2109 I WindowManager: Relayout Window{27e4888 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=8 req=527x444 ty=2032 d0
+12-22 20:59:16.106  1423  2109 I WindowManager: Relayout hash=27e4888, pid=31283, syncId=-1: mAttrs={(520,1916)(527x444) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:16.106  1423  2109 I WindowManager:   fl=1040228
+12-22 20:59:16.106  1423  2109 I WindowManager:   pfl=40000000
+12-22 20:59:16.106  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:16.106  1423  2109 I WindowManager:   fitTypes=207
+12-22 20:59:16.106  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.106  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.109  1423  2109 I WindowManager: Relayout Window{a0238ff u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=93x93 ty=2032 d0
+12-22 20:59:16.109  1423  2109 D WindowManager: makeSurface duration=1 name=$_31283
+12-22 20:59:16.110  1423  2109 I WindowManager: Relayout hash=a0238ff, pid=31283, syncId=-1: mAttrs={(929,1211)(93x93) gr=TOP START CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:16.110  1423  2109 I WindowManager:   fl=1000308
+12-22 20:59:16.110  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:16.110  1423  2109 I WindowManager:   fitTypes=206
+12-22 20:59:16.110  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.110  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.136  1423  2697 D WindowManager: finishDrawingWindow: Window{a0238ff u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:16.137  1423  2934 I WindowManager: Relayout Window{1967d93 u0 com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=50x50 ty=2032 d0
+12-22 20:59:16.137  1423  2934 D WindowManager: makeSurface duration=0 name=$_31283
+12-22 20:59:16.138  1423  2934 I WindowManager: Relayout hash=1967d93, pid=31283, syncId=-1: mAttrs={(540,1260)(wrapxwrap) gr=TOP LEFT CENTER sim={adjust=pan} layoutInDisplayCutoutMode=shortEdges ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:16.138  1423  2934 I WindowManager:   fl=1000318
+12-22 20:59:16.138  1423  2934 I WindowManager:   bhv=1
+12-22 20:59:16.138  1423  2934 I WindowManager:   fitTypes=206
+12-22 20:59:16.138  1423  2934 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:16.138  1423  2934 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:16.144  1423  2697 D WindowManager: finishDrawingWindow: Window{1967d93 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:16.151  1423  2697 D WindowManager: finishDrawingWindow: Window{a0238ff u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:16.160  1423  2109 D WindowManager: finishDrawingWindow: Window{1967d93 u0 com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:17.573  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33717172543000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:17.574  1423  1695 I InputDispatcher: Delivering touch to (7845): action: 0x4, f=0x0, d=1, '2a89570', t=1 
+12-22 20:59:17.574  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=1, 'e983ff1', t=1 
+12-22 20:59:17.575  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x0, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
+12-22 20:59:17.622  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33717225275000, f=0x0, d=1 dsdx=1.500000 dtdx=-0.000000
+12-22 20:59:17.623  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x1, f=0x0, d=1, 'e382cc2', t=1 +(0,-35)*(1.50)
+12-22 20:59:17.709  1423  2697 D WindowManager: Transition is created, t=TransitionRecord{fab65f4 id=-1 type=OPEN flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createAndStartCollecting:106 com.android.server.wm.ActivityStarter.executeRequest:3537 com.android.server.wm.ActivityStarter.execute:1873 com.android.server.wm.ActivityTaskManagerService.startActivityAsUser:87 
+12-22 20:59:17.718  2022  2160 D ViewRootImpl: desktopMode is false
+12-22 20:59:17.719  2022  2160 I ViewRootImpl: dVRR is disabled
+12-22 20:59:17.720  1423  2697 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
+12-22 20:59:17.720  1423  2697 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
+12-22 20:59:17.721  1423  2697 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:17.728  1423  2934 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{151e3bc u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:17.729  1423  1473 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:17.731  1423  1473 D InputDispatcher: Focused application(1): ActivityRecord{63107357 u0 com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.MainActivity t19275}
+12-22 20:59:17.731  1423  1473 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
+12-22 20:59:17.731  1423  1473 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0x2522e3b
+12-22 20:59:17.731  1423  1473 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:17.731  1423  1473 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:17.731  1423  1473 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xbf43bcb
+12-22 20:59:17.737  1423  2697 W ActivityManager: Unable to start service Intent { xflg=0x4 cmp=com.katsuyamaki.DroidOSTrackpadKeyboard/com.example.coverscreentester.TrackpadService (has extras) } U=0: not found
+12-22 20:59:17.737  1423  1473 I WindowManager: Relayout Window{151e3bc u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}: viewVisibility=0 req=1422x1169 ty=3 d1
+12-22 20:59:17.737  1423  1473 D WindowManager: makeSurface duration=0 name=Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard$_2022
+12-22 20:59:17.739  1423  1473 I WindowManager: Relayout hash=151e3bc, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_STARTING fmt=TRANSLUCENT wanim=0x1030317
+12-22 20:59:17.739  1423  1473 I WindowManager:   fl=81030118
+12-22 20:59:17.739  1423  1473 I WindowManager:   pfl=10000010
+12-22 20:59:17.739  1423  1473 I WindowManager:   bhv=1
+12-22 20:59:17.739  1423  1473 I WindowManager:   fitSides=0
+12-22 20:59:17.739  1423  1473 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:17.739  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:17.742  1423  4808 D InputDispatcher: Focused application(1): ActivityRecord{260071160 u0 com.android.systemui/.subscreen.SubHomeActivity t9}
+12-22 20:59:17.742  1423  4808 D WindowManager: Changing focus from null to Window{e382cc2 u0 SubLauncherWindow} displayId=1 Callers=com.android.server.wm.ActivityTaskManagerService.setLastResumedActivityUncheckLocked:264 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:49 com.android.server.wm.TaskFragment.setResumedActivity:30 com.android.server.wm.ActivityRecord.setState:100 
+12-22 20:59:17.742  1423  4808 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xbf43bcb
+12-22 20:59:17.742  1423  4808 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:17.742  1423  4808 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:17.742  1423  4808 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xb58ee54
+12-22 20:59:17.743  1423  4808 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:17.745  1423  2109 D WindowManager: finishDrawingWindow: Window{151e3bc u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:17.745  1423  4808 D InputDispatcher: Once focus requested (1): <null>
+12-22 20:59:17.745  1423  4808 D InputDispatcher: Focus request (1): <null> but waiting because NO_WINDOW
+12-22 20:59:17.745  1423  4808 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
+12-22 20:59:17.754  1423  4808 D WindowManager: Starting window removed Window{151e3bc u0 Splash Screen com.katsuyamaki.DroidOSTrackpadKeyboard}
+12-22 20:59:17.761  1423  4808 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.WindowManagerService.relayoutWindow:84 com.android.server.wm.Session.relayout:27 
+12-22 20:59:17.762  1423  4808 D InputDispatcher: Once focus requested (1): e382cc2 SubLauncherWindow
+12-22 20:59:17.762  1423  4808 D InputDispatcher: Focus request (1): e382cc2 SubLauncherWindow but waiting because NO_WINDOW
+12-22 20:59:17.763  1423  2934 D InputDispatcher: Focus entered window (1): e382cc2 SubLauncherWindow
+12-22 20:59:17.763  1423  2109 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:1 com.android.server.wm.Session.setOnBackInvokedCallbackInfo:15 android.view.IWindowSession$Stub.onTransact:1390 
+12-22 20:59:17.763  1423  2109 I WindowManager: setOnBackInvokedCallback(): No window state for package:com.android.systemui
+12-22 20:59:17.764  1423  2934 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:17.764  1423  1473 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:17.770  1423  1754 I InputMethodManagerService: startInputUncheckedLocked: Rejecting unbind/bind in case of no editor in cover screen.
+12-22 20:59:18.804  1423  1549 D WindowManager: onStateChanged, state=1
+12-22 20:59:18.808  1423  1549 D WindowManager: rotationForOrientation, orientationSource=DefaultTaskDisplayArea_d0@131230281
+12-22 20:59:18.808  1423  1549 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:19.045  1423  1549 D WindowManager: onStateChanged, state=2
+12-22 20:59:19.056  1423  1549 D WindowManager: Changing focus from Window{e382cc2 u0 SubLauncherWindow} to null displayId=1 Callers=com.android.server.wm.RootWindowContainer.onChildPositionChanged:8 com.android.server.wm.WindowContainer.positionChildAt:69 com.android.server.wm.RootWindowContainer.positionChildAt:8 com.android.server.wm.WindowManagerServiceExt.moveDisplayToTop:37 
+12-22 20:59:19.056  1423  1549 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0xb58ee54
+12-22 20:59:19.056  1423  1549 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785, destroy=false, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc
+12-22 20:59:19.057  1423  1549 I WindowManager: Reparenting to leash, surface=Surface(name=e983ff1 NavigationBar1)/@0x74594fc, leashParent=Surface(name=WindowToken{4641b98 type=2019 android.os.BinderProxy@d3c750a})/@0x2ed6785
+12-22 20:59:19.057  1423  1549 D WindowManager: makeSurface duration=1 leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0x4e1158f
+12-22 20:59:19.058  1423  1549 D InputDispatcher: Focused display: 1 -> 0
+12-22 20:59:19.058  1423  1549 W InputDispatcher: Focused display #0 does not have a focused window.
+12-22 20:59:19.058  1423  1549 E InputDispatcher: But another display has a focused window
+12-22 20:59:19.058  1423  1549 E InputDispatcher:   FocusedWindows:
+12-22 20:59:19.058  1423  1549 E InputDispatcher:     displayId=1, name='e382cc2 SubLauncherWindow'
+12-22 20:59:19.060  1423  1549 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:19.064  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2019, view=com.android.systemui.navigationbar.views.NavigationBarFrame{7824b18 V.E...... ......I. 0,0-1422,66 #7f0a083a app:id/navigation_bar_frame}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeViewImmediate:216 com.android.systemui.navigationbar.views.NavigationBar.destroyView:32 
+12-22 20:59:19.064  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2024, view=com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle{2671829 G.E...... ......I. 0,0-0,0 #7f0a0b72 app:id/secondary_home_handle}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.android.systemui.navigationbar.views.NavigationBar.onViewDetached:75 
+12-22 20:59:19.066  1423  1604 D WindowManager: Create SleepToken: tag=Display-off, displayId=1
+12-22 20:59:19.069  1423  4800 I WindowManager: Cancelling animation restarting=false, leash=Surface(name=Surface(name=e983ff1 NavigationBar1)/@0x74594fc - animation-leash of insets_animation)/@0x4e1158f
+12-22 20:59:19.073  2022  2022 I WindowManager: WindowManagerGlobal#removeView, ty=2024, view=com.android.systemui.navigationbar.gestural.SamsungBackPanel{3740d0b G.ED..... ......I. 0,0-164,419}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.android.systemui.navigationbar.gestural.BackPanelController.onDestroy:12 
+12-22 20:59:19.077  1423  4800 D InputDispatcher: Once focus requested (1): <null>
+12-22 20:59:19.077  1423  4800 D InputDispatcher: Focus request (1): <null> but waiting because NO_WINDOW
+12-22 20:59:19.077  1423  4800 D InputDispatcher: Focus left window (1): e382cc2 SubLauncherWindow
+12-22 20:59:19.082  1423  1549 I ActivityManager: Changes in 10375 2 to 12, 255 to 0
+12-22 20:59:19.092  1423  1604 D WindowManager: Remove SleepToken: tag=Display-off, displayId=0
+12-22 20:59:19.092  1423  1604 D WindowManager: Transition is created, t=TransitionRecord{49b523 id=-1 type=WAKE flags=0x0}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.RootWindowContainer.applySleepTokens:209 com.android.server.wm.ActivityTaskManagerService.updateSleepIfNeededLocked:90 com.android.server.wm.RootWindowContainer.removeSleepToken:131 
+12-22 20:59:19.093  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}
+12-22 20:59:19.099  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}
+12-22 20:59:19.099  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e382cc2 u0 SubLauncherWindow}
+12-22 20:59:19.099  1423  1604 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}
+12-22 20:59:19.100  1423  1604 D WindowManager: rotationForOrientation, orientationSource=ActivityRecord{127106347 u0 com.sec.android.app.launcher/.activities.LauncherActivity t18982}
+12-22 20:59:19.104  1423  2109 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=0 req=1422x1500 ty=1 d1
+12-22 20:59:19.104  1423  2109 D WindowManager: updateSystemBarAttributes: displayId=1, focusedCanBeNavColorWin=false, win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}, navColorWin=null, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
+12-22 20:59:19.104  1423  2109 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-11
+12-22 20:59:19.106  1423  2109 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan forwardNavigation} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:19.106  1423  2109 I WindowManager:   fl=81910100
+12-22 20:59:19.106  1423  2109 I WindowManager:   pfl=10008850
+12-22 20:59:19.106  1423  2109 I WindowManager:   vsysui=1600000
+12-22 20:59:19.106  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:19.106  1423  2109 I WindowManager:   fitSides=0
+12-22 20:59:19.106  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.106  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:19.106  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:19.107 22381 22381 D ViewRootImpl: Skipping stats log for color mode
+12-22 20:59:19.113  1423  1855 I ActivityManager: Changes in 10342 4 to 2, 254 to 255
+12-22 20:59:19.115  1423  2784 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:19.115  1423  2784 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:19.115  1423  2784 I WindowManager:   fl=80080260
+12-22 20:59:19.115  1423  2784 I WindowManager:   vsysui=1600400
+12-22 20:59:19.115  1423  2784 I WindowManager:   bhv=1
+12-22 20:59:19.115  1423  2784 I WindowManager:   fitTypes=206
+12-22 20:59:19.115  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.115  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.118  1423  1855 I ActivityManager: Changes in 10155 5 to 2, 184 to 255
+12-22 20:59:19.121  1423  2265 I ActivityManager: Changes in 10395 19 to 3, 0 to 144
+12-22 20:59:19.123  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.127  1423  2109 I WindowManager: Relayout Window{d2cc959 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=-1x-1 ty=2013 d1
+12-22 20:59:19.130  1423  1547 I WindowManager: Waiting for transition
+12-22 20:59:19.130  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:19.131  1423  2109 I WindowManager: Relayout hash=d2cc959, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:19.131  1423  2109 I WindowManager:   fl=10318
+12-22 20:59:19.131  1423  2109 I WindowManager:   pfl=14
+12-22 20:59:19.131  1423  2109 I WindowManager:   bhv=1
+12-22 20:59:19.131  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.131  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.145  1423  1549 I ActivityManager: Changes in 10375 12 to 2, 0 to 255
+12-22 20:59:19.153  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.154  1423  1547 I WindowManager: Waiting for transition
+12-22 20:59:19.154  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:19.154  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(948 x 1048) immediately
+12-22 20:59:19.156  1423  1547 I WindowManager: Waiting for transition
+12-22 20:59:19.158  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:19.176  1423  2109 I WindowManager: Relayout Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}: viewVisibility=0 req=1080x2520 ty=1 d0
+12-22 20:59:19.176  1423  2109 D WindowManager: makeSurface duration=0 name=com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity$_2712
+12-22 20:59:19.177  1423  2109 I WindowManager: Waiting for transition
+12-22 20:59:19.177  1423  2109 I WindowManager: Relayout hash=64185e1, pid=2712, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=nothing} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT wanim=0x1030306
+12-22 20:59:19.177  1423  2109 I WindowManager:   fl=81910100
+12-22 20:59:19.177  1423  2109 I WindowManager:   pfl=10008840
+12-22 20:59:19.177  1423  2109 I WindowManager:   bhv=2
+12-22 20:59:19.177  1423  2109 I WindowManager:   fitSides=0
+12-22 20:59:19.177  1423  2109 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.177  1423  2109 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=200000 naviIconColor=0}
+12-22 20:59:19.177  1423  1474 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=0 req=1422x1500 ty=1000 d1
+12-22 20:59:19.178  1423  1474 I WindowManager: Waiting for transition
+12-22 20:59:19.178  1423  1474 I WindowManager: Waiting for transition
+12-22 20:59:19.179  1423  4812 I WindowManager: Relayout Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}: viewVisibility=0 req=1080x1260 ty=1 d0
+12-22 20:59:19.179  1423  4812 D WindowManager: makeSurface duration=0 name=com.termux/com.termux.app.TermuxActivity$_22381
+12-22 20:59:19.179  1423  1474 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:19.179  1423  1474 I WindowManager:   fl=81080278
+12-22 20:59:19.179  1423  1474 I WindowManager:   vsysui=1600400
+12-22 20:59:19.179  1423  1474 I WindowManager:   bhv=1
+12-22 20:59:19.179  1423  1474 I WindowManager:   fitTypes=206
+12-22 20:59:19.179  1423  1474 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.179  1423  1474 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.179  1423  4812 I WindowManager: Waiting for transition
+12-22 20:59:19.180  1423  4812 D WindowManager: Changing focus from null to Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity} displayId=0 Callers=com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:19.180  1423  4812 I WindowManager: Cancelling animation restarting=true, leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x1073eb5
+12-22 20:59:19.180  1423  4812 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599, destroy=false, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0
+12-22 20:59:19.180  1423  4812 I WindowManager: Reparenting to leash, surface=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0, leashParent=Surface(name=WindowToken{abeb61a type=2019 android.os.BinderProxy@2cf173c})/@0x22a599
+12-22 20:59:19.180  1423  4812 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=6146b28 NavigationBar0)/@0x1b76ee0 - animation-leash of insets_animation)/@0x2068762
+12-22 20:59:19.180  1423  4812 I WindowManager: Cancelling animation restarting=false, leash=Surface(name=Surface(name=88c439 StatusBar)/@0x6820c3f - animation-leash of insets_animation)/@0x24f757a
+12-22 20:59:19.180  1423  4812 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{9be6400 type=2000 android.os.BinderProxy@ec85d32})/@0xcd4990c, destroy=false, surface=Surface(name=88c439 StatusBar)/@0x6820c3f
+12-22 20:59:19.180  1423  4812 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=null, caller=com.android.server.wm.WindowManagerService.updateFocusedWindowLocked:372 com.android.server.wm.WindowManagerService.relayoutWindow:1359 com.android.server.wm.Session.relayout:27 
+12-22 20:59:19.180  1423  4812 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[], requestedVisibilities=-9
+12-22 20:59:19.181  1423  4812 I WindowManager: Relayout hash=f704bfc, pid=22381, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} ty=BASE_APPLICATION wanim=0x1030317
+12-22 20:59:19.181  1423  4812 I WindowManager:   fl=8d810100
+12-22 20:59:19.181  1423  4812 I WindowManager:   pfl=10008040
+12-22 20:59:19.181  1423  4812 I WindowManager:   vsysui=700
+12-22 20:59:19.181  1423  4812 I WindowManager:   bhv=1
+12-22 20:59:19.181  1423  4812 I WindowManager:   fitSides=0
+12-22 20:59:19.181  1423  4812 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.181  1423  4812 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.181  1423  4800 I WindowManager: Relayout Window{2044d8a u0 com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity}: viewVisibility=8 req=1080x1260 ty=1 d0
+12-22 20:59:19.181  1423  4800 I WindowManager: Waiting for transition
+12-22 20:59:19.182  1423  4800 I WindowManager: Relayout hash=2044d8a, pid=14008, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION wanim=0x1030317
+12-22 20:59:19.182  1423  4800 I WindowManager:   fl=80810100
+12-22 20:59:19.182  1423  4800 I WindowManager:   pfl=10008840
+12-22 20:59:19.182  1423  4800 I WindowManager:   bhv=1
+12-22 20:59:19.182  1423  4800 I WindowManager:   fitSides=0
+12-22 20:59:19.182  1423  4800 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.182  1423  4800 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.188  1423  2220 D WindowManager: finishDrawingWindow: Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:19.190  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:19.191  1423  1550 I WindowManager: Waiting for transition
+12-22 20:59:19.199  1423  1549 D WindowManager: onStateChanged, state=3
+12-22 20:59:19.200  1423  2697 D WindowManager: finishDrawingWindow: Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:19.203  1423  1550 D WindowManager: All windows drawn!
+12-22 20:59:19.204  1423  1550 I WindowManager: Reparenting to leash, surface=Surface(name=88c439 StatusBar)/@0x6820c3f, leashParent=Surface(name=WindowToken{9be6400 type=2000 android.os.BinderProxy@ec85d32})/@0xcd4990c
+12-22 20:59:19.204  1423  1550 D WindowManager: makeSurface duration=0 leash=Surface(name=Surface(name=88c439 StatusBar)/@0x6820c3f - animation-leash of insets_animation)/@0x5a55ec2
+12-22 20:59:19.204  1423  1550 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, caller=com.android.server.wm.DisplayPolicy.finishPostLayoutPolicyLw:17 com.android.server.wm.RootWindowContainer.applySurfaceChangesTransaction$1:195 com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace:86 
+12-22 20:59:19.204  1423  1550 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-9
+12-22 20:59:19.205  1423  1547 D WindowManager: finishScreenTurningOn: mAwake=true, mScreenOnEarly=true, mScreenOnFully=false, mKeyguardDrawComplete=true, mWindowManagerDrawComplete=true
+12-22 20:59:19.208  2022  2106 D ViewRootImpl: desktopMode is false
+12-22 20:59:19.209  2022  2106 I ViewRootImpl: dVRR is disabled
+12-22 20:59:19.209  1423  2697 D InputDispatcher: Once focus requested (0): f704bfc com.termux/com.termux.app.TermuxActivity
+12-22 20:59:19.209  1423  2697 D InputDispatcher: Focus request (0): f704bfc com.termux/com.termux.app.TermuxActivity but waiting because NOT_VISIBLE
+12-22 20:59:19.221  1423  2109 W WindowManager: Cannot find window which accessibility connection is added to
+12-22 20:59:19.232  1423  1474 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:19.233  1423  2220 W WindowManager: Failed looking up window session=Session{eef2b83 2022:u0a10055} callers=com.android.server.wm.Session.remove:10 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 
+12-22 20:59:19.239  1423  2934 D InputDispatcher: Focus entered window (0): f704bfc com.termux/com.termux.app.TermuxActivity
+12-22 20:59:19.252  1423  2934 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19260)/@0xd898151} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
+12-22 20:59:19.258  1423  4808 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:19.262  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.263  1423  4808 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:19.263  1423  4808 I WindowManager:   fl=14318
+12-22 20:59:19.263  1423  4808 I WindowManager:   pfl=14
+12-22 20:59:19.263  1423  4808 I WindowManager:   bhv=1
+12-22 20:59:19.263  1423  4808 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.263  1423  4808 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:19.263  1423  4808 I WindowManager:   sfl=8}
+12-22 20:59:19.264  1423  1754 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:19.264  1423  1754 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
+12-22 20:59:19.264  1423  1754 D InputMethodManagerService: checkDisplayOfStartInputAndUpdateKeyboard: displayId=0, mFocusedDisplayId=0
+12-22 20:59:19.264  1423  1754 D InputMethodManagerService: ACCESS_CONTROL_ENABLED = false, ACCESS_CONTROL_KEYBOARD_BLOCK = true
+12-22 20:59:19.265  1423  1754 I ActivityManager: Changes in 10332 7 to 5, 128 to 255
+12-22 20:59:19.266  1423  1754 I InputMethodManagerService: attachNewInputLocked: showCurrentInputInternal, softInputModeState=STATE_UNSPECIFIED|ADJUST_RESIZE
+12-22 20:59:19.266  1423  4812 I InputMethodManagerService: isAccessoryKeyboard 0
+12-22 20:59:19.267  1423  1855 I InputMethodManagerService: isAccessoryKeyboard 0
+12-22 20:59:19.268  1423  2934 D WindowManager: finishDrawingWindow: Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper} mDrawState=HAS_DRAWN seqId=2147483647
+12-22 20:59:19.269  1423  4800 D WindowManager: updateSystemBarAttributes: displayId=0, focusedCanBeNavColorWin=false, win=Window{f704bfc u0 com.termux/com.termux.app.TermuxActivity}, navColorWin=Window{64185e1 u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity}, caller=com.android.server.wm.InsetsStateController.onRequestedVisibleTypesChanged:86 com.android.server.wm.WindowManagerService.updateDisplayWindowRequestedVisibleTypes:148 android.view.IWindowManager$Stub.onTransact:3601 
+12-22 20:59:19.269  1423  4800 D WindowManager: updateSystemBarAttributes, bhv=1, apr=0, statusBarAprRegions=[AppearanceRegion{ bounds=[0,0][1080,2520]}], requestedVisibilities=-1
+12-22 20:59:19.276  1423  2071 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=8 req=1422x1500 ty=1000 d1
+12-22 20:59:19.280  1423  2071 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=resize} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:19.280  1423  2071 I WindowManager:   fl=81080278
+12-22 20:59:19.280  1423  2071 I WindowManager:   vsysui=1600400
+12-22 20:59:19.280  1423  2071 I WindowManager:   bhv=1
+12-22 20:59:19.280  1423  2071 I WindowManager:   fitTypes=206
+12-22 20:59:19.280  1423  2071 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.280  1423  2071 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.280  1423  2934 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+12-22 20:59:19.280  1423  2934 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
+12-22 20:59:19.281  1423  2934 I InputMethodManagerService: setImeWindowStatus: vis=3, backDisposition=0
+12-22 20:59:19.284  1423  1549 D InputMethodManagerService: ACCESS_CONTROL_ENABLED = false, ACCESS_CONTROL_KEYBOARD_BLOCK = true
+12-22 20:59:19.285  1423  2071 I WindowManager: Relayout Window{f748235 u0 InputMethod}: viewVisibility=0 req=1080x2404 ty=2011 d0
+12-22 20:59:19.285  1423  2071 D WindowManager: makeSurface duration=0 name=InputMethod$_4255
+12-22 20:59:19.286  1423  2071 I WindowManager: Relayout hash=f748235, pid=4255, syncId=-1: mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT wanim=0x1030056 preferredMinDisplayRefreshRate=60.0 receive insets ignoring z-order
+12-22 20:59:19.286  1423  2071 I WindowManager:   fl=81800108
+12-22 20:59:19.286  1423  2071 I WindowManager:   pfl=14000000
+12-22 20:59:19.286  1423  2071 I WindowManager:   bhv=1
+12-22 20:59:19.286  1423  2071 I WindowManager:   fitTypes=3
+12-22 20:59:19.286  1423  2071 I WindowManager:   fitSides=7
+12-22 20:59:19.286  1423  2071 I WindowManager:   fitIgnoreVis
+12-22 20:59:19.286  1423  2071 I WindowManager:   dvrrWindowFrameRateHint=true
+12-22 20:59:19.286  1423  2071 I WindowManager:  dimAmount=0.18 dimDuration=150 naviIconColor=0}
+12-22 20:59:19.286  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.288  1423  2784 I WindowManager: Relayout Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity}: viewVisibility=8 req=1422x1500 ty=1 d1
+12-22 20:59:19.289  1423  2784 I WindowManager: Relayout hash=9a3d1c6, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan forwardNavigation} layoutInDisplayCutoutMode=always ty=BASE_APPLICATION fmt=TRANSPARENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY userActivityTimeout=30000
+12-22 20:59:19.289  1423  2784 I WindowManager:   fl=81910100
+12-22 20:59:19.289  1423  2784 I WindowManager:   pfl=10008850
+12-22 20:59:19.289  1423  2784 I WindowManager:   vsysui=1600000
+12-22 20:59:19.289  1423  2784 I WindowManager:   bhv=1
+12-22 20:59:19.289  1423  2784 I WindowManager:   fitSides=0
+12-22 20:59:19.289  1423  2784 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.289  1423  2784 I WindowManager:   dvrrWindowFrameRateHint=true screenDimDuration=0 naviIconColor=0}
+12-22 20:59:19.290  1423  2934 D WindowManager: setInsetsWindow Window{f748235 u0 InputMethod}, contentInsets=Rect(0, 2329 - 0, 0) -> Rect(0, 1904 - 0, 0), visibleInsets=Rect(0, 2329 - 0, 0) -> Rect(0, 1904 - 0, 0), touchableRegion=SkRegion() -> SkRegion((0,1904,1080,2404)), touchableInsets 3 -> 3
+12-22 20:59:19.293  1423  2697 E WindowManager: win=Window{e382cc2 u0 SubLauncherWindow} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowState.destroySurface:24 com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 
+12-22 20:59:19.294  1423  2697 E WindowManager: win=Window{9a3d1c6 u0 com.android.systemui/com.android.systemui.subscreen.SubHomeActivity} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.ActivityRecord.destroySurfaces:25 com.android.server.wm.ActivityRecord.activityStopped:192 com.android.server.wm.ActivityClientController.activityStopped:97 android.app.IActivityClientController$Stub.onTransact:726 com.android.server.wm.ActivityClientController.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 
+12-22 20:59:19.295  1423  4800 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:19.297  1423  1473 I InputMethodManagerService: isAccessoryKeyboard 0
+12-22 20:59:19.298  1423  4794 I InputMethodManagerService: isAccessoryKeyboard 0
+12-22 20:59:19.298  1423  4800 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:19.298  1423  4800 I WindowManager:   fl=14318
+12-22 20:59:19.298  1423  4800 I WindowManager:   pfl=14
+12-22 20:59:19.298  1423  4800 I WindowManager:   bhv=1
+12-22 20:59:19.298  1423  4800 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.298  1423  4800 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:19.298  1423  4800 I WindowManager:   sfl=8}
+12-22 20:59:19.298  1423  2071 D WindowManager: finishDrawingWindow: Window{f748235 u0 InputMethod} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:19.312  1423  2697 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:19.313  1423  2697 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:19.313  1423  2697 I WindowManager:   fl=14318
+12-22 20:59:19.313  1423  2697 I WindowManager:   pfl=14
+12-22 20:59:19.313  1423  2697 I WindowManager:   bhv=1
+12-22 20:59:19.313  1423  2697 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.313  1423  2697 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:19.313  1423  2697 I WindowManager:   sfl=8}
+12-22 20:59:19.313  1423  4794 I WindowManager: Relayout Window{5a7dcc6 u0 com.android.systemui.wallpapers.ImageWallpaper}: viewVisibility=0 req=2486x2520 ty=2013 d0
+12-22 20:59:19.314  1423  1473 D WindowManager: finishDrawingWindow: Window{f748235 u0 InputMethod} mDrawState=HAS_DRAWN seqId=0
+12-22 20:59:19.315  1423  4794 I WindowManager: Relayout hash=5a7dcc6, pid=2022, syncId=-1: mAttrs={(0,0)(2486x2520) gr=TOP START CENTER layoutInDisplayCutoutMode=always ty=WALLPAPER fmt=RGBX_8888 wanim=0x1030328
+12-22 20:59:19.315  1423  4794 I WindowManager:   fl=14318
+12-22 20:59:19.315  1423  4794 I WindowManager:   pfl=14
+12-22 20:59:19.315  1423  4794 I WindowManager:   bhv=1
+12-22 20:59:19.315  1423  4794 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.315  1423  4794 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0
+12-22 20:59:19.315  1423  4794 I WindowManager:   sfl=8}
+12-22 20:59:19.316  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.347  1423  1473 I WindowManager: Relayout Window{e382cc2 u0 SubLauncherWindow}: viewVisibility=8 req=1422x1500 ty=1000 d1
+12-22 20:59:19.348  1423  1473 I WindowManager: Relayout hash=e382cc2, pid=2022, syncId=-1: mAttrs={(0,0)(fillxfill) sim={adjust=pan} layoutInDisplayCutoutMode=always ty=APPLICATION_PANEL fmt=TRANSLUCENT if=INPUT_FEATURE_DISABLE_USER_ACTIVITY
+12-22 20:59:19.348  1423  1473 I WindowManager:   fl=81080278
+12-22 20:59:19.348  1423  1473 I WindowManager:   vsysui=1600400
+12-22 20:59:19.348  1423  1473 I WindowManager:   bhv=1
+12-22 20:59:19.348  1423  1473 I WindowManager:   fitTypes=206
+12-22 20:59:19.348  1423  1473 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:19.348  1423  1473 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:19.634  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:19.638  1423  2220 I ActivityManager: Changes in 10053 15 to 6, 0 to 128
+12-22 20:59:19.836  1423  1423 I WindowManager: getCoverScreenRotation 0, sensor= 0, isFlat=false, isDual=false
+12-22 20:59:20.145  7845  7845 I WindowManager: WindowManagerGlobal#removeView, ty=2032, view=android.widget.FrameLayout{d4e1542 VFE...C.. ........ 0,0-63,63}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeView:211 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1054 
+12-22 20:59:20.176  7845  7845 I WindowManager: WindowManagerGlobal#addView, ty=2032, view=android.widget.FrameLayout{61f4511 VFE...C.. ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 com.example.quadrantlauncher.FloatingLauncherService.setupBubble:607 com.example.quadrantlauncher.FloatingLauncherService.performDisplayChange:1071 
+12-22 20:59:20.178  7845  7845 D ViewRootImpl: desktopMode is false
+12-22 20:59:20.178  7845  7845 I ViewRootImpl: dVRR is disabled
+12-22 20:59:20.217  1423  4794 I WindowManager: Relayout Window{29eb9ea u0 com.katsuyamaki.DroidOSLauncher}: viewVisibility=0 req=63x63 ty=2032 d0
+12-22 20:59:20.218  1423  4794 D WindowManager: makeSurface duration=0 name=$_7845
+12-22 20:59:20.220  1423  4794 I WindowManager: Relayout hash=29eb9ea, pid=7845, syncId=-1: mAttrs={(50,200)(wrapxwrap) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+12-22 20:59:20.220  1423  4794 I WindowManager:   fl=1040308
+12-22 20:59:20.220  1423  4794 I WindowManager:   bhv=1
+12-22 20:59:20.220  1423  4794 I WindowManager:   fitTypes=206
+12-22 20:59:20.220  1423  4794 I WindowManager:   frameRateBoostOnTouch=true
+12-22 20:59:20.220  1423  4794 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+12-22 20:59:20.255  1423  4794 D WindowManager: finishDrawingWindow: Window{29eb9ea u0 com.katsuyamaki.DroidOSLauncher} mDrawState=DRAW_PENDING seqId=0
+12-22 20:59:20.258  1423  4794 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19260)/@0xd898151} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
+12-22 20:59:20.283  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:21.847  1423  1554 I ActivityManager: Changes in 5009 5 to 6, 144 to 128
+12-22 20:59:21.859  1423  1554 I ActivityManager: Changes in 10333 6 to 15, 128 to 0
+12-22 20:59:22.304  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33721904093000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
+12-22 20:59:22.305  1423  1695 I InputDispatcher: Delivering touch to (7845): action: 0x4, f=0x0, d=0, '29eb9ea', t=1 
+12-22 20:59:22.305  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=0, '6146b28', t=1 
+12-22 20:59:22.305  1423  1695 I InputDispatcher: Delivering touch to (22381): action: 0x0, f=0x0, d=0, 'f704bfc', t=1 +(0,-116)
+12-22 20:59:22.331  1423  2220 E InputDispatcher: Embedded{TaskInputSink of Surface(name=Decor container of Task=19260)/@0xd898151} has feature NO_INPUT_WINDOW, but a non-null token. Clearing
+12-22 20:59:22.334  1423  1547 D WindowManager: DeferredDisplayUpdater: partially applying DisplayInfo(1080 x 2520) immediately
+12-22 20:59:22.383  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x1, time=33721986802000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
+12-22 20:59:22.383  1423  1695 I InputDispatcher: Delivering touch to (22381): action: 0x1, f=0x0, d=0, 'f704bfc', t=1 +(0,-116)
+12-22 20:59:23.270  1423  1423 D InputDispatcher: Inject motion (0/0): action=0x0, time=33722870090000, f=0x0, d=0 dsdx=1.000000 dtdx=0.000000
+12-22 20:59:23.270  1423  1695 I InputDispatcher: Delivering touch to (7845): action: 0x4, f=0x0, d=0, '29eb9ea', t=1 
+12-22 20:59:23.270  1423  1695 I InputDispatcher: Delivering touch to (2022): action: 0x4, f=0x0, d=0, '6146b28', t=1 
+12-22 20:59:23.270  1423  1695 I InputDispatcher: Delivering touch to (4255): action: 0x0, f=0x0, d=0, 'f748235', t=1 +(0,-116)
+```
+
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/MainActivity.kt
 ```kotlin
 package com.example.coverscreentester
@@ -16390,91 +16019,21 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_menu)
 
-        // UI Binding
-        tvStep1 = findViewById(R.id.tvStep1Title)
-        tvStep2 = findViewById(R.id.tvStep2Title)
-        tvStep3 = findViewById(R.id.tvStep3Title)
-        tvStep4 = findViewById(R.id.tvStep4Title)
-        tvStep5 = findViewById(R.id.tvStep5Title)
-        tvStepNullKeyboardTitle = findViewById(R.id.tvStepNullKeyboardTitle)
-
-        val btnStep1 = findViewById<Button>(R.id.btnStep1Trigger)
-        val btnStep2 = findViewById<Button>(R.id.btnStep2Unblock)
-        val btnStep3 = findViewById<Button>(R.id.btnStep3Enable)
-        val btnStep4 = findViewById<Button>(R.id.btnStep4Overlay)
-        val btnStep5 = findViewById<Button>(R.id.btnStep5Shizuku)
-        val btnStepNullKeyboardEnable = findViewById<Button>(R.id.btnStepNullKeyboardEnable)
-
-        btnStart = findViewById(R.id.btnStartApp)
-        btnSettings = findViewById(R.id.btnOpenSettings)
-
-        // Step 1: Trigger (Open Accessibility)
-        btnStep1.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        val displayId = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
         }
 
-        // Step 2: Unblock (Open App Info)
-        btnStep2.setOnClickListener {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            intent.data = Uri.parse("package:$packageName")
-            startActivity(intent)
-        }
+        android.util.Log.d("DroidOS_Trackpad_Main", "Triggering Trackpad on Display $displayId")
 
-        // Step 3: Enable (Open Accessibility)
-        btnStep3.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        // Step 3.5: Enable Null Keyboard (NEW)
-        btnStepNullKeyboardEnable.setOnClickListener {
-            val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-            startActivity(intent)
-        }
-
-        // Step 4: Overlay
-        btnStep4.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        }
-
-        // Step 5: Shizuku
-        try {
-            Shizuku.addRequestPermissionResultListener(this)
-        } catch (e: Exception) {}
+        val intent = Intent(this, TrackpadService::class.java)
+        intent.putExtra("TARGET_DISPLAY_ID", displayId)
+        startService(intent)
         
-        btnStep5.setOnClickListener {
-            try {
-                if (Shizuku.getBinder() == null) {
-                    Toast.makeText(this, "Shizuku not running!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Shizuku.requestPermission(0)
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Shizuku Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // LAUNCH BUTTON
-        btnStart.setOnClickListener {
-            if (checkCriticalPermissions()) {
-                launchOverlayService()
-            }
-        }
-
-        // SETTINGS BUTTON
-        btnSettings.setOnClickListener {
-            if (checkCriticalPermissions()) {
-                val intent = Intent(this, OverlayService::class.java)
-                intent.action = "OPEN_MENU"
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-                finish()
-            }
-        }
+        finish()
     }
 
     override fun onResume() {
@@ -16596,6 +16155,686 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
         try {
             Shizuku.removeRequestPermissionResultListener(this)
         } catch (e: Exception) {}
+    }
+}
+```
+
+## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardOverlay.kt
+```kotlin
+package com.example.coverscreentester
+
+import android.content.Context
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
+import kotlin.math.max
+
+class KeyboardOverlay(
+    private val context: Context,
+    private val windowManager: WindowManager,
+    private val shellService: IShellService?,
+    private val targetDisplayId: Int,
+    private val onScreenToggleAction: () -> Unit,
+    private val onScreenModeChangeAction: () -> Unit,
+    private val onCloseAction: () -> Unit // New Parameter
+) : KeyboardView.KeyboardListener {
+
+    private var keyboardContainer: FrameLayout? = null
+    private var keyboardView: KeyboardView? = null
+    private var keyboardParams: WindowManager.LayoutParams? = null
+    private var isVisible = false
+
+    // State Variables
+    private var isMoving = false
+    private var isResizing = false
+    private var isAnchored = false
+    private var initialTouchX = 0f
+    private var initialTouchY = 0f
+    private var initialWindowX = 0
+    private var initialWindowY = 0
+    private var initialWidth = 0
+    private var initialHeight = 0
+
+    private val TAG = "KeyboardOverlay"
+    
+    // FIX: Default height to WRAP_CONTENT (-2) to avoid cutting off rows
+    private var keyboardWidth = 500
+    private var keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT 
+    
+    private var screenWidth = 720
+    private var screenHeight = 748
+    private var currentRotation = 0
+    private var currentAlpha = 200
+    private var currentDisplayId = 0
+
+    fun setScreenDimensions(width: Int, height: Int, displayId: Int = 0) {
+        screenWidth = width
+        screenHeight = height
+        currentDisplayId = displayId
+        
+        loadKeyboardSizeForDisplay(displayId)
+        
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        currentAlpha = prefs.getInt("keyboard_alpha", 200)
+        
+        // Only set defaults if nothing is saved
+        if (!prefs.contains("keyboard_width_d$displayId")) {
+            keyboardWidth = (width * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
+            // Keep height as WRAP_CONTENT by default
+            keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT
+        }
+    }
+
+    fun updateScale(scale: Float) {
+        if (keyboardView == null) return
+        keyboardView?.setScale(scale)
+        
+        // FIX: Removed forced reset of keyboardHeight to WRAP_CONTENT.
+        // We now respect the existing keyboardHeight (whether it's fixed pixels from a manual resize
+        // or WRAP_CONTENT from default).
+        
+        if (isVisible && keyboardParams != null) {
+            // If the window is set to WRAP_CONTENT, we might need to poke the WM to re-measure
+            // effectively, but we shouldn't change the param value itself if it's already -2.
+            // If it is fixed pixels, we leave it alone.
+            
+            // We only need to update layout if we want to ensure constraints are met,
+            // but simply invalidating the view is usually enough for internal changes.
+            // To be safe, we update the view layout with the *current* params.
+            try { 
+                windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+                // Do NOT call saveKeyboardSize() here. Scaling shouldn't change the 
+                // "Window Size Preference" (Container), only the content scale.
+            } catch (e: Exception) {}
+        }
+    }
+    
+    fun updateAlpha(alpha: Int) {
+        currentAlpha = alpha
+        if (isVisible && keyboardContainer != null) {
+            val bg = keyboardContainer?.background as? GradientDrawable
+            if (bg != null) {
+                val fillColor = (alpha shl 24) or (0x1A1A1A)
+                bg.setColor(fillColor)
+                bg.setStroke(2, Color.parseColor("#44FFFFFF"))
+            }
+            val normalizedAlpha = alpha / 255f
+            keyboardView?.alpha = normalizedAlpha
+            keyboardContainer?.invalidate()
+        }
+    }
+    
+    fun setWindowBounds(x: Int, y: Int, width: Int, height: Int) {
+        keyboardWidth = width
+        keyboardHeight = height
+        if (isVisible && keyboardParams != null) {
+            keyboardParams?.x = x
+            keyboardParams?.y = y
+            keyboardParams?.width = width
+            keyboardParams?.height = height
+            try { 
+                windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+                saveKeyboardPosition()
+                saveKeyboardSize()
+            } catch (e: Exception) {}
+        } else {
+            // Even if hidden, save the new bounds so they apply on next show
+            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .putInt("keyboard_width_d$currentDisplayId", width)
+                .putInt("keyboard_height_d$currentDisplayId", height)
+                .apply()
+        }
+    }
+   
+    fun setAnchored(anchored: Boolean) {
+        isAnchored = anchored
+    }
+
+    // Helper for OverlayService Profile Load
+    fun updatePosition(x: Int, y: Int) {
+        if (keyboardContainer == null || keyboardParams == null) {
+            // Save to prefs if hidden
+            context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .apply()
+            return
+        }
+        keyboardParams?.x = x
+        keyboardParams?.y = y
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+            saveKeyboardPosition()
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // Helper for OverlayService Profile Load
+    fun updateSize(w: Int, h: Int) {
+        keyboardWidth = w
+        keyboardHeight = h
+        
+        if (keyboardContainer == null || keyboardParams == null) {
+            saveKeyboardSize()
+            return
+        }
+        keyboardParams?.width = w
+        keyboardParams?.height = h
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+            saveKeyboardSize()
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+    
+    // Robust Getters: Return live values if visible, otherwise return saved Prefs
+    fun getViewX(): Int {
+        if (keyboardParams != null) return keyboardParams!!.x
+        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .getInt("keyboard_x_d$currentDisplayId", 0)
+    }
+    
+    fun getViewY(): Int {
+        if (keyboardParams != null) return keyboardParams!!.y
+        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .getInt("keyboard_y_d$currentDisplayId", 0)
+    }
+    
+    fun getViewWidth(): Int = keyboardWidth
+    fun getViewHeight(): Int = keyboardHeight
+    
+    // [START ROTATION FIX]
+    fun setRotation(angle: Int) {
+        currentRotation = angle
+        if (!isVisible || keyboardContainer == null || keyboardParams == null || keyboardView == null) return
+
+        val isPortrait = (angle == 90 || angle == 270)
+
+        // 1. Determine Logical Dimensions (Unrotated size)
+        // We rely on keyboardWidth/Height being the canonical "Landscape" size.
+        val baseW = keyboardWidth
+        val baseH = keyboardHeight 
+
+        // 2. Configure WINDOW Params (The touchable area on screen)
+        // If rotated, we swap the dimensions passed to WindowManager
+        if (isPortrait) {
+            keyboardParams?.width = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
+            keyboardParams?.height = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
+        } else {
+            keyboardParams?.width = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
+            keyboardParams?.height = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
+        }
+
+        // 3. Configure VIEW Params (The Internal Content)
+        // The View must ALWAYS be the logical size (e.g. Wide) to layout keys in rows correctly.
+        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+        lp.width = if (baseW == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseW
+        lp.height = if (baseH == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseH
+        keyboardView!!.layoutParams = lp
+
+        // 4. Apply Rotation to View (Not Container)
+        keyboardView!!.rotation = angle.toFloat()
+        keyboardContainer!!.rotation = 0f // Ensure container is NOT rotated
+
+        // 5. Update Layout
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+        } catch (e: Exception) {}
+
+        // 6. Post-Layout Alignment
+        // We must translate the view to re-center it because rotation happens around the pivot (center).
+        // Since we swapped the Window dimensions, the centers might not align by default without this.
+        keyboardView!!.post { alignRotatedView() }
+    }
+
+    private fun alignRotatedView() {
+        if (keyboardView == null) return
+        
+        val angle = currentRotation
+        val w = keyboardView!!.measuredWidth
+        val h = keyboardView!!.measuredHeight
+        
+        // When rotated 90/270, the "Visual" width matches the View's Height, and vice versa.
+        // We translate the view so its visual center matches the window's center.
+        
+        when (angle) {
+            90, 270 -> {
+                val tx = (h - w) / 2f
+                val ty = (w - h) / 2f
+                keyboardView!!.translationX = tx
+                keyboardView!!.translationY = ty
+            }
+            else -> {
+                keyboardView!!.translationX = 0f
+                keyboardView!!.translationY = 0f
+            }
+        }
+    }
+
+    fun cycleRotation() {
+        if (keyboardContainer == null) return
+        val nextRotation = (currentRotation + 90) % 360
+        setRotation(nextRotation)
+    }
+
+    fun resetPosition() {
+        if (keyboardParams == null) return
+        
+        // 1. Reset Rotation state
+        currentRotation = 0
+        keyboardContainer?.rotation = 0f
+        keyboardView?.rotation = 0f
+        keyboardView?.translationX = 0f
+        keyboardView?.translationY = 0f
+
+        // 2. Calculate Defaults
+        val defaultWidth = (screenWidth * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
+        val defaultHeight = WindowManager.LayoutParams.WRAP_CONTENT
+        val defaultX = (screenWidth - defaultWidth) / 2
+        val defaultY = (screenHeight / 2) // Place in middle
+
+        // 3. Update State & Params
+        keyboardWidth = defaultWidth
+        keyboardHeight = defaultHeight
+        
+        keyboardParams?.x = defaultX
+        keyboardParams?.y = defaultY
+        keyboardParams?.width = defaultWidth
+        keyboardParams?.height = defaultHeight
+
+        // 4. Update View Constraints
+        if (keyboardView != null) {
+            val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+            lp.width = defaultWidth
+            lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
+            keyboardView!!.layoutParams = lp
+        }
+
+        try {
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+        } catch (e: Exception) {}
+        
+        saveKeyboardPosition()
+        saveKeyboardSize()
+    }
+    // [END ROTATION FIX]
+
+    fun show() { 
+        if (isVisible) return
+        try { 
+            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            currentAlpha = prefs.getInt("keyboard_alpha", 200)
+
+            createKeyboardWindow()
+            isVisible = true
+            if (currentRotation != 0) setRotation(currentRotation)
+        } catch (e: Exception) { Log.e(TAG, "Failed to show keyboard", e) } 
+    }
+    
+    fun hide() { 
+        if (!isVisible) return
+        try { 
+            windowManager.removeView(keyboardContainer)
+            keyboardContainer = null
+            keyboardView = null
+            isVisible = false 
+        } catch (e: Exception) { Log.e(TAG, "Failed to hide keyboard", e) } 
+    }
+    
+    fun toggle() { if (isVisible) hide() else show() }
+    fun isShowing(): Boolean = isVisible
+
+    fun setFocusable(focusable: Boolean) {
+        try {
+            if (keyboardContainer == null || keyboardParams == null) return
+
+            if (focusable) {
+                // Remove NOT_FOCUSABLE (Make it focusable)
+                keyboardParams?.flags = keyboardParams?.flags?.and(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv())
+            } else {
+                // Add NOT_FOCUSABLE (Make it click-through for focus purposes)
+                keyboardParams?.flags = keyboardParams?.flags?.or(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+            }
+            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // =================================================================================
+    // FUNCTION: setVoiceActive
+    // SUMMARY: Passes the voice state down to the keyboard view.
+    // =================================================================================
+    fun setVoiceActive(active: Boolean) {
+        keyboardView?.setVoiceActive(active)
+    }
+    // =================================================================================
+    // END BLOCK: setVoiceActive
+    // =================================================================================
+
+    fun moveWindow(dx: Int, dy: Int) {
+        if (!isVisible || keyboardParams == null) return
+        keyboardParams!!.x += dx; keyboardParams!!.y += dy
+        try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardPosition() } catch (e: Exception) {}
+    }
+    
+    fun resizeWindow(dw: Int, dh: Int) {
+         if (!isVisible || keyboardParams == null) return
+         
+         // If current height is WRAP_CONTENT (-2), start from current measured height
+         var currentH = keyboardParams!!.height
+         if (currentH == WindowManager.LayoutParams.WRAP_CONTENT) {
+             currentH = keyboardContainer?.height ?: 260
+         }
+         
+         var currentW = keyboardParams!!.width
+         if (currentW == WindowManager.LayoutParams.WRAP_CONTENT) {
+             currentW = keyboardContainer?.width ?: 500
+         }
+
+         keyboardParams!!.width = max(280, currentW + dw)
+         keyboardParams!!.height = max(180, currentH + dh)
+         
+         keyboardWidth = keyboardParams!!.width
+         keyboardHeight = keyboardParams!!.height
+         
+         try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardSize() } catch (e: Exception) {}
+    }
+
+    private fun createKeyboardWindow() {
+        keyboardContainer = FrameLayout(context)
+        val containerBg = GradientDrawable(); 
+        val fillColor = (currentAlpha shl 24) or (0x1A1A1A)
+        containerBg.setColor(fillColor)
+        containerBg.cornerRadius = 16f
+        containerBg.setStroke(2, Color.parseColor("#44FFFFFF"))
+        keyboardContainer?.background = containerBg
+        
+        keyboardView = KeyboardView(context)
+        keyboardView?.setKeyboardListener(this)
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        keyboardView?.setVibrationEnabled(prefs.getBoolean("vibrate", true))
+        val scale = prefs.getInt("keyboard_key_scale", 100) / 100f; keyboardView?.setScale(scale)
+        
+        keyboardView?.alpha = currentAlpha / 255f
+        
+        val kbParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        kbParams.setMargins(6, 28, 6, 6)
+        keyboardContainer?.addView(keyboardView, kbParams)
+        addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
+        
+        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", (screenWidth - keyboardWidth) / 2)
+        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", screenHeight - 350 - 10)
+        
+        // FIX: Use variable keyboardHeight instead of hardcoded WRAP_CONTENT
+        // This ensures loaded profiles with specific sizes are respected.
+        keyboardParams = WindowManager.LayoutParams(
+            keyboardWidth, 
+            keyboardHeight, 
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, 
+            PixelFormat.TRANSLUCENT
+        )
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+             keyboardParams?.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        keyboardParams?.gravity = Gravity.TOP or Gravity.LEFT; keyboardParams?.x = savedX; keyboardParams?.y = savedY
+        windowManager.addView(keyboardContainer, keyboardParams)
+    }
+
+    private fun addDragHandle() {
+        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 28); handleParams.gravity = Gravity.TOP
+        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#555555")); indicatorBg.cornerRadius = 3f; indicator.background = indicatorBg
+        val indicatorParams = FrameLayout.LayoutParams(50, 5); indicatorParams.gravity = Gravity.CENTER; indicatorParams.topMargin = 8
+        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleDrag(event); true }
+        keyboardContainer?.addView(handle, handleParams)
+    }
+
+    private fun addResizeHandle() {
+        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(36, 36); handleParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
+        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#3DDC84")); indicatorBg.cornerRadius = 4f; indicator.background = indicatorBg; indicator.alpha = 0.7f
+        val indicatorParams = FrameLayout.LayoutParams(14, 14); indicatorParams.gravity = Gravity.BOTTOM or Gravity.RIGHT; indicatorParams.setMargins(0, 0, 6, 6)
+        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleResize(event); true }
+        keyboardContainer?.addView(handle, handleParams)
+    }
+
+    private fun addCloseButton() {
+        val button = FrameLayout(context); val buttonParams = FrameLayout.LayoutParams(28, 28); buttonParams.gravity = Gravity.TOP or Gravity.RIGHT; buttonParams.setMargins(0, 2, 4, 0)
+        val closeText = TextView(context); closeText.text = "X"; closeText.setTextColor(Color.parseColor("#FF5555")); closeText.textSize = 12f; closeText.gravity = Gravity.CENTER
+        // CHANGED: Call onCloseAction to notify Service (handles IME toggle & automation)
+        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)); button.setOnClickListener { onCloseAction() }
+        keyboardContainer?.addView(button, buttonParams)
+    }
+
+    private fun addTargetLabel() {
+        val label = TextView(context); label.text = "Display $targetDisplayId"; label.setTextColor(Color.parseColor("#888888")); label.textSize = 9f
+        val labelParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT); labelParams.gravity = Gravity.TOP or Gravity.LEFT; labelParams.setMargins(8, 6, 0, 0)
+        keyboardContainer?.addView(label, labelParams)
+    }
+
+    private fun handleDrag(event: MotionEvent): Boolean {
+        if (isAnchored) return true
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> { 
+                isMoving = true
+                initialTouchX = event.rawX
+                initialTouchY = event.rawY
+                initialWindowX = keyboardParams?.x ?: 0
+                initialWindowY = keyboardParams?.y ?: 0 
+            }
+            MotionEvent.ACTION_MOVE -> { 
+                if (isMoving) { 
+                    keyboardParams?.x = initialWindowX + (event.rawX - initialTouchX).toInt()
+                    keyboardParams?.y = initialWindowY + (event.rawY - initialTouchY).toInt()
+                    try { windowManager.updateViewLayout(keyboardContainer, keyboardParams) } catch (e: Exception) {} 
+                } 
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { 
+                isMoving = false
+                saveKeyboardPosition() 
+            }
+        }
+        return true
+    }
+
+    // [START RESIZE FIX]
+    private fun handleResize(event: MotionEvent): Boolean {
+        if (isAnchored) return true
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                isResizing = true
+                initialTouchX = event.rawX
+                initialTouchY = event.rawY
+                // Capture the current WINDOW dimensions (Visual)
+                initialWidth = keyboardParams?.width ?: keyboardWidth
+                initialHeight = keyboardParams?.height ?: keyboardHeight
+                
+                // Handle WRAP_CONTENT case for initial values
+                if (initialWidth < 0) initialWidth = keyboardContainer?.width ?: 300
+                if (initialHeight < 0) initialHeight = keyboardContainer?.height ?: 200
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (isResizing) {
+                    val dX = (event.rawX - initialTouchX).toInt()
+                    val dY = (event.rawY - initialTouchY).toInt()
+                    
+                    // 1. Calculate New VISUAL Dimensions (Window Size)
+                    val newVisualW = max(280, initialWidth + dX)
+                    val newVisualH = max(180, initialHeight + dY)
+                    
+                    // 2. Update Window Params
+                    keyboardParams?.width = newVisualW
+                    keyboardParams?.height = newVisualH
+                    
+                    // 3. Update LOGICAL Dimensions (Keyboard State)
+                    // If rotated, dragging "Width" actually changes the Keyboard's "Height" (Rows)
+                    if (currentRotation == 90 || currentRotation == 270) {
+                        keyboardHeight = newVisualW
+                        keyboardWidth = newVisualH
+                    } else {
+                        keyboardWidth = newVisualW
+                        keyboardHeight = newVisualH
+                    }
+                    
+                    // 4. Update Inner View Layout to match Logical Dimensions
+                    if (keyboardView != null) {
+                        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
+                        lp.width = keyboardWidth
+                        lp.height = keyboardHeight
+                        keyboardView!!.layoutParams = lp
+                        
+                        // Re-center view if rotation is active
+                        alignRotatedView()
+                    }
+
+                    try {
+                        windowManager.updateViewLayout(keyboardContainer, keyboardParams)
+                    } catch (e: Exception) {}
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isResizing = false
+                saveKeyboardSize()
+            }
+        }
+        return true
+    }
+    // [END RESIZE FIX]
+
+    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
+    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
+    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
+
+    override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) { injectKey(keyCode, metaState) }
+    
+    override fun onTextInput(text: String) {
+        if (shellService == null) return
+        Thread { try { val cmd = "input -d $targetDisplayId text \"$text\""; shellService.runCommand(cmd) } catch (e: Exception) { Log.e(TAG, "Text injection failed", e) } }.start()
+    }
+
+    override fun onScreenToggle() { onScreenToggleAction() }
+    override fun onScreenModeChange() { onScreenModeChangeAction() }
+
+    override fun onSpecialKey(key: KeyboardView.SpecialKey, metaState: Int) {
+        if (key == KeyboardView.SpecialKey.VOICE_INPUT) {
+            triggerVoiceTyping()
+            return
+        }
+        if (key == KeyboardView.SpecialKey.HIDE_KEYBOARD) {
+            onCloseAction() // Calls the close/hide action passed from Service
+            return
+        }
+        val keyCode = when (key) {
+            KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
+            KeyboardView.SpecialKey.ENTER -> KeyEvent.KEYCODE_ENTER
+            KeyboardView.SpecialKey.SPACE -> KeyEvent.KEYCODE_SPACE
+            KeyboardView.SpecialKey.TAB -> KeyEvent.KEYCODE_TAB
+            KeyboardView.SpecialKey.ESCAPE -> KeyEvent.KEYCODE_ESCAPE
+            KeyboardView.SpecialKey.ARROW_UP -> KeyEvent.KEYCODE_DPAD_UP
+            KeyboardView.SpecialKey.ARROW_DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
+            KeyboardView.SpecialKey.ARROW_LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
+            KeyboardView.SpecialKey.ARROW_RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
+            KeyboardView.SpecialKey.HOME -> KeyEvent.KEYCODE_MOVE_HOME
+            KeyboardView.SpecialKey.END -> KeyEvent.KEYCODE_MOVE_END
+            KeyboardView.SpecialKey.DELETE -> KeyEvent.KEYCODE_FORWARD_DEL
+            KeyboardView.SpecialKey.MUTE -> KeyEvent.KEYCODE_VOLUME_MUTE
+            KeyboardView.SpecialKey.VOL_UP -> KeyEvent.KEYCODE_VOLUME_UP
+            KeyboardView.SpecialKey.VOL_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
+            KeyboardView.SpecialKey.BACK_NAV -> KeyEvent.KEYCODE_BACK
+            KeyboardView.SpecialKey.FWD_NAV -> KeyEvent.KEYCODE_FORWARD
+            else -> return
+        }
+        injectKey(keyCode, metaState)
+    }
+
+    private fun injectKey(keyCode: Int, metaState: Int) {
+        (context as? OverlayService)?.injectKeyFromKeyboard(keyCode, metaState)
+    }
+
+    // --- Voice Logic & Mic Check Loop ---
+    
+    // Handler for the 1-second loop
+    private val micCheckHandler = Handler(Looper.getMainLooper())
+    
+    // Runnable that checks if the Microphone is currently recording
+    private val micCheckRunnable = object : Runnable {
+        override fun run() {
+            try {
+                val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+                
+                // Use activeRecordingConfigurations (API 24+) to check if any app is recording
+                var isMicOn = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    if (audioManager.activeRecordingConfigurations.isNotEmpty()) {
+                        isMicOn = true
+                    }
+                }
+                
+                if (isMicOn) {
+                    // Still recording, check again in 1 second
+                    micCheckHandler.postDelayed(this, 1000)
+                } else {
+                    // Mic stopped (or not supported), turn off the green light
+                    keyboardView?.setVoiceActive(false)
+                }
+            } catch (e: Exception) {
+                // If check fails, fail safe to off
+                keyboardView?.setVoiceActive(false)
+            }
+        }
+    }
+
+    private fun triggerVoiceTyping() {
+        if (shellService == null) return
+
+        // 1. UI: Turn Button Green Immediately
+        keyboardView?.setVoiceActive(true)
+        
+        // 2. Start Monitoring Loop
+        // Delay 3 seconds to allow the Voice IME to open and start recording
+        micCheckHandler.removeCallbacks(micCheckRunnable)
+        micCheckHandler.postDelayed(micCheckRunnable, 3000)
+
+        // 3. Notify Service to stop blocking touches
+        val intent = android.content.Intent("VOICE_TYPE_TRIGGERED")
+        intent.setPackage(context.packageName)
+        context.sendBroadcast(intent)
+
+        // 4. Perform IME Switch via Shell
+        Thread {
+            try {
+                // Fetch IME list and find Google Voice Typing
+                val output = shellService?.runCommand("ime list -a -s") ?: ""
+                val voiceIme = output.lines().find { it.contains("google", true) && it.contains("voice", true) } 
+                    ?: output.lines().find { it.contains("voice", true) }
+                
+                if (voiceIme != null) {
+                    shellService?.runCommand("ime set $voiceIme")
+                } else {
+                    android.util.Log.w(TAG, "Voice IME not found")
+                    // If IME missing, turn off light
+                    micCheckHandler.post { keyboardView?.setVoiceActive(false) }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Voice Switch Failed", e)
+                micCheckHandler.post { keyboardView?.setVoiceActive(false) }
+            }
+        }.start()
     }
 }
 ```
@@ -17009,9 +17248,65 @@ class FloatingLauncherService : AccessibilityService() {
         safeToast("Launcher Ready")
     }
 
-    // AccessibilityService is managed by system - onStartCommand not used for init
+    /* * FUNCTION: onStartCommand
+     * SUMMARY: Updated to strictly handle display migration. If an ID is passed,
+     * it forces the bubble to move to that display context immediately.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
+        // Priority: 1. Explicit ID from Intent (Triggered by Icon Click) 2. Last saved Physical ID
+        val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", currentDisplayId) ?: currentDisplayId
+
+        Log.d(TAG, "onStartCommand: Target Display $targetDisplayId (Current: $currentDisplayId)")
+
+        if (bubbleView != null) {
+            // If we are already running but the target display changed, move the bubble
+            if (targetDisplayId != currentDisplayId) {
+                try {
+                    windowManager.removeView(bubbleView)
+                    if (isExpanded) windowManager.removeView(drawerView)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error removing views for migration", e)
+                }
+                setupDisplayContext(targetDisplayId)
+                setupBubble()
+                setupDrawer()
+                updateBubbleIcon()
+                loadDisplaySettings(currentDisplayId)
+                isExpanded = false
+                safeToast("Recalled to Display $targetDisplayId")
+            }
+        } else {
+            // First time initialization
+            try {
+                setupDisplayContext(targetDisplayId)
+                setupBubble()
+                setupDrawer()
+                selectedLayoutType = AppPreferences.getLastLayout(this)
+                activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
+                updateGlobalFontSize()
+                updateBubbleIcon()
+                loadDisplaySettings(currentDisplayId)
+
+                if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+                    val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+                    if (data != null) {
+                        val rects = mutableListOf<Rect>()
+                        val rectParts = data.split("|")
+                        for (rp in rectParts) {
+                            val coords = rp.split(",")
+                            if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+                        }
+                        activeCustomRects = rects
+                    }
+                }
+
+                if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku()
+            } catch (e: Exception) {
+                Log.e(TAG, "Setup failed", e)
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
     }
     
     private fun loadDisplaySettings(displayId: Int) { selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId); currentDpiSetting = AppPreferences.getDisplayDpi(this, displayId) }
@@ -18263,686 +18558,6 @@ class FloatingLauncherService : AccessibilityService() {
             else if (holder is WidthHolder && item is WidthOption) { holder.textVal.text = item.currentPercent.toString(); holder.btnMinus.setOnClickListener { changeDrawerWidth(-5) }; holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } }
         }
         override fun getItemCount() = displayList.size
-    }
-}
-```
-
-## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardOverlay.kt
-```kotlin
-package com.example.coverscreentester
-
-import android.content.Context
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
-import android.media.AudioRecordingConfiguration
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.view.Gravity
-import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.TextView
-import kotlin.math.max
-
-class KeyboardOverlay(
-    private val context: Context,
-    private val windowManager: WindowManager,
-    private val shellService: IShellService?,
-    private val targetDisplayId: Int,
-    private val onScreenToggleAction: () -> Unit,
-    private val onScreenModeChangeAction: () -> Unit,
-    private val onCloseAction: () -> Unit // New Parameter
-) : KeyboardView.KeyboardListener {
-
-    private var keyboardContainer: FrameLayout? = null
-    private var keyboardView: KeyboardView? = null
-    private var keyboardParams: WindowManager.LayoutParams? = null
-    private var isVisible = false
-
-    // State Variables
-    private var isMoving = false
-    private var isResizing = false
-    private var isAnchored = false
-    private var initialTouchX = 0f
-    private var initialTouchY = 0f
-    private var initialWindowX = 0
-    private var initialWindowY = 0
-    private var initialWidth = 0
-    private var initialHeight = 0
-
-    private val TAG = "KeyboardOverlay"
-    
-    // FIX: Default height to WRAP_CONTENT (-2) to avoid cutting off rows
-    private var keyboardWidth = 500
-    private var keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT 
-    
-    private var screenWidth = 720
-    private var screenHeight = 748
-    private var currentRotation = 0
-    private var currentAlpha = 200
-    private var currentDisplayId = 0
-
-    fun setScreenDimensions(width: Int, height: Int, displayId: Int = 0) {
-        screenWidth = width
-        screenHeight = height
-        currentDisplayId = displayId
-        
-        loadKeyboardSizeForDisplay(displayId)
-        
-        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        currentAlpha = prefs.getInt("keyboard_alpha", 200)
-        
-        // Only set defaults if nothing is saved
-        if (!prefs.contains("keyboard_width_d$displayId")) {
-            keyboardWidth = (width * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
-            // Keep height as WRAP_CONTENT by default
-            keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT
-        }
-    }
-
-    fun updateScale(scale: Float) {
-        if (keyboardView == null) return
-        keyboardView?.setScale(scale)
-        
-        // FIX: Removed forced reset of keyboardHeight to WRAP_CONTENT.
-        // We now respect the existing keyboardHeight (whether it's fixed pixels from a manual resize
-        // or WRAP_CONTENT from default).
-        
-        if (isVisible && keyboardParams != null) {
-            // If the window is set to WRAP_CONTENT, we might need to poke the WM to re-measure
-            // effectively, but we shouldn't change the param value itself if it's already -2.
-            // If it is fixed pixels, we leave it alone.
-            
-            // We only need to update layout if we want to ensure constraints are met,
-            // but simply invalidating the view is usually enough for internal changes.
-            // To be safe, we update the view layout with the *current* params.
-            try { 
-                windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-                // Do NOT call saveKeyboardSize() here. Scaling shouldn't change the 
-                // "Window Size Preference" (Container), only the content scale.
-            } catch (e: Exception) {}
-        }
-    }
-    
-    fun updateAlpha(alpha: Int) {
-        currentAlpha = alpha
-        if (isVisible && keyboardContainer != null) {
-            val bg = keyboardContainer?.background as? GradientDrawable
-            if (bg != null) {
-                val fillColor = (alpha shl 24) or (0x1A1A1A)
-                bg.setColor(fillColor)
-                bg.setStroke(2, Color.parseColor("#44FFFFFF"))
-            }
-            val normalizedAlpha = alpha / 255f
-            keyboardView?.alpha = normalizedAlpha
-            keyboardContainer?.invalidate()
-        }
-    }
-    
-    fun setWindowBounds(x: Int, y: Int, width: Int, height: Int) {
-        keyboardWidth = width
-        keyboardHeight = height
-        if (isVisible && keyboardParams != null) {
-            keyboardParams?.x = x
-            keyboardParams?.y = y
-            keyboardParams?.width = width
-            keyboardParams?.height = height
-            try { 
-                windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-                saveKeyboardPosition()
-                saveKeyboardSize()
-            } catch (e: Exception) {}
-        } else {
-            // Even if hidden, save the new bounds so they apply on next show
-            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            prefs.edit()
-                .putInt("keyboard_x_d$currentDisplayId", x)
-                .putInt("keyboard_y_d$currentDisplayId", y)
-                .putInt("keyboard_width_d$currentDisplayId", width)
-                .putInt("keyboard_height_d$currentDisplayId", height)
-                .apply()
-        }
-    }
-   
-    fun setAnchored(anchored: Boolean) {
-        isAnchored = anchored
-    }
-
-    // Helper for OverlayService Profile Load
-    fun updatePosition(x: Int, y: Int) {
-        if (keyboardContainer == null || keyboardParams == null) {
-            // Save to prefs if hidden
-            context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-                .putInt("keyboard_x_d$currentDisplayId", x)
-                .putInt("keyboard_y_d$currentDisplayId", y)
-                .apply()
-            return
-        }
-        keyboardParams?.x = x
-        keyboardParams?.y = y
-        try {
-            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-            saveKeyboardPosition()
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    // Helper for OverlayService Profile Load
-    fun updateSize(w: Int, h: Int) {
-        keyboardWidth = w
-        keyboardHeight = h
-        
-        if (keyboardContainer == null || keyboardParams == null) {
-            saveKeyboardSize()
-            return
-        }
-        keyboardParams?.width = w
-        keyboardParams?.height = h
-        try {
-            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-            saveKeyboardSize()
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-    
-    // Robust Getters: Return live values if visible, otherwise return saved Prefs
-    fun getViewX(): Int {
-        if (keyboardParams != null) return keyboardParams!!.x
-        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .getInt("keyboard_x_d$currentDisplayId", 0)
-    }
-    
-    fun getViewY(): Int {
-        if (keyboardParams != null) return keyboardParams!!.y
-        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .getInt("keyboard_y_d$currentDisplayId", 0)
-    }
-    
-    fun getViewWidth(): Int = keyboardWidth
-    fun getViewHeight(): Int = keyboardHeight
-    
-    // [START ROTATION FIX]
-    fun setRotation(angle: Int) {
-        currentRotation = angle
-        if (!isVisible || keyboardContainer == null || keyboardParams == null || keyboardView == null) return
-
-        val isPortrait = (angle == 90 || angle == 270)
-
-        // 1. Determine Logical Dimensions (Unrotated size)
-        // We rely on keyboardWidth/Height being the canonical "Landscape" size.
-        val baseW = keyboardWidth
-        val baseH = keyboardHeight 
-
-        // 2. Configure WINDOW Params (The touchable area on screen)
-        // If rotated, we swap the dimensions passed to WindowManager
-        if (isPortrait) {
-            keyboardParams?.width = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
-            keyboardParams?.height = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
-        } else {
-            keyboardParams?.width = if (baseW == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseW
-            keyboardParams?.height = if (baseH == -2) WindowManager.LayoutParams.WRAP_CONTENT else baseH
-        }
-
-        // 3. Configure VIEW Params (The Internal Content)
-        // The View must ALWAYS be the logical size (e.g. Wide) to layout keys in rows correctly.
-        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
-        lp.width = if (baseW == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseW
-        lp.height = if (baseH == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseH
-        keyboardView!!.layoutParams = lp
-
-        // 4. Apply Rotation to View (Not Container)
-        keyboardView!!.rotation = angle.toFloat()
-        keyboardContainer!!.rotation = 0f // Ensure container is NOT rotated
-
-        // 5. Update Layout
-        try {
-            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-        } catch (e: Exception) {}
-
-        // 6. Post-Layout Alignment
-        // We must translate the view to re-center it because rotation happens around the pivot (center).
-        // Since we swapped the Window dimensions, the centers might not align by default without this.
-        keyboardView!!.post { alignRotatedView() }
-    }
-
-    private fun alignRotatedView() {
-        if (keyboardView == null) return
-        
-        val angle = currentRotation
-        val w = keyboardView!!.measuredWidth
-        val h = keyboardView!!.measuredHeight
-        
-        // When rotated 90/270, the "Visual" width matches the View's Height, and vice versa.
-        // We translate the view so its visual center matches the window's center.
-        
-        when (angle) {
-            90, 270 -> {
-                val tx = (h - w) / 2f
-                val ty = (w - h) / 2f
-                keyboardView!!.translationX = tx
-                keyboardView!!.translationY = ty
-            }
-            else -> {
-                keyboardView!!.translationX = 0f
-                keyboardView!!.translationY = 0f
-            }
-        }
-    }
-
-    fun cycleRotation() {
-        if (keyboardContainer == null) return
-        val nextRotation = (currentRotation + 90) % 360
-        setRotation(nextRotation)
-    }
-
-    fun resetPosition() {
-        if (keyboardParams == null) return
-        
-        // 1. Reset Rotation state
-        currentRotation = 0
-        keyboardContainer?.rotation = 0f
-        keyboardView?.rotation = 0f
-        keyboardView?.translationX = 0f
-        keyboardView?.translationY = 0f
-
-        // 2. Calculate Defaults
-        val defaultWidth = (screenWidth * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
-        val defaultHeight = WindowManager.LayoutParams.WRAP_CONTENT
-        val defaultX = (screenWidth - defaultWidth) / 2
-        val defaultY = (screenHeight / 2) // Place in middle
-
-        // 3. Update State & Params
-        keyboardWidth = defaultWidth
-        keyboardHeight = defaultHeight
-        
-        keyboardParams?.x = defaultX
-        keyboardParams?.y = defaultY
-        keyboardParams?.width = defaultWidth
-        keyboardParams?.height = defaultHeight
-
-        // 4. Update View Constraints
-        if (keyboardView != null) {
-            val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
-            lp.width = defaultWidth
-            lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
-            keyboardView!!.layoutParams = lp
-        }
-
-        try {
-            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-        } catch (e: Exception) {}
-        
-        saveKeyboardPosition()
-        saveKeyboardSize()
-    }
-    // [END ROTATION FIX]
-
-    fun show() { 
-        if (isVisible) return
-        try { 
-            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            currentAlpha = prefs.getInt("keyboard_alpha", 200)
-
-            createKeyboardWindow()
-            isVisible = true
-            if (currentRotation != 0) setRotation(currentRotation)
-        } catch (e: Exception) { Log.e(TAG, "Failed to show keyboard", e) } 
-    }
-    
-    fun hide() { 
-        if (!isVisible) return
-        try { 
-            windowManager.removeView(keyboardContainer)
-            keyboardContainer = null
-            keyboardView = null
-            isVisible = false 
-        } catch (e: Exception) { Log.e(TAG, "Failed to hide keyboard", e) } 
-    }
-    
-    fun toggle() { if (isVisible) hide() else show() }
-    fun isShowing(): Boolean = isVisible
-
-    fun setFocusable(focusable: Boolean) {
-        try {
-            if (keyboardContainer == null || keyboardParams == null) return
-
-            if (focusable) {
-                // Remove NOT_FOCUSABLE (Make it focusable)
-                keyboardParams?.flags = keyboardParams?.flags?.and(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv())
-            } else {
-                // Add NOT_FOCUSABLE (Make it click-through for focus purposes)
-                keyboardParams?.flags = keyboardParams?.flags?.or(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-            }
-            windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    // =================================================================================
-    // FUNCTION: setVoiceActive
-    // SUMMARY: Passes the voice state down to the keyboard view.
-    // =================================================================================
-    fun setVoiceActive(active: Boolean) {
-        keyboardView?.setVoiceActive(active)
-    }
-    // =================================================================================
-    // END BLOCK: setVoiceActive
-    // =================================================================================
-
-    fun moveWindow(dx: Int, dy: Int) {
-        if (!isVisible || keyboardParams == null) return
-        keyboardParams!!.x += dx; keyboardParams!!.y += dy
-        try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardPosition() } catch (e: Exception) {}
-    }
-    
-    fun resizeWindow(dw: Int, dh: Int) {
-         if (!isVisible || keyboardParams == null) return
-         
-         // If current height is WRAP_CONTENT (-2), start from current measured height
-         var currentH = keyboardParams!!.height
-         if (currentH == WindowManager.LayoutParams.WRAP_CONTENT) {
-             currentH = keyboardContainer?.height ?: 260
-         }
-         
-         var currentW = keyboardParams!!.width
-         if (currentW == WindowManager.LayoutParams.WRAP_CONTENT) {
-             currentW = keyboardContainer?.width ?: 500
-         }
-
-         keyboardParams!!.width = max(280, currentW + dw)
-         keyboardParams!!.height = max(180, currentH + dh)
-         
-         keyboardWidth = keyboardParams!!.width
-         keyboardHeight = keyboardParams!!.height
-         
-         try { windowManager.updateViewLayout(keyboardContainer, keyboardParams); saveKeyboardSize() } catch (e: Exception) {}
-    }
-
-    private fun createKeyboardWindow() {
-        keyboardContainer = FrameLayout(context)
-        val containerBg = GradientDrawable(); 
-        val fillColor = (currentAlpha shl 24) or (0x1A1A1A)
-        containerBg.setColor(fillColor)
-        containerBg.cornerRadius = 16f
-        containerBg.setStroke(2, Color.parseColor("#44FFFFFF"))
-        keyboardContainer?.background = containerBg
-        
-        keyboardView = KeyboardView(context)
-        keyboardView?.setKeyboardListener(this)
-        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        keyboardView?.setVibrationEnabled(prefs.getBoolean("vibrate", true))
-        val scale = prefs.getInt("keyboard_key_scale", 100) / 100f; keyboardView?.setScale(scale)
-        
-        keyboardView?.alpha = currentAlpha / 255f
-        
-        val kbParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        kbParams.setMargins(6, 28, 6, 6)
-        keyboardContainer?.addView(keyboardView, kbParams)
-        addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
-        
-        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", (screenWidth - keyboardWidth) / 2)
-        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", screenHeight - 350 - 10)
-        
-        // FIX: Use variable keyboardHeight instead of hardcoded WRAP_CONTENT
-        // This ensures loaded profiles with specific sizes are respected.
-        keyboardParams = WindowManager.LayoutParams(
-            keyboardWidth, 
-            keyboardHeight, 
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, 
-            PixelFormat.TRANSLUCENT
-        )
-        
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-             keyboardParams?.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        keyboardParams?.gravity = Gravity.TOP or Gravity.LEFT; keyboardParams?.x = savedX; keyboardParams?.y = savedY
-        windowManager.addView(keyboardContainer, keyboardParams)
-    }
-
-    private fun addDragHandle() {
-        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 28); handleParams.gravity = Gravity.TOP
-        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#555555")); indicatorBg.cornerRadius = 3f; indicator.background = indicatorBg
-        val indicatorParams = FrameLayout.LayoutParams(50, 5); indicatorParams.gravity = Gravity.CENTER; indicatorParams.topMargin = 8
-        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleDrag(event); true }
-        keyboardContainer?.addView(handle, handleParams)
-    }
-
-    private fun addResizeHandle() {
-        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(36, 36); handleParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
-        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#3DDC84")); indicatorBg.cornerRadius = 4f; indicator.background = indicatorBg; indicator.alpha = 0.7f
-        val indicatorParams = FrameLayout.LayoutParams(14, 14); indicatorParams.gravity = Gravity.BOTTOM or Gravity.RIGHT; indicatorParams.setMargins(0, 0, 6, 6)
-        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleResize(event); true }
-        keyboardContainer?.addView(handle, handleParams)
-    }
-
-    private fun addCloseButton() {
-        val button = FrameLayout(context); val buttonParams = FrameLayout.LayoutParams(28, 28); buttonParams.gravity = Gravity.TOP or Gravity.RIGHT; buttonParams.setMargins(0, 2, 4, 0)
-        val closeText = TextView(context); closeText.text = "X"; closeText.setTextColor(Color.parseColor("#FF5555")); closeText.textSize = 12f; closeText.gravity = Gravity.CENTER
-        // CHANGED: Call onCloseAction to notify Service (handles IME toggle & automation)
-        button.addView(closeText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)); button.setOnClickListener { onCloseAction() }
-        keyboardContainer?.addView(button, buttonParams)
-    }
-
-    private fun addTargetLabel() {
-        val label = TextView(context); label.text = "Display $targetDisplayId"; label.setTextColor(Color.parseColor("#888888")); label.textSize = 9f
-        val labelParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT); labelParams.gravity = Gravity.TOP or Gravity.LEFT; labelParams.setMargins(8, 6, 0, 0)
-        keyboardContainer?.addView(label, labelParams)
-    }
-
-    private fun handleDrag(event: MotionEvent): Boolean {
-        if (isAnchored) return true
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> { 
-                isMoving = true
-                initialTouchX = event.rawX
-                initialTouchY = event.rawY
-                initialWindowX = keyboardParams?.x ?: 0
-                initialWindowY = keyboardParams?.y ?: 0 
-            }
-            MotionEvent.ACTION_MOVE -> { 
-                if (isMoving) { 
-                    keyboardParams?.x = initialWindowX + (event.rawX - initialTouchX).toInt()
-                    keyboardParams?.y = initialWindowY + (event.rawY - initialTouchY).toInt()
-                    try { windowManager.updateViewLayout(keyboardContainer, keyboardParams) } catch (e: Exception) {} 
-                } 
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { 
-                isMoving = false
-                saveKeyboardPosition() 
-            }
-        }
-        return true
-    }
-
-    // [START RESIZE FIX]
-    private fun handleResize(event: MotionEvent): Boolean {
-        if (isAnchored) return true
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                isResizing = true
-                initialTouchX = event.rawX
-                initialTouchY = event.rawY
-                // Capture the current WINDOW dimensions (Visual)
-                initialWidth = keyboardParams?.width ?: keyboardWidth
-                initialHeight = keyboardParams?.height ?: keyboardHeight
-                
-                // Handle WRAP_CONTENT case for initial values
-                if (initialWidth < 0) initialWidth = keyboardContainer?.width ?: 300
-                if (initialHeight < 0) initialHeight = keyboardContainer?.height ?: 200
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (isResizing) {
-                    val dX = (event.rawX - initialTouchX).toInt()
-                    val dY = (event.rawY - initialTouchY).toInt()
-                    
-                    // 1. Calculate New VISUAL Dimensions (Window Size)
-                    val newVisualW = max(280, initialWidth + dX)
-                    val newVisualH = max(180, initialHeight + dY)
-                    
-                    // 2. Update Window Params
-                    keyboardParams?.width = newVisualW
-                    keyboardParams?.height = newVisualH
-                    
-                    // 3. Update LOGICAL Dimensions (Keyboard State)
-                    // If rotated, dragging "Width" actually changes the Keyboard's "Height" (Rows)
-                    if (currentRotation == 90 || currentRotation == 270) {
-                        keyboardHeight = newVisualW
-                        keyboardWidth = newVisualH
-                    } else {
-                        keyboardWidth = newVisualW
-                        keyboardHeight = newVisualH
-                    }
-                    
-                    // 4. Update Inner View Layout to match Logical Dimensions
-                    if (keyboardView != null) {
-                        val lp = keyboardView!!.layoutParams as FrameLayout.LayoutParams
-                        lp.width = keyboardWidth
-                        lp.height = keyboardHeight
-                        keyboardView!!.layoutParams = lp
-                        
-                        // Re-center view if rotation is active
-                        alignRotatedView()
-                    }
-
-                    try {
-                        windowManager.updateViewLayout(keyboardContainer, keyboardParams)
-                    } catch (e: Exception) {}
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isResizing = false
-                saveKeyboardSize()
-            }
-        }
-        return true
-    }
-    // [END RESIZE FIX]
-
-    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
-    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
-    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
-
-    override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) { injectKey(keyCode, metaState) }
-    
-    override fun onTextInput(text: String) {
-        if (shellService == null) return
-        Thread { try { val cmd = "input -d $targetDisplayId text \"$text\""; shellService.runCommand(cmd) } catch (e: Exception) { Log.e(TAG, "Text injection failed", e) } }.start()
-    }
-
-    override fun onScreenToggle() { onScreenToggleAction() }
-    override fun onScreenModeChange() { onScreenModeChangeAction() }
-
-    override fun onSpecialKey(key: KeyboardView.SpecialKey, metaState: Int) {
-        if (key == KeyboardView.SpecialKey.VOICE_INPUT) {
-            triggerVoiceTyping()
-            return
-        }
-        if (key == KeyboardView.SpecialKey.HIDE_KEYBOARD) {
-            onCloseAction() // Calls the close/hide action passed from Service
-            return
-        }
-        val keyCode = when (key) {
-            KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
-            KeyboardView.SpecialKey.ENTER -> KeyEvent.KEYCODE_ENTER
-            KeyboardView.SpecialKey.SPACE -> KeyEvent.KEYCODE_SPACE
-            KeyboardView.SpecialKey.TAB -> KeyEvent.KEYCODE_TAB
-            KeyboardView.SpecialKey.ESCAPE -> KeyEvent.KEYCODE_ESCAPE
-            KeyboardView.SpecialKey.ARROW_UP -> KeyEvent.KEYCODE_DPAD_UP
-            KeyboardView.SpecialKey.ARROW_DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
-            KeyboardView.SpecialKey.ARROW_LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
-            KeyboardView.SpecialKey.ARROW_RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
-            KeyboardView.SpecialKey.HOME -> KeyEvent.KEYCODE_MOVE_HOME
-            KeyboardView.SpecialKey.END -> KeyEvent.KEYCODE_MOVE_END
-            KeyboardView.SpecialKey.DELETE -> KeyEvent.KEYCODE_FORWARD_DEL
-            KeyboardView.SpecialKey.MUTE -> KeyEvent.KEYCODE_VOLUME_MUTE
-            KeyboardView.SpecialKey.VOL_UP -> KeyEvent.KEYCODE_VOLUME_UP
-            KeyboardView.SpecialKey.VOL_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
-            KeyboardView.SpecialKey.BACK_NAV -> KeyEvent.KEYCODE_BACK
-            KeyboardView.SpecialKey.FWD_NAV -> KeyEvent.KEYCODE_FORWARD
-            else -> return
-        }
-        injectKey(keyCode, metaState)
-    }
-
-    private fun injectKey(keyCode: Int, metaState: Int) {
-        (context as? OverlayService)?.injectKeyFromKeyboard(keyCode, metaState)
-    }
-
-    // --- Voice Logic & Mic Check Loop ---
-    
-    // Handler for the 1-second loop
-    private val micCheckHandler = Handler(Looper.getMainLooper())
-    
-    // Runnable that checks if the Microphone is currently recording
-    private val micCheckRunnable = object : Runnable {
-        override fun run() {
-            try {
-                val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-                
-                // Use activeRecordingConfigurations (API 24+) to check if any app is recording
-                var isMicOn = false
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    if (audioManager.activeRecordingConfigurations.isNotEmpty()) {
-                        isMicOn = true
-                    }
-                }
-                
-                if (isMicOn) {
-                    // Still recording, check again in 1 second
-                    micCheckHandler.postDelayed(this, 1000)
-                } else {
-                    // Mic stopped (or not supported), turn off the green light
-                    keyboardView?.setVoiceActive(false)
-                }
-            } catch (e: Exception) {
-                // If check fails, fail safe to off
-                keyboardView?.setVoiceActive(false)
-            }
-        }
-    }
-
-    private fun triggerVoiceTyping() {
-        if (shellService == null) return
-
-        // 1. UI: Turn Button Green Immediately
-        keyboardView?.setVoiceActive(true)
-        
-        // 2. Start Monitoring Loop
-        // Delay 3 seconds to allow the Voice IME to open and start recording
-        micCheckHandler.removeCallbacks(micCheckRunnable)
-        micCheckHandler.postDelayed(micCheckRunnable, 3000)
-
-        // 3. Notify Service to stop blocking touches
-        val intent = android.content.Intent("VOICE_TYPE_TRIGGERED")
-        intent.setPackage(context.packageName)
-        context.sendBroadcast(intent)
-
-        // 4. Perform IME Switch via Shell
-        Thread {
-            try {
-                // Fetch IME list and find Google Voice Typing
-                val output = shellService?.runCommand("ime list -a -s") ?: ""
-                val voiceIme = output.lines().find { it.contains("google", true) && it.contains("voice", true) } 
-                    ?: output.lines().find { it.contains("voice", true) }
-                
-                if (voiceIme != null) {
-                    shellService?.runCommand("ime set $voiceIme")
-                } else {
-                    android.util.Log.w(TAG, "Voice IME not found")
-                    // If IME missing, turn off light
-                    micCheckHandler.post { keyboardView?.setVoiceActive(false) }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "Voice Switch Failed", e)
-                micCheckHandler.post { keyboardView?.setVoiceActive(false) }
-            }
-        }.start()
     }
 }
 ```

@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Robust display ID detection
         val displayId = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             this.display?.displayId ?: 0
         } else {
@@ -36,12 +37,15 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
             windowManager.defaultDisplay.displayId
         }
 
-        android.util.Log.d("DroidOS_Trackpad_Main", "Triggering Trackpad on Display $displayId")
+        android.util.Log.d("DroidOS_Trackpad", "MainActivity: Triggering recall to Display $displayId")
 
-        val intent = Intent(this, TrackpadService::class.java)
-        intent.putExtra("TARGET_DISPLAY_ID", displayId)
+        val intent = Intent(this, OverlayService::class.java)
+        intent.putExtra("displayId", displayId)
+        // Add a flag to signal this is a user-initiated recall
+        intent.putExtra("isRecall", true)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startService(intent)
-        
+
         finish()
     }
 

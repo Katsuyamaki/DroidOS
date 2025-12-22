@@ -647,6 +647,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         checkAndBindShizuku()
 
         try {
+            // Handle display recall from MainActivity
+            if (intent != null) {
+                val targetDisplayId = intent.getIntExtra("displayId", currentDisplayId)
+                val isRecall = intent.getBooleanExtra("isRecall", false)
+
+                android.util.Log.d("OverlayService", "onStartCommand: target=$targetDisplayId, current=$currentDisplayId, recall=$isRecall")
+
+                // Only setup UI if display changed OR if user explicitly tapped the icon (Recall)
+                if (targetDisplayId != currentDisplayId || isRecall || bubbleView == null) {
+                    setupUI(targetDisplayId)
+                    return START_STICKY
+                }
+            }
+
             when (intent?.action) {
                 "SWITCH_DISPLAY" -> switchDisplay()
                 "RESET_POSITION" -> {
@@ -669,14 +683,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "LOAD_LAYOUT" -> loadLayout()
                 "DELETE_PROFILE" -> deleteCurrentProfile()
                 "MANUAL_ADJUST" -> handleManualAdjust(intent)
-                "RELOAD_PREFS" -> { 
+                "RELOAD_PREFS" -> {
                     loadPrefs()
                     updateBorderColor(currentBorderColor)
                     updateLayoutSizes()
                     updateScrollPosition()
                     updateCursorSize()
                     keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
-                    if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() } 
+                    if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
                 }
                 "PREVIEW_UPDATE" -> handlePreview(intent)
                 "CYCLE_INPUT_TARGET" -> cycleInputTarget()
@@ -784,20 +798,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         return super.onKeyEvent(event)
     }
 
-    private fun setupUI(displayId: Int) {
+    private fun removeOldViews() {
+        val viewsToRemove = listOf(trackpadLayout, bubbleView, cursorLayout)
+        for (view in viewsToRemove) {
+            if (view != null && view.parent != null && windowManager != null) {
+                try {
+                    windowManager?.removeViewImmediate(view)
+                    android.util.Log.d("OverlayService", "Successfully removed view: ${view.javaClass.simpleName}")
+                } catch (e: Exception) {
+                    android.util.Log.e("OverlayService", "Failed to remove view immediate", e)
+                }
+            }
+        }
+        // Clean up keyboard and menu
         try {
-            if (windowManager != null) {
-                if (bubbleView != null) windowManager?.removeView(bubbleView)
-                if (cursorLayout != null) windowManager?.removeView(cursorLayout)
-            }
-            if (trackpadLayout != null && windowManager != null) {
-                 try { windowManager?.removeView(trackpadLayout) } catch(e: Exception){}
-            }
             keyboardOverlay?.hide()
             keyboardOverlay = null
             menuManager?.hide()
             menuManager = null
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("OverlayService", "Failed to cleanup keyboard/menu", e)
+        }
+        // Nullify references to ensure setup functions create fresh instances
+        trackpadLayout = null
+        bubbleView = null
+        cursorLayout = null
+        cursorView = null
+    }
+
+    private fun setupUI(displayId: Int) {
+        android.util.Log.d("OverlayService", "setupUI starting for Display $displayId")
+
+        // 1. Force complete removal of all views using the current WindowManager
+        removeOldViews()
 
         val display = displayManager?.getDisplay(displayId)
         if (display == null) {
@@ -806,11 +839,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
 
         try {
+            // 2. Create a new context strictly for the target physical display
             val displayContext = createDisplayContext(display)
             val accessContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                  displayContext.createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
             } else displayContext
-            
+
+            // 3. RE-BIND WindowManager and Inflater to the new display context
             windowManager = accessContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             appWindowManager = windowManager
 
@@ -818,7 +853,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             inputTargetDisplayId = displayId
 
             updateUiMetrics()
-            
+
+            // 4. Rebuild the UI components
             setupTrackpad(accessContext)
             if (shellService != null) initCustomKeyboard()
             menuManager = TrackpadMenuManager(displayContext, windowManager!!, this)
@@ -827,8 +863,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
             enforceZOrder()
             showToast("Trackpad active on Display $displayId")
-            
+
             if (prefs.prefBlockSoftKeyboard) triggerAggressiveBlocking()
+
+            android.util.Log.d("OverlayService", "setupUI completed successfully on Display $displayId")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to setup UI on display $displayId", e)
