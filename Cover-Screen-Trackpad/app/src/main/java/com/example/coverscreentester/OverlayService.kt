@@ -55,6 +55,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var isBound = false
     private val handler = Handler(Looper.getMainLooper())
 
+    // Create a single worker queue for all input events to prevent race conditions
+    private val inputExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     private var lastBlockTime: Long = 0
 
     private var bubbleView: View? = null
@@ -1600,12 +1603,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
     }
     
-    override fun onDestroy() { 
+    override fun onDestroy() {
         super.onDestroy()
+        inputExecutor.shutdownNow() // Stop the worker thread
         if (Build.VERSION.SDK_INT >= 24) { try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {} }
         Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()
-        try { unregisterReceiver(switchReceiver) } catch(e: Exception){}; 
-        if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection) 
+        try { unregisterReceiver(switchReceiver) } catch(e: Exception){};
+        if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection)
     }
 
     fun forceSystemKeyboardVisible() {
@@ -1631,36 +1635,35 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // NEW: dismiss Voice if active
         checkAndDismissVoice()
 
-        Thread {
+        // Submit to the sequential queue instead of spinning a random thread
+        inputExecutor.execute {
             try {
                 // 1. CHECK ACTUAL SYSTEM STATE
-                // Don't trust our internal boolean. Trust the Android Settings.
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                 val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
 
                 if (isNullKeyboardActive) {
                     // STRATEGY A: NATIVE (Cleanest)
-                    // Only works if we successfully switched to our keyboard
                     val intent = Intent("com.example.coverscreentester.INJECT_KEY")
                     intent.setPackage(packageName)
                     intent.putExtra("keyCode", keyCode)
-                    intent.putExtra("metaState", metaState) // Pass modifiers (Shift/Alt/etc)
+                    intent.putExtra("metaState", metaState)
                     sendBroadcast(intent)
                 } else {
-                    // STRATEGY B: SHIZUKU INJECTION (Fallback / Gboard Active)
-                    // Works even if switching failed. Uses Device ID 1 to mimic hardware.
+                    // STRATEGY B: SHELL INJECTION (Fallback)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
+                    // Small delay only needed for shell to ensure UP registers after DOWN
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Key injection failed", e)
             }
-        }.start()
+        }
     }
 
     fun injectText(text: String) {
-        Thread {
+        inputExecutor.execute {
             try {
                 // 1. CHECK ACTUAL SYSTEM STATE
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
@@ -1674,8 +1677,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     sendBroadcast(intent)
                 } else {
                     // STRATEGY B: SHELL INJECTION (Fallback)
-                    // Note: Shell injection is slow and can struggle with special chars.
-                    // We wrap in quotes to handle spaces.
                     val escapedText = text.replace("\"", "\\\"")
                     val cmd = "input -d $inputTargetDisplayId text \"$escapedText\""
                     shellService?.runCommand(cmd)
@@ -1683,7 +1684,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
             }
-        }.start()
+        }
     }
 
     fun switchDisplay() {
