@@ -50,6 +50,7 @@ class KeyboardOverlay(
     // --- PREDICTION STATE ---
     private val predictionEngine = PredictionEngine()
     private var currentComposingWord = StringBuilder()
+    private val handler = Handler(Looper.getMainLooper())
 
     // FIX: Default height to WRAP_CONTENT (-2) to avoid cutting off rows
     private var keyboardWidth = 500
@@ -638,9 +639,7 @@ class KeyboardOverlay(
     }
 
     override fun onSuggestionClick(text: String) {
-        if (currentComposingWord.isEmpty()) return
-
-        // 1. Delete the characters we manually typed
+        // 1. Delete the characters we manually typed (if any)
         val charsToDelete = currentComposingWord.length
         for (i in 0 until charsToDelete) {
             injectKey(KeyEvent.KEYCODE_DEL, 0)
@@ -651,6 +650,28 @@ class KeyboardOverlay(
 
         // 3. Reset
         resetComposition()
+    }
+
+    override fun onSwipeDetected(path: List<android.graphics.PointF>) {
+        val keyMap = keyboardView?.getKeyCenters() ?: return
+
+        // Run decoding on background thread to keep UI smooth
+        Thread {
+            val suggestions = predictionEngine.decodeSwipe(path, keyMap)
+
+            if (suggestions.isNotEmpty()) {
+                val bestMatch = suggestions[0]
+
+                // UI updates must happen on main thread
+                handler.post {
+                    // Update suggestion strip
+                    keyboardView?.setSuggestions(suggestions)
+
+                    // Auto-commit the best match + space (Gboard style)
+                    (context as? OverlayService)?.injectText("$bestMatch ")
+                }
+            }
+        }.start()
     }
 
     private fun updateSuggestions() {
