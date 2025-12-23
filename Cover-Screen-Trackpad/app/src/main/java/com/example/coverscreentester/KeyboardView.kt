@@ -103,16 +103,28 @@ class KeyboardView @JvmOverloads constructor(
     private var cand2: TextView? = null
     private var cand3: TextView? = null
 
-    // --- GESTURE TYPING STATE ---
+// =================================================================================
+    // GESTURE TYPING STATE
+    // SUMMARY: Variables for swipe/gesture typing detection. Swipe is only tracked for
+    //          single-finger gestures. Multitouch cancels swipe detection to prevent
+    //          false triggers during fast two-thumb typing.
+    // =================================================================================
     private var swipeTrail: SwipeTrailView? = null
     private val keyCenters = HashMap<String, android.graphics.PointF>()
     private var isSwiping = false
-    private val SWIPE_THRESHOLD = 20f // pixels to trigger swipe mode
+    private val SWIPE_THRESHOLD = 35f // pixels of movement to trigger swipe mode (increased from 20)
+    private val SWIPE_MIN_DISTANCE = 80f // minimum start-to-end distance for valid swipe
+    private val SWIPE_MIN_PATH_POINTS = 10 // minimum path points for valid swipe (increased from 5)
     private var startTouchX = 0f
     private var startTouchY = 0f
+    private var swipePointerId = -1 // Track which pointer started the swipe (-1 = none)
 
     // Store the full path for the decoder
     private val currentPath = ArrayList<android.graphics.PointF>()
+    // =================================================================================
+    // END BLOCK: GESTURE TYPING STATE
+    // =================================================================================
+
 
     // We attach the trail view externally from the Overlay
     fun attachTrailView(view: SwipeTrailView) {
@@ -407,25 +419,63 @@ class KeyboardView @JvmOverloads constructor(
 
     // --- MULTITOUCH HANDLING ---
 
+// =================================================================================
+    // FUNCTION: dispatchTouchEvent
+    // SUMMARY: Intercepts touch events to detect swipe/gesture typing. Key safeguards:
+    //          1. Only tracks swipe for single-finger gestures (pointer index 0)
+    //          2. Multitouch (second finger down) cancels any active swipe detection
+    //          3. Requires minimum movement threshold AND minimum path distance
+    //          4. Validates swipe has enough points and traveled enough distance
+    //          This prevents false swipe triggers during fast two-thumb typing.
+    // =================================================================================
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         val superResult = super.dispatchTouchEvent(event)
+        val action = event.actionMasked
+        val pointerIndex = event.actionIndex
+        val pointerId = event.getPointerId(pointerIndex)
 
-        when (event.action) {
+        when (action) {
             android.view.MotionEvent.ACTION_DOWN -> {
+                // First finger down - initialize potential swipe tracking
                 isSwiping = false
+                swipePointerId = pointerId
                 startTouchX = event.x
                 startTouchY = event.y
                 swipeTrail?.clear()
                 swipeTrail?.addPoint(event.x, event.y)
-
                 currentPath.clear()
                 currentPath.add(android.graphics.PointF(event.x, event.y))
             }
+            
+            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                // Second finger touched - CANCEL swipe detection (user is typing with two thumbs)
+                if (isSwiping) {
+                    isSwiping = false
+                    swipeTrail?.clear()
+                    swipeTrail?.visibility = View.INVISIBLE
+                    currentPath.clear()
+                }
+                swipePointerId = -1 // Disable swipe tracking for this gesture
+            }
+            
             android.view.MotionEvent.ACTION_MOVE -> {
+                // Only track movement for the original swipe pointer
+                if (swipePointerId == -1) return superResult
+                
+                // Find the index of our tracked pointer
+                val trackedIndex = event.findPointerIndex(swipePointerId)
+                if (trackedIndex == -1) return superResult
+                
+                val currentX = event.getX(trackedIndex)
+                val currentY = event.getY(trackedIndex)
+                
                 if (!isSwiping) {
-                    val dx = Math.abs(event.x - startTouchX)
-                    val dy = Math.abs(event.y - startTouchY)
-                    if (dx > SWIPE_THRESHOLD || dy > SWIPE_THRESHOLD) {
+                    val dx = Math.abs(currentX - startTouchX)
+                    val dy = Math.abs(currentY - startTouchY)
+                    // Require movement in BOTH axes or significant movement in one
+                    // This helps distinguish intentional swipes from finger wobble
+                    val totalMovement = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                    if (totalMovement > SWIPE_THRESHOLD) {
                         isSwiping = true
                         currentRepeatKey = null
                         repeatHandler.removeCallbacks(repeatRunnable)
@@ -434,35 +484,87 @@ class KeyboardView @JvmOverloads constructor(
                 }
 
                 if (isSwiping) {
-                    swipeTrail?.addPoint(event.x, event.y)
-                    // Sample points to avoid too much data
+                    swipeTrail?.addPoint(currentX, currentY)
+                    // Sample historical points for smoother path
                     if (event.historySize > 0) {
-                         for (h in 0 until event.historySize) {
-                             currentPath.add(android.graphics.PointF(event.getHistoricalX(h), event.getHistoricalY(h)))
-                         }
+                        for (h in 0 until event.historySize) {
+                            val hx = event.getHistoricalX(trackedIndex, h)
+                            val hy = event.getHistoricalY(trackedIndex, h)
+                            currentPath.add(android.graphics.PointF(hx, hy))
+                        }
                     }
-                    currentPath.add(android.graphics.PointF(event.x, event.y))
+                    currentPath.add(android.graphics.PointF(currentX, currentY))
                 }
             }
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                if (isSwiping) {
+            
+            android.view.MotionEvent.ACTION_UP -> {
+                if (isSwiping && pointerId == swipePointerId) {
                     swipeTrail?.clear()
                     swipeTrail?.visibility = View.INVISIBLE
 
-                    // Trigger Decoder
-                    if (currentPath.size > 5) {
-                        // Send a copy of the path
+                    // Validate swipe before triggering decoder
+                    val isValidSwipe = validateSwipe()
+                    
+                    if (isValidSwipe) {
+                        // Send a copy of the path to decoder
                         listener?.onSwipeDetected(ArrayList(currentPath))
                     }
 
                     isSwiping = false
+                    swipePointerId = -1
+                    currentPath.clear()
                     return true
                 }
+                // Clean up even if this wasn't our tracked pointer
                 swipeTrail?.clear()
+                swipePointerId = -1
+            }
+            
+            android.view.MotionEvent.ACTION_POINTER_UP -> {
+                // One finger lifted but another still down - just clean up if it was our pointer
+                if (pointerId == swipePointerId) {
+                    isSwiping = false
+                    swipePointerId = -1
+                    swipeTrail?.clear()
+                    swipeTrail?.visibility = View.INVISIBLE
+                    currentPath.clear()
+                }
+            }
+            
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                isSwiping = false
+                swipePointerId = -1
+                swipeTrail?.clear()
+                swipeTrail?.visibility = View.INVISIBLE
+                currentPath.clear()
             }
         }
         return superResult
     }
+
+    // =================================================================================
+    // FUNCTION: validateSwipe
+    // SUMMARY: Checks if the recorded path qualifies as a valid swipe gesture.
+    //          Requirements: minimum number of points AND minimum start-to-end distance.
+    //          This filters out short taps that accumulated a few points from finger wobble.
+    // =================================================================================
+    private fun validateSwipe(): Boolean {
+        if (currentPath.size < SWIPE_MIN_PATH_POINTS) {
+            return false
+        }
+        
+        // Check start-to-end distance (not total path length)
+        val startPt = currentPath.firstOrNull() ?: return false
+        val endPt = currentPath.lastOrNull() ?: return false
+        val dx = endPt.x - startPt.x
+        val dy = endPt.y - startPt.y
+        val distance = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+        
+        return distance >= SWIPE_MIN_DISTANCE
+    }
+    // =================================================================================
+    // END BLOCK: dispatchTouchEvent and validateSwipe
+    // =================================================================================
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val action = event.actionMasked
