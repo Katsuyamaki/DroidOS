@@ -201,6 +201,7 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
+
     private fun mapKeys() {
         keyCenters.clear()
         val parentLoc = IntArray(2)
@@ -208,37 +209,36 @@ class KeyboardView @JvmOverloads constructor(
         val parentX = parentLoc[0]
         val parentY = parentLoc[1]
 
+        // Debug counter
+        var foundKeys = 0
+
         fun traverse(view: View) {
+            // 1. If it's a container, search inside it
             if (view is android.view.ViewGroup) {
                 for (i in 0 until view.childCount) {
                     traverse(view.getChildAt(i))
                 }
             }
-
-            // Check if this view has a tag
+            
+            // 2. Check if THIS view has a tag (independent of being a group)
             if (view.tag is String) {
                 val key = view.tag as String
-                // CHANGED: Map ALL keys, not just letters, so we can manual-tap them
+                
                 val loc = IntArray(2)
                 view.getLocationOnScreen(loc)
                 val centerX = (loc[0] - parentX) + (view.width / 2f)
                 val centerY = (loc[1] - parentY) + (view.height / 2f)
-
+                
+                // Map the key exactly as tagged (Case-sensitive)
                 keyCenters[key] = android.graphics.PointF(centerX, centerY)
-                // Store case variants for letter keys to ensure lookup success
-                if (key.length == 1) {
-                    keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
-                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
-                }
+                foundKeys++
             }
         }
+        
         traverse(this)
-
-        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size} total entries")
-        if (keyCenters.containsKey("h")) {
-             android.util.Log.d("DroidOS_Swipe", "Example 'H': ${keyCenters["h"]}")
-        }
+        android.util.Log.d("DroidOS_Swipe", "Keys mapped: $foundKeys")
     }
+
 
     // Helper to find key under finger (Simple nearest neighbor within radius)
     private fun findKeyAt(x: Float, y: Float): String? {
@@ -250,14 +250,14 @@ class KeyboardView @JvmOverloads constructor(
             val dx = x - point.x
             val dy = y - point.y
             val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-
+            
             if (dist < bestDist && dist < minLimit) {
                 bestDist = dist
                 bestKey = key
             }
         }
-        // Normalize: If we matched a lowercase key map entry, return the uppercase tag usually used for logic
-        return bestKey?.uppercase()
+        // FIXED: Return the exact key found (preserves case)
+        return bestKey 
     }
 
     fun setSuggestions(words: List<String>) {
