@@ -203,36 +203,46 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun mapKeys() {
         keyCenters.clear()
-        // Recursively find all keys (TextViews with tags)
-        val location = IntArray(2)
-        this.getLocationOnScreen(location)
-        val parentX = location[0]
-        val parentY = location[1]
 
+        // 1. Get the absolute position of the KeyboardView itself
+        val parentLoc = IntArray(2)
+        this.getLocationOnScreen(parentLoc)
+        val parentX = parentLoc[0]
+        val parentY = parentLoc[1]
+
+        // 2. Traverse all children to find tagged TextViews
         fun traverse(view: View) {
             if (view is android.view.ViewGroup) {
                 for (i in 0 until view.childCount) {
                     traverse(view.getChildAt(i))
                 }
-            } else if (view.tag is String) {
-                val key = view.tag as String
-                // Ignore functional keys for mapping (only map letters)
-                if (key.length == 1 && Character.isLetter(key[0])) {
-                    view.getLocationOnScreen(location)
-                    // Calculate center relative to the KeyboardView (Parent)
-                    val centerX = (location[0] - parentX) + (view.width / 2f)
-                    val centerY = (location[1] - parentY) + (view.height / 2f)
-                    keyCenters[key] = android.graphics.PointF(centerX, centerY)
+            }
 
-                    // DEBUG: Log 'H' position to verify
-                    if (key.equals("h", ignoreCase = true)) {
-                        android.util.Log.d("DroidOS_Swipe", "Mapped 'H' to: $centerX, $centerY (Parent: $parentX, $parentY)")
-                    }
+            // Check if this view (could be ViewGroup or TextView) has a tag
+            if (view.tag is String) {
+                val key = view.tag as String
+                // We only care about single letters for swipe decoding (A-Z)
+                if (key.length == 1 && Character.isLetter(key[0])) {
+                    val loc = IntArray(2)
+                    view.getLocationOnScreen(loc)
+
+                    // Calculate center relative to the KeyboardView (0,0 is top-left of keyboard)
+                    // This matches the MotionEvent coordinates we get in dispatchTouchEvent
+                    val centerX = (loc[0] - parentX) + (view.width / 2f)
+                    val centerY = (loc[1] - parentY) + (view.height / 2f)
+
+                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
+                    // Also store lowercase for easier matching
+                    keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
                 }
             }
         }
         traverse(this)
-        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size}")
+
+        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size / 2} (Unique Letters)")
+        if (keyCenters.isNotEmpty()) {
+             android.util.Log.d("DroidOS_Swipe", "Example 'H': ${keyCenters["h"]}")
+        }
     }
 
     fun setSuggestions(words: List<String>) {
