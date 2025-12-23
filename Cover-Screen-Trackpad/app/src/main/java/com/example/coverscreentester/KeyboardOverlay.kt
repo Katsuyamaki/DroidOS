@@ -46,7 +46,11 @@ class KeyboardOverlay(
     private var initialHeight = 0
 
     private val TAG = "KeyboardOverlay"
-    
+
+    // --- PREDICTION STATE ---
+    private val predictionEngine = PredictionEngine()
+    private var currentComposingWord = StringBuilder()
+
     // FIX: Default height to WRAP_CONTENT (-2) to avoid cutting off rows
     private var keyboardWidth = 500
     private var keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT 
@@ -557,7 +561,18 @@ class KeyboardOverlay(
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
 
-    override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) { injectKey(keyCode, metaState) }
+    override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) {
+        injectKey(keyCode, metaState)
+
+        // Track local composition
+        if (char != null && Character.isLetterOrDigit(char)) {
+            currentComposingWord.append(char)
+            updateSuggestions()
+        } else {
+            // Punctuation usually ends a word
+            resetComposition()
+        }
+    }
     
     override fun onTextInput(text: String) {
         if (shellService == null) return
@@ -576,6 +591,19 @@ class KeyboardOverlay(
             onCloseAction() // Calls the close/hide action passed from Service
             return
         }
+
+        // --- COMPOSITION HANDLING ---
+        if (key == KeyboardView.SpecialKey.BACKSPACE) {
+            if (currentComposingWord.isNotEmpty()) {
+                currentComposingWord.deleteCharAt(currentComposingWord.length - 1)
+                updateSuggestions()
+            }
+        } else {
+            // Space, Enter, Tabs, Arrows all break the current word chain
+            resetComposition()
+        }
+        // ----------------------------
+
         val keyCode = when (key) {
             KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
             KeyboardView.SpecialKey.ENTER -> KeyEvent.KEYCODE_ENTER
@@ -597,6 +625,32 @@ class KeyboardOverlay(
             else -> return
         }
         injectKey(keyCode, metaState)
+    }
+
+    override fun onSuggestionClick(text: String) {
+        if (currentComposingWord.isEmpty()) return
+
+        // 1. Delete the characters we manually typed
+        val charsToDelete = currentComposingWord.length
+        for (i in 0 until charsToDelete) {
+            injectKey(KeyEvent.KEYCODE_DEL, 0)
+        }
+
+        // 2. Inject the full word + space
+        (context as? OverlayService)?.injectText("$text ")
+
+        // 3. Reset
+        resetComposition()
+    }
+
+    private fun updateSuggestions() {
+        val suggestions = predictionEngine.getSuggestions(currentComposingWord.toString())
+        keyboardView?.setSuggestions(suggestions)
+    }
+
+    private fun resetComposition() {
+        currentComposingWord.clear()
+        keyboardView?.setSuggestions(emptyList())
     }
 
     private fun injectKey(keyCode: Int, metaState: Int) {

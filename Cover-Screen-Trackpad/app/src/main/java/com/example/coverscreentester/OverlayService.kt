@@ -1653,8 +1653,35 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
                 }
-            } catch (e: Exception) { 
-                Log.e(TAG, "Key injection failed", e) 
+            } catch (e: Exception) {
+                Log.e(TAG, "Key injection failed", e)
+            }
+        }.start()
+    }
+
+    fun injectText(text: String) {
+        Thread {
+            try {
+                // 1. CHECK ACTUAL SYSTEM STATE
+                val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
+                val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
+
+                if (isNullKeyboardActive) {
+                    // STRATEGY A: NATIVE (Cleanest)
+                    val intent = Intent("com.example.coverscreentester.INJECT_TEXT")
+                    intent.setPackage(packageName)
+                    intent.putExtra("text", text)
+                    sendBroadcast(intent)
+                } else {
+                    // STRATEGY B: SHELL INJECTION (Fallback)
+                    // Note: Shell injection is slow and can struggle with special chars.
+                    // We wrap in quotes to handle spaces.
+                    val escapedText = text.replace("\"", "\\\"")
+                    val cmd = "input -d $inputTargetDisplayId text \"$escapedText\""
+                    shellService?.runCommand(cmd)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Text injection failed", e)
             }
         }.start()
     }

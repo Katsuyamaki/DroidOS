@@ -22,7 +22,6 @@ class NullInputMethodService : InputMethodService() {
                     if (!targetIme.isNullOrEmpty()) {
                         try {
                             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                            // Using the Service's Token proves we are the active IME and have permission to switch
                             val token = window?.window?.attributes?.token
                             if (token != null) {
                                 imm.setInputMethod(token, targetIme)
@@ -30,22 +29,30 @@ class NullInputMethodService : InputMethodService() {
                         } catch (e: Exception) { e.printStackTrace() }
                     }
                 }
-                
+
                 // COMMAND 2: TYPE KEY (Native Input)
                 "com.example.coverscreentester.INJECT_KEY" -> {
                     val keyCode = intent.getIntExtra("keyCode", 0)
                     val metaState = intent.getIntExtra("metaState", 0)
-                    
+
                     if (keyCode != 0 && currentInputConnection != null) {
                         val now = System.currentTimeMillis()
-                        // Send DOWN with Meta State
                         currentInputConnection.sendKeyEvent(
                             KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState)
                         )
-                        // Send UP with Meta State
                         currentInputConnection.sendKeyEvent(
                             KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState)
                         )
+                    }
+                }
+
+                // COMMAND 3: INJECT TEXT (Swipe/Prediction Support)
+                "com.example.coverscreentester.INJECT_TEXT" -> {
+                    val text = intent.getStringExtra("text")
+                    if (!text.isNullOrEmpty() && currentInputConnection != null) {
+                        // commitText inserts the string at the cursor position
+                        // '1' moves the cursor to the end of the inserted text
+                        currentInputConnection.commitText(text, 1)
                     }
                 }
             }
@@ -57,6 +64,7 @@ class NullInputMethodService : InputMethodService() {
         val filter = IntentFilter().apply {
             addAction("com.example.coverscreentester.RESTORE_IME")
             addAction("com.example.coverscreentester.INJECT_KEY")
+            addAction("com.example.coverscreentester.INJECT_TEXT")
         }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)

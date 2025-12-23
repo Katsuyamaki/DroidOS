@@ -35,6 +35,7 @@ class KeyboardView @JvmOverloads constructor(
         fun onSpecialKey(key: SpecialKey, metaState: Int)
         fun onScreenToggle()
         fun onScreenModeChange()
+        fun onSuggestionClick(text: String) // New Callback
     }
 
     enum class SpecialKey {
@@ -94,6 +95,12 @@ class KeyboardView @JvmOverloads constructor(
         capsLockPending = true
         toggleCapsLock()
     }
+
+    // UI Elements for Suggestions
+    private var suggestionStrip: LinearLayout? = null
+    private var cand1: TextView? = null
+    private var cand2: TextView? = null
+    private var cand3: TextView? = null
 
     private val lowercaseRows = listOf(
         listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
@@ -165,8 +172,67 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
+    fun setSuggestions(words: List<String>) {
+        if (suggestionStrip == null) return
+
+        val w1 = words.getOrNull(0) ?: ""
+        val w2 = words.getOrNull(1) ?: ""
+        val w3 = words.getOrNull(2) ?: ""
+
+        cand1?.text = w1
+        cand1?.visibility = if (w1.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand1?.setOnClickListener { if (w1.isNotEmpty()) listener?.onSuggestionClick(w1) }
+
+        cand2?.text = w2
+        cand2?.visibility = if (w2.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand2?.setOnClickListener { if (w2.isNotEmpty()) listener?.onSuggestionClick(w2) }
+
+        cand3?.text = w3
+        cand3?.visibility = if (w3.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand3?.setOnClickListener { if (w3.isNotEmpty()) listener?.onSuggestionClick(w3) }
+
+        // Show strip if we have suggestions, hide if empty (optional, keeping visible prevents jumpiness)
+        // suggestionStrip?.visibility = if (words.isEmpty()) View.GONE else View.VISIBLE
+    }
+
     private fun buildKeyboard() {
         removeAllViews()
+
+        // --- 1. SUGGESTION STRIP ---
+        suggestionStrip = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, (35 * scaleFactor).toInt()) // Slightly shorter than keys
+            setBackgroundColor(Color.parseColor("#222222"))
+            setPadding(0, 0, 0, 4)
+        }
+
+        fun createCandidateView(): TextView {
+            return TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                textSize = fontSize * 0.9f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+        }
+
+        cand1 = createCandidateView(); suggestionStrip?.addView(cand1)
+        // Divider
+        val div1 = View(context).apply { layoutParams = LinearLayout.LayoutParams(1, LayoutParams.MATCH_PARENT); setBackgroundColor(Color.GRAY) }
+        suggestionStrip?.addView(div1)
+
+        cand2 = createCandidateView(); suggestionStrip?.addView(cand2)
+        // Divider
+        val div2 = View(context).apply { layoutParams = LinearLayout.LayoutParams(1, LayoutParams.MATCH_PARENT); setBackgroundColor(Color.GRAY) }
+        suggestionStrip?.addView(div2)
+
+        cand3 = createCandidateView(); suggestionStrip?.addView(cand3)
+
+        addView(suggestionStrip)
+        // --- END SUGGESTION STRIP ---
         
         val topRows = when (currentState) {
             KeyboardState.LOWERCASE -> lowercaseRows
