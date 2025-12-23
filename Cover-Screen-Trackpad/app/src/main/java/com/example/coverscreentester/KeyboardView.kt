@@ -203,14 +203,11 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun mapKeys() {
         keyCenters.clear()
-
-        // 1. Get the absolute position of the KeyboardView itself
         val parentLoc = IntArray(2)
         this.getLocationOnScreen(parentLoc)
         val parentX = parentLoc[0]
         val parentY = parentLoc[1]
 
-        // 2. Traverse all children to find tagged TextViews
         fun traverse(view: View) {
             if (view is android.view.ViewGroup) {
                 for (i in 0 until view.childCount) {
@@ -218,31 +215,49 @@ class KeyboardView @JvmOverloads constructor(
                 }
             }
 
-            // Check if this view (could be ViewGroup or TextView) has a tag
+            // Check if this view has a tag
             if (view.tag is String) {
                 val key = view.tag as String
-                // We only care about single letters for swipe decoding (A-Z)
-                if (key.length == 1 && Character.isLetter(key[0])) {
-                    val loc = IntArray(2)
-                    view.getLocationOnScreen(loc)
+                // CHANGED: Map ALL keys, not just letters, so we can manual-tap them
+                val loc = IntArray(2)
+                view.getLocationOnScreen(loc)
+                val centerX = (loc[0] - parentX) + (view.width / 2f)
+                val centerY = (loc[1] - parentY) + (view.height / 2f)
 
-                    // Calculate center relative to the KeyboardView (0,0 is top-left of keyboard)
-                    // This matches the MotionEvent coordinates we get in dispatchTouchEvent
-                    val centerX = (loc[0] - parentX) + (view.width / 2f)
-                    val centerY = (loc[1] - parentY) + (view.height / 2f)
-
-                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
-                    // Also store lowercase for easier matching
+                keyCenters[key] = android.graphics.PointF(centerX, centerY)
+                // Store case variants for letter keys to ensure lookup success
+                if (key.length == 1) {
                     keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
+                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
                 }
             }
         }
         traverse(this)
 
-        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size / 2} (Unique Letters)")
-        if (keyCenters.isNotEmpty()) {
+        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size} total entries")
+        if (keyCenters.containsKey("h")) {
              android.util.Log.d("DroidOS_Swipe", "Example 'H': ${keyCenters["h"]}")
         }
+    }
+
+    // Helper to find key under finger (Simple nearest neighbor within radius)
+    private fun findKeyAt(x: Float, y: Float): String? {
+        var bestKey: String? = null
+        var minLimit = 150f // Max radius (pixels) to consider a "hit"
+        var bestDist = Float.MAX_VALUE
+
+        for ((key, point) in keyCenters) {
+            val dx = x - point.x
+            val dy = y - point.y
+            val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+
+            if (dist < bestDist && dist < minLimit) {
+                bestDist = dist
+                bestKey = key
+            }
+        }
+        // Normalize: If we matched a lowercase key map entry, return the uppercase tag usually used for logic
+        return bestKey?.uppercase()
     }
 
     fun setSuggestions(words: List<String>) {
@@ -408,8 +423,6 @@ class KeyboardView @JvmOverloads constructor(
     // --- MULTITOUCH HANDLING ---
 
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-        val superResult = super.dispatchTouchEvent(event)
-
         when (event.action) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 isSwiping = false
@@ -420,6 +433,7 @@ class KeyboardView @JvmOverloads constructor(
 
                 currentPath.clear()
                 currentPath.add(android.graphics.PointF(event.x, event.y))
+                return true // Consume event, don't propagate to prevent immediate typing
             }
             android.view.MotionEvent.ACTION_MOVE -> {
                 if (!isSwiping) {
@@ -442,10 +456,13 @@ class KeyboardView @JvmOverloads constructor(
                          }
                     }
                     currentPath.add(android.graphics.PointF(event.x, event.y))
+                    return true // Consume event while swiping
                 }
+                return super.dispatchTouchEvent(event) // Allow normal handling if not swiping yet
             }
             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                 if (isSwiping) {
+                    // Logic A: Complete the swipe
                     swipeTrail?.clear()
                     swipeTrail?.visibility = View.INVISIBLE
 
@@ -457,11 +474,30 @@ class KeyboardView @JvmOverloads constructor(
 
                     isSwiping = false
                     return true
+                } else {
+                    // Logic B: Manual tap detection
+                    swipeTrail?.clear()
+                    val tappedKey = findKeyAt(event.x, event.y)
+                    if (tappedKey != null) {
+                        android.util.Log.d("DroidOS_Tap", "Manual tap detected: $tappedKey")
+                        // Simulate the key press
+                        handleKeyPress(tappedKey, fromRepeat = false)
+                        // Add haptic feedback for tap
+                        if (vibrationEnabled) {
+                            val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                v?.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                v?.vibrate(30)
+                            }
+                        }
+                    }
+                    return true
                 }
-                swipeTrail?.clear()
             }
         }
-        return superResult
+        return super.dispatchTouchEvent(event)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
