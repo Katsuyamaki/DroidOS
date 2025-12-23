@@ -1328,11 +1328,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         } catch(e: Exception) { e.printStackTrace() }
     }
 
+
     private fun initCustomKeyboard() { 
         if (appWindowManager == null || shellService == null) return
-        keyboardOverlay = KeyboardOverlay(this, appWindowManager!!, shellService, inputTargetDisplayId, { toggleScreen() }, { toggleScreenMode() }, { toggleCustomKeyboard() })
+        
+        keyboardOverlay = KeyboardOverlay(
+            this, 
+            appWindowManager!!, 
+            shellService, 
+            inputTargetDisplayId, 
+            { toggleScreen() }, 
+            { toggleScreenMode() }, 
+            { toggleCustomKeyboard() }
+        )
+        
+        // --- WIRE UP TRACKPAD ---
+        keyboardOverlay?.onCursorMove = { dx, dy -> handleExternalMouseMove(dx, dy) }
+        keyboardOverlay?.onCursorClick = { isRight -> handleExternalMouseClick(isRight) }
+        
         keyboardOverlay?.setScreenDimensions(uiScreenWidth, uiScreenHeight, currentDisplayId) 
     }
+
 
     fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
         if (keyboardOverlay == null) initCustomKeyboard()
@@ -1485,7 +1501,36 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun openMenuHandle(event: MotionEvent): Boolean { if (event.action == MotionEvent.ACTION_DOWN) menuManager?.toggle(); return true }
     private fun injectAction(action: Int, source: Int, button: Int, time: Long) { if (shellService == null) return; Thread { try { shellService?.injectMouse(action, cursorX, cursorY, inputTargetDisplayId, source, button, time) } catch(e: Exception){} }.start() }
     private fun injectScroll(hScroll: Float, vScroll: Float) { if (shellService == null) return; Thread { try { shellService?.injectScroll(cursorX, cursorY, vScroll / 10f, hScroll / 10f, inputTargetDisplayId) } catch(e: Exception){} }.start() }
-    private fun performClick(right: Boolean) { if (shellService == null) return; Thread { try { if (right) shellService?.execRightClick(cursorX, cursorY, inputTargetDisplayId) else shellService?.execClick(cursorX, cursorY, inputTargetDisplayId) } catch(e: Exception){} }.start() }
+
+    // Helper to allow external components (like Keyboard) to control the cursor
+    fun handleExternalMouseMove(dx: Float, dy: Float) {
+        // Calculate safe bounds
+        val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
+        val safeH = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight.toFloat() else uiScreenHeight.toFloat()
+        
+        // Update position
+        cursorX = (cursorX + dx).coerceIn(0f, safeW)
+        cursorY = (cursorY + dy).coerceIn(0f, safeH)
+        
+        // Update Visuals (Redraw the cursor icon)
+        if (inputTargetDisplayId == currentDisplayId) { 
+             cursorParams.x = cursorX.toInt()
+             cursorParams.y = cursorY.toInt()
+             try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {} 
+        } else {
+             remoteCursorParams.x = cursorX.toInt()
+             remoteCursorParams.y = cursorY.toInt()
+             try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+        }
+        
+        // Inject Mouse Movement (HOVER) so apps react to the new position
+        injectAction(MotionEvent.ACTION_HOVER_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
+    }
+
+    fun handleExternalMouseClick(isRight: Boolean) {
+        performClick(isRight)
+    }
+    fun performClick(right: Boolean) { if (shellService == null) return; Thread { try { if (right) shellService?.execRightClick(cursorX, cursorY, inputTargetDisplayId) else shellService?.execClick(cursorX, cursorY, inputTargetDisplayId) } catch(e: Exception){} }.start() }
     fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} } }
     fun performRotation() { rotationAngle = (rotationAngle + 90) % 360; cursorView?.rotation = rotationAngle.toFloat() }
     fun getProfileKey(): String = "P_${uiScreenWidth}_${uiScreenHeight}"

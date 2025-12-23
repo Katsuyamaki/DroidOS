@@ -22,6 +22,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.roundToInt
+import android.annotation.SuppressLint
+import android.util.Log
 
 class KeyboardView @JvmOverloads constructor(
     context: Context,
@@ -124,6 +126,41 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     // END BLOCK: GESTURE TYPING STATE
     // =================================================================================
+
+
+    // --- SPACEBAR TRACKPAD VARIABLES ---
+    var isPredictiveBarEmpty: Boolean = false
+    
+    // Actions triggered by Spacebar Trackpad
+    var cursorMoveAction: ((Float, Float) -> Unit)? = null
+    var cursorClickAction: ((Boolean) -> Unit)? = null
+    
+    private var spacebarPointerId = -1
+    private var isSpaceTrackpadActive = false
+    private var lastSpaceX = 0f
+    private var lastSpaceY = 0f
+    private val touchSlop = 15f 
+    private val cursorSensitivity = 2.5f 
+    private var currentActiveKey: View? = null
+
+    private fun handleSpacebarClick(xRelativeToKey: Float, keyWidth: Int) {
+        val zone = xRelativeToKey / keyWidth
+        // 0: Left (0-33%), 2: Middle (33-66%), 1: Right (66-100%)
+        val isRightClick = zone > 0.66f
+        
+        // Trigger click in OverlayService
+        cursorClickAction?.invoke(isRightClick)
+        
+        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
+
+    private fun moveMouse(dx: Float, dy: Float) {
+        if (dx == 0f && dy == 0f) return
+        
+        // Send delta to OverlayService to move the fake cursor
+        cursorMoveAction?.invoke(dx * cursorSensitivity, dy * cursorSensitivity)
+    }
+
 
 
     // We attach the trail view externally from the Overlay
@@ -428,7 +465,21 @@ class KeyboardView @JvmOverloads constructor(
     //          4. Validates swipe has enough points and traveled enough distance
     //          This prevents false swipe triggers during fast two-thumb typing.
     // =================================================================================
+
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        // --- 1. PREVENT SWIPE TRAIL ON SPACEBAR ---
+        // If the touch starts on the SPACE key, we skip the swipe detection logic entirely.
+        // This ensures we don't draw the green line or trigger the swipe decoder 
+        // when the user is just trying to use the trackpad.
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            val touchedView = findKeyView(event.x, event.y)
+            if (touchedView?.tag == "SPACE") {
+                // Pass directly to onTouchEvent (standard handling) and skip swipe logic
+                return super.dispatchTouchEvent(event)
+            }
+        }
+
+        // --- 2. EXISTING SWIPE / GESTURE LOGIC ---
         val superResult = super.dispatchTouchEvent(event)
         val action = event.actionMasked
         val pointerIndex = event.actionIndex
@@ -473,7 +524,6 @@ class KeyboardView @JvmOverloads constructor(
                     val dx = Math.abs(currentX - startTouchX)
                     val dy = Math.abs(currentY - startTouchY)
                     // Require movement in BOTH axes or significant movement in one
-                    // This helps distinguish intentional swipes from finger wobble
                     val totalMovement = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
                     if (totalMovement > SWIPE_THRESHOLD) {
                         isSwiping = true
@@ -542,6 +592,7 @@ class KeyboardView @JvmOverloads constructor(
         return superResult
     }
 
+
     // =================================================================================
     // FUNCTION: validateSwipe
     // SUMMARY: Checks if the recorded path qualifies as a valid swipe gesture.
@@ -566,46 +617,151 @@ class KeyboardView @JvmOverloads constructor(
     // END BLOCK: dispatchTouchEvent and validateSwipe
     // =================================================================================
 
+
+
+
+
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val action = event.actionMasked
-        val index = event.actionIndex
-        val id = event.getPointerId(index)
+        val pointerIndex = event.actionIndex
+        val pointerId = event.getPointerId(pointerIndex)
+        val x = event.getX(pointerIndex)
+        val y = event.getY(pointerIndex)
+
+        val touchedView = findKeyView(x, y)
+        val keyTag = touchedView?.tag as? String
+
+        // --- SPACEBAR TRACKPAD HANDLING ---
+        if ((keyTag == "SPACE" && action == MotionEvent.ACTION_DOWN) || spacebarPointerId == pointerId) {
+            when (action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (keyTag == "SPACE") {
+                        spacebarPointerId = pointerId
+                        lastSpaceX = x
+                        lastSpaceY = y
+                        isSpaceTrackpadActive = false
+                        // Visual feedback only
+                        if (touchedView != null) setKeyVisual(touchedView, true, "SPACE")
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (pointerId == spacebarPointerId) {
+                        val dx = x - lastSpaceX
+                        val dy = y - lastSpaceY
+                        
+                        // Detect Drag vs Tap
+                        if (!isSpaceTrackpadActive) {
+                            if (kotlin.math.hypot(dx, dy) > touchSlop) {
+                                isSpaceTrackpadActive = true
+                                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        }
+                        
+                        if (isSpaceTrackpadActive) {
+                            moveMouse(dx, dy)
+                            lastSpaceX = x
+                            lastSpaceY = y
+                        }
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    if (pointerId == spacebarPointerId) {
+                        // Reset Visual
+                        // We search for space view again just to be safe
+                        val spaceView = if (touchedView?.tag == "SPACE") touchedView else findViewWithTag("SPACE")
+                        if (spaceView != null) setKeyVisual(spaceView, false, "SPACE")
+
+                        if (!isSpaceTrackpadActive) {
+                            // TAP DETECTED
+                            if (isPredictiveBarEmpty) {
+                                // --- MOUSE CLICK MODE ---
+                                var keyLeft = 0f
+                                if (touchedView != null) {
+                                    val row = touchedView.parent as? View
+                                    if (row != null) keyLeft = row.x + touchedView.x
+                                }
+                                val relativeX = x - keyLeft
+                                val width = touchedView?.width ?: 100
+                                handleSpacebarClick(relativeX, width)
+                            } else {
+                                // --- NORMAL SPACE INPUT ---
+                                listener?.onSpecialKey(SpecialKey.SPACE, 0)
+                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            }
+                        }
+                        spacebarPointerId = -1
+                        isSpaceTrackpadActive = false
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (pointerId == spacebarPointerId) {
+                        spacebarPointerId = -1
+                        isSpaceTrackpadActive = false
+                        val spaceView = findViewWithTag<View>("SPACE")
+                        if (spaceView != null) setKeyVisual(spaceView, false, "SPACE")
+                        return true
+                    }
+                }
+            }
+        }
+
+        // --- STANDARD KEYBOARD HANDLING (Fixes Stuck Highlights) ---
+        // We track the active key and update it as the finger slides.
         
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                val x = event.getX(index)
-                val y = event.getY(index)
-                val keyView = findKeyView(x, y)
-                if (keyView != null) {
-                    val keyTag = keyView.tag as? String
-                    if (keyTag != null) {
-                        activePointers.put(id, keyView)
-                        onKeyDown(keyTag, keyView)
+                if (touchedView != null && keyTag != null && keyTag != "SPACE") {
+                    currentActiveKey = touchedView
+                    onKeyDown(keyTag, touchedView)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                // If we slid to a new key
+                if (touchedView != currentActiveKey) {
+                    // Deactivate old
+                    currentActiveKey?.let { 
+                        val oldTag = it.tag as? String
+                        if (oldTag != null) setKeyVisual(it, false, oldTag) // Just visual off, don't commit input on slide-off
+                    }
+                    
+                    // Activate new
+                    if (touchedView != null && keyTag != null && keyTag != "SPACE") {
+                        currentActiveKey = touchedView
+                        onKeyDown(keyTag, touchedView) // Visual on + Haptic
+                    } else {
+                        currentActiveKey = null
                     }
                 }
-                return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                val keyView = activePointers.get(id)
-                if (keyView != null) {
-                    val keyTag = keyView.tag as? String
-                    if (keyTag != null) onKeyUp(keyTag, keyView)
-                    activePointers.remove(id)
+                currentActiveKey?.let {
+                    val tag = it.tag as? String
+                    if (tag != null) {
+                        // Commit the input
+                        onKeyUp(tag, it)
+                    }
                 }
-                return true
+                currentActiveKey = null
             }
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat()
-                for (i in 0 until activePointers.size()) {
-                    val view = activePointers.valueAt(i)
-                    val tag = view.tag as? String
-                    if (tag != null) setKeyVisual(view, false, tag)
+                currentActiveKey?.let {
+                    val tag = it.tag as? String
+                    if (tag != null) setKeyVisual(it, false, tag)
                 }
-                activePointers.clear()
+                currentActiveKey = null
             }
         }
-        return super.onTouchEvent(event)
+        
+        return true
     }
+
+
+
+
 
     private fun findKeyView(targetX: Float, targetY: Float): View? {
         return findKeyRecursively(this, targetX, targetY)

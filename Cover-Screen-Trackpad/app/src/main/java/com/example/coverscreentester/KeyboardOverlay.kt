@@ -52,7 +52,7 @@ class KeyboardOverlay(
     private var currentComposingWord = StringBuilder()
     private val handler = Handler(Looper.getMainLooper())
 
-    // FIX: Default height to WRAP_CONTENT (-2) to avoid cutting off rows
+    // FIX Default height to WRAP_CONTENT (-2) to avoid cutting off rows
     private var keyboardWidth = 500
     private var keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT 
     
@@ -62,23 +62,28 @@ class KeyboardOverlay(
     private var currentAlpha = 200
     private var currentDisplayId = 0
 
-    fun setScreenDimensions(width: Int, height: Int, displayId: Int = 0) {
-        screenWidth = width
-        screenHeight = height
-        currentDisplayId = displayId
+
+    // Callbacks to talk back to OverlayService
+    var onCursorMove: ((Float, Float) -> Unit)? = null
+    var onCursorClick: ((Boolean) -> Unit)? = null
+
+
+
+    fun setScreenDimensions(width: Int, height: Int, displayId: Int) {
+        // We no longer update inputHandler here
         
-        loadKeyboardSizeForDisplay(displayId)
-        
-        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        currentAlpha = prefs.getInt("keyboard_alpha", 200)
-        
-        // Only set defaults if nothing is saved
-        if (!prefs.contains("keyboard_width_d$displayId")) {
-            keyboardWidth = (width * 0.90f).toInt().coerceIn(300, 1200) // CHANGED: 90% width
-            // Keep height as WRAP_CONTENT by default
-            keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT
+        keyboardParams?.let {
+            it.width = width
+            it.height = height
+            try {
+                windowManager.updateViewLayout(keyboardContainer, it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
+
+
 
     fun updateScale(scale: Float) {
         if (keyboardView == null) return
@@ -407,7 +412,28 @@ class KeyboardOverlay(
         keyboardContainer?.background = containerBg
 
         // 1. The Keyboard Keys
+        // --- FIX Connect Shell for Spacebar Trackpad ---
+        // Pass the shell command capability to the view so it can inject mouse events
+
+
+        // Initialize Handler using 'targetDisplayId' (the class property), NOT 'inputTargetDisplayId'
+
         keyboardView = KeyboardView(context)
+
+        // Bind KeyboardView events to our OverlayService callbacks
+        // We use these INSTEAD of inputHandler now.
+        keyboardView?.cursorMoveAction = { dx, dy ->
+            onCursorMove?.invoke(dx, dy)
+        }
+        
+        keyboardView?.cursorClickAction = { isRight ->
+            onCursorClick?.invoke(isRight)
+        }
+
+
+        
+
+        // ------------------------------------------------
         keyboardView?.setKeyboardListener(this)
         val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         keyboardView?.setVibrationEnabled(prefs.getBoolean("vibrate", true))

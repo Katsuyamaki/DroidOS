@@ -1,38 +1,48 @@
+
 package com.example.coverscreentester
 
-import android.util.Log
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 
-object ShizukuInputHandler {
-    private const val TAG = "ShizukuInputHandler"
-
-    /**
-     * Injects a relative mouse movement event to a specific display.
-     * * @param dx The change in X.
-     * @param dy The change in Y.
-     * @param displayId The ID of the target display (0 is usually local, others are virtual/external).
-     */
-    fun injectMouseMovement(dx: Float, dy: Float, displayId: Int) {
-        // Construct the command with the display flag (-d) explicitly placed before 'mouse'
-        val command = "input -d $displayId mouse relative $dx $dy"
-        executeCommand(command)
+class ShizukuInputHandler(
+    private val shellService: IShellService?,
+    private var displayId: Int
+) {
+    fun updateDisplay(newDisplayId: Int) {
+        this.displayId = newDisplayId
     }
 
-    /**
-     * Injects a mouse click event to a specific display.
-     */
-    fun injectMouseClick(displayId: Int) {
-        val command = "input -d $displayId mouse tap 0 0" // Tap coordinates often ignored for mouse click, but required by syntax
-        executeCommand(command)
+    fun moveMouseRelative(dx: Float, dy: Float) {
+        if (shellService == null) return
+        
+        // Convert to Int for shell command
+        val dxInt = dx.toInt()
+        val dyInt = dy.toInt()
+        
+        if (dxInt == 0 && dyInt == 0) return
+
+        Thread {
+            try {
+                // Use input command for relative movement
+                shellService.runCommand("input -d $displayId mouse relative $dxInt $dyInt")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
     }
 
-    private fun executeCommand(command: String) {
-        try {
-            // Using Shizuku to execute the shell command
-//             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-            // If strictly using Shizuku binding without 'su', replace above with:
-            // Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to inject input: ${e.message}")
-        }
+    fun injectKey(keyCode: Int, metaState: Int) {
+        if (shellService == null) return
+        Thread {
+            try {
+                // Inject Down and Up events
+                shellService.injectKey(keyCode, android.view.KeyEvent.ACTION_DOWN, metaState, displayId, -1)
+                Thread.sleep(10)
+                shellService.injectKey(keyCode, android.view.KeyEvent.ACTION_UP, metaState, displayId, -1)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
     }
 }
