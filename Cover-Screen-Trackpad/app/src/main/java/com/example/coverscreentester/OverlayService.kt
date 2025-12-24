@@ -70,6 +70,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private lateinit var cursorParams: WindowManager.LayoutParams
 
     private var menuManager: TrackpadMenuManager? = null
+    private var savedKbX = 0
+    private var savedKbY = 0
+    private var savedKbW = 0
+    private var savedKbH = 0
     private var keyboardOverlay: KeyboardOverlay? = null
 
     var currentDisplayId = 0
@@ -1329,6 +1333,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
+
     private fun initCustomKeyboard() { 
         if (appWindowManager == null || shellService == null) return
         
@@ -1342,12 +1347,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             { toggleCustomKeyboard() }
         )
         
-        // --- WIRE UP TRACKPAD ---
+        // Wire up Trackpad Callbacks
         keyboardOverlay?.onCursorMove = { dx, dy -> handleExternalMouseMove(dx, dy) }
         keyboardOverlay?.onCursorClick = { isRight -> handleExternalMouseClick(isRight) }
         
-        keyboardOverlay?.setScreenDimensions(uiScreenWidth, uiScreenHeight, currentDisplayId) 
+        // FIX: Restore Saved Layout (fixes reset/aspect ratio issue)
+        if (savedKbW > 0 && savedKbH > 0) {
+            keyboardOverlay?.updatePosition(savedKbX, savedKbY)
+            keyboardOverlay?.updateSize(savedKbW, savedKbH)
+        } else {
+            // Sane Defaults: Bottom 45% of screen
+            val defaultH = (uiScreenHeight * 0.45f).toInt()
+            keyboardOverlay?.updatePosition(0, uiScreenHeight - defaultH)
+            keyboardOverlay?.updateSize(uiScreenWidth, defaultH)
+        }
     }
+
 
 
     fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
@@ -1535,7 +1550,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun performRotation() { rotationAngle = (rotationAngle + 90) % 360; cursorView?.rotation = rotationAngle.toFloat() }
     fun getProfileKey(): String = "P_${uiScreenWidth}_${uiScreenHeight}"
     
-    fun saveLayout() { 
+    fun saveLayout() {
+
+        // Cache the current values
+        val currentKbX = keyboardOverlay?.getViewX() ?: savedKbX
+        val currentKbY = keyboardOverlay?.getViewY() ?: savedKbY
+        val currentKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
+        val currentKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
+        
+        // Update local memory
+        savedKbX = currentKbX; savedKbY = currentKbY; savedKbW = currentKbW; savedKbH = currentKbH
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit(); val key = getProfileKey()
         p.putInt("X_$key", trackpadParams.x); p.putInt("Y_$key", trackpadParams.y); p.putInt("W_$key", trackpadParams.width); p.putInt("H_$key", trackpadParams.height)
         val kbX = keyboardOverlay?.getViewX() ?: 0; val kbY = keyboardOverlay?.getViewY() ?: 0; val kbW = keyboardOverlay?.getViewWidth() ?: 0; val kbH = keyboardOverlay?.getViewHeight() ?: 0
@@ -1556,11 +1580,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 prefs.prefHandleTouchSize = parts[8].toInt(); prefs.prefScrollTouchSize = parts[9].toInt(); prefs.prefScrollVisualSize = parts[10].toInt(); prefs.prefCursorSize = parts[11].toInt()
                 prefs.prefKeyScale = parts[12].toInt(); prefs.prefAutomationEnabled = parseBoolean(parts[13]); prefs.prefAnchored = parseBoolean(parts[14]); prefs.prefBubbleSize = parts[15].toInt(); prefs.prefBubbleAlpha = parts[16].toInt()
                 if (parts.size >= 27) { prefs.prefBubbleIconIndex = parts[17].toInt(); prefs.prefBubbleX = parts[18].toInt(); prefs.prefBubbleY = parts[19].toInt(); prefs.hardkeyVolUpTap = parts[20]; prefs.hardkeyVolUpDouble = parts[21]; prefs.hardkeyVolUpHold = parts[22]; prefs.hardkeyVolDownTap = parts[23]; prefs.hardkeyVolDownDouble = parts[24]; prefs.hardkeyVolDownHold = parts[25]; prefs.hardkeyPowerDouble = parts[26] }
-                if (parts.size >= 31) { keyboardOverlay?.updatePosition(parts[27].toInt(), parts[28].toInt()); keyboardOverlay?.updateSize(parts[29].toInt(), parts[30].toInt()) } 
                 else if (parts.size >= 29) { keyboardOverlay?.updatePosition(parts[27].toInt(), parts[28].toInt()) }
                 updateBorderColor(currentBorderColor); updateLayoutSizes(); updateScrollSize(); updateHandleSize(); updateCursorSize(); keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha); keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f); keyboardOverlay?.setAnchored(prefs.prefAnchored)
                 if (bubbleView != null) { bubbleParams.x = prefs.prefBubbleX; bubbleParams.y = prefs.prefBubbleY; windowManager?.updateViewLayout(bubbleView, bubbleParams); applyBubbleAppearance() }
-                
+                if (parts.size >= 31) { 
+                    savedKbX = parts[27].toInt()
+                    savedKbY = parts[28].toInt()
+                    savedKbW = parts[29].toInt()
+                    savedKbH = parts[30].toInt()
+                } else {
+                    // Default if no save exists yet
+                    savedKbW = uiScreenWidth
+                    savedKbH = (uiScreenHeight * 0.45f).toInt()
+                    savedKbX = 0
+                    savedKbY = uiScreenHeight - savedKbH
+                } 
+
                 // IMPORTANT: Save loaded values to disk so toggling components (Keyboard) recalls correct state
                 savePrefs()
                 
