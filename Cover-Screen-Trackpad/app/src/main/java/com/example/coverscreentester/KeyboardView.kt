@@ -104,6 +104,8 @@ class KeyboardView @JvmOverloads constructor(
     private var cand1: TextView? = null
     private var cand2: TextView? = null
     private var cand3: TextView? = null
+    private var div1: View? = null
+    private var div2: View? = null
 
 // =================================================================================
     // GESTURE TYPING STATE
@@ -129,7 +131,9 @@ class KeyboardView @JvmOverloads constructor(
 
 
     // --- SPACEBAR TRACKPAD VARIABLES ---
-    var isPredictiveBarEmpty: Boolean = false
+
+    var isPredictiveBarEmpty: Boolean = true
+
     
     // Actions triggered by Spacebar Trackpad
     var cursorMoveAction: ((Float, Float) -> Unit)? = null
@@ -299,28 +303,9 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
-    fun setSuggestions(words: List<String>) {
-        if (suggestionStrip == null) return
 
-        val w1 = words.getOrNull(0) ?: ""
-        val w2 = words.getOrNull(1) ?: ""
-        val w3 = words.getOrNull(2) ?: ""
 
-        cand1?.text = w1
-        cand1?.visibility = if (w1.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand1?.setOnClickListener { if (w1.isNotEmpty()) listener?.onSuggestionClick(w1) }
 
-        cand2?.text = w2
-        cand2?.visibility = if (w2.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand2?.setOnClickListener { if (w2.isNotEmpty()) listener?.onSuggestionClick(w2) }
-
-        cand3?.text = w3
-        cand3?.visibility = if (w3.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand3?.setOnClickListener { if (w3.isNotEmpty()) listener?.onSuggestionClick(w3) }
-
-        // Show strip if we have suggestions, hide if empty (optional, keeping visible prevents jumpiness)
-        // suggestionStrip?.visibility = if (words.isEmpty()) View.GONE else View.VISIBLE
-    }
 
     private fun buildKeyboard() {
         removeAllViews()
@@ -328,10 +313,48 @@ class KeyboardView @JvmOverloads constructor(
         // --- 1. SUGGESTION STRIP ---
         suggestionStrip = LinearLayout(context).apply {
             orientation = HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, (35 * scaleFactor).toInt()) // Slightly shorter than keys
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, (35 * scaleFactor).toInt()) 
             setBackgroundColor(Color.parseColor("#222222"))
             setPadding(0, 0, 0, 4)
+            
+            // Mouse Click Handler for Empty Bar
+            setOnTouchListener { v, event ->
+                if (isPredictiveBarEmpty) {
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> true // Capture touch
+                        MotionEvent.ACTION_UP -> {
+                            val w = v.width.toFloat()
+                            val x = event.x
+                            if (x < w * 0.33f) {
+                                // Left Click Section (Left 33%)
+                                cursorClickAction?.invoke(false) 
+                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                            } else if (x > w * 0.66f) {
+                                // Right Click Section (Right 33%)
+                                cursorClickAction?.invoke(true)
+                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                            } else {
+                                // Middle Section
+                            }
+                            v.performClick()
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false // Pass through to candidates
+                }
+            }
         }
+
+        
+        // Check initial state (hide children if empty by default)
+        if (isPredictiveBarEmpty) {
+            cand1?.visibility = View.GONE; cand2?.visibility = View.GONE; cand3?.visibility = View.GONE
+            div1?.visibility = View.GONE; div2?.visibility = View.GONE
+        }
+        // --- END SUGGESTION STRIP ---
+
 
         fun createCandidateView(): TextView {
             return TextView(context).apply {
@@ -1104,4 +1127,41 @@ class KeyboardView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         stopRepeat()
     }
+    fun setSuggestions(words: List<String>) {
+        if (suggestionStrip == null) return
+
+        // Update empty state flag
+        isPredictiveBarEmpty = words.isEmpty() || words.all { it.isEmpty() }
+
+        if (isPredictiveBarEmpty) {
+            // Hide everything so the Strip Container (parent) catches all touches
+            cand1?.visibility = View.GONE
+            cand2?.visibility = View.GONE
+            cand3?.visibility = View.GONE
+            div1?.visibility = View.GONE
+            div2?.visibility = View.GONE
+            return
+        }
+
+        // Restore dividers
+        div1?.visibility = View.VISIBLE
+        div2?.visibility = View.VISIBLE
+
+        val w1 = words.getOrNull(0) ?: ""
+        val w2 = words.getOrNull(1) ?: ""
+        val w3 = words.getOrNull(2) ?: ""
+
+        cand1?.text = w1
+        cand1?.visibility = if (w1.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand1?.setOnClickListener { if (w1.isNotEmpty()) listener?.onSuggestionClick(w1) }
+
+        cand2?.text = w2
+        cand2?.visibility = if (w2.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand2?.setOnClickListener { if (w2.isNotEmpty()) listener?.onSuggestionClick(w2) }
+
+        cand3?.text = w3
+        cand3?.visibility = if (w3.isNotEmpty()) View.VISIBLE else View.INVISIBLE
+        cand3?.setOnClickListener { if (w3.isNotEmpty()) listener?.onSuggestionClick(w3) }
+    }
+
 }
