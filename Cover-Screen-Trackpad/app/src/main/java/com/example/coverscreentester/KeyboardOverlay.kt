@@ -52,6 +52,15 @@ class KeyboardOverlay(
     private var currentComposingWord = StringBuilder()
     private val handler = Handler(Looper.getMainLooper())
 
+    // NEW: Track sentence context and swipe history
+    private var lastCommittedSwipeWord: String? = null
+    private var isSentenceStart = true
+
+    // Helper to inject text via OverlayService
+    private fun injectText(text: String) {
+        (context as? OverlayService)?.injectText(text)
+    }
+
     // FIX Default height to WRAP_CONTENT (-2) to avoid cutting off rows
     private var keyboardWidth = 500
     private var keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT 
@@ -605,18 +614,38 @@ class KeyboardOverlay(
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
 
+
     override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) {
+        // Log the key press for debugging
+        android.util.Log.d("DroidOS_Key", "Press: $keyCode ('$char')")
+
+        // 1. Inject the key event
         injectKey(keyCode, metaState)
 
-        // Track local composition
+        // 2. Clear Swipe History on manual typing
+        // If user manually types/deletes, we lose the "swipe correction" context
+        if (keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) {
+            lastCommittedSwipeWord = null
+        }
+
+        // 3. Track Sentence Start
+        if (keyCode == KeyEvent.KEYCODE_ENTER || char == '.' || char == '!' || char == '?') {
+            isSentenceStart = true
+        } else if (char != null && !Character.isWhitespace(char)) {
+            // If we typed a visible character that isn't punctuation, sentence has started
+            isSentenceStart = false
+        }
+
+        // 4. Update Composing Word (For manual suggestion lookups)
         if (char != null && Character.isLetterOrDigit(char)) {
             currentComposingWord.append(char)
             updateSuggestions()
         } else {
-            // Punctuation usually ends a word
+            // Punctuation or space usually ends a word context
             resetComposition()
         }
     }
+
     
     override fun onTextInput(text: String) {
         if (shellService == null) return
@@ -672,17 +701,43 @@ class KeyboardOverlay(
     }
 
     override fun onSuggestionClick(text: String) {
-        // 1. Delete the characters we manually typed (if any)
-        val charsToDelete = currentComposingWord.length
-        for (i in 0 until charsToDelete) {
-            injectKey(KeyEvent.KEYCODE_DEL, 0)
+        // --- LOGIC: Swipe Correction ---
+        // If we just auto-committed a swipe word, and the user clicks a suggestion,
+        // we want to REPLACE that word, not append to it.
+        if (lastCommittedSwipeWord != null) {
+            // 1. Delete previous word (Backspace N times)
+            val deleteCount = lastCommittedSwipeWord!!.length
+            for (i in 0 until deleteCount) {
+                injectKey(KeyEvent.KEYCODE_DEL, 0)
+            }
+
+            // 2. Inject new word (Maintain capitalization of the replaced word)
+            var newText = text
+            val wasCap = Character.isUpperCase(lastCommittedSwipeWord!!.firstOrNull() ?: ' ')
+            if (wasCap) {
+                newText = newText.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            }
+
+            val finalText = "$newText "
+            injectText(finalText)
+
+            // 3. Update history (so we can correct the correction again)
+            lastCommittedSwipeWord = finalText
+
+        } else {
+            // --- LOGIC: Manual Typing Completion ---
+            // 1. Delete the characters we manually typed (if any)
+            val charsToDelete = currentComposingWord.length
+            for (i in 0 until charsToDelete) {
+                injectKey(KeyEvent.KEYCODE_DEL, 0)
+            }
+
+            // 2. Inject the full word + space
+            injectText("$text ")
+
+            // 3. Reset
+            resetComposition()
         }
-
-        // 2. Inject the full word + space
-        (context as? OverlayService)?.injectText("$text ")
-
-        // 3. Reset
-        resetComposition()
     }
 
     override fun onSwipeDetected(path: List<android.graphics.PointF>) {
@@ -693,15 +748,36 @@ class KeyboardOverlay(
             val suggestions = predictionEngine.decodeSwipe(path, keyMap)
 
             if (suggestions.isNotEmpty()) {
-                val bestMatch = suggestions[0]
-
                 // UI updates must happen on main thread
                 handler.post {
-                    // Update suggestion strip
-                    keyboardView?.setSuggestions(suggestions)
+                    var bestMatch = suggestions[0]
 
-                    // Auto-commit the best match + space (Gboard style)
-                    (context as? OverlayService)?.injectText("$bestMatch ")
+                    // --- LOGIC: Capitalize Start of Sentence ---
+                    if (isSentenceStart) {
+                        bestMatch = bestMatch.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                        // Don't reset isSentenceStart here; let the next logic decide if it ends with space
+                    }
+
+                    // Prepare display candidates (Capitalize all if the best match was capitalized)
+                    val isCap = Character.isUpperCase(bestMatch.firstOrNull() ?: ' ')
+                    val displaySuggestions = if (isCap) {
+                        suggestions.map { it.replaceFirstChar { c -> c.titlecase() } }
+                    } else {
+                        suggestions
+                    }
+
+                    // Update UI
+                    keyboardView?.setSuggestions(displaySuggestions)
+
+                    // --- LOGIC: Auto-Commit ---
+                    val textToCommit = "$bestMatch "
+                    injectText(textToCommit)
+
+                    // Save for replacement if user clicks a different suggestion
+                    lastCommittedSwipeWord = textToCommit
+
+                    // Update Sentence State (Word + Space usually means we are inside a sentence now)
+                    isSentenceStart = false
                 }
             }
         }.start()

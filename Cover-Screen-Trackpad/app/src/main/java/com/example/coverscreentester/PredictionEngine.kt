@@ -239,43 +239,39 @@ class PredictionEngine {
      * 4. Location channel scoring (absolute positions)  
      * 5. Integration with frequency weighting
      */
+
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
+        val startT = System.currentTimeMillis()
+        android.util.Log.d("DroidOS_Swipe", "--- Decoding Swipe: ${swipePath.size} points ---")
+
         if (swipePath.size < 5) {
-            android.util.Log.d("DroidOS_Swipe", "Path too short: ${swipePath.size} points")
+            android.util.Log.d("DroidOS_Swipe", "Path too short (<5), ignoring.")
             return emptyList()
         }
-        
-        // Check if keyboard layout changed - invalidate template cache if so
+
         val keyMapHash = keyMap.hashCode()
         if (keyMapHash != lastKeyMapHash) {
             templateCache.clear()
             lastKeyMapHash = keyMapHash
+            android.util.Log.d("DroidOS_Prediction", "Keymap changed, clearing cache.")
         }
 
-        // Step 1: Sample the input gesture to SAMPLE_POINTS uniform points
+        // Step 1: Sample input
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
-        if (sampledInput.size < SAMPLE_POINTS) {
-            android.util.Log.d("DroidOS_Swipe", "Failed to sample path properly")
-            return emptyList()
+        
+        // Step 2: Identify Start/End keys
+        val startKeys = findKeysNear(sampledInput.first(), keyMap, 150f)
+        val endKeys = findKeysNear(sampledInput.last(), keyMap, 150f)
+        
+        android.util.Log.d("DroidOS_Swipe", "Start Keys: $startKeys | End Keys: $endKeys")
+
+        if (startKeys.isEmpty() || endKeys.isEmpty()) { 
+            return emptyList() 
         }
         
-        // Step 2: Create normalized version of input for shape channel
         val normalizedInput = normalizePath(sampledInput)
-        
-        // Step 3: Prune candidates based on start/end key proximity
-        val startPt = swipePath.first()
-        val endPt = swipePath.last()
-        val startKeys = findKeysNear(startPt, keyMap, PRUNING_THRESHOLD)
-        val endKeys = findKeysNear(endPt, keyMap, PRUNING_THRESHOLD)
 
-        if (startKeys.isEmpty() || endKeys.isEmpty()) {
-            android.util.Log.d("DroidOS_Swipe", "No keys found near start/end. Start: $startPt, End: $endPt")
-            return emptyList()
-        }
-        
-        android.util.Log.d("DroidOS_Swipe", "Start keys: $startKeys, End keys: $endKeys")
-
-        // Step 4: Filter dictionary words and build/retrieve templates
+        // Step 3: Filter dictionary words
         val candidates = wordList.filter { word ->
             if (word.length < MIN_WORD_LENGTH) return@filter false
             val first = word.first().toString().lowercase()
@@ -287,14 +283,11 @@ class PredictionEngine {
             android.util.Log.d("DroidOS_Swipe", "No candidates after pruning")
             return emptyList()
         }
-        
-        android.util.Log.d("DroidOS_Swipe", "Candidates after pruning: ${candidates.size}")
 
-        // Step 5: Score each candidate using dual-channel approach
+        // Step 4: Score candidates
         val scored = candidates.mapNotNull { word ->
             val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
             
-            // Ensure template has sampled points
             if (template.sampledPoints == null) {
                 template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
                 template.normalizedPoints = normalizePath(template.sampledPoints!!)
@@ -302,28 +295,25 @@ class PredictionEngine {
             
             if (template.sampledPoints?.size != SAMPLE_POINTS) return@mapNotNull null
             
-            // Shape channel: compare normalized patterns
             val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
-            
-            // Location channel: compare absolute positions
             val locationScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
             
-            // Integration: weighted combination
             val integrationScore = SHAPE_WEIGHT * shapeScore + LOCATION_WEIGHT * locationScore
             
-            // Apply frequency weighting
             val rank = template.rank
             val frequencyBonus = 1.0f / (1.0f + ln((rank + 1).toFloat()))
-            val finalScore = integrationScore * (1.0f - 0.3f * frequencyBonus) // Lower score is better
+            val finalScore = integrationScore * (1.0f - 0.3f * frequencyBonus)
             
             Triple(word, finalScore, rank)
         }
 
         // Return top candidates sorted by score (lower is better)
         val results = scored.sortedBy { it.second }.take(3).map { it.first }
-        android.util.Log.d("DroidOS_Swipe", "Top results: $results")
+        
+        android.util.Log.d("DroidOS_Swipe", "Result (${System.currentTimeMillis() - startT}ms): $results")
         return results
     }
+
     
     /**
      * Get or create a word template with key positions
