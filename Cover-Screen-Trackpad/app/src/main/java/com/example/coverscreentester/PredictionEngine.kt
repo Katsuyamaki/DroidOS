@@ -70,6 +70,13 @@ class PredictionEngine {
     // Template cache - maps word to its template (lazy-computed per keyboard layout)
     private val templateCache = HashMap<String, WordTemplate>()
     private var lastKeyMapHash = 0  // Track if keyboard layout changed
+
+    // --- CUSTOM DICTIONARY STORAGE ---
+    private val blockedWords = java.util.HashSet<String>()
+    private val customWords = java.util.HashSet<String>()
+    // Fix: Removed 'const' (not allowed in class body)
+    private val USER_DICT_FILE = "user_words.txt"
+    private val BLOCKED_DICT_FILE = "blocked_words.txt"
     
     // =================================================================================
     // END DATA STRUCTURES
@@ -122,66 +129,171 @@ class PredictionEngine {
         Thread {
             try {
                 val start = System.currentTimeMillis()
-                
-                try {
-                    val assetList = context.assets.list("") ?: emptyArray()
-                    android.util.Log.d("DroidOS_Prediction", "Available assets: ${assetList.joinToString(", ")}")
-                    if (!assetList.contains("dictionary.txt")) {
-                        android.util.Log.e("DroidOS_Prediction", "dictionary.txt NOT FOUND in assets! Make sure to rebuild APK after adding the file.")
-                        return@Thread
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("DroidOS_Prediction", "Failed to list assets", e)
-                }
-                
                 val newRoot = TrieNode()
                 val newWordList = ArrayList<String>()
+                val newBlocked = java.util.HashSet<String>()
+                val newCustom = java.util.HashSet<String>()
                 var lineCount = 0
 
-                context.assets.open("dictionary.txt").bufferedReader().useLines { lines ->
-                    lines.forEachIndexed { index, line ->
-                        val word = line.trim()
-                        if (word.isNotEmpty() && word.all { it.isLetter() } && word.length >= MIN_WORD_LENGTH) {
-                            val lower = word.lowercase(Locale.ROOT)
-                            newWordList.add(lower)
-                            lineCount++
-                            
-                            var current = newRoot
-                            for (char in lower) {
-                                current = current.children.computeIfAbsent(char) { TrieNode() }
+                // 1. Load Custom Lists (User & Blocked)
+                try {
+                    val blockFile = java.io.File(context.filesDir, BLOCKED_DICT_FILE)
+                    if (blockFile.exists()) newBlocked.addAll(blockFile.readLines().map { it.trim().lowercase() })
+
+                    val userFile = java.io.File(context.filesDir, USER_DICT_FILE)
+                    if (userFile.exists()) newCustom.addAll(userFile.readLines().map { it.trim().lowercase() })
+                } catch (e: Exception) {
+                    android.util.Log.e("DroidOS_Prediction", "Failed to load user lists", e)
+                }
+
+                // 2. Load Main Dictionary (Assets) - Filtering Blocked words
+                try {
+                    context.assets.open("dictionary.txt").bufferedReader().useLines { lines ->
+                        lines.forEachIndexed { index, line ->
+                            val word = line.trim().lowercase(Locale.ROOT)
+                            // SKIP if blocked
+                            if (!newBlocked.contains(word) && word.isNotEmpty() && word.all { it.isLetter() } && word.length >= MIN_WORD_LENGTH) {
+                                newWordList.add(word)
+                                lineCount++
+
+                                var current = newRoot
+                                for (char in word) {
+                                    current = current.children.computeIfAbsent(char) { TrieNode() }
+                                }
+                                current.isEndOfWord = true
+                                current.word = word
+                                if (index < current.rank) current.rank = index
                             }
-                            current.isEndOfWord = true
-                            current.word = lower
-                            if (index < current.rank) current.rank = index
                         }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("DroidOS_Prediction", "Dictionary asset load failed: ${e.message}")
+                }
+
+                // 3. Merge Custom Words
+                for (word in newCustom) {
+                    if (!newWordList.contains(word)) {
+                        newWordList.add(word)
+                        var current = newRoot
+                        for (char in word) {
+                            current = current.children.computeIfAbsent(char) { TrieNode() }
+                        }
+                        current.isEndOfWord = true
+                        current.word = word
+                        current.rank = 0 // High priority
                     }
                 }
 
-                if (newWordList.isEmpty()) {
-                    android.util.Log.e("DroidOS_Prediction", "Dictionary file was empty or had no valid words!")
-                    return@Thread
+                // 4. Merge Hardcoded Defaults
+                val existingDefaults = synchronized(this) { ArrayList(wordList) }
+                for (defaultWord in existingDefaults) {
+                    val lower = defaultWord.lowercase(Locale.ROOT)
+                    if (!newBlocked.contains(lower) && !newWordList.contains(lower)) {
+                        newWordList.add(lower)
+                        var current = newRoot
+                        for (char in lower) {
+                            current = current.children.computeIfAbsent(char) { TrieNode() }
+                        }
+                        current.isEndOfWord = true
+                        current.word = lower
+                        if (current.rank > 100) current.rank = 50
+                    }
                 }
 
+                // 5. Commit Changes
                 synchronized(this) {
                     wordList.clear()
                     wordList.addAll(newWordList)
                     root.children.clear()
                     root.children.putAll(newRoot.children)
-                    templateCache.clear() // Clear cache when dictionary changes
+
+                    blockedWords.clear()
+                    blockedWords.addAll(newBlocked)
+                    customWords.clear()
+                    customWords.addAll(newCustom)
+
+                    templateCache.clear()
                 }
-                
-                android.util.Log.d("DroidOS_Prediction", "Dictionary loaded SUCCESS: $lineCount words in ${System.currentTimeMillis() - start}ms")
-                
-            } catch (e: java.io.FileNotFoundException) {
-                android.util.Log.e("DroidOS_Prediction", "dictionary.txt not found in assets! Rebuild APK after adding assets/dictionary.txt", e)
+                android.util.Log.d("DroidOS_Prediction", "Dictionary Loaded: $lineCount asset + ${newCustom.size} user words.")
+
             } catch (e: Exception) {
-                android.util.Log.e("DroidOS_Prediction", "Failed to load dictionary", e)
+                e.printStackTrace()
             }
         }.start()
     }
     // =================================================================================
     // END BLOCK: loadDictionary
     // =================================================================================
+
+    /**
+     * Learns a new word: Adds to memory and saves to user_words.txt
+     */
+    fun learnWord(context: Context, word: String) {
+        val cleanWord = word.trim().lowercase(Locale.ROOT)
+        if (cleanWord.length < MIN_WORD_LENGTH) return
+        if (hasWord(cleanWord)) return // Already known
+
+        Thread {
+            try {
+                // 1. Update Memory
+                synchronized(this) {
+                    customWords.add(cleanWord)
+                    blockedWords.remove(cleanWord) // Unblock if previously blocked
+                    insert(cleanWord, 0) // Rank 0 = High Priority
+                }
+
+                // 2. Append to File
+                val file = java.io.File(context.filesDir, USER_DICT_FILE)
+                file.appendText("$cleanWord\n")
+
+                // 3. Ensure it's removed from blocked file if needed
+                saveSetToFile(context, BLOCKED_DICT_FILE, blockedWords)
+
+                android.util.Log.d("DroidOS_Prediction", "Learned word: $cleanWord")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
+    }
+
+    /**
+     * Blocks a word: Removes from memory and saves to blocked_words.txt
+     */
+    fun blockWord(context: Context, word: String) {
+        val cleanWord = word.trim().lowercase(Locale.ROOT)
+        if (cleanWord.isEmpty()) return
+
+        Thread {
+            try {
+                // 1. Update Memory
+                synchronized(this) {
+                    blockedWords.add(cleanWord)
+                    customWords.remove(cleanWord)
+
+                    // Remove from active lists
+                    wordList.remove(cleanWord)
+                    templateCache.remove(cleanWord)
+                }
+
+                // 2. Save to Files
+                saveSetToFile(context, BLOCKED_DICT_FILE, blockedWords)
+                saveSetToFile(context, USER_DICT_FILE, customWords)
+
+                android.util.Log.d("DroidOS_Prediction", "Blocked word: $cleanWord")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
+    }
+
+    private fun saveSetToFile(context: Context, filename: String, data: Set<String>) {
+        val file = java.io.File(context.filesDir, filename)
+        file.writeText(data.joinToString("\n"))
+    }
+
+    fun hasWord(word: String): Boolean {
+        return wordList.contains(word.lowercase(Locale.ROOT))
+    }
 
     fun insert(word: String, rank: Int = Int.MAX_VALUE) {
         val lower = word.lowercase(Locale.ROOT)

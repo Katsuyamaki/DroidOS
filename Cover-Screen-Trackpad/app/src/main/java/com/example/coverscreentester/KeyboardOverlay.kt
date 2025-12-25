@@ -700,7 +700,15 @@ class KeyboardOverlay(
         injectKey(keyCode, metaState)
     }
 
-    override fun onSuggestionClick(text: String) {
+    override fun onSuggestionClick(text: String, isNew: Boolean) {
+        // 1. Learn word if it was flagged as New
+        if (isNew) {
+            predictionEngine.learnWord(context, text)
+            // Show subtle feedback
+            android.util.Log.d("KeyboardOverlay", "Learned new word: $text")
+        }
+
+        // 2. Commit logic
         // --- LOGIC: Swipe Correction ---
         // If we just auto-committed a swipe word, and the user clicks a suggestion,
         // we want to REPLACE that word, not append to it.
@@ -738,6 +746,20 @@ class KeyboardOverlay(
             // 3. Reset
             resetComposition()
         }
+
+        // Refresh to show it's no longer "New" if we keep typing
+        updateSuggestions()
+    }
+
+    override fun onSuggestionDropped(text: String) {
+        // Block the word
+        predictionEngine.blockWord(context, text)
+
+        android.widget.Toast.makeText(context, "Removed: $text", android.widget.Toast.LENGTH_SHORT).show()
+
+        // Reset composition if we deleted what we were typing?
+        // Or just refresh suggestions to remove the blocked word.
+        updateSuggestions()
     }
 
     override fun onSwipeDetected(path: List<android.graphics.PointF>) {
@@ -760,10 +782,9 @@ class KeyboardOverlay(
 
                     // Prepare display candidates (Capitalize all if the best match was capitalized)
                     val isCap = Character.isUpperCase(bestMatch.firstOrNull() ?: ' ')
-                    val displaySuggestions = if (isCap) {
-                        suggestions.map { it.replaceFirstChar { c -> c.titlecase() } }
-                    } else {
-                        suggestions
+                    val displaySuggestions = suggestions.map {
+                        val text = if (isCap) it.replaceFirstChar { c -> c.titlecase() } else it
+                        KeyboardView.Candidate(text, isNew = false) // Swipe suggestions are always from dictionary
                     }
 
                     // Update UI
@@ -784,8 +805,36 @@ class KeyboardOverlay(
     }
 
     private fun updateSuggestions() {
-        val suggestions = predictionEngine.getSuggestions(currentComposingWord.toString())
-        keyboardView?.setSuggestions(suggestions)
+        val prefix = currentComposingWord.toString()
+        if (prefix.isEmpty()) {
+            keyboardView?.setSuggestions(emptyList())
+            return
+        }
+
+        // 1. Get raw suggestions from engine
+        val suggestions = predictionEngine.getSuggestions(prefix, 3)
+
+        // 2. Convert to Candidate objects
+        val candidates = ArrayList<KeyboardView.Candidate>()
+
+        // Always add the raw Typed Word if it's not in the list (so user can type "zorg" without autocorrect)
+        // If it IS in the dict, it will just show as normal.
+        // If NOT in dict, show as NEW.
+        val rawExists = predictionEngine.hasWord(prefix)
+
+        if (!rawExists) {
+            // Add raw input as the first option (flagged as new)
+            candidates.add(KeyboardView.Candidate(prefix, isNew = true))
+        }
+
+        // Add dictionary suggestions
+        for (s in suggestions) {
+            if (!s.equals(prefix, ignoreCase = true)) {
+                candidates.add(KeyboardView.Candidate(s, isNew = false))
+            }
+        }
+
+        keyboardView?.setSuggestions(candidates.take(3))
     }
 
     private fun resetComposition() {

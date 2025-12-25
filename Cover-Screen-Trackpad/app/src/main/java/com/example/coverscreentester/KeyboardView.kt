@@ -31,14 +31,17 @@ class KeyboardView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
+    data class Candidate(val text: String, val isNew: Boolean = false)
+
     interface KeyboardListener {
         fun onKeyPress(keyCode: Int, char: Char?, metaState: Int)
         fun onTextInput(text: String)
         fun onSpecialKey(key: SpecialKey, metaState: Int)
         fun onScreenToggle()
         fun onScreenModeChange()
-        fun onSuggestionClick(text: String) // New Callback
-        fun onSwipeDetected(path: List<android.graphics.PointF>) // New
+        fun onSuggestionClick(text: String, isNew: Boolean) // Updated
+        fun onSwipeDetected(path: List<android.graphics.PointF>)
+        fun onSuggestionDropped(text: String) // New: Drag to Delete
     }
 
     enum class SpecialKey {
@@ -1005,10 +1008,17 @@ class KeyboardView @JvmOverloads constructor(
     // END BLOCK: onKeyUp
     // =================================================================================
 
-    private fun setKeyVisual(container: View, pressed: Boolean, key: String) {
+    private fun setKeyVisual(container: View, pressed: Boolean, key: String, overrideColor: Int? = null) {
         val tv = (container as? ViewGroup)?.getChildAt(0) as? TextView ?: return
         val bg = tv.background as? GradientDrawable ?: return
-        if (pressed) bg.setColor(Color.parseColor("#3DDC84")) else bg.setColor(getKeyColor(key))
+
+        if (overrideColor != null) {
+            bg.setColor(overrideColor)
+        } else if (pressed) {
+            bg.setColor(Color.parseColor("#3DDC84"))
+        } else {
+            bg.setColor(getKeyColor(key))
+        }
     }
 
     private fun stopRepeat() {
@@ -1225,14 +1235,20 @@ class KeyboardView @JvmOverloads constructor(
         // ... (keep existing cleanup like stopRepeat)
     }
 
-    fun setSuggestions(words: List<String>) {
+    // --- DRAG TO DELETE LOGIC ---
+    private var dragStartX = 0f
+    private var dragStartY = 0f
+    private var isCandidateDragging = false
+    private var activeDragCandidate: String? = null
+
+    @SuppressLint("ClickableViewAccessibility")
+    fun setSuggestions(candidates: List<Candidate>) {
         if (suggestionStrip == null) return
 
         // Update empty state flag
-        isPredictiveBarEmpty = words.isEmpty() || words.all { it.isEmpty() }
+        isPredictiveBarEmpty = candidates.isEmpty() || candidates.all { it.text.isEmpty() }
 
         if (isPredictiveBarEmpty) {
-            // Hide everything so the Strip Container (parent) catches all touches
             cand1?.visibility = View.GONE
             cand2?.visibility = View.GONE
             cand3?.visibility = View.GONE
@@ -1241,25 +1257,118 @@ class KeyboardView @JvmOverloads constructor(
             return
         }
 
-        // Restore dividers
         div1?.visibility = View.VISIBLE
         div2?.visibility = View.VISIBLE
 
-        val w1 = words.getOrNull(0) ?: ""
-        val w2 = words.getOrNull(1) ?: ""
-        val w3 = words.getOrNull(2) ?: ""
+        val views = listOf(cand1, cand2, cand3)
 
-        cand1?.text = w1
-        cand1?.visibility = if (w1.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand1?.setOnClickListener { if (w1.isNotEmpty()) listener?.onSuggestionClick(w1) }
+        for (i in 0 until 3) {
+            val view = views[i] ?: continue
+            if (i < candidates.size) {
+                val item = candidates[i]
+                view.text = item.text
+                view.visibility = View.VISIBLE
 
-        cand2?.text = w2
-        cand2?.visibility = if (w2.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand2?.setOnClickListener { if (w2.isNotEmpty()) listener?.onSuggestionClick(w2) }
+                // HIGHLIGHT NEW WORDS
+                if (item.isNew) {
+                    view.setTextColor(Color.CYAN)
+                    view.typeface = android.graphics.Typeface.DEFAULT_BOLD
+                } else {
+                    view.setTextColor(Color.WHITE)
+                    view.typeface = android.graphics.Typeface.DEFAULT
+                }
 
-        cand3?.text = w3
-        cand3?.visibility = if (w3.isNotEmpty()) View.VISIBLE else View.INVISIBLE
-        cand3?.setOnClickListener { if (w3.isNotEmpty()) listener?.onSuggestionClick(w3) }
+                // TOUCH LISTENER: Handle Click vs Drag
+                view.setOnTouchListener { v, event ->
+                    handleCandidateTouch(v, event, item)
+                }
+            } else {
+                view.visibility = View.INVISIBLE
+                view.setOnTouchListener(null)
+            }
+        }
+    }
+
+    private fun handleCandidateTouch(view: View, event: MotionEvent, item: Candidate): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                dragStartX = event.rawX
+                dragStartY = event.rawY
+                isCandidateDragging = false
+                activeDragCandidate = item.text
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - dragStartX
+                val dy = event.rawY - dragStartY
+
+                // Threshold to start dragging (20px)
+                if (!isCandidateDragging && kotlin.math.hypot(dx.toDouble(), dy.toDouble()) > 20) {
+                    isCandidateDragging = true
+                    // Visual feedback: Dim the candidate
+                    view.alpha = 0.5f
+                }
+
+                if (isCandidateDragging) {
+                    // Check if hovering over BACKSPACE
+                    val bkspKey = findViewWithTag<View>("BKSP")
+                    if (bkspKey != null) {
+                        val loc = IntArray(2)
+                        bkspKey.getLocationOnScreen(loc)
+                        val kx = loc[0]
+                        val ky = loc[1]
+                        val kw = bkspKey.width
+                        val kh = bkspKey.height
+
+                        // Check intersection
+                        if (event.rawX >= kx && event.rawX <= kx + kw &&
+                            event.rawY >= ky && event.rawY <= ky + kh) {
+                            // HOVERING: Turn Red
+                            setKeyVisual(bkspKey, false, "BKSP", overrideColor = Color.RED)
+                        } else {
+                            // NORMAL
+                            setKeyVisual(bkspKey, false, "BKSP")
+                        }
+                    }
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                view.alpha = 1.0f
+                val bkspKey = findViewWithTag<View>("BKSP")
+                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP") // Reset color
+
+                if (isCandidateDragging) {
+                    // Check Drop Target
+                    if (bkspKey != null) {
+                        val loc = IntArray(2)
+                        bkspKey.getLocationOnScreen(loc)
+                        if (event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
+                            event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height) {
+
+                            // DROPPED ON BACKSPACE -> DELETE
+                            listener?.onSuggestionDropped(item.text)
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        }
+                    }
+                } else {
+                    // CLICK -> SELECT
+                    listener?.onSuggestionClick(item.text, item.isNew)
+                    view.performClick()
+                }
+                isCandidateDragging = false
+                activeDragCandidate = null
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                view.alpha = 1.0f
+                isCandidateDragging = false
+                val bkspKey = findViewWithTag<View>("BKSP")
+                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP")
+                return true
+            }
+        }
+        return false
     }
 
 }
