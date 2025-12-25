@@ -640,10 +640,19 @@ class KeyboardView @JvmOverloads constructor(
 
                     // Validate swipe before triggering decoder
                     val isValidSwipe = validateSwipe()
-                    
+
                     if (isValidSwipe) {
-                        // Send a copy of the path to decoder
-                        listener?.onSwipeDetected(ArrayList(currentPath))
+                        // LOG: Swipe passed validation, sending to decoder
+                        android.util.Log.d("DroidOS_Swipe", "DISPATCH: Sending ${currentPath.size} points to onSwipeDetected")
+
+                        // Check if listener exists
+                        if (listener == null) {
+                            android.util.Log.e("DroidOS_Swipe", "DISPATCH FAIL: listener is NULL!")
+                        } else {
+                            listener?.onSwipeDetected(ArrayList(currentPath))
+                        }
+                    } else {
+                        android.util.Log.d("DroidOS_Swipe", "DISPATCH SKIP: validateSwipe returned false")
                     }
 
                     isSwiping = false
@@ -682,25 +691,39 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     // FUNCTION: validateSwipe
     // SUMMARY: Checks if the recorded path qualifies as a valid swipe gesture.
-    //          Requirements: minimum number of points AND minimum start-to-end distance.
-    //          This filters out short taps that accumulated a few points from finger wobble.
+    //          Requirements: minimum number of points AND minimum TOTAL PATH LENGTH.
+    //          Uses total traveled distance (not start-to-end) to handle words that
+    //          start and end on the same or nearby letters (e.g., "test", "that").
+    //          LOGGING: Always logs validation result to diagnose failures.
     // =================================================================================
     private fun validateSwipe(): Boolean {
+        // CHECK 1: Minimum path points
         if (currentPath.size < SWIPE_MIN_PATH_POINTS) {
+            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path too short (${currentPath.size} < $SWIPE_MIN_PATH_POINTS points)")
             return false
         }
-        
-        // Check start-to-end distance (not total path length)
-        val startPt = currentPath.firstOrNull() ?: return false
-        val endPt = currentPath.lastOrNull() ?: return false
-        val dx = endPt.x - startPt.x
-        val dy = endPt.y - startPt.y
-        val distance = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-        
-        return distance >= SWIPE_MIN_DISTANCE
+
+        // CHECK 2: Calculate TOTAL PATH LENGTH (not start-to-end distance)
+        // This properly handles words like "test" where start and end keys are the same
+        var totalPathLength = 0f
+        for (i in 1 until currentPath.size) {
+            val prev = currentPath[i - 1]
+            val curr = currentPath[i]
+            val dx = curr.x - prev.x
+            val dy = curr.y - prev.y
+            totalPathLength += Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+        }
+
+        if (totalPathLength < SWIPE_MIN_DISTANCE) {
+            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path length too short (${totalPathLength.toInt()}px < ${SWIPE_MIN_DISTANCE.toInt()}px)")
+            return false
+        }
+
+        android.util.Log.d("DroidOS_Swipe", "VALIDATE OK: ${currentPath.size} points, ${totalPathLength.toInt()}px total path length")
+        return true
     }
     // =================================================================================
-    // END BLOCK: dispatchTouchEvent and validateSwipe
+    // END BLOCK: validateSwipe with total path length check
     // =================================================================================
 
 

@@ -79,6 +79,8 @@ class PredictionEngine {
     // Fix: Removed 'const' (not allowed in class body)
     private val USER_DICT_FILE = "user_words.txt"
     private val BLOCKED_DICT_FILE = "blocked_words.txt"
+    // Throttle template failure logging
+    private var lastTemplateMissLog = 0L
     
     // =================================================================================
     // END DATA STRUCTURES
@@ -363,6 +365,9 @@ class PredictionEngine {
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
         val startT = System.currentTimeMillis()
 
+        // ENTRY LOG: Proves decodeSwipe was called
+        android.util.Log.d("DroidOS_Swipe", "=== decodeSwipe ENTRY: ${swipePath.size} path points, ${keyMap.size} keys ===")
+
         // --- DIAGNOSTIC: COORDINATE CHECK ---
         if (swipePath.isNotEmpty()) {
             val firstPt = swipePath[0]
@@ -447,25 +452,55 @@ class PredictionEngine {
             android.util.Log.d("DroidOS_Swipe", "Pass 2 Triggered. Total Candidates: ${candidates.size}")
         }
 
-        // PASS 3: Hail Mary (Use Cached Common Words)
+        // =================================================================================
+        // PASS 3: HAIL MARY FALLBACK
+        // SUMMARY: When Pass 1 and 2 find zero candidates, fall back to the pre-cached
+        //          common words list. Logs cache status to diagnose empty cache scenarios.
+        // =================================================================================
         if (candidates.isEmpty()) {
-            android.util.Log.d("DroidOS_Swipe", "Pass 2 failed. Using Cached Hail Mary.")
-            candidates = ArrayList(commonWordsCache) // Use pre-computed list
+            android.util.Log.w("DroidOS_Swipe", "Pass 2 failed (0 candidates). Triggering Hail Mary. Cache size: ${commonWordsCache.size}")
+
+            if (commonWordsCache.isEmpty()) {
+                android.util.Log.e("DroidOS_Swipe", "CRITICAL: commonWordsCache is EMPTY! Dictionary may not have loaded.")
+            }
+
+            candidates = ArrayList(commonWordsCache)
             currentPass = 3
             shapeWeight = 1.0f
             locationWeight = 0.0f
         }
+        // =================================================================================
+        // END BLOCK: PASS 3 HAIL MARY FALLBACK
+        // =================================================================================
 
-        // 3. Scoring (Wrapped in Try-Catch to prevent silent thread death)
+        // =================================================================================
+        // SCORING BLOCK WITH ENHANCED FAILURE LOGGING
+        // SUMMARY: Scores all candidates using shape and location channels. Logs all failure
+        //          scenarios to diagnose silent prediction failures. Tracks template creation
+        //          failures, sample point mismatches, and empty result scenarios.
+        // =================================================================================
         try {
+            // Track failure reasons for debugging
+            var templateFailures = 0
+            var samplePointFailures = 0
+            var scoredCount = 0
+
             val scored = candidates.mapNotNull { word ->
-                val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
+                val template = getOrCreateTemplate(word, keyMap)
+                if (template == null) {
+                    templateFailures++
+                    return@mapNotNull null
+                }
 
                 if (template.sampledPoints == null) {
                     template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
                     template.normalizedPoints = normalizePath(template.sampledPoints!!)
                 }
-                if (template.sampledPoints?.size != SAMPLE_POINTS) return@mapNotNull null
+
+                if (template.sampledPoints?.size != SAMPLE_POINTS) {
+                    samplePointFailures++
+                    return@mapNotNull null
+                }
 
                 val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
                 val locationScore = if (locationWeight > 0) calculateLocationScore(sampledInput, template.sampledPoints!!) else 0f
@@ -478,11 +513,30 @@ class PredictionEngine {
 
                 val finalScore = integrationScore * (1.0f - freqBonusMultiplier * frequencyBonus)
 
+                scoredCount++
                 Triple(word, finalScore, rank)
+            }
+
+            // LOG: Scoring statistics to identify filtering issues
+            if (templateFailures > 0 || samplePointFailures > 0) {
+                android.util.Log.w("DroidOS_Swipe", "SCORING FILTER: $templateFailures template failures, $samplePointFailures sample point failures out of ${candidates.size} candidates")
             }
 
             val sorted = scored.sortedBy { it.second }
             val results = sorted.take(3).map { it.first }
+
+            // LOG: Empty results with detailed diagnostics
+            if (results.isEmpty()) {
+                android.util.Log.e("DroidOS_Swipe", "FAIL: 0 results! Pass=$currentPass, Candidates=${candidates.size}, Scored=$scoredCount, TemplateErr=$templateFailures, SampleErr=$samplePointFailures")
+                android.util.Log.e("DroidOS_Swipe", "FAIL: KeyMap has ${keyMap.size} keys. CommonCache has ${commonWordsCache.size} words.")
+
+                // Fallback: Return most common words as last resort
+                if (commonWordsCache.isNotEmpty()) {
+                    val fallback = commonWordsCache.take(3)
+                    android.util.Log.w("DroidOS_Swipe", "FALLBACK: Returning top common words: $fallback")
+                    return fallback
+                }
+            }
 
             // Log if our debug word made it
             if (results.contains(debugWord)) {
@@ -497,31 +551,49 @@ class PredictionEngine {
             e.printStackTrace()
             return emptyList()
         }
+        // =================================================================================
+        // END BLOCK: SCORING WITH ENHANCED FAILURE LOGGING
+        // =================================================================================
     }
 
     
-    /**
-     * Get or create a word template with key positions
-     */
+    // =================================================================================
+    // FUNCTION: getOrCreateTemplate
+    // SUMMARY: Gets or creates a word template with key positions. Returns null if any
+    //          character in the word is missing from the keyMap. Logs first failure per
+    //          batch to avoid log spam while still providing diagnostic info.
+    // =================================================================================
     private fun getOrCreateTemplate(word: String, keyMap: Map<String, PointF>): WordTemplate? {
         templateCache[word]?.let { return it }
-        
+
         // Build raw points from key centers
         val rawPoints = ArrayList<PointF>()
         for (char in word) {
-            val keyPos = keyMap[char.toString().uppercase()] 
+            val keyPos = keyMap[char.toString().uppercase()]
                 ?: keyMap[char.toString().lowercase()]
-                ?: return null
+
+            if (keyPos == null) {
+                // Log missing key (throttled to once per second to avoid spam)
+                val now = System.currentTimeMillis()
+                if (now - lastTemplateMissLog > 1000) {
+                    android.util.Log.w("DroidOS_Swipe", "Template fail for '$word': key '$char' not in keyMap (${keyMap.size} keys)")
+                    lastTemplateMissLog = now
+                }
+                return null
+            }
             rawPoints.add(PointF(keyPos.x, keyPos.y))
         }
-        
+
         if (rawPoints.size < MIN_WORD_LENGTH) return null
-        
+
         val rank = getWordRank(word)
         val template = WordTemplate(word, rank, rawPoints)
         templateCache[word] = template
         return template
     }
+    // =================================================================================
+    // END BLOCK: getOrCreateTemplate
+    // =================================================================================
 
     /**
      * Uniformly sample N points along a path.

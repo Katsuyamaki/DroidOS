@@ -789,20 +789,44 @@ class KeyboardOverlay(
         updateSuggestions()
     }
 
+    // =================================================================================
+    // FUNCTION: onSwipeDetected
+    // SUMMARY: Handles swipe gesture completion. Runs decoding in background thread.
+    //          LOGGING: Logs at every decision point to diagnose silent failures.
+    // =================================================================================
     override fun onSwipeDetected(path: List<android.graphics.PointF>) {
-        val keyMap = keyboardView?.getKeyCenters() ?: return
+        // LOG: Entry point - proves we got here from KeyboardView
+        android.util.Log.d("DroidOS_Swipe", ">>> onSwipeDetected ENTRY (${path.size} points)")
+
+        // CHECK: keyboardView exists
+        if (keyboardView == null) {
+            android.util.Log.e("DroidOS_Swipe", "ABORT: keyboardView is NULL")
+            return
+        }
+
+        // CHECK: keyMap exists and has keys
+        val keyMap = keyboardView?.getKeyCenters()
+        if (keyMap == null) {
+            android.util.Log.e("DroidOS_Swipe", "ABORT: getKeyCenters() returned NULL")
+            return
+        }
+        if (keyMap.isEmpty()) {
+            android.util.Log.e("DroidOS_Swipe", "ABORT: keyMap is EMPTY (0 keys)")
+            return
+        }
+
+        android.util.Log.d("DroidOS_Swipe", "keyMap OK: ${keyMap.size} keys loaded")
 
         Thread {
             try {
-                // --- DEBUG TRACE: START ---
-                // This proves the UI actually detected the swipe
-                android.util.Log.d("DroidOS_Swipe", "--- New Swipe UI Detected (${path.size} points) ---")
+                android.util.Log.d("DroidOS_Swipe", "--- Decoding Thread Started ---")
 
                 val suggestions = predictionEngine.decodeSwipe(path, keyMap)
 
+                android.util.Log.d("DroidOS_Swipe", "--- Decoding Complete: ${suggestions.size} suggestions ---")
+
                 if (suggestions.isNotEmpty()) {
                     handler.post {
-                        // (Existing UI Logic)
                         var bestMatch = suggestions[0]
                         if (isSentenceStart) {
                             bestMatch = bestMatch.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
@@ -821,18 +845,21 @@ class KeyboardOverlay(
                         injectText(textToCommit)
                         lastCommittedSwipeWord = textToCommit
                         isSentenceStart = false
+
+                        android.util.Log.d("DroidOS_Swipe", "SUCCESS: Committed '$bestMatch'")
                     }
                 } else {
-                    android.util.Log.d("DroidOS_Swipe", "UI: Received 0 suggestions (Engine returned empty).")
+                    android.util.Log.e("DroidOS_Swipe", "FAIL: decodeSwipe returned EMPTY list")
                 }
             } catch (e: Exception) {
-                // --- DEBUG TRACE: CRASH CAUGHT ---
-                // This ensures you see the error even with your filters
                 android.util.Log.e("DroidOS_Swipe", "CRASH in Swipe Thread: ${e.message}", e)
                 e.printStackTrace()
             }
         }.start()
     }
+    // =================================================================================
+    // END BLOCK: onSwipeDetected with comprehensive logging
+    // =================================================================================
 
     private fun updateSuggestions() {
         val prefix = currentComposingWord.toString()
