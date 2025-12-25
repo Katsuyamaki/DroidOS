@@ -371,10 +371,10 @@ class PredictionEngine {
         // Step 1: Sample input
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
 
-        // Step 2: Identify Start/End keys with WIDE search radius
-        // We look broadly (350px) but will filter strictly later for rare words
-        val startKeyDists = findKeysWithDist(sampledInput.first(), keyMap, 350f)
-        val endKeyDists = findKeysWithDist(sampledInput.last(), keyMap, 350f)
+        // Step 2: Get distances to ALL keys (Use large radius 1000f to capture everything)
+        // We filter strictly later, but we need the data now.
+        val startKeyDists = findKeysWithDist(sampledInput.first(), keyMap, 1000f)
+        val endKeyDists = findKeysWithDist(sampledInput.last(), keyMap, 1000f)
 
         if (startKeyDists.isEmpty() || endKeyDists.isEmpty()) {
             return emptyList()
@@ -382,27 +382,41 @@ class PredictionEngine {
 
         val normalizedInput = normalizePath(sampledInput)
 
-        // Step 3: Hybrid Pruning Filter
-        val candidates = wordList.filter { word ->
-            if (word.length < MIN_WORD_LENGTH) return@filter false
+        // Step 3: Candidate Selection (Two-Pass)
 
-            val first = word.first().toString().lowercase()
-            val last = word.last().toString().lowercase()
+        // Helper function to filter candidates
+        fun getCandidates(commonRadius: Float, rareRadius: Float): List<String> {
+            return wordList.filter { word ->
+                if (word.length < MIN_WORD_LENGTH) return@filter false
 
-            val dStart = startKeyDists[first] ?: return@filter false
-            val dEnd = endKeyDists[last] ?: return@filter false
+                val first = word.first().toString().lowercase()
+                val last = word.last().toString().lowercase()
 
-            // --- HYBRID LOGIC ---
-            // If word is Common (Rank < 1000), allow sloppy typing (up to 350px off)
-            // If word is Rare, require precision (within 140px)
-            val rank = getWordRank(word)
-            val maxDist = if (rank < 1000) 350f else 140f
+                val dStart = startKeyDists[first] ?: return@filter false
+                val dEnd = endKeyDists[last] ?: return@filter false
 
-            dStart <= maxDist && dEnd <= maxDist
+                val rank = getWordRank(word)
+                // If word is common (Rank < 1000), use commonRadius, else rareRadius
+                val maxDist = if (rank < 1000) commonRadius else rareRadius
+
+                dStart <= maxDist && dEnd <= maxDist
+            }
+        }
+
+        // PASS 1: Standard Hybrid (Common=350px, Rare=140px)
+        var candidates = getCandidates(350f, 140f)
+        var passUsed = 1
+
+        // PASS 2: Desperation (If empty, open the floodgates for common words)
+        // Common=1000px (Basically global), Rare=300px
+        if (candidates.isEmpty()) {
+            android.util.Log.d("DroidOS_Swipe", "Pass 1 empty. Trying loose constraints...")
+            candidates = getCandidates(1000f, 300f)
+            passUsed = 2
         }
 
         if (candidates.isEmpty()) {
-            android.util.Log.d("DroidOS_Swipe", "No candidates after pruning")
+            android.util.Log.d("DroidOS_Swipe", "No candidates after Pass 2")
             return emptyList()
         }
 
@@ -423,9 +437,11 @@ class PredictionEngine {
             val integrationScore = SHAPE_WEIGHT * shapeScore + LOCATION_WEIGHT * locationScore
 
             val rank = template.rank
-            // BOOST: Increased frequency weight from 0.3 to 0.5 to prioritize common words
             val frequencyBonus = 1.0f / (1.0f + ln((rank + 1).toFloat()))
-            val finalScore = integrationScore * (1.0f - 0.5f * frequencyBonus)
+
+            // Apply stronger frequency bias if we used the Loose Pass
+            val freqWeight = if (passUsed == 2) 0.6f else 0.5f
+            val finalScore = integrationScore * (1.0f - freqWeight * frequencyBonus)
 
             Triple(word, finalScore, rank)
         }
@@ -435,7 +451,7 @@ class PredictionEngine {
 
         if (sorted.isNotEmpty()) {
             val top3 = sorted.take(3).joinToString { "${it.first}(${"%.2f".format(it.second)})" }
-            android.util.Log.d("DroidOS_Prediction", "Result (${System.currentTimeMillis() - startT}ms): $top3")
+            android.util.Log.d("DroidOS_Prediction", "Result (Pass $passUsed, ${System.currentTimeMillis() - startT}ms): $top3")
         } else {
             android.util.Log.d("DroidOS_Prediction", "No candidates found.")
         }
