@@ -139,16 +139,35 @@ class PredictionEngine {
                 val newCustom = java.util.HashSet<String>()
                 var lineCount = 0
 
-                // 1. Load Custom Lists (User & Blocked)
+                // =================================================================================
+                // LOAD CUSTOM LISTS (User & Blocked)
+                // SUMMARY: Loads user's custom words and blocked words from persistent storage.
+                //          These files are in the app's private filesDir.
+                // =================================================================================
                 try {
                     val blockFile = java.io.File(context.filesDir, BLOCKED_DICT_FILE)
-                    if (blockFile.exists()) newBlocked.addAll(blockFile.readLines().map { it.trim().lowercase() })
+                    if (blockFile.exists()) {
+                        val blockedLines = blockFile.readLines().map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+                        newBlocked.addAll(blockedLines)
+                        android.util.Log.d("DroidOS_Prediction", "LOAD: Blocked words file found, ${blockedLines.size} words: $blockedLines")
+                    } else {
+                        android.util.Log.d("DroidOS_Prediction", "LOAD: No blocked words file exists yet")
+                    }
 
                     val userFile = java.io.File(context.filesDir, USER_DICT_FILE)
-                    if (userFile.exists()) newCustom.addAll(userFile.readLines().map { it.trim().lowercase() })
+                    if (userFile.exists()) {
+                        val userLines = userFile.readLines().map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+                        newCustom.addAll(userLines)
+                        android.util.Log.d("DroidOS_Prediction", "LOAD: User words file found, ${userLines.size} words")
+                    } else {
+                        android.util.Log.d("DroidOS_Prediction", "LOAD: No user words file exists yet")
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("DroidOS_Prediction", "Failed to load user lists", e)
                 }
+                // =================================================================================
+                // END BLOCK: LOAD CUSTOM LISTS
+                // =================================================================================
 
                 // 2. Load Main Dictionary (Assets) - Filtering Blocked words
                 try {
@@ -224,7 +243,10 @@ class PredictionEngine {
                         wordList.sortedBy { getWordRank(it) }.take(1000)
                     )
                 }
-                android.util.Log.d("DroidOS_Prediction", "Dictionary Loaded: $lineCount asset + ${newCustom.size} user words. Common Cache: ${commonWordsCache.size}")
+                android.util.Log.d("DroidOS_Prediction", "Dictionary Loaded: $lineCount asset + ${newCustom.size} user words + ${newBlocked.size} blocked. Common Cache: ${commonWordsCache.size}")
+                if (newBlocked.isNotEmpty()) {
+                    android.util.Log.d("DroidOS_Prediction", "Blocked words loaded: $newBlocked")
+                }
 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -269,6 +291,11 @@ class PredictionEngine {
     /**
      * Blocks a word: Removes from memory and saves to blocked_words.txt
      */
+    // =================================================================================
+    // FUNCTION: blockWord
+    // SUMMARY: Blocks a word from appearing in suggestions. Saves to persistent storage.
+    //          The word will remain blocked until user clears app data or unblocks it.
+    // =================================================================================
     fun blockWord(context: Context, word: String) {
         val cleanWord = word.trim().lowercase(Locale.ROOT)
         if (cleanWord.isEmpty()) return
@@ -289,17 +316,37 @@ class PredictionEngine {
                 saveSetToFile(context, BLOCKED_DICT_FILE, blockedWords)
                 saveSetToFile(context, USER_DICT_FILE, customWords)
 
-                android.util.Log.d("DroidOS_Prediction", "Blocked word: $cleanWord")
+                // 3. Verify save
+                val blockFile = java.io.File(context.filesDir, BLOCKED_DICT_FILE)
+                val savedContent = if (blockFile.exists()) blockFile.readText() else "(file not found)"
+                android.util.Log.d("DroidOS_Prediction", "SAVE: Blocked '$cleanWord'. File now contains: $savedContent")
+                android.util.Log.d("DroidOS_Prediction", "SAVE: blockedWords set now has ${blockedWords.size} words: $blockedWords")
             } catch (e: Exception) {
-                e.printStackTrace()
+                android.util.Log.e("DroidOS_Prediction", "SAVE FAILED: ${e.message}", e)
             }
         }.start()
     }
+    // =================================================================================
+    // END BLOCK: blockWord
+    // =================================================================================
 
+    // =================================================================================
+    // FUNCTION: saveSetToFile
+    // SUMMARY: Saves a set of words to a file in the app's private storage.
+    // =================================================================================
     private fun saveSetToFile(context: Context, filename: String, data: Set<String>) {
-        val file = java.io.File(context.filesDir, filename)
-        file.writeText(data.joinToString("\n"))
+        try {
+            val file = java.io.File(context.filesDir, filename)
+            val content = data.filter { it.isNotEmpty() }.joinToString("\n")
+            file.writeText(content)
+            android.util.Log.d("DroidOS_Prediction", "SAVEFILE: Wrote ${data.size} items to $filename")
+        } catch (e: Exception) {
+            android.util.Log.e("DroidOS_Prediction", "SAVEFILE FAILED: $filename - ${e.message}", e)
+        }
     }
+    // =================================================================================
+    // END BLOCK: saveSetToFile
+    // =================================================================================
 
     fun hasWord(word: String): Boolean {
         return wordList.contains(word.lowercase(Locale.ROOT))
