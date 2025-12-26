@@ -615,14 +615,38 @@ class KeyboardOverlay(
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
 
 
+    // =================================================================================
+    // FUNCTION: onKeyPress
+    // SUMMARY: Handles key press events from the keyboard. Manages composing word state,
+    //          sentence start detection, and auto-learning. Special handling for
+    //          punctuation after swiped words to remove the trailing space.
+    // =================================================================================
     override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) {
         android.util.Log.d("DroidOS_Key", "Press: $keyCode ('$char')")
+
+        // --- PUNCTUATION AFTER SWIPE: Remove trailing space ---
+        // If the last action was a swipe (which adds "word "), and user types punctuation,
+        // we need to delete the trailing space first so we get "word." not "word ."
+        val isPunctuation = char != null && (char == '.' || char == ',' || char == '!' ||
+                                              char == '?' || char == ';' || char == ':' ||
+                                              char == '\'' || char == '"')
+
+        if (isPunctuation && lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.endsWith(" ")) {
+            // Delete the trailing space from the swiped word
+            injectKey(KeyEvent.KEYCODE_DEL, 0)
+            android.util.Log.d("DroidOS_Swipe", "PUNCTUATION: Removed trailing space before '$char'")
+
+            // Update the swipe word to not include the space (in case they backspace)
+            lastCommittedSwipeWord = lastCommittedSwipeWord!!.trimEnd()
+        }
 
         // 1. Inject the key event
         injectKey(keyCode, metaState)
 
-        // 2. Clear Swipe History on manual typing
-        if (keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) {
+        // 2. Clear Swipe History on manual typing (but NOT for punctuation or shift)
+        if (keyCode != KeyEvent.KEYCODE_SHIFT_LEFT &&
+            keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT &&
+            !isPunctuation) {
             lastCommittedSwipeWord = null
         }
 
@@ -638,6 +662,7 @@ class KeyboardOverlay(
         // 4. Track Sentence Start
         if (keyCode == KeyEvent.KEYCODE_ENTER || char == '.' || char == '!' || char == '?') {
             isSentenceStart = true
+            lastCommittedSwipeWord = null // Clear swipe state on sentence end
 
             // Auto-learn on punctuation
             if (currentComposingWord.isNotEmpty()) {
@@ -648,7 +673,7 @@ class KeyboardOverlay(
             }
             currentComposingWord.clear()
 
-        } else if (char != null && !Character.isWhitespace(char)) {
+        } else if (char != null && !Character.isWhitespace(char) && !isPunctuation) {
             isSentenceStart = false
         }
 
@@ -665,6 +690,7 @@ class KeyboardOverlay(
                 }
             }
             currentComposingWord.clear()
+            lastCommittedSwipeWord = null // Clear swipe state on space
             updateSuggestions()
         } else {
             // Other symbols clear composition
@@ -672,6 +698,9 @@ class KeyboardOverlay(
             updateSuggestions()
         }
     }
+    // =================================================================================
+    // END BLOCK: onKeyPress with punctuation spacing fix
+    // =================================================================================
 
     
     override fun onTextInput(text: String) {
@@ -692,17 +721,47 @@ class KeyboardOverlay(
             return
         }
 
-        // --- COMPOSITION HANDLING ---
+        // =================================================================================
+        // BACKSPACE HANDLING - SWIPE WORD DELETE
+        // SUMMARY: If the last action was a swipe word commit, backspace deletes the
+        //          entire word (plus trailing space). Otherwise, normal backspace behavior.
+        //          This allows quick correction of mis-swiped words.
+        // =================================================================================
         if (key == KeyboardView.SpecialKey.BACKSPACE) {
+            // CHECK: Was the last input a swiped word?
+            if (lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.isNotEmpty()) {
+                // Delete the entire swiped word (including trailing space)
+                val deleteCount = lastCommittedSwipeWord!!.length
+                android.util.Log.d("DroidOS_Swipe", "BACKSPACE: Deleting swiped word '${lastCommittedSwipeWord}' ($deleteCount chars)")
+
+                for (i in 0 until deleteCount) {
+                    injectKey(KeyEvent.KEYCODE_DEL, 0)
+                }
+
+                // Clear the swipe history so next backspace is normal
+                lastCommittedSwipeWord = null
+
+                // Don't inject another backspace - we already deleted
+                return
+            }
+
+            // Normal backspace: delete from composing word
             if (currentComposingWord.isNotEmpty()) {
                 currentComposingWord.deleteCharAt(currentComposingWord.length - 1)
                 updateSuggestions()
             }
+        } else if (key == KeyboardView.SpecialKey.SPACE) {
+            // Space clears swipe history (user is continuing to type)
+            lastCommittedSwipeWord = null
+            resetComposition()
         } else {
-            // Space, Enter, Tabs, Arrows all break the current word chain
+            // Enter, Tabs, Arrows all break the current word chain
+            lastCommittedSwipeWord = null
             resetComposition()
         }
-        // ----------------------------
+        // =================================================================================
+        // END BLOCK: BACKSPACE HANDLING - SWIPE WORD DELETE
+        // =================================================================================
 
         val keyCode = when (key) {
             KeyboardView.SpecialKey.BACKSPACE -> KeyEvent.KEYCODE_DEL
@@ -727,56 +786,101 @@ class KeyboardOverlay(
         injectKey(keyCode, metaState)
     }
 
+    // =================================================================================
+    // FUNCTION: onSuggestionClick
+    // SUMMARY: Handles when user taps a word in the prediction bar. Two modes:
+    //          1. Swipe Correction: Replaces the last swiped word entirely
+    //          2. Manual Typing Completion: Replaces partially typed word
+    //          Uses small delays between deletes and text injection to ensure
+    //          proper sequencing on the input field.
+    // =================================================================================
     override fun onSuggestionClick(text: String, isNew: Boolean) {
+        android.util.Log.d("DroidOS_Prediction", "Suggestion clicked: '$text' (isNew=$isNew, swipeWord='$lastCommittedSwipeWord', composing='$currentComposingWord')")
+
         // 1. Learn word if it was flagged as New
         if (isNew) {
             predictionEngine.learnWord(context, text)
-            // Show subtle feedback
-            android.util.Log.d("KeyboardOverlay", "Learned new word: $text")
+            android.util.Log.d("DroidOS_Prediction", "Learned new word: $text")
         }
 
         // 2. Commit logic
         // --- LOGIC: Swipe Correction ---
-        // If we just auto-committed a swipe word, and the user clicks a suggestion,
-        // we want to REPLACE that word, not append to it.
-        if (lastCommittedSwipeWord != null) {
-            // 1. Delete previous word (Backspace N times)
+        if (lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.isNotEmpty()) {
             val deleteCount = lastCommittedSwipeWord!!.length
-            for (i in 0 until deleteCount) {
-                injectKey(KeyEvent.KEYCODE_DEL, 0)
-            }
+            android.util.Log.d("DroidOS_Prediction", "SWIPE REPLACE: Deleting $deleteCount chars, inserting '$text'")
 
-            // 2. Inject new word (Maintain capitalization of the replaced word)
-            var newText = text
-            val wasCap = Character.isUpperCase(lastCommittedSwipeWord!!.firstOrNull() ?: ' ')
-            if (wasCap) {
-                newText = newText.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-            }
+            // Delete in a background thread with small delays for reliability
+            Thread {
+                try {
+                    // Delete character by character with small delay
+                    for (i in 0 until deleteCount) {
+                        injectKey(KeyEvent.KEYCODE_DEL, 0)
+                        Thread.sleep(5) // Small delay between deletes
+                    }
 
-            val finalText = "$newText "
-            injectText(finalText)
+                    // Small pause before injecting new text
+                    Thread.sleep(20)
 
-            // 3. Update history (so we can correct the correction again)
-            lastCommittedSwipeWord = finalText
+                    // Inject new word (Maintain capitalization of the replaced word)
+                    var newText = text
+                    val wasCap = Character.isUpperCase(lastCommittedSwipeWord!!.firstOrNull() ?: ' ')
+                    if (wasCap) {
+                        newText = newText.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                    }
+
+                    val finalText = "$newText "
+                    injectText(finalText)
+
+                    // Update history on UI thread
+                    handler.post {
+                        lastCommittedSwipeWord = finalText
+                        updateSuggestions()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("DroidOS_Prediction", "Suggestion replace failed: ${e.message}")
+                }
+            }.start()
 
         } else {
             // --- LOGIC: Manual Typing Completion ---
-            // 1. Delete the characters we manually typed (if any)
             val charsToDelete = currentComposingWord.length
-            for (i in 0 until charsToDelete) {
-                injectKey(KeyEvent.KEYCODE_DEL, 0)
+            android.util.Log.d("DroidOS_Prediction", "MANUAL REPLACE: Deleting $charsToDelete chars, inserting '$text'")
+
+            if (charsToDelete == 0) {
+                // Nothing to delete, just insert
+                injectText("$text ")
+                resetComposition()
+                return
             }
 
-            // 2. Inject the full word + space
-            injectText("$text ")
+            // Delete and insert in background thread for reliability
+            Thread {
+                try {
+                    // Delete character by character with small delay
+                    for (i in 0 until charsToDelete) {
+                        injectKey(KeyEvent.KEYCODE_DEL, 0)
+                        Thread.sleep(5) // Small delay between deletes
+                    }
 
-            // 3. Reset
-            resetComposition()
+                    // Small pause before injecting new text
+                    Thread.sleep(20)
+
+                    // Inject the full word + space
+                    injectText("$text ")
+
+                    // Reset on UI thread
+                    handler.post {
+                        resetComposition()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("DroidOS_Prediction", "Suggestion insert failed: ${e.message}")
+                }
+            }.start()
         }
-
-        // Refresh to show it's no longer "New" if we keep typing
-        updateSuggestions()
     }
+    // =================================================================================
+    // END BLOCK: onSuggestionClick with reliable replacement
+    // =================================================================================
 
     override fun onSuggestionDropped(text: String) {
         // Block the word
