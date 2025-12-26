@@ -882,16 +882,27 @@ class KeyboardOverlay(
     // END BLOCK: onSuggestionClick with reliable replacement
     // =================================================================================
 
+    // =================================================================================
+    // FUNCTION: onSuggestionDropped
+    // SUMMARY: Called when user drags a suggestion to backspace to delete/block it.
+    //          DEBUG: Logging to confirm this is being called.
+    // =================================================================================
     override fun onSuggestionDropped(text: String) {
+        android.util.Log.d("DroidOS_Drag", ">>> onSuggestionDropped CALLED: '$text'")
+
         // Block the word
         predictionEngine.blockWord(context, text)
 
         android.widget.Toast.makeText(context, "Removed: $text", android.widget.Toast.LENGTH_SHORT).show()
 
-        // Reset composition if we deleted what we were typing?
-        // Or just refresh suggestions to remove the blocked word.
+        // Refresh suggestions to remove the blocked word
         updateSuggestions()
+
+        android.util.Log.d("DroidOS_Drag", "<<< onSuggestionDropped COMPLETE: '$text' blocked")
     }
+    // =================================================================================
+    // END BLOCK: onSuggestionDropped with debug logging
+    // =================================================================================
 
     // =================================================================================
     // FUNCTION: onSwipeDetected
@@ -945,10 +956,32 @@ class KeyboardOverlay(
 
                         keyboardView?.setSuggestions(displaySuggestions)
 
-                        val textToCommit = "$bestMatch "
+                        // =================================================================================
+                        // SWIPE TEXT COMMIT WITH SPACE HANDLING
+                        // SUMMARY: If user was typing letters before swiping, we need to add a space
+                        //          between the typed letters and the swiped word.
+                        //          Example: Type "a" then swipe "dog" = "a dog" not "adog"
+                        // =================================================================================
+                        var textToCommit = bestMatch
+
+                        // Check if there are uncommitted typed letters that need a space after them
+                        if (currentComposingWord.isNotEmpty()) {
+                            // User typed some letters, then started swiping
+                            // We need to "finish" the typed word with a space first
+                            android.util.Log.d("DroidOS_Swipe", "Composing word exists: '$currentComposingWord' - adding space before swipe")
+                            textToCommit = " $bestMatch"
+                            currentComposingWord.clear()
+                        }
+
+                        // Add trailing space
+                        textToCommit = "$textToCommit "
+
                         injectText(textToCommit)
                         lastCommittedSwipeWord = textToCommit
                         isSentenceStart = false
+                        // =================================================================================
+                        // END BLOCK: SWIPE TEXT COMMIT WITH SPACE HANDLING
+                        // =================================================================================
 
                         android.util.Log.d("DroidOS_Swipe", "SUCCESS: Committed '$bestMatch'")
                     }
@@ -965,6 +998,11 @@ class KeyboardOverlay(
     // END BLOCK: onSwipeDetected with comprehensive logging
     // =================================================================================
 
+    // =================================================================================
+    // FUNCTION: updateSuggestions
+    // SUMMARY: Updates the suggestion bar based on current composing word.
+    //          Shows raw input + dictionary suggestions, filtering blocked words.
+    // =================================================================================
     private fun updateSuggestions() {
         val prefix = currentComposingWord.toString()
         if (prefix.isEmpty()) {
@@ -972,15 +1010,19 @@ class KeyboardOverlay(
             return
         }
 
-        // 1. Get dictionary suggestions
+        // 1. Get dictionary suggestions (already filtered for blocked words)
         val suggestions = predictionEngine.getSuggestions(prefix, 3)
 
         val candidates = ArrayList<KeyboardView.Candidate>()
 
-        // 2. ALWAYS add the Raw Input as the first option
-        // This fixes the issue where "Chris" wouldn't show because "Christmas" existed
-        val rawExists = predictionEngine.hasWord(prefix)
-        candidates.add(KeyboardView.Candidate(prefix, isNew = !rawExists))
+        // 2. Add Raw Input as first option (but NOT if it's blocked)
+        val lowerPrefix = prefix.lowercase()
+        val isBlocked = predictionEngine.isWordBlocked(lowerPrefix)
+
+        if (!isBlocked) {
+            val rawExists = predictionEngine.hasWord(prefix)
+            candidates.add(KeyboardView.Candidate(prefix, isNew = !rawExists))
+        }
 
         // 3. Add dictionary suggestions (avoiding duplicates)
         for (s in suggestions) {
@@ -992,6 +1034,9 @@ class KeyboardOverlay(
 
         keyboardView?.setSuggestions(candidates.take(3))
     }
+    // =================================================================================
+    // END BLOCK: updateSuggestions
+    // =================================================================================
 
     private fun resetComposition() {
         currentComposingWord.clear()

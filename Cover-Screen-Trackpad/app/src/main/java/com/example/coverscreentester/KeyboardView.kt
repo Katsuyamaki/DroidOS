@@ -552,21 +552,45 @@ class KeyboardView @JvmOverloads constructor(
     //          This prevents false swipe triggers during fast two-thumb typing.
     // =================================================================================
 
+    // =================================================================================
+    // FUNCTION: dispatchTouchEvent
+    // SUMMARY: Intercepts touch events to detect swipe/gesture typing. Key safeguards:
+    //          1. Skips swipe detection if touch starts on SPACE (trackpad mode)
+    //          2. Skips swipe detection if a candidate is being dragged to delete
+    //          3. Only tracks swipe for single-finger gestures
+    //          4. Validates swipe has enough points and distance
+    // =================================================================================
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         // --- 1. PREVENT SWIPE TRAIL ON SPACEBAR ---
         // If the touch starts on the SPACE key, we skip the swipe detection logic entirely.
-        // This ensures we don't draw the green line or trigger the swipe decoder 
-        // when the user is just trying to use the trackpad.
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
             val touchedView = findKeyView(event.x, event.y)
             if (touchedView?.tag == "SPACE") {
-                // Pass directly to onTouchEvent (standard handling) and skip swipe logic
                 return super.dispatchTouchEvent(event)
             }
         }
 
-        // --- 2. EXISTING SWIPE / GESTURE LOGIC ---
+        // --- 2. CALL SUPER FIRST ---
+        // This delivers touch events to child views (including suggestion candidates)
+        // handleCandidateTouch will set activeDragCandidate/isCandidateDragging
         val superResult = super.dispatchTouchEvent(event)
+
+        // --- 3. CHECK IF CANDIDATE IS BEING DRAGGED ---
+        // If user is dragging a suggestion candidate, cancel any swipe tracking
+        // and skip the swipe detection logic below
+        if (activeDragCandidate != null) {
+            // Cancel any active swipe tracking
+            if (isSwiping) {
+                isSwiping = false
+                swipeTrail?.clear()
+                swipeTrail?.visibility = View.INVISIBLE
+            }
+            currentPath.clear()
+            swipePointerId = -1
+            return superResult
+        }
+
+        // --- 4. SWIPE / GESTURE TRACKING LOGIC ---
         val action = event.actionMasked
         val pointerIndex = event.actionIndex
         val pointerId = event.getPointerId(pointerIndex)
@@ -583,7 +607,7 @@ class KeyboardView @JvmOverloads constructor(
                 currentPath.clear()
                 currentPath.add(android.graphics.PointF(event.x, event.y))
             }
-            
+
             android.view.MotionEvent.ACTION_POINTER_DOWN -> {
                 // Second finger touched - CANCEL swipe detection (user is typing with two thumbs)
                 if (isSwiping) {
@@ -594,18 +618,18 @@ class KeyboardView @JvmOverloads constructor(
                 }
                 swipePointerId = -1 // Disable swipe tracking for this gesture
             }
-            
+
             android.view.MotionEvent.ACTION_MOVE -> {
                 // Only track movement for the original swipe pointer
                 if (swipePointerId == -1) return superResult
-                
+
                 // Find the index of our tracked pointer
                 val trackedIndex = event.findPointerIndex(swipePointerId)
                 if (trackedIndex == -1) return superResult
-                
+
                 val currentX = event.getX(trackedIndex)
                 val currentY = event.getY(trackedIndex)
-                
+
                 if (!isSwiping) {
                     val dx = Math.abs(currentX - startTouchX)
                     val dy = Math.abs(currentY - startTouchY)
@@ -632,7 +656,7 @@ class KeyboardView @JvmOverloads constructor(
                     currentPath.add(android.graphics.PointF(currentX, currentY))
                 }
             }
-            
+
             android.view.MotionEvent.ACTION_UP -> {
                 if (isSwiping && pointerId == swipePointerId) {
                     swipeTrail?.clear()
@@ -664,7 +688,7 @@ class KeyboardView @JvmOverloads constructor(
                 swipeTrail?.clear()
                 swipePointerId = -1
             }
-            
+
             android.view.MotionEvent.ACTION_POINTER_UP -> {
                 // One finger lifted but another still down - just clean up if it was our pointer
                 if (pointerId == swipePointerId) {
@@ -675,7 +699,7 @@ class KeyboardView @JvmOverloads constructor(
                     currentPath.clear()
                 }
             }
-            
+
             android.view.MotionEvent.ACTION_CANCEL -> {
                 isSwiping = false
                 swipePointerId = -1
@@ -686,6 +710,9 @@ class KeyboardView @JvmOverloads constructor(
         }
         return superResult
     }
+    // =================================================================================
+    // END BLOCK: dispatchTouchEvent
+    // =================================================================================
 
 
     // =================================================================================
@@ -1312,9 +1339,16 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
+    // =================================================================================
+    // FUNCTION: handleCandidateTouch
+    // SUMMARY: Handles touch events on suggestion candidates. Detects click vs drag.
+    //          Dragging to backspace triggers word deletion (block from dictionary).
+    //          DEBUG: Comprehensive logging to trace touch flow.
+    // =================================================================================
     private fun handleCandidateTouch(view: View, event: MotionEvent, item: Candidate): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                android.util.Log.d("DroidOS_Drag", "CANDIDATE DOWN: '${item.text}' at (${event.rawX.toInt()}, ${event.rawY.toInt()})")
                 dragStartX = event.rawX
                 dragStartY = event.rawY
                 isCandidateDragging = false
@@ -1324,10 +1358,12 @@ class KeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - dragStartX
                 val dy = event.rawY - dragStartY
+                val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
 
                 // Threshold to start dragging (20px)
-                if (!isCandidateDragging && kotlin.math.hypot(dx.toDouble(), dy.toDouble()) > 20) {
+                if (!isCandidateDragging && dist > 20) {
                     isCandidateDragging = true
+                    android.util.Log.d("DroidOS_Drag", "CANDIDATE DRAG START: '${item.text}' (moved ${dist.toInt()}px)")
                     // Visual feedback: Dim the candidate
                     view.alpha = 0.5f
                 }
@@ -1344,8 +1380,10 @@ class KeyboardView @JvmOverloads constructor(
                         val kh = bkspKey.height
 
                         // Check intersection
-                        if (event.rawX >= kx && event.rawX <= kx + kw &&
-                            event.rawY >= ky && event.rawY <= ky + kh) {
+                        val isOverBksp = event.rawX >= kx && event.rawX <= kx + kw &&
+                                         event.rawY >= ky && event.rawY <= ky + kh
+
+                        if (isOverBksp) {
                             // HOVERING: Turn Red
                             setKeyVisual(bkspKey, false, "BKSP", overrideColor = Color.RED)
                         } else {
@@ -1357,6 +1395,7 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                android.util.Log.d("DroidOS_Drag", "CANDIDATE UP: '${item.text}' isCandidateDragging=$isCandidateDragging")
                 view.alpha = 1.0f
                 val bkspKey = findViewWithTag<View>("BKSP")
                 if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP") // Reset color
@@ -1366,16 +1405,23 @@ class KeyboardView @JvmOverloads constructor(
                     if (bkspKey != null) {
                         val loc = IntArray(2)
                         bkspKey.getLocationOnScreen(loc)
-                        if (event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
-                            event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height) {
+                        val isOverBksp = event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
+                                         event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height
 
+                        android.util.Log.d("DroidOS_Drag", "DROP CHECK: rawX=${event.rawX.toInt()}, rawY=${event.rawY.toInt()}, bksp=(${loc[0]},${loc[1]},${bkspKey.width},${bkspKey.height}), isOver=$isOverBksp")
+
+                        if (isOverBksp) {
                             // DROPPED ON BACKSPACE -> DELETE
+                            android.util.Log.d("DroidOS_Drag", "DROP ON BKSP: Calling onSuggestionDropped('${item.text}')")
                             listener?.onSuggestionDropped(item.text)
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
+                    } else {
+                        android.util.Log.e("DroidOS_Drag", "ERROR: bkspKey is NULL!")
                     }
                 } else {
                     // CLICK -> SELECT
+                    android.util.Log.d("DroidOS_Drag", "CANDIDATE CLICK: '${item.text}'")
                     listener?.onSuggestionClick(item.text, item.isNew)
                     view.performClick()
                 }
@@ -1384,8 +1430,10 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                android.util.Log.d("DroidOS_Drag", "CANDIDATE CANCEL: '${item.text}'")
                 view.alpha = 1.0f
                 isCandidateDragging = false
+                activeDragCandidate = null
                 val bkspKey = findViewWithTag<View>("BKSP")
                 if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP")
                 return true
@@ -1393,5 +1441,8 @@ class KeyboardView @JvmOverloads constructor(
         }
         return false
     }
+    // =================================================================================
+    // END BLOCK: handleCandidateTouch with debug logging
+    // =================================================================================
 
 }

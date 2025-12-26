@@ -305,6 +305,17 @@ class PredictionEngine {
         return wordList.contains(word.lowercase(Locale.ROOT))
     }
 
+    // =================================================================================
+    // FUNCTION: isWordBlocked
+    // SUMMARY: Checks if a word is in the blocked list.
+    // =================================================================================
+    fun isWordBlocked(word: String): Boolean {
+        return blockedWords.contains(word.lowercase(Locale.ROOT))
+    }
+    // =================================================================================
+    // END BLOCK: isWordBlocked
+    // =================================================================================
+
     fun insert(word: String, rank: Int = Int.MAX_VALUE) {
         val lower = word.lowercase(Locale.ROOT)
         synchronized(this) {
@@ -323,10 +334,15 @@ class PredictionEngine {
     /**
      * Returns a list of suggested words for the given prefix, sorted by popularity.
      */
+    // =================================================================================
+    // FUNCTION: getSuggestions
+    // SUMMARY: Returns suggested words for a given prefix, sorted by popularity.
+    //          Filters out blocked words to prevent them from appearing in suggestions.
+    // =================================================================================
     fun getSuggestions(prefix: String, maxResults: Int = 3): List<String> {
         if (prefix.isEmpty()) return emptyList()
         val cleanPrefix = prefix.lowercase(Locale.ROOT)
-        
+
         var current = root
         for (char in cleanPrefix) {
             current = current.children[char] ?: return emptyList()
@@ -336,17 +352,37 @@ class PredictionEngine {
         collectCandidates(current, candidates)
         candidates.sortWith(compareBy<Pair<String, Int>> { it.second }.thenBy { it.first.length })
 
-        return candidates.take(maxResults).map { it.first }
+        // Filter out blocked words before returning
+        return candidates
+            .filter { !blockedWords.contains(it.first) }
+            .take(maxResults)
+            .map { it.first }
     }
+    // =================================================================================
+    // END BLOCK: getSuggestions
+    // =================================================================================
 
+    // =================================================================================
+    // FUNCTION: collectCandidates
+    // SUMMARY: Recursively collects word candidates from trie nodes.
+    //          Skips blocked words during traversal for efficiency.
+    // =================================================================================
     private fun collectCandidates(node: TrieNode, results: MutableList<Pair<String, Int>>) {
         if (node.isEndOfWord) {
-            node.word?.let { results.add(it to node.rank) }
+            node.word?.let { word ->
+                // Skip blocked words
+                if (!blockedWords.contains(word)) {
+                    results.add(word to node.rank)
+                }
+            }
         }
         for (child in node.children.values) {
             collectCandidates(child, results)
         }
     }
+    // =================================================================================
+    // END BLOCK: collectCandidates
+    // =================================================================================
 
     // =================================================================================
     // SHARK2-INSPIRED SWIPE DECODER LOGIC
