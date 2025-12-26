@@ -245,7 +245,27 @@ class TrackpadMenuManager(
         
         // Renamed: "Target: ..." -> "Toggle Remote Display"
         list.add(TrackpadMenuAdapter.MenuItem("Toggle Remote Display", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN) })
-        
+
+        // =================================================================================
+        // VIRTUAL MIRROR MODE TOGGLE
+        // SUMMARY: Toggles the virtual mirror keyboard mode for AR glasses/remote displays.
+        //          When enabled, a mirror copy of the keyboard appears on the remote display.
+        //          Touching the physical keyboard shows an orange orientation trail on both
+        //          displays until the finger stops, then normal typing resumes.
+        // =================================================================================
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Virtual Mirror Mode",
+            if(p.prefVirtualMirrorMode) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
+            TrackpadMenuAdapter.Type.TOGGLE,
+            if(p.prefVirtualMirrorMode) 1 else 0
+        ) { v ->
+            service.updatePref("virtual_mirror_mode", v)
+            loadTab(TAB_MAIN)  // Refresh to update icon
+        })
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE TOGGLE
+        // =================================================================================
+
         // --- ANCHOR TOGGLE: Locks trackpad and keyboard position/size ---
         list.add(TrackpadMenuAdapter.MenuItem("Anchor (Lock Position)", 
             if(p.prefAnchored) R.drawable.ic_lock_closed else R.drawable.ic_lock_open, 

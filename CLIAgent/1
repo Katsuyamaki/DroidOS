@@ -1,3 +1,38 @@
+# Update 1: TrackpadPrefs.kt
+
+## Summary
+Adding new preference properties for Virtual Mirror Mode feature.
+
+## File Path
+`Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadPrefs.kt`
+
+## nvim Command
+```bash
+nvim /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadPrefs.kt
+```
+
+## Change Location
+Around line 20, after `var prefBlockSoftKeyboard = false`
+
+## Code to ADD (insert after `var prefBlockSoftKeyboard = false`)
+
+```kotlin
+    // =================================================================================
+    // VIRTUAL MIRROR MODE PREFERENCES
+    // SUMMARY: Settings for displaying a mirror keyboard on remote/AR display.
+    //          When enabled, touching the physical keyboard shows an orange orientation
+    //          trail on both displays. After finger stops for orientDelayMs, normal
+    //          keyboard input resumes.
+    // =================================================================================
+    var prefVirtualMirrorMode = false
+    var prefMirrorOrientDelayMs = 1000L  // Default 1 second orientation delay
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE PREFERENCES
+    // =================================================================================
+```
+
+## Full File After Change (for reference)
+```kotlin
 package com.example.coverscreentester
 
 class TrackpadPrefs {
@@ -53,3 +88,4 @@ class TrackpadPrefs {
     var holdDurationMs = 400
     var displayOffMode = "alternate"
 }
+```

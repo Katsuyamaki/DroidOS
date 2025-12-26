@@ -47,6 +47,18 @@ class KeyboardOverlay(
 
     private val TAG = "KeyboardOverlay"
 
+    // =================================================================================
+    // VIRTUAL MIRROR ORIENTATION MODE VARIABLES
+    // SUMMARY: State for orientation mode when virtual mirror is active.
+    //          During orientation mode, an orange trail is shown and key input is blocked
+    //          until the finger stops moving for the configured delay.
+    // =================================================================================
+    private var isOrientationModeActive = false
+    private var orientationTrailView: SwipeTrailView? = null
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR ORIENTATION MODE VARIABLES
+    // =================================================================================
+
     // --- PREDICTION STATE ---
 
     private var currentComposingWord = StringBuilder()
@@ -78,6 +90,16 @@ class KeyboardOverlay(
     var onTouchDown: (() -> Unit)? = null
     var onTouchUp: (() -> Unit)? = null
     var onTouchTap: (() -> Unit)? = null
+
+    // =================================================================================
+    // VIRTUAL MIRROR CALLBACK
+    // SUMMARY: Callback to forward touch events to OverlayService for mirror sync.
+    //          Returns true if touch should be consumed (orientation mode active).
+    // =================================================================================
+    var onMirrorTouch: ((Float, Float, Int) -> Boolean)? = null // x, y, action -> consumed
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR CALLBACK
+    // =================================================================================
 
 
 
@@ -385,6 +407,86 @@ class KeyboardOverlay(
     // END BLOCK: setVoiceActive
     // =================================================================================
 
+    // =================================================================================
+    // VIRTUAL MIRROR ORIENTATION MODE METHODS
+    // SUMMARY: Methods for managing orientation mode during virtual mirror operation.
+    //          These handle the orange trail that helps users locate their finger
+    //          position on the physical keyboard without looking at the screen.
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: setOrientationMode
+    // SUMMARY: Enables or disables orientation mode. When enabled, an orange trail
+    //          is shown and key input is blocked until the mode ends.
+    // @param active - true to enable orientation mode, false to disable
+    // =================================================================================
+    fun setOrientationMode(active: Boolean) {
+        isOrientationModeActive = active
+        keyboardView?.setOrientationModeActive(active)
+
+        if (!active) {
+            // Clear the orange trail when exiting orientation mode
+            orientationTrailView?.clear()
+        }
+    }
+    // =================================================================================
+    // END BLOCK: setOrientationMode
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: startOrientationTrail
+    // SUMMARY: Starts a new orange orientation trail at the specified position.
+    // @param x - Starting X coordinate
+    // @param y - Starting Y coordinate
+    // =================================================================================
+    fun startOrientationTrail(x: Float, y: Float) {
+        orientationTrailView?.clear()
+        orientationTrailView?.addPoint(x, y)
+    }
+    // =================================================================================
+    // END BLOCK: startOrientationTrail
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: addOrientationTrailPoint
+    // SUMMARY: Adds a point to the orange orientation trail.
+    // @param x - X coordinate of new point
+    // @param y - Y coordinate of new point
+    // =================================================================================
+    fun addOrientationTrailPoint(x: Float, y: Float) {
+        orientationTrailView?.addPoint(x, y)
+    }
+    // =================================================================================
+    // END BLOCK: addOrientationTrailPoint
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: clearOrientationTrail
+    // SUMMARY: Clears the orange orientation trail.
+    // =================================================================================
+    fun clearOrientationTrail() {
+        orientationTrailView?.clear()
+    }
+    // =================================================================================
+    // END BLOCK: clearOrientationTrail
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: isInOrientationMode
+    // SUMMARY: Returns whether orientation mode is currently active.
+    // @return true if orientation mode is active
+    // =================================================================================
+    fun isInOrientationMode(): Boolean {
+        return isOrientationModeActive
+    }
+    // =================================================================================
+    // END BLOCK: isInOrientationMode
+    // =================================================================================
+
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR ORIENTATION MODE METHODS
+    // =================================================================================
+
     fun moveWindow(dx: Int, dy: Int) {
         if (!isVisible || keyboardParams == null) return
         keyboardParams!!.x += dx; keyboardParams!!.y += dy
@@ -460,6 +562,39 @@ class KeyboardOverlay(
         kbParams.setMargins(6, 28, 6, 6)
         keyboardContainer?.addView(keyboardView, kbParams)
 
+        // =================================================================================
+        // VIRTUAL MIRROR MODE TOUCH INTERCEPTOR
+        // SUMMARY: Intercepts touch events on the keyboard container. When virtual mirror
+        //          mode is active, forwards touch coordinates to the mirror callback first.
+        //          If callback returns true (orientation mode), the touch is consumed for
+        //          trail rendering. Otherwise, touch passes through to KeyboardView.
+        // =================================================================================
+        keyboardContainer?.setOnTouchListener { _, event ->
+            // Only intercept if we have a mirror touch callback configured
+            val callback = onMirrorTouch
+            if (callback != null) {
+                // Adjust coordinates to be relative to keyboard view area
+                // (accounting for the drag handle margin at top)
+                val adjustedX = event.x - 6  // Left margin
+                val adjustedY = event.y - 28 // Top margin (drag handle)
+
+                val consumed = callback.invoke(adjustedX, adjustedY, event.actionMasked)
+
+                if (consumed) {
+                    // Orientation mode is active - consume touch for trail
+                    // The KeyboardView's onTouchEvent will see isOrientationModeActive=true
+                    // and ignore key input
+                    return@setOnTouchListener false // Return false to let child views get the event too
+                }
+            }
+
+            // No callback or not consumed - let normal touch handling proceed
+            false // Return false to pass touch to children (KeyboardView)
+        }
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE TOUCH INTERCEPTOR
+        // =================================================================================
+
         // 2. The Swipe Trail Overlay (Must match keyboard params to align coordinates)
         val trailView = SwipeTrailView(context)
         val trailParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -468,6 +603,24 @@ class KeyboardOverlay(
 
         // Link them
         keyboardView?.attachTrailView(trailView)
+
+        // =================================================================================
+        // ORIENTATION TRAIL VIEW (for virtual mirror mode)
+        // SUMMARY: A separate trail view for orange orientation trails. Layered on top
+        //          of the normal blue swipe trail so both can be visible simultaneously
+        //          if needed. Normally invisible; only shows during orientation mode.
+        // =================================================================================
+        orientationTrailView = SwipeTrailView(context)
+        orientationTrailView?.setTrailColor(0xFFFF9900.toInt()) // Orange color
+        val orientTrailParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        orientTrailParams.setMargins(6, 28, 6, 6)
+        keyboardContainer?.addView(orientationTrailView, orientTrailParams)
+        // =================================================================================
+        // END BLOCK: ORIENTATION TRAIL VIEW
+        // =================================================================================
 
         addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
 

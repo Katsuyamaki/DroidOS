@@ -1,0 +1,99 @@
+# Virtual Mirror Mode - Complete Implementation Guide
+
+## Feature Summary
+
+**Virtual Mirror Mode** is a new feature for DroidOS Trackpad Keyboard that displays a mirror copy of the keyboard on a remote display (AR glasses) while the user types on the physical phone screen without looking at it.
+
+### How It Works:
+1. User enables "Virtual Mirror Mode" from the trackpad overlay menu
+2. User enables "Toggle Remote Display" to target the AR glasses display  
+3. A transparent keyboard mirror appears on the AR glasses
+4. When user touches the physical keyboard:
+   - An **orange orientation trail** appears on BOTH displays
+   - Key input is BLOCKED during this "orientation mode"
+   - User can see their finger position on AR display without looking at phone
+5. After finger stops moving for 1 second (configurable):
+   - Orientation mode ends
+   - Orange trail disappears
+   - Normal keyboard input resumes
+6. User can now type normally, using the visual feedback from the previous orientation trail
+
+---
+
+## Implementation Files (in order of application)
+
+### Update 1: TrackpadPrefs.kt
+**Purpose:** Add preference properties for virtual mirror mode  
+**File:** `virtual_mirror_update_1_TrackpadPrefs.md`
+
+### Update 2: OverlayService.kt - Prefs Class
+**Purpose:** Add properties to inner Prefs class and update load/save logic  
+**File:** `virtual_mirror_update_2_OverlayService_Prefs.md`
+
+### Update 3: OverlayService.kt - Mirror Functions
+**Purpose:** Add mirror keyboard management functions (create/remove/touch handling)  
+**File:** `virtual_mirror_update_3_OverlayService_Functions.md`
+
+### Update 4: SwipeTrailView.kt
+**Purpose:** Add color customization for orange orientation trail  
+**File:** `virtual_mirror_update_4_SwipeTrailView.md`
+
+### Update 5: KeyboardOverlay.kt - Orientation Methods
+**Purpose:** Add orientation mode methods and callback  
+**File:** `virtual_mirror_update_5_KeyboardOverlay.md`
+
+### Update 6: KeyboardView.kt - Orientation State
+**Purpose:** Add orientation mode state that blocks key input  
+**File:** `virtual_mirror_update_6_KeyboardView.md`
+
+### Update 7: TrackpadMenuManager.kt
+**Purpose:** Add menu toggle for virtual mirror mode  
+**File:** `virtual_mirror_update_7_TrackpadMenuManager.md`
+
+### Update 8: OverlayService.kt - Callback Wiring
+**Purpose:** Wire mirror touch callback in initCustomKeyboard  
+**File:** `virtual_mirror_update_8_OverlayService_Wiring.md`
+
+### Update 9: KeyboardOverlay.kt - Touch Intercept
+**Purpose:** Add touch interception to forward events to mirror  
+**File:** `virtual_mirror_update_9_KeyboardOverlay_TouchIntercept.md`
+
+---
+
+## Quick Reference: Files to Edit
+
+| Order | File | Path |
+|-------|------|------|
+| 1 | TrackpadPrefs.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadPrefs.kt` |
+| 2-3, 8 | OverlayService.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/OverlayService.kt` |
+| 4 | SwipeTrailView.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/SwipeTrailView.kt` |
+| 5, 9 | KeyboardOverlay.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardOverlay.kt` |
+| 6 | KeyboardView.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardView.kt` |
+| 7 | TrackpadMenuManager.kt | `Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadMenuManager.kt` |
+
+---
+
+## Testing Checklist
+
+After implementing all updates:
+
+1. [ ] Build and install the app
+2. [ ] Enable Toggle Remote Display (target AR glasses)
+3. [ ] Enable Virtual Mirror Mode from menu
+4. [ ] Verify mirror keyboard appears on AR display (transparent)
+5. [ ] Touch physical keyboard - verify orange trail appears on both displays
+6. [ ] Verify key input is blocked during orange trail
+7. [ ] Stop moving finger for 1 second - verify trail disappears
+8. [ ] Type a letter - verify it registers normally
+9. [ ] Test swipe typing - verify blue trail still works after orientation mode
+10. [ ] Toggle Virtual Mirror Mode OFF - verify mirror disappears
+11. [ ] Toggle back to local display - verify mirror is removed
+
+---
+
+## Future Enhancements (Not Implemented)
+
+- User-configurable orientation delay (currently hardcoded to 1 second)
+- Option to show mirror keyboard permanently (not just during touch)
+- Mirror keyboard position/size customization
+- Different trail colors (user preference)

@@ -136,9 +136,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var hardkeyVolDownDouble = "display_toggle"
         var hardkeyVolDownHold = "alt_position"
         var hardkeyPowerDouble = "none"
-        var doubleTapMs = 300           
-        var holdDurationMs = 400        
-        var displayOffMode = "alternate" 
+        var doubleTapMs = 300
+        var holdDurationMs = 400
+        var displayOffMode = "alternate"
+
+        // =================================================================================
+        // VIRTUAL MIRROR MODE PREFERENCES
+        // SUMMARY: Settings for displaying a mirror keyboard on remote/AR display.
+        //          When enabled, touching the physical keyboard shows an orange orientation
+        //          trail on both displays. After finger stops for orientDelayMs, normal
+        //          keyboard input resumes.
+        // =================================================================================
+        var prefVirtualMirrorMode = false
+        var prefMirrorOrientDelayMs = 1000L  // Default 1 second orientation delay
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE PREFERENCES
+        // =================================================================================
     }
     val prefs = Prefs()
 
@@ -425,6 +438,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var remoteCursorLayout: FrameLayout? = null
     private var remoteCursorView: ImageView? = null
     private lateinit var remoteCursorParams: WindowManager.LayoutParams
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE VARIABLES
+    // =================================================================================
+    private var mirrorWindowManager: WindowManager? = null
+    private var mirrorKeyboardContainer: FrameLayout? = null
+    private var mirrorKeyboardView: KeyboardView? = null
+    private var mirrorTrailView: SwipeTrailView? = null
+    private var mirrorKeyboardParams: WindowManager.LayoutParams? = null
+
+    private var isInOrientationMode = false
+    private var orientationModeHandler = Handler(Looper.getMainLooper())
+    private var lastOrientationTouchTime = 0L
+
+    private val orientationModeTimeout = Runnable {
+        isInOrientationMode = false
+        clearMirrorTrail()
+        keyboardOverlay?.setOrientationMode(false)
+    }
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE VARIABLES
+    // =================================================================================
 
     private val longPressRunnable = Runnable { startTouchDrag() }
     private val clearHighlightsRunnable = Runnable { updateBorderColor(currentBorderColor); updateLayoutSizes() }
@@ -1203,6 +1238,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             "hardkey_vol_down_hold" -> prefs.hardkeyVolDownHold = value as String
             "double_tap_ms" -> prefs.doubleTapMs = value as Int
             "hold_duration_ms" -> prefs.holdDurationMs = value as Int
+            // =================================================================================
+            // VIRTUAL MIRROR MODE UPDATE HANDLERS
+            // =================================================================================
+            "virtual_mirror_mode" -> {
+                prefs.prefVirtualMirrorMode = parseBoolean(value)
+                updateVirtualMirrorMode()
+            }
+            "mirror_orient_delay_ms" -> prefs.prefMirrorOrientDelayMs = (value as? Long) ?: 1000L
+            // =================================================================================
+            // END BLOCK: VIRTUAL MIRROR MODE UPDATE HANDLERS
+            // =================================================================================
         }
         savePrefs() 
     }
@@ -1267,6 +1313,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         
         prefs.doubleTapMs = p.getInt("double_tap_ms", 300)
         prefs.holdDurationMs = p.getInt("hold_duration_ms", 400)
+
+        // =================================================================================
+        // VIRTUAL MIRROR MODE LOAD
+        // =================================================================================
+        prefs.prefVirtualMirrorMode = p.getBoolean("virtual_mirror_mode", false)
+        prefs.prefMirrorOrientDelayMs = p.getLong("mirror_orient_delay_ms", 1000L)
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE LOAD
+        // =================================================================================
     }
     
     private fun savePrefs() { 
@@ -1310,7 +1365,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         
         e.putInt("double_tap_ms", prefs.doubleTapMs)
         e.putInt("hold_duration_ms", prefs.holdDurationMs)
-        
+
+        // =================================================================================
+        // VIRTUAL MIRROR MODE SAVE
+        // =================================================================================
+        e.putBoolean("virtual_mirror_mode", prefs.prefVirtualMirrorMode)
+        e.putLong("mirror_orient_delay_ms", prefs.prefMirrorOrientDelayMs)
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE SAVE
+        // =================================================================================
+
         e.apply() 
     }
 
@@ -1363,7 +1427,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         keyboardOverlay?.onTouchDown = { handleExternalTouchDown() }
         keyboardOverlay?.onTouchUp = { handleExternalTouchUp() }
         keyboardOverlay?.onTouchTap = { handleExternalTouchTap() }
-        
+
+        // =================================================================================
+        // VIRTUAL MIRROR TOUCH CALLBACK
+        // SUMMARY: Wire up the mirror touch callback to forward touch events from the
+        //          physical keyboard to the mirror keyboard on the remote display.
+        //          Returns true if the touch should be consumed (orientation mode active).
+        // =================================================================================
+        keyboardOverlay?.onMirrorTouch = { x, y, action ->
+            onMirrorKeyboardTouch(x, y, action)
+        }
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR TOUCH CALLBACK
+        // =================================================================================
+
         // FIX: Restore Saved Layout (fixes reset/aspect ratio issue)
         if (savedKbW > 0 && savedKbH > 0) {
             keyboardOverlay?.updatePosition(savedKbX, savedKbY)
@@ -1663,14 +1740,186 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         keyboardOverlay?.cycleRotation()
     }
 
-    fun resetTrackpadPosition() { trackpadParams.x = 100; trackpadParams.y = 100; trackpadParams.width = 400; trackpadParams.height = 300; windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }    fun cycleInputTarget() { 
+    fun resetTrackpadPosition() { trackpadParams.x = 100; trackpadParams.y = 100; trackpadParams.width = 400; trackpadParams.height = 300; windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }    fun cycleInputTarget() {
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
-        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)") } 
-        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId") }
+        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)") }
+        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId") }
     }
     private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
     private fun removeRemoteCursor() { try { if (remoteCursorLayout != null && remoteWindowManager != null) { remoteWindowManager?.removeView(remoteCursorLayout) } } catch (e: Exception) {}; remoteCursorLayout = null; remoteCursorView = null; remoteWindowManager = null }
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE FUNCTIONS
+    // =================================================================================
+
+    /**
+     * Creates or removes the mirror keyboard based on Virtual Mirror Mode preference.
+     * Called when the preference changes or when switching displays.
+     */
+    private fun updateVirtualMirrorMode() {
+        if (prefs.prefVirtualMirrorMode && inputTargetDisplayId != currentDisplayId) {
+            createMirrorKeyboard(inputTargetDisplayId)
+        } else {
+            removeMirrorKeyboard()
+        }
+    }
+
+    /**
+     * Creates a mirror keyboard overlay on the specified display.
+     * The mirror keyboard is FLAG_NOT_TOUCHABLE - it only shows visual feedback.
+     * Touch events are handled on the local keyboard and forwarded here for trail rendering.
+     */
+    private fun createMirrorKeyboard(displayId: Int) {
+        try {
+            removeMirrorKeyboard()
+
+            val display = displayManager?.getDisplay(displayId) ?: return
+            val mirrorContext = createTrackpadDisplayContext(display)
+
+            mirrorWindowManager = mirrorContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            mirrorKeyboardContainer = FrameLayout(mirrorContext)
+
+            // Create KeyboardView for the mirror
+            mirrorKeyboardView = KeyboardView(mirrorContext, null, 0)
+            mirrorKeyboardView?.alpha = prefs.prefKeyboardAlpha / 255f
+
+            // Create SwipeTrailView for orientation trail
+            mirrorTrailView = SwipeTrailView(mirrorContext)
+
+            // Add views to container
+            mirrorKeyboardContainer?.addView(mirrorKeyboardView)
+            mirrorKeyboardContainer?.addView(mirrorTrailView)
+
+            // Create layout params - FLAG_NOT_TOUCHABLE so touches go through
+            val metrics = android.util.DisplayMetrics()
+            display.getRealMetrics(metrics)
+
+            val keyboardWidth = (metrics.widthPixels * prefs.prefKeyScale / 100f).toInt()
+            val keyboardHeight = (keyboardWidth * 0.4f).toInt()
+
+            mirrorKeyboardParams = WindowManager.LayoutParams(
+                keyboardWidth,
+                keyboardHeight,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            )
+
+            mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            mirrorKeyboardParams?.x = 0
+            mirrorKeyboardParams?.y = 0
+
+            mirrorWindowManager?.addView(mirrorKeyboardContainer, mirrorKeyboardParams)
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Removes the mirror keyboard overlay.
+     */
+    private fun removeMirrorKeyboard() {
+        try {
+            if (mirrorKeyboardContainer != null && mirrorWindowManager != null) {
+                mirrorWindowManager?.removeView(mirrorKeyboardContainer)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        mirrorKeyboardContainer = null
+        mirrorKeyboardView = null
+        mirrorTrailView = null
+        mirrorKeyboardParams = null
+        mirrorWindowManager = null
+
+        // Cancel any pending orientation mode timeout
+        orientationModeHandler.removeCallbacks(orientationModeTimeout)
+        isInOrientationMode = false
+    }
+
+    /**
+     * Handles touch events in Virtual Mirror Mode.
+     * When a touch occurs on the local keyboard:
+     * 1. Enters orientation mode (shows orange trail on both displays)
+     * 2. Starts timeout for orientation delay
+     * 3. After timeout, exits orientation mode and allows normal input
+     * @param x - Touch X coordinate
+     * @param y - Touch Y coordinate
+     * @param action - MotionEvent action (ACTION_DOWN, ACTION_MOVE, ACTION_UP, etc.)
+     * @return true if touch was consumed (orientation mode active), false otherwise
+     */
+    fun onMirrorKeyboardTouch(x: Float, y: Float, action: Int): Boolean {
+        if (!isVirtualMirrorModeActive()) return false
+
+        when (action) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                if (!isInOrientationMode) {
+                    isInOrientationMode = true
+                    keyboardOverlay?.setOrientationMode(true)
+                }
+
+                lastOrientationTouchTime = System.currentTimeMillis()
+
+                // Update trails on both keyboards
+                mirrorTrailView?.addPoint(x, y) // Orange trail on mirror
+                keyboardOverlay?.addOrientationTrailPoint(x, y) // Orange trail on local
+
+                // Reset timeout
+                orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                orientationModeHandler.postDelayed(
+                    orientationModeTimeout,
+                    prefs.prefMirrorOrientDelayMs
+                )
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                // Finger lifted - wait for timeout to complete orientation
+            }
+        }
+
+        return isInOrientationMode
+    }
+
+    /**
+     * Clears the orange trail from the mirror keyboard.
+     */
+    private fun clearMirrorTrail() {
+        mirrorTrailView?.clear()
+    }
+
+    /**
+     * Returns true if Virtual Mirror Mode is currently active.
+     */
+    private fun isVirtualMirrorModeActive(): Boolean {
+        return prefs.prefVirtualMirrorMode &&
+               inputTargetDisplayId != currentDisplayId &&
+               mirrorKeyboardView != null
+    }
+
+    /**
+     * Returns true if currently in orientation mode (showing orange trail, blocking input).
+     */
+    fun isCurrentlyInOrientationMode(): Boolean {
+        return isInOrientationMode
+    }
+
+    /**
+     * Toggles Virtual Mirror Mode on/off.
+     */
+    fun toggleVirtualMirrorMode() {
+        prefs.prefVirtualMirrorMode = !prefs.prefVirtualMirrorMode
+        updatePref("virtual_mirror_mode", prefs.prefVirtualMirrorMode.toString())
+    }
+
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE FUNCTIONS
+    // =================================================================================
+
     private fun startTouchDrag() { if (ignoreTouchSequence || isTouchDragging) return; isTouchDragging = true; activeDragButton = MotionEvent.BUTTON_PRIMARY; dragDownTime = SystemClock.uptimeMillis(); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, dragDownTime); hasSentTouchDown = true; if (prefs.prefVibrate) vibrate(); updateBorderColor(0xFFFF9900.toInt()) }
     private fun startResize() {}
     private fun startMove() {}

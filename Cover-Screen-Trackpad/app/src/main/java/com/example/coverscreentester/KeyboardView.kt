@@ -63,7 +63,17 @@ class KeyboardView @JvmOverloads constructor(
     private var isAltActive = false
     
     private var isVoiceActive = false
-    
+
+    // =================================================================================
+    // VIRTUAL MIRROR ORIENTATION MODE STATE
+    // SUMMARY: When true, key input is blocked and touches are forwarded for
+    //          orientation trail rendering. Set by KeyboardOverlay during mirror mode.
+    // =================================================================================
+    private var isOrientationModeActive = false
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR ORIENTATION MODE STATE
+    // =================================================================================
+
     private val BASE_KEY_HEIGHT = 40
     private val BASE_FONT_SIZE = 14f
     private var scaleFactor = 1.0f
@@ -309,6 +319,41 @@ class KeyboardView @JvmOverloads constructor(
             }
         }
     }
+
+    // =================================================================================
+    // FUNCTION: setOrientationModeActive
+    // SUMMARY: Sets whether orientation mode is active. When active, normal key input
+    //          is blocked to allow the user to see the orientation trail and find
+    //          their finger position on the physical keyboard.
+    // @param active - true to block key input, false to resume normal operation
+    // =================================================================================
+    fun setOrientationModeActive(active: Boolean) {
+        isOrientationModeActive = active
+
+        // If exiting orientation mode, clear any pending key states
+        if (!active) {
+            currentActiveKey?.let {
+                val tag = it.tag as? String
+                if (tag != null) setKeyVisual(it, false, tag)
+            }
+            currentActiveKey = null
+        }
+    }
+    // =================================================================================
+    // END BLOCK: setOrientationModeActive
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: isOrientationModeActive
+    // SUMMARY: Returns whether orientation mode is currently active.
+    // @return true if orientation mode is blocking key input
+    // =================================================================================
+    fun isOrientationModeActive(): Boolean {
+        return isOrientationModeActive
+    }
+    // =================================================================================
+    // END BLOCK: isOrientationModeActive
+    // =================================================================================
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
@@ -764,6 +809,27 @@ class KeyboardView @JvmOverloads constructor(
         val pointerId = event.getPointerId(pointerIndex)
         val x = event.getX(pointerIndex)
         val y = event.getY(pointerIndex)
+
+        // =================================================================================
+        // ORIENTATION MODE CHECK
+        // SUMMARY: When virtual mirror orientation mode is active, we block all normal
+        //          key input. The touch events are handled by KeyboardOverlay for trail
+        //          rendering. We still return true to consume the event.
+        // =================================================================================
+        if (isOrientationModeActive) {
+            // Clear any visual key highlights during orientation mode
+            currentActiveKey?.let {
+                val tag = it.tag as? String
+                if (tag != null) setKeyVisual(it, false, tag)
+            }
+            currentActiveKey = null
+
+            // Consume the event but don't process any key input
+            return true
+        }
+        // =================================================================================
+        // END BLOCK: ORIENTATION MODE CHECK
+        // =================================================================================
 
         val touchedView = findKeyView(x, y)
         val keyTag = touchedView?.tag as? String
