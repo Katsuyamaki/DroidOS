@@ -1501,10 +1501,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             syncMirrorKeyboardLayer(state)
         }
 
-        // Wire up suggestions callback for mirror keyboard sync
+        // =================================================================================
+        // MIRROR SUGGESTIONS SYNC CALLBACK
+        // SUMMARY: When suggestions change on physical keyboard, sync to mirror keyboard.
+        //          This keeps the prediction bar in sync on both displays.
+        // =================================================================================
         keyboardOverlay?.onSuggestionsChanged = { suggestions ->
-            syncMirrorSuggestions(suggestions)
+            mirrorKeyboardView?.setSuggestions(suggestions)
         }
+        // =================================================================================
+        // END BLOCK: MIRROR SUGGESTIONS SYNC CALLBACK
+        // =================================================================================
 
         // FIX: Restore Saved Layout (fixes reset/aspect ratio issue)
         if (savedKbW > 0 && savedKbH > 0) {
@@ -1953,19 +1960,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
     // =================================================================================
     // END BLOCK: syncMirrorKeyboardLayer
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: syncMirrorSuggestions
-    // SUMMARY: Syncs prediction/suggestion bar from physical to mirror keyboard.
-    //          Called when suggestions change during typing.
-    // =================================================================================
-    private fun syncMirrorSuggestions(suggestions: List<String>) {
-        val candidates = suggestions.map { KeyboardView.Candidate(it, isNew = false) }
-        mirrorKeyboardView?.setSuggestions(candidates)
-    }
-    // =================================================================================
-    // END BLOCK: syncMirrorSuggestions
     // =================================================================================
 
     // =================================================================================

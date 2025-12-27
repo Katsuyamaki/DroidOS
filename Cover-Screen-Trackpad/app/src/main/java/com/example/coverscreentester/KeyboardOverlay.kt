@@ -104,9 +104,14 @@ class KeyboardOverlay(
     // Layer change callback for syncing mirror keyboard
     var onLayerChanged: ((KeyboardView.KeyboardState) -> Unit)? = null
 
-    // Suggestions sync for mirror keyboard
-    var onSuggestionsChanged: ((List<String>) -> Unit)? = null
-    private var lastSuggestions = listOf<String>()
+    // =================================================================================
+    // CALLBACK: onSuggestionsChanged
+    // SUMMARY: Called whenever the suggestion bar is updated. Used to sync mirror keyboard.
+    // =================================================================================
+    var onSuggestionsChanged: ((List<KeyboardView.Candidate>) -> Unit)? = null
+    // =================================================================================
+    // END BLOCK: onSuggestionsChanged
+    // =================================================================================
 
 
 
@@ -545,6 +550,18 @@ class KeyboardOverlay(
     }
     // =================================================================================
     // END BLOCK: State accessor functions for mirror sync
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: updateSuggestionsWithSync
+    // SUMMARY: Sets suggestions on the keyboard view AND notifies callback for mirror sync.
+    // =================================================================================
+    private fun updateSuggestionsWithSync(candidates: List<KeyboardView.Candidate>) {
+        keyboardView?.setSuggestions(candidates)
+        onSuggestionsChanged?.invoke(candidates)
+    }
+    // =================================================================================
+    // END BLOCK: updateSuggestionsWithSync
     // =================================================================================
 
     // =================================================================================
@@ -1175,7 +1192,7 @@ class KeyboardOverlay(
                             suggestions
                         }.map { KeyboardView.Candidate(it, isNew = false) }
 
-                        keyboardView?.setSuggestions(displaySuggestions)
+                        updateSuggestionsWithSync(displaySuggestions)
 
                         // =================================================================================
                         // SWIPE TEXT COMMIT WITH SPACE HANDLING
@@ -1227,9 +1244,7 @@ class KeyboardOverlay(
     private fun updateSuggestions() {
         val prefix = currentComposingWord.toString()
         if (prefix.isEmpty()) {
-            keyboardView?.setSuggestions(emptyList())
-            lastSuggestions = emptyList()
-            onSuggestionsChanged?.invoke(emptyList())
+            updateSuggestionsWithSync(emptyList())
             return
         }
 
@@ -1255,12 +1270,7 @@ class KeyboardOverlay(
             }
         }
 
-        val finalCandidates = candidates.take(3)
-        keyboardView?.setSuggestions(finalCandidates)
-
-        // Sync to mirror keyboard
-        lastSuggestions = finalCandidates.map { it.text }
-        onSuggestionsChanged?.invoke(lastSuggestions)
+        updateSuggestionsWithSync(candidates.take(3))
     }
     // =================================================================================
     // END BLOCK: updateSuggestions
@@ -1268,9 +1278,7 @@ class KeyboardOverlay(
 
     private fun resetComposition() {
         currentComposingWord.clear()
-        keyboardView?.setSuggestions(emptyList())
-        lastSuggestions = emptyList()
-        onSuggestionsChanged?.invoke(emptyList())
+        updateSuggestionsWithSync(emptyList())
     }
 
     private fun injectKey(keyCode: Int, metaState: Int) {
