@@ -450,23 +450,32 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var mirrorTrailView: SwipeTrailView? = null
     private var mirrorKeyboardParams: WindowManager.LayoutParams? = null
 
+    // Dimensions for coordinate scaling between physical and mirror keyboards
+    private var physicalKbWidth = 0f
+    private var physicalKbHeight = 0f
+    private var mirrorKbWidth = 0f
+    private var mirrorKbHeight = 0f
+
     private var isInOrientationMode = false
     private var orientationModeHandler = Handler(Looper.getMainLooper())
     private var lastOrientationTouchTime = 0L
 
     // =================================================================================
     // RUNNABLE: orientationModeTimeout
-    // SUMMARY: Called after finger stops moving for the configured delay.
-    //          Ends orientation mode, clears trails, fades mirror back to dim state.
+    // SUMMARY: Called when finger stops moving for the configured delay.
+    //          Exits orientation mode, clears all trails, fades mirror back to dim.
+    //          After this, normal keyboard input resumes on the physical keyboard.
     // =================================================================================
     private val orientationModeTimeout = Runnable {
-        Log.d(TAG, "Orientation mode timeout - exiting orientation")
+        Log.d(TAG, "Orientation mode timeout - exiting orientation, resuming input")
 
         isInOrientationMode = false
 
-        // Clear trails on both displays
+        // Clear trails on BOTH displays
         mirrorTrailView?.clear()
         keyboardOverlay?.clearOrientationTrail()
+
+        // Tell KeyboardOverlay (and KeyboardView) to exit orientation mode
         keyboardOverlay?.setOrientationMode(false)
 
         // Fade mirror back to semi-transparent
@@ -1786,9 +1795,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     // =================================================================================
     // FUNCTION: createMirrorKeyboard
-    // SUMMARY: Creates a keyboard mirror overlay on the specified remote display.
-    //          The mirror starts semi-transparent and becomes more visible when touched.
-    //          An orange trail is drawn to help user orient their finger position.
+    // SUMMARY: Creates a transparent keyboard mirror on the remote display.
+    //          Stores dimensions for coordinate scaling between physical and mirror.
     // =================================================================================
     private fun createMirrorKeyboard(displayId: Int) {
         try {
@@ -1798,71 +1806,70 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             val mirrorContext = createTrackpadDisplayContext(display)
 
             mirrorWindowManager = mirrorContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
-            // Create container with semi-transparent dark background
             mirrorKeyboardContainer = FrameLayout(mirrorContext)
-            mirrorKeyboardContainer?.setBackgroundColor(0x40000000) // Semi-transparent black
+            mirrorKeyboardContainer?.setBackgroundColor(0x40000000) // Semi-transparent bg
 
             // Create KeyboardView for the mirror
             mirrorKeyboardView = KeyboardView(mirrorContext, null, 0)
-            // Start semi-transparent - will become more visible when touched
-            mirrorKeyboardView?.alpha = 0.2f
+            mirrorKeyboardView?.alpha = 0.2f // Start semi-transparent
 
-            // Apply same scale as main keyboard
+            // Apply same scale
             val scale = prefs.prefKeyScale / 100f
             mirrorKeyboardView?.setScale(scale)
 
-            // Create SwipeTrailView for orientation trail - ORANGE COLOR
+            // Create SwipeTrailView for orientation trail - ORANGE
             mirrorTrailView = SwipeTrailView(mirrorContext)
-            mirrorTrailView?.setTrailColor(0xFFFF9900.toInt()) // Orange
+            mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())
 
-            // Layout params for keyboard view
-            val kbLayoutParams = FrameLayout.LayoutParams(
+            // Layout params for views
+            val kbParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             )
-            kbLayoutParams.gravity = Gravity.CENTER
-
-            // Layout params for trail view - match parent to cover whole area
-            val trailLayoutParams = FrameLayout.LayoutParams(
+            val trailParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
 
-            // Add views to container
-            mirrorKeyboardContainer?.addView(mirrorKeyboardView, kbLayoutParams)
-            mirrorKeyboardContainer?.addView(mirrorTrailView, trailLayoutParams)
+            mirrorKeyboardContainer?.addView(mirrorKeyboardView, kbParams)
+            mirrorKeyboardContainer?.addView(mirrorTrailView, trailParams)
 
-            // Get display metrics for sizing
+            // Get display metrics
             val metrics = android.util.DisplayMetrics()
             display.getRealMetrics(metrics)
 
-            // Size the mirror to match physical keyboard proportions
-            val keyboardWidth = (metrics.widthPixels * 0.95f).toInt()
-            val keyboardHeight = WindowManager.LayoutParams.WRAP_CONTENT
+            // Calculate mirror keyboard size
+            val mirrorWidth = (metrics.widthPixels * 0.95f).toInt()
 
-            // Window params - NOT_TOUCHABLE so it doesn't intercept input on remote
+            // Store dimensions for coordinate scaling
+            mirrorKbWidth = mirrorWidth.toFloat()
+            mirrorKbHeight = 400f // Approximate, will be adjusted
+
+            // Get physical keyboard dimensions
+            physicalKbWidth = keyboardOverlay?.getViewWidth()?.toFloat() ?: 600f
+            physicalKbHeight = keyboardOverlay?.getViewHeight()?.toFloat() ?: 400f
+
+            Log.d(TAG, "Mirror KB: ${mirrorKbWidth}x${mirrorKbHeight}, Physical KB: ${physicalKbWidth}x${physicalKbHeight}")
+
+            // Window params
             mirrorKeyboardParams = WindowManager.LayoutParams(
-                keyboardWidth,
-                keyboardHeight,
+                mirrorWidth,
+                WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
-
-            // Position at bottom center
             mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            mirrorKeyboardParams?.y = 20 // Small margin from bottom
+            mirrorKeyboardParams?.y = 20
 
             mirrorWindowManager?.addView(mirrorKeyboardContainer, mirrorKeyboardParams)
 
-            Log.d(TAG, "Mirror keyboard created on display $displayId, size=${keyboardWidth}x${keyboardHeight}")
+            Log.d(TAG, "Mirror keyboard created on display $displayId")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create mirror keyboard", e)
-            e.printStackTrace()
         }
     }
     // =================================================================================
@@ -1894,19 +1901,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     // =================================================================================
     // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Handles touch events forwarded from the physical keyboard.
-    //          Shows orange orientation trail on both displays.
-    //          After finger stops for delay period, orientation mode ends.
+    // SUMMARY: Handles touch events forwarded from physical keyboard.
+    //          Scales coordinates to match mirror keyboard dimensions.
+    //          Shows orange trail on both displays during orientation mode.
     // =================================================================================
     fun onMirrorKeyboardTouch(x: Float, y: Float, action: Int): Boolean {
         if (!isVirtualMirrorModeActive()) {
-            Log.d(TAG, "Mirror touch ignored - mode not active")
             return false
         }
 
+        // Scale coordinates from physical keyboard to mirror keyboard
+        val scaleX = if (physicalKbWidth > 0) mirrorKbWidth / physicalKbWidth else 1f
+        val scaleY = if (physicalKbHeight > 0) mirrorKbHeight / physicalKbHeight else 1f
+        val mirrorX = x * scaleX
+        val mirrorY = y * scaleY
+
         when (action) {
             MotionEvent.ACTION_DOWN -> {
-                Log.d(TAG, "Mirror touch DOWN at ($x, $y)")
+                Log.d(TAG, "Mirror touch DOWN at ($x, $y) -> mirror ($mirrorX, $mirrorY)")
 
                 // Enter orientation mode
                 isInOrientationMode = true
@@ -1917,13 +1929,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 mirrorKeyboardView?.alpha = 0.9f
                 mirrorKeyboardContainer?.setBackgroundColor(0x80000000.toInt())
 
-                // Clear old trails and start fresh
+                // Clear old trails
                 mirrorTrailView?.clear()
                 keyboardOverlay?.clearOrientationTrail()
 
-                // Start new trail
-                mirrorTrailView?.addPoint(x, y)
+                // Start new trails - use original coords for physical, scaled for mirror
                 keyboardOverlay?.startOrientationTrail(x, y)
+                mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
                 // Cancel any pending timeout
                 orientationModeHandler.removeCallbacks(orientationModeTimeout)
@@ -1934,8 +1946,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     lastOrientationTouchTime = System.currentTimeMillis()
 
                     // Continue drawing trails
-                    mirrorTrailView?.addPoint(x, y)
                     keyboardOverlay?.addOrientationTrailPoint(x, y)
+                    mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
                     // Reset timeout
                     orientationModeHandler.removeCallbacks(orientationModeTimeout)
@@ -1949,7 +1961,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 Log.d(TAG, "Mirror touch UP")
 
-                // Start countdown to end orientation mode
+                // Start countdown to exit orientation mode
                 if (isInOrientationMode) {
                     orientationModeHandler.removeCallbacks(orientationModeTimeout)
                     orientationModeHandler.postDelayed(
