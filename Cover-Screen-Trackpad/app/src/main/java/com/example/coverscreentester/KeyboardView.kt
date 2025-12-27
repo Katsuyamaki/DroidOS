@@ -392,8 +392,18 @@ class KeyboardView @JvmOverloads constructor(
     // FUNCTION: handleDeferredTap
     // SUMMARY: Called when a quick tap happens during mirror orientation mode.
     //          Handles all keys including spacebar for single character input.
+    //          Also handles taps on prediction bar candidates.
     // =================================================================================
     fun handleDeferredTap(x: Float, y: Float) {
+        // First, check if tap is on a prediction candidate
+        val tappedCandidate = findCandidateAt(x, y)
+        if (tappedCandidate != null) {
+            Log.d("KeyboardView", "Deferred tap on prediction: '${tappedCandidate.first}'")
+            listener?.onSuggestionClick(tappedCandidate.first, tappedCandidate.second)
+            return
+        }
+
+        // Otherwise, check for keyboard key
         val touchedView = findKeyView(x, y)
         val keyTag = touchedView?.tag as? String
 
@@ -412,6 +422,47 @@ class KeyboardView @JvmOverloads constructor(
     }
     // =================================================================================
     // END BLOCK: handleDeferredTap
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: findCandidateAt
+    // SUMMARY: Checks if the given coordinates are within one of the prediction
+    //          candidates (cand1, cand2, cand3). Returns the text and isNew flag
+    //          if found, null otherwise.
+    // =================================================================================
+    private fun findCandidateAt(x: Float, y: Float): Pair<String, Boolean>? {
+        val candidates = listOf(cand1, cand2, cand3)
+
+        for (candView in candidates) {
+            if (candView == null || candView.visibility != View.VISIBLE) continue
+
+            // Get the view's position relative to this KeyboardView
+            val loc = IntArray(2)
+            candView.getLocationInWindow(loc)
+
+            val myLoc = IntArray(2)
+            this.getLocationInWindow(myLoc)
+
+            // Calculate relative position
+            val relX = loc[0] - myLoc[0]
+            val relY = loc[1] - myLoc[1]
+
+            // Check if tap is within this candidate
+            if (x >= relX && x < relX + candView.width &&
+                y >= relY && y < relY + candView.height) {
+
+                val text = candView.text?.toString() ?: continue
+                // Check if it's a "new" word by text color (cyan = new)
+                val isNew = candView.currentTextColor == Color.CYAN
+
+                return Pair(text, isNew)
+            }
+        }
+
+        return null
+    }
+    // =================================================================================
+    // END BLOCK: findCandidateAt
     // =================================================================================
 
     // =================================================================================
@@ -970,15 +1021,19 @@ class KeyboardView @JvmOverloads constructor(
         val y = event.getY(pointerIndex)
 
         // =================================================================================
-        // BLOCK: VIRTUAL MIRROR MODE - INTERCEPT ALL TOUCHES
-        // SUMMARY: All keys including spacebar go through orientation mode.
-        //          Spacebar trackpad will work after orientation completes.
+        // BLOCK: VIRTUAL MIRROR MODE - INTERCEPT TOUCHES (EXCEPT PREDICTIONS)
+        // SUMMARY: All key touches go through orientation mode, but prediction bar
+        //          touches should work immediately so users can tap suggestions.
         // =================================================================================
+
+        // Check if touch is in the prediction bar area (top portion of keyboard)
+        val isPredictionBarTouch = suggestionStrip != null && y < (suggestionStrip?.bottom ?: 0)
+
         val touchedView = findKeyView(x, y)
         val keyTag = touchedView?.tag as? String
 
         val callback = mirrorTouchCallback
-        if (callback != null) {
+        if (callback != null && !isPredictionBarTouch) {
             val shouldBlock = callback.invoke(x, y, action)
             if (shouldBlock) {
                 // Orientation mode is active - set flag and block ALL input
@@ -996,13 +1051,13 @@ class KeyboardView @JvmOverloads constructor(
             }
         }
         // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE - INTERCEPT TOUCH
+        // END BLOCK: VIRTUAL MIRROR MODE - INTERCEPT TOUCHES
         // =================================================================================
 
         // =================================================================================
-        // ORIENTATION MODE CHECK (fallback)
+        // ORIENTATION MODE CHECK (fallback, but skip for prediction bar)
         // =================================================================================
-        if (isOrientationModeActive) {
+        if (isOrientationModeActive && !isPredictionBarTouch) {
             currentActiveKey?.let {
                 val tag = it.tag as? String
                 if (tag != null) setKeyVisual(it, false, tag)
