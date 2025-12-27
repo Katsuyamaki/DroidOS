@@ -495,6 +495,17 @@ class KeyboardOverlay(
     // =================================================================================
 
     // =================================================================================
+    // FUNCTION: handleDeferredTap
+    // SUMMARY: Forwards deferred tap to KeyboardView for single key press in mirror mode.
+    // =================================================================================
+    fun handleDeferredTap(x: Float, y: Float) {
+        keyboardView?.handleDeferredTap(x, y)
+    }
+    // =================================================================================
+    // END BLOCK: handleDeferredTap
+    // =================================================================================
+
+    // =================================================================================
     // FUNCTION: isInOrientationMode
     // SUMMARY: Returns whether orientation mode is currently active.
     // @return true if orientation mode is active

@@ -499,6 +499,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
     // END BLOCK: orientationModeTimeout
     // =================================================================================
+
+    // =================================================================================
+    // MIRROR FADE OUT HANDLER
+    // SUMMARY: Fades the mirror keyboard to fully transparent after inactivity.
+    // =================================================================================
+    private val mirrorFadeHandler = Handler(Looper.getMainLooper())
+    private val mirrorFadeRunnable = Runnable {
+        mirrorKeyboardView?.animate()?.alpha(0f)?.setDuration(300)?.start()
+        mirrorKeyboardContainer?.animate()?.alpha(0f)?.setDuration(300)?.start()
+    }
+    // =================================================================================
+    // END BLOCK: MIRROR FADE OUT HANDLER
+    // =================================================================================
     // =================================================================================
     // END BLOCK: VIRTUAL MIRROR MODE VARIABLES
     // =================================================================================
@@ -1822,10 +1835,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             mirrorWindowManager = mirrorContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             mirrorKeyboardContainer = FrameLayout(mirrorContext)
             mirrorKeyboardContainer?.setBackgroundColor(0x40000000) // Semi-transparent bg
+            mirrorKeyboardContainer?.alpha = 0f // Start fully invisible
 
             // Create KeyboardView for the mirror
             mirrorKeyboardView = KeyboardView(mirrorContext, null, 0)
-            mirrorKeyboardView?.alpha = 0.2f // Start semi-transparent
+            mirrorKeyboardView?.alpha = 0f // Start fully invisible
 
             // Apply same scale
             val scale = prefs.prefKeyScale / 100f
@@ -1910,6 +1924,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         // Cancel any pending orientation mode timeout
         orientationModeHandler.removeCallbacks(orientationModeTimeout)
+        mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
         isInOrientationMode = false
     }
 
@@ -1922,9 +1937,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
     // FUNCTION: onMirrorKeyboardTouch
     // SUMMARY: Virtual Mirror Mode touch handling.
-    //          - Every new touch (ACTION_DOWN) starts orange trail
-    //          - After timeout (finger still), switches to blue trail
-    //          - Blue trail = normal typing on virtual display
+    //          - Every new touch: Show mirror + orange trail
+    //          - After timeout: Switch to blue trail, allow typing
+    //          - Single taps (quick touch) should also type after orientation
     // @return true to block input, false to allow input
     // =================================================================================
     fun onMirrorKeyboardTouch(x: Float, y: Float, action: Int): Boolean {
@@ -1942,7 +1957,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             MotionEvent.ACTION_DOWN -> {
                 Log.d(TAG, "Mirror touch DOWN - starting ORANGE trail")
 
-                // ALWAYS start with orange trail on new touch
+                // Cancel any pending fade
+                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
+
+                // Make mirror VISIBLE on touch
+                mirrorKeyboardView?.alpha = 0.9f
+                mirrorKeyboardContainer?.alpha = 1f
+                mirrorKeyboardContainer?.setBackgroundColor(0x80000000.toInt())
+
+                // Start orientation mode
                 isInOrientationMode = true
                 keyboardOverlay?.setOrientationMode(true)
 
@@ -1950,13 +1973,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 lastOrientX = x
                 lastOrientY = y
 
-                // Make mirror visible
-                mirrorKeyboardView?.alpha = 0.9f
-                mirrorKeyboardContainer?.setBackgroundColor(0x80000000.toInt())
-
-                // RESET trail color to ORANGE for new touch
-                mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())  // Orange
-                keyboardOverlay?.setOrientationTrailColor(0xFFFF9900.toInt())  // Orange
+                // Set ORANGE trail color
+                mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())
+                keyboardOverlay?.setOrientationTrailColor(0xFFFF9900.toInt())
 
                 // Clear old trails, start new orange trail on BOTH displays
                 mirrorTrailView?.clear()
@@ -1964,7 +1983,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 keyboardOverlay?.startOrientationTrail(x, y)
                 mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
-                // Start timeout - will switch to blue when finger is still
+                // Start timeout
                 orientationModeHandler.removeCallbacks(orientationModeTimeout)
                 orientationModeHandler.postDelayed(
                     orientationModeTimeout,
@@ -1976,16 +1995,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
             MotionEvent.ACTION_MOVE -> {
                 if (isInOrientationMode) {
-                    // ORANGE phase - draw orange trail, check movement threshold
+                    // ORANGE phase
                     val dx = x - lastOrientX
                     val dy = y - lastOrientY
                     val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                    // Draw orange trail on both displays
+                    // Draw orange trail
                     keyboardOverlay?.addOrientationTrailPoint(x, y)
                     mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
-                    // Only reset timeout if significant movement
+                    // Reset timeout only on significant movement
                     if (distance > MOVEMENT_THRESHOLD) {
                         lastOrientX = x
                         lastOrientY = y
@@ -1998,12 +2017,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
                     return true  // Block input
                 } else {
-                    // BLUE phase - draw blue trail on mirror, allow input
-                    // The physical blue trail is handled by KeyboardView
-                    // We just need to mirror it
+                    // BLUE phase - allow input, draw blue trail on mirror
                     mirrorTrailView?.addPoint(mirrorX, mirrorY)
-
-                    return false  // Allow input
+                    return false
                 }
             }
 
@@ -2012,21 +2028,30 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
                 orientationModeHandler.removeCallbacks(orientationModeTimeout)
 
+                val wasInOrientation = isInOrientationMode
+
                 if (isInOrientationMode) {
-                    // Lifted during orange - just clear trails
-                    Log.d(TAG, "Lifted during orange phase")
+                    // Quick tap - lifted during orange phase
+                    Log.d(TAG, "Quick tap detected - triggering deferred key press")
                     isInOrientationMode = false
                     keyboardOverlay?.setOrientationMode(false)
                     mirrorTrailView?.clear()
                     keyboardOverlay?.clearOrientationTrail()
+
+                    // CRITICAL: Trigger the key press that was deferred
+                    keyboardOverlay?.handleDeferredTap(x, y)
                 } else {
-                    // Lifted during blue - clear mirror trail
+                    // Normal lift after blue phase - clear mirror trail
                     mirrorTrailView?.clear()
                 }
 
                 // Fade mirror
-                mirrorKeyboardView?.alpha = 0.5f
+                mirrorKeyboardView?.alpha = 0.3f
                 mirrorKeyboardContainer?.setBackgroundColor(0x40000000)
+
+                // Schedule fade out
+                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
+                mirrorFadeHandler.postDelayed(mirrorFadeRunnable, 2000)
 
                 return false
             }

@@ -388,6 +388,27 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
 
     // =================================================================================
+    // FUNCTION: handleDeferredTap
+    // SUMMARY: Called when a quick tap happens during mirror orientation mode.
+    //          Since ACTION_DOWN was blocked, we manually trigger the key press here.
+    //          This allows single letter taps to work in virtual mirror mode.
+    // =================================================================================
+    fun handleDeferredTap(x: Float, y: Float) {
+        val touchedView = findKeyView(x, y)
+        val keyTag = touchedView?.tag as? String
+
+        if (touchedView != null && keyTag != null && keyTag != "SPACE") {
+            Log.d("KeyboardView", "Deferred tap on key: $keyTag")
+            // Trigger the full key press sequence
+            onKeyDown(keyTag, touchedView)
+            onKeyUp(keyTag, touchedView)
+        }
+    }
+    // =================================================================================
+    // END BLOCK: handleDeferredTap
+    // =================================================================================
+
+    // =================================================================================
     // FUNCTION: isOrientationModeActive
     // SUMMARY: Returns whether orientation mode is currently active.
     // @return true if orientation mode is blocking key input
@@ -1081,12 +1102,18 @@ class KeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 // If we slid to a new key
                 if (touchedView != currentActiveKey) {
-                    // Deactivate old
-                    currentActiveKey?.let { 
+                    // Deactivate old key
+                    currentActiveKey?.let {
                         val oldTag = it.tag as? String
-                        if (oldTag != null) setKeyVisual(it, false, oldTag) // Just visual off, don't commit input on slide-off
+                        if (oldTag != null) {
+                            setKeyVisual(it, false, oldTag)
+                            // CRITICAL: Stop any repeat when sliding off a key
+                            if (oldTag == currentRepeatKey) {
+                                stopRepeat()
+                            }
+                        }
                     }
-                    
+
                     // Activate new
                     if (touchedView != null && keyTag != null && keyTag != "SPACE") {
                         currentActiveKey = touchedView
