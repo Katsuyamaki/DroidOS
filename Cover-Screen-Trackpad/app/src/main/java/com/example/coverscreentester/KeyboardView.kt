@@ -360,6 +360,34 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
 
     // =================================================================================
+    // FUNCTION: startSwipeFromPosition
+    // SUMMARY: Initializes swipe tracking from a given position mid-gesture.
+    //          Called when switching from orange (orientation) to blue (typing) trail.
+    //          Sets up all the swipe state so subsequent MOVE events are tracked.
+    // =================================================================================
+    fun startSwipeFromPosition(x: Float, y: Float) {
+        Log.d("KeyboardView", "Starting swipe from position ($x, $y)")
+
+        // Initialize swipe tracking as if this was the ACTION_DOWN point
+        startTouchX = x
+        startTouchY = y
+        isSwiping = true  // Already swiping
+        swipePointerId = 0  // Assume primary pointer
+
+        // Clear and start the blue trail
+        swipeTrail?.clear()
+        swipeTrail?.visibility = View.VISIBLE
+        swipeTrail?.addPoint(x, y)
+
+        // Start the path collection
+        currentPath.clear()
+        currentPath.add(android.graphics.PointF(x, y))
+    }
+    // =================================================================================
+    // END BLOCK: startSwipeFromPosition
+    // =================================================================================
+
+    // =================================================================================
     // FUNCTION: isOrientationModeActive
     // SUMMARY: Returns whether orientation mode is currently active.
     // @return true if orientation mode is blocking key input

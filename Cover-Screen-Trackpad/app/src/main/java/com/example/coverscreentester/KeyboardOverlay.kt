@@ -472,6 +472,18 @@ class KeyboardOverlay(
     // =================================================================================
 
     // =================================================================================
+    // FUNCTION: startSwipeFromCurrentPosition
+    // SUMMARY: Called when switching from orange to blue trail mid-gesture.
+    //          Initializes swipe tracking so the path starts from the given position.
+    // =================================================================================
+    fun startSwipeFromCurrentPosition(x: Float, y: Float) {
+        keyboardView?.startSwipeFromPosition(x, y)
+    }
+    // =================================================================================
+    // END BLOCK: startSwipeFromCurrentPosition
+    // =================================================================================
+
+    // =================================================================================
     // FUNCTION: isInOrientationMode
     // SUMMARY: Returns whether orientation mode is currently active.
     // @return true if orientation mode is active
