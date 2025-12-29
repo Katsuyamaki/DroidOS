@@ -324,124 +324,77 @@ override fun setBrightness(displayId: Int, brightness: Int) {
 
 
     // === GET VISIBLE PACKAGES - START ===
-    // Detects which packages have visible windows on the specified displayId
-    // Uses dual-source detection to work with both physical and virtual displays
+    // Returns list of packages that are actually visible on the specified display
+    // Checks both mViewVisibility AND window frame bounds
+    // Windows moved off-screen (left >= 10000) are considered not visible
     override fun getVisiblePackages(displayId: Int): List<String> {
         val list = ArrayList<String>()
         val token = Binder.clearCallingIdentity()
         try {
             Log.d(TAG, "getVisiblePackages: Checking display $displayId")
+            val p = Runtime.getRuntime().exec("dumpsys window windows")
+            val r = BufferedReader(InputStreamReader(p.inputStream))
+            var line: String?
+            var currentPkg: String? = null
+            var isVisible = false
+            var onCorrectDisplay = false
+            var isOffScreen = false
+            val windowPattern = Pattern.compile("Window\\{[0-9a-f]+ u\\d+ ([^\\}/ ]+)")
+            // Pattern to match frame bounds like "frame=[50000,50000][50100,50100]" or "mFrame=[0,0][960,1080]"
+            val framePattern = Pattern.compile("(?:frame|mFrame)=\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]")
 
-            // === SOURCE 1: dumpsys window windows ===
-            // Best for physical displays, checks actual window visibility
-            try {
-                val p = Runtime.getRuntime().exec("dumpsys window windows")
-                val r = BufferedReader(InputStreamReader(p.inputStream))
-                var line: String?
-                var currentPkg: String? = null
-                var isVisible = false
-                var onCorrectDisplay = false
-                val windowPattern = Pattern.compile("Window\\{[0-9a-f]+ u\\d+ ([^\\}/ ]+)")
+            while (r.readLine().also { line = it } != null) {
+                val l = line!!.trim()
 
-                while (r.readLine().also { line = it } != null) {
-                    val l = line!!.trim()
-                    if (l.startsWith("Window #")) {
-                        // Check previous window
-                        if (currentPkg != null && isVisible && onCorrectDisplay) {
-                            if (isUserApp(currentPkg!!) && !list.contains(currentPkg!!)) {
-                                list.add(currentPkg!!)
-                                Log.d(TAG, "getVisiblePackages: Found visible (window): $currentPkg")
-                            }
-                        }
-                        // Reset for new window
-                        currentPkg = null; isVisible = false; onCorrectDisplay = false
-                        val matcher = windowPattern.matcher(l)
-                        if (matcher.find()) currentPkg = matcher.group(1)
-                    }
-
-                    // Check for display ID - support multiple formats for virtual displays
-                    if (l.contains("displayId=$displayId") ||
-                        l.contains("mDisplayId=$displayId") ||
-                        l.contains("Display #$displayId") ||
-                        l.contains("display=$displayId")) {
-                        onCorrectDisplay = true
-                    }
-
-                    // Check visibility - support multiple formats
-                    if (l.contains("mViewVisibility=0x0") ||
-                        l.contains("isVisible=true") ||
-                        l.contains("mShownState=SHOWN")) {
-                        isVisible = true
-                    }
+                // New window entry - reset state
+                if (l.startsWith("Window #")) {
+                    currentPkg = null
+                    isVisible = false
+                    onCorrectDisplay = false
+                    isOffScreen = false
+                    val matcher = windowPattern.matcher(l)
+                    if (matcher.find()) currentPkg = matcher.group(1)
                 }
 
-                // Don't forget last window
-                if (currentPkg != null && isVisible && onCorrectDisplay) {
+                // Check display
+                if (l.contains("displayId=$displayId") || l.contains("mDisplayId=$displayId")) {
+                    onCorrectDisplay = true
+                }
+
+                // Check visibility flag
+                if (l.contains("mViewVisibility=0x0")) {
+                    isVisible = true
+                }
+
+                // Check frame bounds - if left >= 10000, window is off-screen (minimized)
+                val frameMatcher = framePattern.matcher(l)
+                if (frameMatcher.find()) {
+                    try {
+                        val left = frameMatcher.group(1)?.toIntOrNull() ?: 0
+                        if (left >= 10000) {
+                            isOffScreen = true
+                            Log.d(TAG, "getVisiblePackages: $currentPkg is off-screen (left=$left)")
+                        }
+                    } catch (e: Exception) {}
+                }
+
+                // Add to list if truly visible (on correct display, view visible, NOT off-screen)
+                if (currentPkg != null && isVisible && onCorrectDisplay && !isOffScreen) {
                     if (isUserApp(currentPkg!!) && !list.contains(currentPkg!!)) {
                         list.add(currentPkg!!)
+                        Log.d(TAG, "getVisiblePackages: Found visible (window): $currentPkg")
                     }
+                    currentPkg = null
                 }
-                r.close()
-                p.waitFor()
-            } catch (e: Exception) {
-                Log.e(TAG, "getVisiblePackages: window source failed", e)
             }
-
-            // === SOURCE 2: dumpsys activity activities ===
-            // Better for virtual displays, checks activity resume state
-            // Only add packages not already found
-            try {
-                val p2 = Runtime.getRuntime().exec("dumpsys activity activities")
-                val r2 = BufferedReader(InputStreamReader(p2.inputStream))
-                var line2: String?
-                var currentScanningDisplayId = -1
-                var inResumedSection = false
-                val recordPattern = Pattern.compile("ActivityRecord\\{[0-9a-f]+ u\\d+ ([a-zA-Z0-9_.]+)/")
-
-                while (r2.readLine().also { line2 = it } != null) {
-                    val l = line2!!.trim()
-
-                    // Track current display
-                    if (l.startsWith("Display #")) {
-                        val displayMatch = Regex("Display #(\\d+)").find(l)
-                        if (displayMatch != null) {
-                            currentScanningDisplayId = displayMatch.groupValues[1].toInt()
-                        }
-                        inResumedSection = false
-                        continue
-                    }
-
-                    // Check for resumed activities section
-                    if (l.contains("mResumedActivity") || l.contains("resumedActivity")) {
-                        inResumedSection = true
-                    }
-
-                    // Only process for target display
-                    if (currentScanningDisplayId == displayId && inResumedSection) {
-                        val matcher = recordPattern.matcher(l)
-                        if (matcher.find()) {
-                            val pkg = matcher.group(1)
-                            if (pkg != null && isUserApp(pkg) && !list.contains(pkg)) {
-                                list.add(pkg)
-                                Log.d(TAG, "getVisiblePackages: Found visible (activity): $pkg")
-                            }
-                        }
-                        inResumedSection = false  // Only one resumed activity per display
-                    }
-                }
-                r2.close()
-                p2.waitFor()
-            } catch (e: Exception) {
-                Log.e(TAG, "getVisiblePackages: activity source failed", e)
-            }
-
-            Log.d(TAG, "getVisiblePackages: display=$displayId result=${list.joinToString()}")
-
+            r.close()
+            p.waitFor()
         } catch (e: Exception) {
-            Log.e(TAG, "getVisiblePackages: Failed", e)
+            Log.e(TAG, "getVisiblePackages: Error", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
+        Log.d(TAG, "getVisiblePackages: display=$displayId result=${list.joinToString()}")
         return list
     }
     // === GET VISIBLE PACKAGES - END ===
@@ -745,61 +698,56 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // === DEBUG DUMP TASKS - END ===
 
     // === MOVE TASK TO BACK / MINIMIZE TASK - START ===
-    // Minimizes a task by moving it far outside the visible display area
-    // Negative coords don't work, so use large positive coords instead
-    // Position task at 50000,50000 which is far outside any display
+    // Minimizes a task by setting windowing mode to 0 (undefined/minimized)
+    // Mode 0 removes the task from freeform rendering, making it truly invisible
+    // This is what Android's native minimize button does
     override fun moveTaskToBack(taskId: Int) {
         val token = Binder.clearCallingIdentity()
         try {
-            Log.d(TAG, "moveTaskToBack: Moving taskId=$taskId off-screen")
+            Log.d(TAG, "moveTaskToBack: Minimizing taskId=$taskId via windowing mode 0")
 
-            // STEP 1: Set freeform windowing mode (mode 5) - REQUIRED before resize
-            val modeCmd = "am task set-windowing-mode $taskId 5"
+            // Set windowing mode to 0 (WINDOWING_MODE_UNDEFINED = minimized)
+            val modeCmd = "am task set-windowing-mode $taskId 0"
             Log.d(TAG, "moveTaskToBack: $modeCmd")
             val modeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd))
-            modeProc.waitFor()
+            val modeExit = modeProc.waitFor()
+            Log.d(TAG, "moveTaskToBack: set-windowing-mode 0 exitCode=$modeExit")
+
+            if (modeExit == 0) {
+                Log.d(TAG, "moveTaskToBack: Task $taskId minimized successfully via mode 0")
+                return
+            }
+
+            // If mode 0 didn't work, try the off-screen approach as fallback
+            Log.w(TAG, "moveTaskToBack: Mode 0 failed, trying off-screen fallback")
+
+            // Set to freeform first
+            val freeformCmd = "am task set-windowing-mode $taskId 5"
+            Runtime.getRuntime().exec(arrayOf("sh", "-c", freeformCmd)).waitFor()
             Thread.sleep(100)
 
-            // STEP 2: Move task far outside visible area using LARGE POSITIVE coordinates
-            // Any display is at most ~4000 pixels, so 50000 is definitely off-screen
-            val left = 50000
-            val top = 50000
-            val right = 50100  // 100x100 size
-            val bottom = 50100
-
-            val resizeCmd = "am task resize $taskId $left $top $right $bottom"
+            // Move far off-screen
+            val resizeCmd = "am task resize $taskId 99999 99999 100000 100000"
             Log.d(TAG, "moveTaskToBack: $resizeCmd")
             val resizeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd))
-            val exitCode = resizeProc.waitFor()
-            Log.d(TAG, "moveTaskToBack: exitCode=$exitCode for task $taskId")
+            val resizeExit = resizeProc.waitFor()
+            Log.d(TAG, "moveTaskToBack: resize exitCode=$resizeExit")
 
-            if (exitCode == 0) {
-                Log.d(TAG, "moveTaskToBack: Task $taskId moved off-screen successfully")
-            } else {
-                // Try alternative: tiny window at bottom-right corner (might still be visible but tiny)
-                Log.w(TAG, "moveTaskToBack: Large coords failed, trying tiny window approach")
-                val tinyCmd = "am task resize $taskId 9999 9999 10000 10000"
-                Log.d(TAG, "moveTaskToBack: $tinyCmd")
-                val tinyProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", tinyCmd))
-                val tinyExit = tinyProc.waitFor()
-                Log.d(TAG, "moveTaskToBack: tiny exitCode=$tinyExit")
-
-                if (tinyExit != 0) {
-                    // Final fallback: legacy method (doesn't hide on virtual displays but at least reorders)
-                    Log.w(TAG, "moveTaskToBack: All resize attempts failed, using legacy method")
-                    try {
-                        val am = Class.forName("android.app.ActivityManagerNative")
-                            .getMethod("getDefault").invoke(null)
-                        val moveMethod = am.javaClass.getMethod(
-                            "moveTaskToBack",
-                            Int::class.javaPrimitiveType,
-                            Boolean::class.javaPrimitiveType
-                        )
-                        moveMethod.invoke(am, taskId, true)
-                        Log.d(TAG, "moveTaskToBack: Legacy method succeeded")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "moveTaskToBack: Legacy method also failed", e)
-                    }
+            if (resizeExit != 0) {
+                // Final fallback: legacy moveTaskToBack
+                Log.w(TAG, "moveTaskToBack: All methods failed, using legacy")
+                try {
+                    val am = Class.forName("android.app.ActivityManagerNative")
+                        .getMethod("getDefault").invoke(null)
+                    val moveMethod = am.javaClass.getMethod(
+                        "moveTaskToBack",
+                        Int::class.javaPrimitiveType,
+                        Boolean::class.javaPrimitiveType
+                    )
+                    moveMethod.invoke(am, taskId, true)
+                    Log.d(TAG, "moveTaskToBack: Legacy method succeeded")
+                } catch (e: Exception) {
+                    Log.e(TAG, "moveTaskToBack: Legacy method failed", e)
                 }
             }
 
