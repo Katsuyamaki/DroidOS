@@ -43,6 +43,7 @@ import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import android.os.PowerManager
 import java.util.ArrayList
 import com.example.coverscreentester.BuildConfig
 
@@ -61,6 +62,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private val inputExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private var lastBlockTime: Long = 0
+
+    // =================================================================================
+    // VIRTUAL DISPLAY KEEP-ALIVE SYSTEM
+    // SUMMARY: Prevents system from timing out the display when using trackpad on a
+    //          remote/virtual display. The overlay consumes touch events so the system
+    //          doesn't see "real" user activity. We solve this by:
+    //          1. Holding a SCREEN_BRIGHT_WAKE_LOCK when targeting remote display
+    //          2. Periodically calling userActivity() via shell during active touch
+    // =================================================================================
+    private var powerManager: PowerManager? = null
+    private var displayWakeLock: PowerManager.WakeLock? = null
+    private var lastUserActivityPing: Long = 0
+    private val USER_ACTIVITY_PING_INTERVAL_MS = 30_000L // Ping every 30 seconds during active use
+    // =================================================================================
+    // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE SYSTEM VARIABLES
+    // =================================================================================
 
     private var bubbleView: View? = null
     private var trackpadLayout: FrameLayout? = null
@@ -90,6 +107,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var pendingRestoreTrackpad = false
     private var pendingRestoreKeyboard = false
     private var hasPendingRestore = false
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE STATE
+    // SUMMARY: Tracks component visibility before entering mirror mode so we can
+    //          restore to previous state when exiting. Also stores the display ID
+    //          we were targeting before mirror mode was enabled.
+    // =================================================================================
+    private var preMirrorTrackpadVisible = false
+    private var preMirrorKeyboardVisible = false
+    private var preMirrorTargetDisplayId = 0
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE STATE
+    // =================================================================================
 
     private var isVoiceActive = false
     
@@ -711,6 +741,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onCreate() {
         super.onCreate()
         try { displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; displayManager?.registerDisplayListener(this, handler) } catch (e: Exception) {}
+
+        // =================================================================================
+        // VIRTUAL DISPLAY KEEP-ALIVE: Initialize PowerManager
+        // =================================================================================
+        powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        // =================================================================================
+        // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE PowerManager Init
+        // =================================================================================
+
         loadPrefs()
         val filter = IntentFilter().apply { 
             addAction("CYCLE_INPUT_TARGET")
@@ -1616,6 +1655,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (ignoreTouchSequence) return
+                // VIRTUAL DISPLAY KEEP-ALIVE: Ping user activity during active touch on remote display
+                if (inputTargetDisplayId != currentDisplayId) pingUserActivity()
                 if (kotlin.math.sqrt((event.x - touchDownX) * (event.x - touchDownX) + (event.y - touchDownY) * (event.y - touchDownY)) > TAP_SLOP_PX) handler.removeCallbacks(longPressRunnable)
                 val dx = (event.x - lastTouchX) * prefs.cursorSpeed; val dy = (event.y - lastTouchY) * prefs.cursorSpeed
                 val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
@@ -1749,15 +1790,131 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} } }
     fun performRotation() { rotationAngle = (rotationAngle + 90) % 360; cursorView?.rotation = rotationAngle.toFloat() }
     fun getProfileKey(): String = "P_${uiScreenWidth}_${uiScreenHeight}"
-    
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE PROFILE KEY
+    // SUMMARY: Returns a unique profile key for mirror mode, separate from normal
+    //          display-based profiles. This allows mirror mode to have its own
+    //          trackpad/keyboard layout that persists independently.
+    // =================================================================================
+    fun getMirrorModeProfileKey(): String = "MIRROR_MODE_${uiScreenWidth}_${uiScreenHeight}"
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE PROFILE KEY
+    // =================================================================================
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE LAYOUT SAVE
+    // SUMMARY: Saves the current layout to the mirror mode profile. Called when
+    //          exiting mirror mode or when explicitly saving while in mirror mode.
+    // =================================================================================
+    fun saveMirrorModeLayout() {
+        val currentKbX = keyboardOverlay?.getViewX() ?: savedKbX
+        val currentKbY = keyboardOverlay?.getViewY() ?: savedKbY
+        val currentKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
+        val currentKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
+
+        savedKbX = currentKbX; savedKbY = currentKbY; savedKbW = currentKbW; savedKbH = currentKbH
+        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+        val key = getMirrorModeProfileKey()
+
+        p.putInt("X_$key", trackpadParams.x)
+        p.putInt("Y_$key", trackpadParams.y)
+        p.putInt("W_$key", trackpadParams.width)
+        p.putInt("H_$key", trackpadParams.height)
+
+        val kbX = keyboardOverlay?.getViewX() ?: 0
+        val kbY = keyboardOverlay?.getViewY() ?: 0
+        val kbW = keyboardOverlay?.getViewWidth() ?: 0
+        val kbH = keyboardOverlay?.getViewHeight() ?: 0
+
+        // Save settings specific to mirror mode
+        p.putString("SETTINGS_$key", "${prefs.cursorSpeed};${prefs.scrollSpeed};${if(prefs.prefTapScroll) 1 else 0};${if(prefs.prefReverseScroll) 1 else 0};${prefs.prefAlpha};${prefs.prefBgAlpha};${prefs.prefKeyboardAlpha};${prefs.prefHandleSize};${prefs.prefHandleTouchSize};${prefs.prefScrollTouchSize};${prefs.prefScrollVisualSize};${prefs.prefCursorSize};${prefs.prefKeyScale};${if(prefs.prefAutomationEnabled) 1 else 0};${if(prefs.prefAnchored) 1 else 0};${prefs.prefBubbleSize};${prefs.prefBubbleAlpha};${prefs.prefBubbleIconIndex};${prefs.prefBubbleX};${prefs.prefBubbleY};${prefs.hardkeyVolUpTap};${prefs.hardkeyVolUpDouble};${prefs.hardkeyVolUpHold};${prefs.hardkeyVolDownTap};${prefs.hardkeyVolDownDouble};${prefs.hardkeyVolDownHold};${prefs.hardkeyPowerDouble};$kbX;$kbY;$kbW;$kbH")
+
+        p.apply()
+        Log.d(TAG, "Mirror mode layout saved: $key")
+    }
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE LAYOUT SAVE
+    // =================================================================================
+
+    // =================================================================================
+    // VIRTUAL MIRROR MODE LAYOUT LOAD
+    // SUMMARY: Loads the mirror mode profile layout. Called when entering mirror mode.
+    //          If no saved profile exists, uses sensible defaults.
+    // =================================================================================
+    fun loadMirrorModeLayout() {
+        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val key = getMirrorModeProfileKey()
+
+        // Check if mirror mode profile exists
+        val hasSavedLayout = p.contains("X_$key")
+
+        if (hasSavedLayout) {
+            trackpadParams.x = p.getInt("X_$key", 100)
+            trackpadParams.y = p.getInt("Y_$key", 100)
+            trackpadParams.width = p.getInt("W_$key", 400)
+            trackpadParams.height = p.getInt("H_$key", 300)
+            try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception){}
+
+            val settings = p.getString("SETTINGS_$key", null)
+            if (settings != null) {
+                val parts = settings.split(";")
+                if (parts.size >= 17) {
+                    prefs.cursorSpeed = parts[0].toFloat(); prefs.scrollSpeed = parts[1].toFloat()
+                    prefs.prefTapScroll = parseBoolean(parts[2]); prefs.prefReverseScroll = parseBoolean(parts[3])
+                    prefs.prefAlpha = parts[4].toInt(); prefs.prefBgAlpha = parts[5].toInt()
+                    prefs.prefKeyboardAlpha = parts[6].toInt(); prefs.prefHandleSize = parts[7].toInt()
+                    prefs.prefHandleTouchSize = parts[8].toInt(); prefs.prefScrollTouchSize = parts[9].toInt()
+                    prefs.prefScrollVisualSize = parts[10].toInt(); prefs.prefCursorSize = parts[11].toInt()
+                    prefs.prefKeyScale = parts[12].toInt(); prefs.prefAutomationEnabled = parseBoolean(parts[13])
+                    prefs.prefAnchored = parseBoolean(parts[14]); prefs.prefBubbleSize = parts[15].toInt()
+                    prefs.prefBubbleAlpha = parts[16].toInt()
+
+                    if (parts.size >= 31) {
+                        savedKbX = parts[27].toInt()
+                        savedKbY = parts[28].toInt()
+                        savedKbW = parts[29].toInt()
+                        savedKbH = parts[30].toInt()
+                        keyboardOverlay?.setWindowBounds(savedKbX, savedKbY, savedKbW, savedKbH)
+                    }
+
+                    updateBorderColor(currentBorderColor)
+                    updateLayoutSizes()
+                    updateScrollSize()
+                    updateHandleSize()
+                    updateCursorSize()
+                    keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
+                    keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
+                    keyboardOverlay?.setAnchored(prefs.prefAnchored)
+                }
+            }
+            Log.d(TAG, "Mirror mode layout loaded: $key")
+        } else {
+            Log.d(TAG, "No saved mirror mode layout, using current settings")
+        }
+    }
+    // =================================================================================
+    // END BLOCK: VIRTUAL MIRROR MODE LAYOUT LOAD
+    // =================================================================================
+
     fun saveLayout() {
+        // =================================================================================
+        // MIRROR MODE CHECK: If in mirror mode, save to mirror profile instead
+        // =================================================================================
+        if (prefs.prefVirtualMirrorMode && inputTargetDisplayId != currentDisplayId) {
+            saveMirrorModeLayout()
+            return
+        }
+        // =================================================================================
+        // END BLOCK: MIRROR MODE CHECK
+        // =================================================================================
 
         // Cache the current values
         val currentKbX = keyboardOverlay?.getViewX() ?: savedKbX
         val currentKbY = keyboardOverlay?.getViewY() ?: savedKbY
         val currentKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
         val currentKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
-        
+
         // Update local memory
         savedKbX = currentKbX; savedKbY = currentKbY; savedKbW = currentKbW; savedKbH = currentKbH
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit(); val key = getProfileKey()
@@ -1815,9 +1972,72 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     fun resetTrackpadPosition() { trackpadParams.x = 100; trackpadParams.y = 100; trackpadParams.width = 400; trackpadParams.height = 300; windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }    fun cycleInputTarget() {
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
-        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)") }
-        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId") }
+        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() }
+        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() }
     }
+
+    // =================================================================================
+    // VIRTUAL DISPLAY KEEP-ALIVE: Wake Lock Management
+    // SUMMARY: Acquires/releases a SCREEN_BRIGHT wake lock when targeting a remote display.
+    //          This prevents the system from timing out the display during active use.
+    //          Called when cycling target display or when inputTargetDisplayId changes.
+    // =================================================================================
+    private fun acquireDisplayWakeLock() {
+        if (displayWakeLock?.isHeld == true) return // Already held
+        try {
+            displayWakeLock = powerManager?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "DroidOS:VirtualDisplayKeepAlive"
+            )
+            displayWakeLock?.acquire(60 * 60 * 1000L) // 1 hour max, will release manually
+            Log.d(TAG, "Display wake lock ACQUIRED for remote display")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to acquire display wake lock", e)
+        }
+    }
+
+    private fun releaseDisplayWakeLock() {
+        try {
+            if (displayWakeLock?.isHeld == true) {
+                displayWakeLock?.release()
+                Log.d(TAG, "Display wake lock RELEASED")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release display wake lock", e)
+        }
+        displayWakeLock = null
+    }
+
+    private fun pingUserActivity() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastUserActivityPing < USER_ACTIVITY_PING_INTERVAL_MS) return
+        lastUserActivityPing = now
+
+        // Ping the power manager via shell to reset screen timeout
+        Thread {
+            try {
+                // This simulates user activity on display 0 (main display)
+                // Even when using virtual display, we want to keep the physical display awake
+                shellService?.runCommand("input keyevent --longpress 0") // KEYCODE_UNKNOWN - no visible effect
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to ping user activity", e)
+            }
+        }.start()
+    }
+
+    private fun updateWakeLockState() {
+        if (inputTargetDisplayId != currentDisplayId && inputTargetDisplayId >= 0) {
+            // Targeting remote/virtual display - acquire wake lock
+            acquireDisplayWakeLock()
+        } else {
+            // Targeting local display - release wake lock
+            releaseDisplayWakeLock()
+        }
+    }
+    // =================================================================================
+    // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE Wake Lock Management
+    // =================================================================================
+
     private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
     private fun removeRemoteCursor() { try { if (remoteCursorLayout != null && remoteWindowManager != null) { remoteWindowManager?.removeView(remoteCursorLayout) } } catch (e: Exception) {}; remoteCursorLayout = null; remoteCursorView = null; remoteWindowManager = null }
 
@@ -2124,13 +2344,118 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         return isInOrientationMode
     }
 
-    /**
-     * Toggles Virtual Mirror Mode on/off.
-     */
+    // =================================================================================
+    // FUNCTION: toggleVirtualMirrorMode
+    // SUMMARY: Enhanced toggle that automatically:
+    //          - When ON: Saves current state, switches to virtual display, shows
+    //            keyboard and trackpad, loads mirror mode profile
+    //          - When OFF: Saves mirror mode profile, restores previous visibility
+    //            state, switches back to local display, loads normal profile
+    // =================================================================================
     fun toggleVirtualMirrorMode() {
-        prefs.prefVirtualMirrorMode = !prefs.prefVirtualMirrorMode
-        updatePref("virtual_mirror_mode", prefs.prefVirtualMirrorMode.toString())
+        val wasEnabled = prefs.prefVirtualMirrorMode
+        prefs.prefVirtualMirrorMode = !wasEnabled
+
+        if (prefs.prefVirtualMirrorMode) {
+            // === ENTERING MIRROR MODE ===
+            Log.d(TAG, "Entering Virtual Mirror Mode")
+
+            // 1. Save current state before changes
+            preMirrorTrackpadVisible = isTrackpadVisible
+            preMirrorKeyboardVisible = isCustomKeyboardVisible
+            preMirrorTargetDisplayId = inputTargetDisplayId
+
+            // 2. Save current layout to normal profile before switching
+            saveLayout()
+
+            // 3. Find and switch to a virtual/remote display
+            val displays = displayManager?.displays ?: emptyArray()
+            var targetDisplay: Display? = null
+            for (d in displays) {
+                if (d.displayId != currentDisplayId && d.displayId >= 2) {
+                    // Prefer virtual displays (ID >= 2)
+                    targetDisplay = d
+                    break
+                }
+            }
+            // Fallback to any non-current display
+            if (targetDisplay == null) {
+                for (d in displays) {
+                    if (d.displayId != currentDisplayId) {
+                        targetDisplay = d
+                        break
+                    }
+                }
+            }
+
+            if (targetDisplay != null) {
+                // Switch cursor target to remote display
+                inputTargetDisplayId = targetDisplay.displayId
+                updateTargetMetrics(inputTargetDisplayId)
+                createRemoteCursor(inputTargetDisplayId)
+                cursorX = targetScreenWidth / 2f
+                cursorY = targetScreenHeight / 2f
+                remoteCursorParams.x = cursorX.toInt()
+                remoteCursorParams.y = cursorY.toInt()
+                try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+                cursorView?.visibility = View.GONE
+                updateBorderColor(0xFFFF00FF.toInt())
+
+                // 4. Load mirror mode profile
+                loadMirrorModeLayout()
+
+                // 5. Ensure keyboard and trackpad are visible
+                if (!isTrackpadVisible) toggleTrackpad()
+                if (!isCustomKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
+
+                // 6. Create mirror keyboard
+                updateVirtualMirrorMode()
+
+                showToast("Mirror Mode ON → Display ${inputTargetDisplayId}")
+            } else {
+                // No remote display available
+                prefs.prefVirtualMirrorMode = false
+                showToast("No virtual display found. Enable Virtual Display first.")
+            }
+
+        } else {
+            // === EXITING MIRROR MODE ===
+            Log.d(TAG, "Exiting Virtual Mirror Mode")
+
+            // 1. Save mirror mode layout
+            saveMirrorModeLayout()
+
+            // 2. Remove mirror keyboard
+            removeMirrorKeyboard()
+
+            // 3. Switch back to local display
+            inputTargetDisplayId = currentDisplayId
+            targetScreenWidth = uiScreenWidth
+            targetScreenHeight = uiScreenHeight
+            removeRemoteCursor()
+            cursorX = uiScreenWidth / 2f
+            cursorY = uiScreenHeight / 2f
+            cursorParams.x = cursorX.toInt()
+            cursorParams.y = cursorY.toInt()
+            try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {}
+            cursorView?.visibility = View.VISIBLE
+            updateBorderColor(0x55FFFFFF.toInt())
+
+            // 4. Load normal profile
+            loadLayout()
+
+            // 5. Restore previous visibility state
+            if (isTrackpadVisible != preMirrorTrackpadVisible) toggleTrackpad()
+            if (isCustomKeyboardVisible != preMirrorKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
+
+            showToast("Mirror Mode OFF → Local Display")
+        }
+
+        savePrefs()
     }
+    // =================================================================================
+    // END BLOCK: FUNCTION toggleVirtualMirrorMode
+    // =================================================================================
 
     // =================================================================================
     // END BLOCK: VIRTUAL MIRROR MODE FUNCTIONS
@@ -2166,6 +2491,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onDisplayAdded(displayId: Int) {}
     override fun onDisplayRemoved(displayId: Int) {}
     override fun onDisplayChanged(displayId: Int) {
+        // =================================================================================
+        // VIRTUAL DISPLAY PROTECTION
+        // SUMMARY: Skip auto-switch logic when targeting a virtual display (ID >= 2).
+        //          This prevents the overlay from "crashing" back to physical screens
+        //          when display states flicker during virtual display use.
+        // =================================================================================
+        if (inputTargetDisplayId >= 2) {
+            Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $inputTargetDisplayId")
+            return
+        }
+        // =================================================================================
+        // END BLOCK: VIRTUAL DISPLAY PROTECTION
+        // =================================================================================
+
         // We only monitor the Main Screen (0) state changes to determine "Open/Closed"
         if (displayId == 0) {
             val display = displayManager?.getDisplay(0)
@@ -2208,6 +2547,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     
     override fun onDestroy() {
         super.onDestroy()
+        // =================================================================================
+        // VIRTUAL DISPLAY KEEP-ALIVE: Release wake lock on destroy
+        // =================================================================================
+        releaseDisplayWakeLock()
+        // =================================================================================
+        // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE onDestroy cleanup
+        // =================================================================================
         inputExecutor.shutdownNow() // Stop the worker thread
         if (Build.VERSION.SDK_INT >= 24) { try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {} }
         Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()

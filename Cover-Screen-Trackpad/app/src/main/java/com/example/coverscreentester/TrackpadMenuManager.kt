@@ -248,19 +248,24 @@ class TrackpadMenuManager(
 
         // =================================================================================
         // VIRTUAL MIRROR MODE TOGGLE
-        // SUMMARY: Toggles the virtual mirror keyboard mode for AR glasses/remote displays.
-        //          When enabled, a mirror copy of the keyboard appears on the remote display.
-        //          Touching the physical keyboard shows an orange orientation trail on both
-        //          displays until the finger stops, then normal typing resumes.
+        // SUMMARY: Enhanced toggle for AR glasses/remote displays.
+        //          When enabled:
+        //          - Auto-switches cursor to virtual display
+        //          - Shows keyboard and trackpad
+        //          - Loads mirror-mode specific profile
+        //          When disabled:
+        //          - Returns to local display
+        //          - Restores previous visibility state
+        //          - Saves/loads separate profile
         // =================================================================================
         list.add(TrackpadMenuAdapter.MenuItem(
             "Virtual Mirror Mode",
             if(p.prefVirtualMirrorMode) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
             TrackpadMenuAdapter.Type.TOGGLE,
             if(p.prefVirtualMirrorMode) 1 else 0
-        ) { v ->
-            service.updatePref("virtual_mirror_mode", v)
-            loadTab(TAB_MAIN)  // Refresh to update icon
+        ) { _ ->
+            service.toggleVirtualMirrorMode()
+            hide()  // Close menu since display context may change
         })
         // =================================================================================
         // END BLOCK: VIRTUAL MIRROR MODE TOGGLE
