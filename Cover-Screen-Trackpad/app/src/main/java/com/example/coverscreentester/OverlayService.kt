@@ -919,6 +919,59 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 "FORCE_KEYBOARD" -> toggleCustomKeyboard()
                 "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
                 "OPEN_MENU" -> menuManager?.show()
+                
+                // =================================================================================
+                // INTER-APP COMMANDS (forwarded from InterAppCommandReceiver)
+                // SUMMARY: Handles commands from DroidOS Launcher and ADB.
+                //          These enable soft restart, z-order fixes, and virtual display control.
+                // =================================================================================
+                
+                "com.example.coverscreentester.SOFT_RESTART" -> {
+                    Log.d(TAG, "onStartCommand: SOFT_RESTART")
+                    val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
+                    handler.post {
+                        removeOldViews()
+                        handler.postDelayed({
+                            setupUI(targetDisplayId)
+                            enforceZOrder()
+                            showToast("Trackpad Soft Restarted")
+                        }, 200)
+                    }
+                }
+                
+                "com.example.coverscreentester.MOVE_TO_VIRTUAL" -> {
+                    Log.d(TAG, "onStartCommand: MOVE_TO_VIRTUAL")
+                    val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
+                    handler.post {
+                        moveToVirtualDisplayAndEnableMirror(virtualDisplayId)
+                    }
+                }
+                
+                "com.example.coverscreentester.RETURN_TO_PHYSICAL" -> {
+                    Log.d(TAG, "onStartCommand: RETURN_TO_PHYSICAL")
+                    val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
+                    handler.post {
+                        returnToPhysicalDisplay(physicalDisplayId)
+                    }
+                }
+                
+                "com.example.coverscreentester.ENFORCE_ZORDER" -> {
+                    Log.d(TAG, "onStartCommand: ENFORCE_ZORDER")
+                    handler.post { enforceZOrder() }
+                }
+                
+                "com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR" -> {
+                    Log.d(TAG, "onStartCommand: TOGGLE_VIRTUAL_MIRROR")
+                    handler.post { toggleVirtualMirrorMode() }
+                }
+                
+                "com.example.coverscreentester.GET_STATUS" -> {
+                    Log.d(TAG, "onStartCommand: GET_STATUS - Display:$currentDisplayId Target:$inputTargetDisplayId Mirror:${prefs.prefVirtualMirrorMode}")
+                    showToast("D:$currentDisplayId T:$inputTargetDisplayId M:${if(prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
+                }
+                // =================================================================================
+                // END BLOCK: INTER-APP COMMANDS
+                // =================================================================================
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
                 val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
