@@ -3200,17 +3200,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     fun switchDisplay() {
-        val targetId = if (currentDisplayId == 0) 1 else 0
-        val display = displayManager?.getDisplay(targetId)
-        if (display != null) {
-            setupUI(targetId)
-            // Save as preference so it persists restarts
-            prefs.prefBubbleX = 50 // Reset position slightly to ensure visibility
-            prefs.prefBubbleY = 300
-            savePrefs()
-            showToast("Switched to Display $targetId")
+        // ACTION: Smart Toggle
+        // If we are on Main (0) or Cover (1), we assume we want to go to Virtual.
+        if (currentDisplayId == 0 || currentDisplayId == 1) {
+            
+            // 1. Broadcast: Create Virtual Display
+            val intentToggle = Intent("com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL_DISPLAY")
+            intentToggle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            sendBroadcast(intentToggle)
+
+            showToast("Initializing Virtual Display...")
+
+            // 2. Wait for display creation, then Cycle
+            handler.postDelayed({
+                 val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+                 intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+                 sendBroadcast(intentCycle)
+            }, 1000) // Increased wait time to 1s to be safe
+            
         } else {
-            showToast("Display $targetId unavailable")
+            // If we are already on Virtual (or other), just cycle back to Main
+            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            sendBroadcast(intentCycle)
         }
     }
 }

@@ -18,6 +18,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.hardware.display.DisplayManager
+import android.media.ImageReader
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -52,6 +53,10 @@ import kotlin.math.hypot
 import kotlin.math.min
 
 class FloatingLauncherService : AccessibilityService() {
+
+    private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
+    private var virtualImageReader: ImageReader? = null // Keeps surface alive
+    private val ACTION_TOGGLE_VIRTUAL = "com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL_DISPLAY"
 
     // === RECEIVER - START ===
     private val launcherReceiver = object : BroadcastReceiver() {
@@ -244,12 +249,14 @@ class FloatingLauncherService : AccessibilityService() {
                 if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS) 
             }
             else if (action == ACTION_CYCLE_DISPLAY) {
-                cycleDisplay()
+                switchDisplay()
             }
             else if (action == Intent.ACTION_SCREEN_ON) {
                 if (isScreenOffState) {
                     wakeUp()
                 }
+            } else if (action == ACTION_TOGGLE_VIRTUAL) {
+                toggleVirtualDisplay()
             }
         }
     }
@@ -1150,10 +1157,81 @@ class FloatingLauncherService : AccessibilityService() {
     // === LAUNCH VIA SHELL - END ===
 
     
-    private fun cycleDisplay() {
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val displays = dm.displays
-        if (isVirtualDisplayActive) { val virtualDisp = displays.firstOrNull { it.displayId >= 2 }; if (virtualDisp != null) { val targetId = if (currentDisplayId == virtualDisp.displayId) { if (displays.any { it.displayId == lastPhysicalDisplayId }) lastPhysicalDisplayId else Display.DEFAULT_DISPLAY } else { lastPhysicalDisplayId = currentDisplayId; virtualDisp.displayId }; performDisplayChange(targetId); return } }
-        val currentIdx = displays.indexOfFirst { it.displayId == currentDisplayId }; val nextIdx = if (currentIdx == -1) 0 else (currentIdx + 1) % displays.size; performDisplayChange(displays[nextIdx].displayId)
+    private fun toggleVirtualDisplay() {
+        if (virtualDisplay == null) {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            
+            // 1. Create ImageReader to act as the screen buffer
+            virtualImageReader = ImageReader.newInstance(1920, 1080, PixelFormat.RGBA_8888, 2)
+            
+            // 2. Set flags (Public allows other apps/system to see it; Presentation allows secondary content)
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+            
+            // 3. Create Display with Surface
+            virtualDisplay = dm.createVirtualDisplay(
+                "DroidOS-Virtual", 
+                1920, 1080, 320, 
+                virtualImageReader?.surface, 
+                flags
+            )
+            
+            Toast.makeText(this, "Virtual Display Created (1080p)", Toast.LENGTH_SHORT).show()
+        } else {
+            // Optional: Destroy if toggled again? For now, just warn.
+            Toast.makeText(this, "Virtual Display Already Active", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun switchDisplay() {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        
+        // 1. Determine where the Bubble actually is (Source of Truth)
+        var actualCurrentId = currentDisplayId
+        // Safe check for view location
+        if (bubbleView != null && bubbleView?.isAttachedToWindow == true) {
+             bubbleView?.display?.let { actualCurrentId = it.displayId }
+        }
+
+        var targetId = actualCurrentId
+
+        // 2. Logic: Physical <-> Virtual
+        if (actualCurrentId == 0 || actualCurrentId == 1) {
+            // CASE: We are on a Physical Display -> Go to Virtual
+            
+            // Find the first display that ISN'T 0 or 1
+            val virtualDisplay = dm.displays.firstOrNull { it.displayId != 0 && it.displayId != 1 }
+            
+            if (virtualDisplay != null) {
+                targetId = virtualDisplay.displayId
+            } else {
+                // Fallback: If no virtual display exists, just toggle normally so button works
+                targetId = if (actualCurrentId == 0) 1 else 0
+                Toast.makeText(this, "No Virtual Display Active", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            // CASE: We are on Virtual -> Go back to ACTIVE Physical Display
+            
+            val d0 = dm.getDisplay(0)
+            val d1 = dm.getDisplay(1)
+            
+            // Check states to see which screen is actually awake
+            val isZeroOn = d0?.state == Display.STATE_ON
+            val isOneOn = d1?.state == Display.STATE_ON
+            
+            if (isZeroOn) {
+                targetId = 0
+            } else if (isOneOn) {
+                targetId = 1
+            } else {
+                // If both are reported off (unlikely while using phone), default to Main
+                targetId = 0
+            }
+        }
+
+        // 3. Execute Switch if target is different
+        if (targetId != actualCurrentId) {
+            performDisplayChange(targetId)
+        }
     }
     private fun performDisplayChange(newId: Int) {
         lastManualSwitchTime = System.currentTimeMillis()
@@ -1679,7 +1757,7 @@ class FloatingLauncherService : AccessibilityService() {
                 displayList.add(ActionOption("Launch DroidOS Trackpad") { launchTrackpad() })
 
 
-                displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { cycleDisplay() })
+                displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { switchDisplay() })
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
                 displayList.add(WidthOption(currentDrawerWidthPercent))
