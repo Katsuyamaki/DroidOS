@@ -1,21 +1,18 @@
+
 package com.example.coverscreentester
 
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 class KeyboardManager(
     private val context: Context,
@@ -29,14 +26,9 @@ class KeyboardManager(
     private var isSymbols = false
     private var isVisible = false
     
-    // UI Constants
-    private val BASE_KEY_HEIGHT = 45 // Base height in dp
-    private var scaleFactor = 1.0f
-    
-    private val ROW_MARGIN = 2.dp
-    private val KEY_MARGIN = 2.dp
-    private var keyboardWidth = 450
-    private var keyboardHeight = 350
+    // Config
+    private var currentWidth = 450
+    private val MARGIN_PX = 2
     
     // Data Classes
     data class KeyDef(val label: String, val code: Int, val weight: Float = 1f, val isSpecial: Boolean = false)
@@ -77,7 +69,6 @@ class KeyboardManager(
         KeyDef("►", KeyEvent.KEYCODE_DPAD_RIGHT, 1f, true)
     )
 
-    // Number Row (Replaces Row 1 in Symbol Mode)
     private val ROW_NUMS = listOf(
         KeyDef("1", KeyEvent.KEYCODE_1), KeyDef("2", KeyEvent.KEYCODE_2), KeyDef("3", KeyEvent.KEYCODE_3),
         KeyDef("4", KeyEvent.KEYCODE_4), KeyDef("5", KeyEvent.KEYCODE_5), KeyDef("6", KeyEvent.KEYCODE_6),
@@ -93,6 +84,8 @@ class KeyboardManager(
 
     fun createView(): View {
         val root = FrameLayout(context)
+        
+        // Window Background
         val bg = GradientDrawable()
         bg.setColor(Color.parseColor("#EE121212"))
         bg.cornerRadius = 20f
@@ -101,7 +94,7 @@ class KeyboardManager(
 
         val mainContainer = LinearLayout(context)
         mainContainer.orientation = LinearLayout.VERTICAL
-        mainContainer.setPadding(10, 10, 10, 10)
+        mainContainer.setPadding(4, 4, 4, 4)
         
         mainContainer.addView(createRow(if (isSymbols) ROW_NUMS else ROW_1))
         mainContainer.addView(createRow(if (isSymbols) ROW_SYMS else ROW_2))
@@ -109,37 +102,60 @@ class KeyboardManager(
         mainContainer.addView(createRow(ROW_4))
         mainContainer.addView(createRow(ARROWS))
 
-        root.addView(mainContainer, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        // Set Main Container to WRAP_CONTENT height so it only takes what it needs
+        root.addView(mainContainer, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         
-        // Add Resize Handle (Bottom Right)
-        val resizeHandle = View(context)
-        resizeHandle.setBackgroundColor(Color.parseColor("#803DDC84"))
-        val rhParams = FrameLayout.LayoutParams(50, 50)
-        rhParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
-        root.addView(resizeHandle, rhParams)
+        // --- DYNAMIC CONTENT SIZING ---
+        root.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+            val width = right - left
+            val currentHeight = bottom - top
+            
+            if (width > 0) {
+                // Measure how tall the content WANTS to be (including scaling, margins)
+                root.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+                val targetHeight = root.measuredHeight
+                
+                // If window height != content height, snap window to content
+                if (targetHeight > 0 && abs(currentHeight - targetHeight) > 5) {
+                    layoutParams?.height = targetHeight
+                    try {
+                        windowManager.updateViewLayout(keyboardLayout, layoutParams)
+                    } catch (e: Exception) {}
+                }
+            }
+        }
         
-        resizeHandle.setOnTouchListener { _, event -> handleResize(event) }
-        
-        // Add Move Handle (Top Center)
-        val moveHandle = View(context)
-        moveHandle.setBackgroundColor(Color.parseColor("#40FFFFFF"))
-        val mhParams = FrameLayout.LayoutParams(100, 15)
-        mhParams.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        mhParams.topMargin = 5
-        root.addView(moveHandle, mhParams)
-        
-        moveHandle.setOnTouchListener { _, event -> handleMove(event) }
-
         return root
     }
 
     private fun createRow(keys: List<KeyDef>): LinearLayout {
         val row = LinearLayout(context)
         row.orientation = LinearLayout.HORIZONTAL
-        row.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         
-        // FIX: Use scalable key height
-        val dynamicHeight = (BASE_KEY_HEIGHT * scaleFactor).toInt().dp
+        // Minimum Row Height based on width (Square keys baseline)
+        // We use minHeight instead of fixed height so it can grow if font is large
+        val unitSize = (currentWidth / 10).coerceAtLeast(10)
+        row.minimumHeight = unitSize
+        
+        // Wrap Content height allows expansion
+        val rowParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        row.layoutParams = rowParams
+        
+        val MAX_ROW_WEIGHT = 10f
+        val currentWeight = keys.map { it.weight }.sum()
+        val missingWeight = MAX_ROW_WEIGHT - currentWeight
+        
+        if (missingWeight > 0.1f) {
+            val spacer = View(context)
+            val params = LinearLayout.LayoutParams(0, 1) // Height ignored due to parent
+            params.weight = missingWeight / 2f
+            row.addView(spacer, params)
+        }
+        
+        val fontSize = (currentWidth / 30f).coerceIn(10f, 22f)
         
         for (k in keys) {
             val btn = TextView(context)
@@ -147,7 +163,7 @@ class KeyboardManager(
             
             btn.text = label
             btn.setTextColor(Color.WHITE)
-            btn.textSize = 14f * scaleFactor // Scale font too
+            btn.textSize = fontSize
             btn.gravity = Gravity.CENTER
             btn.typeface = Typeface.DEFAULT_BOLD
             
@@ -156,9 +172,10 @@ class KeyboardManager(
             keyBg.cornerRadius = 10f
             btn.background = keyBg
             
-            val params = LinearLayout.LayoutParams(0, dynamicHeight)
+            // Fixed height for key matches row minimum
+            val params = LinearLayout.LayoutParams(0, unitSize)
             params.weight = k.weight
-            params.setMargins(KEY_MARGIN, ROW_MARGIN, KEY_MARGIN, ROW_MARGIN)
+            params.setMargins(MARGIN_PX, MARGIN_PX, MARGIN_PX, MARGIN_PX)
             row.addView(btn, params)
             
             btn.setOnClickListener {
@@ -167,6 +184,14 @@ class KeyboardManager(
                 btn.postDelayed({ btn.alpha = 1.0f }, 50)
             }
         }
+        
+        if (missingWeight > 0.1f) {
+            val spacer = View(context)
+            val params = LinearLayout.LayoutParams(0, 1)
+            params.weight = missingWeight / 2f
+            row.addView(spacer, params)
+        }
+
         return row
     }
 
@@ -181,35 +206,24 @@ class KeyboardManager(
         }
     }
 
-    // --- NEW: Calculate exact content height ---
-    fun getContentHeight(scale: Float): Int {
-        val rows = 5 // Fixed rows
-        val rowHeight = (BASE_KEY_HEIGHT * scale).toInt().dp
-        val verticalPadding = 20 + (rows * ROW_MARGIN * 2) // Container padding + row margins
-        return (rows * rowHeight) + verticalPadding
-    }
-    
-    fun setScale(scale: Float) {
-        this.scaleFactor = scale.coerceIn(0.5f, 2.0f)
-        refreshLayout()
-    }
-
     fun show(width: Int, height: Int) {
         if (isVisible) return
-        keyboardWidth = width
-        keyboardHeight = height
-
+        
+        currentWidth = width
+        
+        // Initial Layout Params: WRAP_CONTENT height.
+        // The listener will measure and snap the exact pixels immediately.
         layoutParams = WindowManager.LayoutParams(
-            keyboardWidth,
-            WindowManager.LayoutParams.WRAP_CONTENT, 
+            currentWidth,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or 
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             android.graphics.PixelFormat.TRANSLUCENT
         )
+        
         layoutParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        layoutParams?.y = 50 
+        layoutParams?.y = 0 
 
         keyboardLayout = createView() as FrameLayout
         windowManager.addView(keyboardLayout, layoutParams)
@@ -231,25 +245,5 @@ class KeyboardManager(
         windowManager.removeView(keyboardLayout)
         keyboardLayout = createView() as FrameLayout
         windowManager.addView(keyboardLayout, p)
-    }
-
-    // --- Helpers ---
-    private val Int.dp: Int get() = (this * context.resources.displayMetrics.density).toInt()
-    
-    // Pass events up to Overlay for global handling, or handle local logic?
-    // Since OverlayService manages window size, we delegate resize logic back to it via listeners if needed.
-    // But this class is for standalone activity usage mostly. OverlayService uses KeyboardOverlay.kt wrapper.
-    // We will leave local handlers for non-service usage but Overlay wrapper overrides them.
-    
-    private var initialX = 0
-    private var initialTouchX = 0f
-    
-    // Local resize logic (if used standalone)
-    private fun handleResize(event: MotionEvent): Boolean {
-        return false // Handled by Overlay wrapper usually
-    }
-
-    private fun handleMove(event: MotionEvent): Boolean {
-        return false // Handled by Overlay wrapper usually
     }
 }

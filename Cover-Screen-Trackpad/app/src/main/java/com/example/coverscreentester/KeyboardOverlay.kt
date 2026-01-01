@@ -367,6 +367,8 @@ class KeyboardOverlay(
     }
     // [END ROTATION FIX]
 
+
+
     fun show() { 
         if (isVisible) return
         try { 
@@ -374,10 +376,47 @@ class KeyboardOverlay(
             currentAlpha = prefs.getInt("keyboard_alpha", 200)
 
             createKeyboardWindow()
+
+            // --- FIX: Dynamic Content Sizing ---
+            // Instead of forcing a 2:1 ratio, we MEASURE the content.
+            // This supports custom key scales, margins, and padding without cutting off keys.
+            keyboardContainer?.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                val width = right - left
+                val currentHeight = bottom - top
+                
+                if (width > 0) {
+                    // 1. Ask the keyboard container exactly how tall it WANTS to be at this width
+                    keyboardContainer?.measure(
+                        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    )
+                    
+                    val targetHeight = keyboardContainer?.measuredHeight ?: 0
+                    
+                    // 2. If the current Window height doesn't match the Content height, fix it.
+                    // This grows the window if keys are cut off, and shrinks it if there's extra space.
+                    if (targetHeight > 0 && kotlin.math.abs(currentHeight - targetHeight) > 5) {
+                        keyboardParams?.height = targetHeight
+                        try { 
+                            windowManager.updateViewLayout(keyboardContainer, keyboardParams) 
+                        } catch (e: Exception) {
+                            // Ignore race conditions
+                        }
+                    }
+                }
+            }
+            
+            // Ensure initial params use WRAP_CONTENT so the measure pass works correctly
+            if (keyboardParams?.height != WindowManager.LayoutParams.WRAP_CONTENT) {
+                 keyboardParams?.height = WindowManager.LayoutParams.WRAP_CONTENT
+            }
+
             isVisible = true
             if (currentRotation != 0) setRotation(currentRotation)
-        } catch (e: Exception) { Log.e(TAG, "Failed to show keyboard", e) } 
+        } catch (e: Exception) { android.util.Log.e("KeyboardOverlay", "Failed to show keyboard", e) } 
     }
+
+
     
     fun hide() { 
         if (!isVisible) return
