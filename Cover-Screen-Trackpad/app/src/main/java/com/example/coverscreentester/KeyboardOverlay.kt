@@ -1200,44 +1200,25 @@ class KeyboardOverlay(
     // =================================================================================
     // FUNCTION: onSwipeDetected
     // SUMMARY: Handles swipe gesture completion. Runs decoding in background thread.
-    //          LOGGING: Logs at every decision point to diagnose silent failures.
+    //          OPTIMIZED: Reduced logging for better performance.
     // =================================================================================
     override fun onSwipeDetected(path: List<android.graphics.PointF>) {
-        // LOG: Entry point - proves we got here from KeyboardView
-        android.util.Log.d("DroidOS_Swipe", ">>> onSwipeDetected ENTRY (${path.size} points)")
-
-        // CHECK: keyboardView exists
-        if (keyboardView == null) {
-            android.util.Log.e("DroidOS_Swipe", "ABORT: keyboardView is NULL")
-            return
-        }
-
-        // CHECK: keyMap exists and has keys
+        if (keyboardView == null) return
+        
         val keyMap = keyboardView?.getKeyCenters()
-        if (keyMap == null) {
-            android.util.Log.e("DroidOS_Swipe", "ABORT: getKeyCenters() returned NULL")
-            return
-        }
-        if (keyMap.isEmpty()) {
-            android.util.Log.e("DroidOS_Swipe", "ABORT: keyMap is EMPTY (0 keys)")
-            return
-        }
-
-        android.util.Log.d("DroidOS_Swipe", "keyMap OK: ${keyMap.size} keys loaded")
+        if (keyMap.isNullOrEmpty()) return
 
         Thread {
             try {
-                android.util.Log.d("DroidOS_Swipe", "--- Decoding Thread Started ---")
-
                 val suggestions = predictionEngine.decodeSwipe(path, keyMap)
-
-                android.util.Log.d("DroidOS_Swipe", "--- Decoding Complete: ${suggestions.size} suggestions ---")
 
                 if (suggestions.isNotEmpty()) {
                     handler.post {
                         var bestMatch = suggestions[0]
                         if (isSentenceStart) {
-                            bestMatch = bestMatch.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                            bestMatch = bestMatch.replaceFirstChar { 
+                                if (it.isLowerCase()) it.titlecase() else it.toString() 
+                            }
                         }
 
                         val isCap = Character.isUpperCase(bestMatch.firstOrNull() ?: ' ')
@@ -1249,46 +1230,26 @@ class KeyboardOverlay(
 
                         updateSuggestionsWithSync(displaySuggestions)
 
-                        // =================================================================================
-                        // SWIPE TEXT COMMIT WITH SPACE HANDLING
-                        // SUMMARY: If user was typing letters before swiping, we need to add a space
-                        //          between the typed letters and the swiped word.
-                        //          Example: Type "a" then swipe "dog" = "a dog" not "adog"
-                        // =================================================================================
+                        // Commit text with proper spacing
                         var textToCommit = bestMatch
-
-                        // Check if there are uncommitted typed letters that need a space after them
                         if (currentComposingWord.isNotEmpty()) {
-                            // User typed some letters, then started swiping
-                            // We need to "finish" the typed word with a space first
-                            android.util.Log.d("DroidOS_Swipe", "Composing word exists: '$currentComposingWord' - adding space before swipe")
                             textToCommit = " $bestMatch"
                             currentComposingWord.clear()
                         }
-
-                        // Add trailing space
                         textToCommit = "$textToCommit "
 
                         injectText(textToCommit)
                         lastCommittedSwipeWord = textToCommit
                         isSentenceStart = false
-                        // =================================================================================
-                        // END BLOCK: SWIPE TEXT COMMIT WITH SPACE HANDLING
-                        // =================================================================================
-
-                        android.util.Log.d("DroidOS_Swipe", "SUCCESS: Committed '$bestMatch'")
                     }
-                } else {
-                    android.util.Log.e("DroidOS_Swipe", "FAIL: decodeSwipe returned EMPTY list")
                 }
             } catch (e: Exception) {
-                android.util.Log.e("DroidOS_Swipe", "CRASH in Swipe Thread: ${e.message}", e)
-                e.printStackTrace()
+                android.util.Log.e("DroidOS_Swipe", "Swipe decode error: ${e.message}")
             }
         }.start()
     }
     // =================================================================================
-    // END BLOCK: onSwipeDetected with comprehensive logging
+    // END BLOCK: onSwipeDetected
     // =================================================================================
 
     // =================================================================================
