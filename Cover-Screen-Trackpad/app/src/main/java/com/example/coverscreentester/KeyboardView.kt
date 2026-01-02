@@ -917,6 +917,13 @@ class KeyboardView @JvmOverloads constructor(
                     swipeTrail?.clear()
                     swipeTrail?.visibility = View.INVISIBLE
 
+                    // FIX: Clear any key highlight that may have been set during swipe
+                    currentActiveKey?.let { key ->
+                        val tag = key.tag as? String
+                        if (tag != null) setKeyVisual(key, false, tag)
+                    }
+                    currentActiveKey = null
+
                     // Validate swipe before triggering decoder
                     val isValidSwipe = validateSwipe()
 
@@ -1281,9 +1288,25 @@ class KeyboardView @JvmOverloads constructor(
     // while the finger is still pressing the screen.
     private val deferredKeys = setOf("SHIFT", "?123", "ABC", "SYM", "SYM1", "SYM2", "CTRL", "ALT", "MODE", "SCREEN")
 
+    // =================================================================================
+    // FUNCTION: onKeyDown
+    // SUMMARY: Handles initial touch on a key. For swipe-compatible keys (single letters),
+    //          we ONLY provide visual/haptic feedback here. The actual character input is
+    //          deferred to onKeyUp to prevent double-letters during swipe typing.
+    //          Special/modifier keys still trigger immediately for responsiveness.
+    //          FIX: ALL key presses are blocked during active swipe to match Gboard behavior.
+    // =================================================================================
     private fun onKeyDown(key: String, view: View) {
+        // FIX: Block ALL key presses during active swipe
+        // This prevents SHIFT, ENTER, BACKSPACE etc from triggering mid-swipe
+        if (isSwiping) {
+            // Still provide visual feedback so user sees they touched something
+            setKeyVisual(view, true, key)
+            return
+        }
+
         setKeyVisual(view, true, key)
-        
+
         // Haptic Feedback
         if (vibrationEnabled) {
             val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
@@ -1298,9 +1321,10 @@ class KeyboardView @JvmOverloads constructor(
         val isDeferred = deferredKeys.contains(key)
 
         // FIRE IMMEDIATE: Navigation, Numbers, Punctuation, Backspace
+        // But only if NOT a swipeable key and NOT a deferred key
         if (!isSwipeableKey && !isDeferred) {
             handleKeyPress(key, fromRepeat = false)
-            
+
             if (isKeyRepeatable(key)) {
                 currentRepeatKey = key
                 isRepeating = true
@@ -1314,6 +1338,9 @@ class KeyboardView @JvmOverloads constructor(
             capsHandler.postDelayed(capsLockRunnable, 500)
         }
     }
+    // =================================================================================
+    // END BLOCK: onKeyDown
+    // =================================================================================
 
 
     // =================================================================================
@@ -1329,32 +1356,43 @@ class KeyboardView @JvmOverloads constructor(
     // SUMMARY: Handles key release. For swipe-compatible keys (single letters), this is
     //          where we actually commit the character - BUT ONLY if we're not currently
     //          in a swipe gesture. This prevents double letters with swipe typing.
+    //          FIX: ALL key presses are blocked during active swipe to match Gboard behavior.
     //          Also handles SHIFT toggle and repeat cancellation.
     // =================================================================================
 
     private fun onKeyUp(key: String, view: View) {
         setKeyVisual(view, false, key)
-        
+
         // Stop any active key repeat
         if (key == currentRepeatKey) stopRepeat()
-        
+
+        // FIX: Block ALL key presses during active swipe
+        // This includes letter keys, special keys, and deferred keys
+        if (isSwiping) {
+            // Cancel SHIFT caps lock timer if it was started
+            if (key == "SHIFT") {
+                capsHandler.removeCallbacks(capsLockRunnable)
+                capsLockPending = false
+            }
+            return
+        }
+
         // Determine if this is a swipeable key that was deferred
         val isSwipeableKey = key.length == 1 && Character.isLetter(key[0])
-        
-        if (isSwipeableKey && !isSwiping) {
+
+        if (isSwipeableKey) {
             // SWIPEABLE KEY + NOT SWIPING = Normal tap, commit the character now
             handleKeyPress(key, fromRepeat = false)
         }
-        
-        // --- FIX: Handle Deferred Keys (CTRL, ALT, SYM, etc) ---
-        // These are skipped in onKeyDown to prevent rebuild loops. 
+
+        // --- Handle Deferred Keys (CTRL, ALT, SYM, etc) ---
+        // These are skipped in onKeyDown to prevent rebuild loops.
         // We must fire them here on release.
         val isDeferred = deferredKeys.contains(key)
         if (isDeferred && key != "SHIFT") {
              handleKeyPress(key, fromRepeat = false)
         }
-        // -------------------------------------------------------
-        
+
         // SHIFT toggle handling
         if (key == "SHIFT") {
             capsHandler.removeCallbacks(capsLockRunnable)
