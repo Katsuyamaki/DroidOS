@@ -191,6 +191,12 @@ class PredictionEngine {
      * Call this when the user clicks a word in the suggestion bar.
      * Boosts the word's priority for future predictions.
      */
+
+/**
+     * Call this when the user clicks a word in the suggestion bar.
+     * Boosts the word's priority for future predictions.
+     * NOTE: This no longer auto-learns new words. Use learnWord() for that.
+     */
     fun recordSelection(context: Context, word: String) {
         if (word.isBlank()) return
         val clean = word.lowercase(Locale.ROOT)
@@ -200,13 +206,15 @@ class PredictionEngine {
             userFrequencyMap[clean] = count + 1
         }
         
-        // Also ensure it is learned as a custom word if not in dictionary
-        if (!hasWord(clean)) {
-            learnWord(context, clean)
-        }
+        // FIX: Removed auto-learning. Typos won't be added automatically.
+        // The UI must call learnWord() explicitly when the user selects a "New Word".
+        // if (!hasWord(clean)) {
+        //    learnWord(context, clean)
+        // }
         
         saveUserStats(context)
     }
+
 
     fun loadDictionary(context: Context) {
         Thread {
@@ -626,29 +634,9 @@ class PredictionEngine {
      * 5. Integration with frequency weighting
      */
 
-    // =================================================================================
-    // FUNCTION: decodeSwipe (OPTIMIZED)
-    // SUMMARY: Decodes a swipe gesture into word suggestions.
-    //          OPTIMIZATIONS:
-    //          1. Uses first/last letter index for O(1) candidate lookup
-    //          2. Reduced logging (only errors and final result)
-    //          3. Early termination when excellent match found
-    //          4. Pre-computed templates for common words
-    // =================================================================================
-// =================================================================================
-    // FUNCTION: decodeSwipe (OPTIMIZED)
-    // SUMMARY: Decodes a swipe gesture into word suggestions.
-    //          OPTIMIZATIONS:
-    //          1. Uses first/last letter index for O(1) candidate lookup
-    //          2. Reduced logging (only errors and final result)
-    //          3. Early termination when excellent match found
-    //          4. Pre-computed templates for common words
-    // =================================================================================
-
-
 
 // =================================================================================
-    // FUNCTION: decodeSwipe (Strict Length Filter + User Rescue)
+    // FUNCTION: decodeSwipe (Balanced Priority + Length Filter)
     // =================================================================================
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
         if (swipePath.size < 3 || keyMap.isEmpty()) return emptyList()
@@ -663,7 +651,6 @@ class PredictionEngine {
             lastKeyMapHash = keyMapHash
         }
 
-        // 1. Calculate Input Length (pixels)
         val inputLength = getPathLength(swipePath)
         // Guard against single tap being treated as swipe
         if (inputLength < 10f) return emptyList()
@@ -686,7 +673,7 @@ class PredictionEngine {
         // A. Add Geometric Matches
         wordsByFirstLastLetter[indexKey]?.let { candidates.addAll(it) }
         
-        // B. Fuzzy Fallback (if tight match is empty)
+        // B. Fuzzy Fallback
         if (candidates.size < 5) {
             val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
             val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
@@ -698,9 +685,7 @@ class PredictionEngine {
             }
         }
         
-        // C. USER RESCUE (Critical Fix)
-        // Always include top user words, regardless of exact start/end key match.
-        // This ensures "bug" is tested even if you swiped slightly off "B" or "G".
+        // C. USER RESCUE
         synchronized(userFrequencyMap) {
              val topUserWords = userFrequencyMap.entries
                 .sortedByDescending { it.value }
@@ -709,27 +694,22 @@ class PredictionEngine {
              candidates.addAll(topUserWords)
         }
         
-        // 3. Scoring with HARD Pruning
-        // We sort by user freq first so "take(50)" doesn't drop "bug"
+        // 3. Scoring
         val rankedCandidates = candidates
             .filter { it.length >= MIN_WORD_LENGTH }
             .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }
                 .thenBy { getWordRank(it) })
-            .take(100) // Increased pool size to be safe
+            .take(100)
         
         val scored = rankedCandidates.mapNotNull { word ->
             val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
             
             // --- HARD LENGTH FILTER ---
-            // "Bringing" (long) vs "Bug" (short).
-            // If the word path is > 2.5x longer or < 0.5x shorter than swipe, DROP IT.
-            // This physically prevents "bringing" from matching a short swipe.
             val templateLength = getPathLength(template.rawPoints)
             val ratio = templateLength / inputLength
             if (ratio > 2.5f || ratio < 0.4f) {
                 return@mapNotNull null 
             }
-            // --------------------------
 
             if (template.sampledPoints == null) {
                 template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
@@ -741,14 +721,18 @@ class PredictionEngine {
             
             val integrationScore = SHAPE_WEIGHT * shapeScore + LOCATION_WEIGHT * locationScore
             
-            // PRIORITY LOGIC:
+            // PRIORITY LOGIC (TUNED DOWN):
             val rank = template.rank
             val freqBonus = 1.0f / (1.0f + 0.3f * ln((rank + 1).toFloat()))
             
             val userCount = userFrequencyMap[word] ?: 0
             val userBoost = if (userCount > 0) {
-                // Strong Magnet: 3.0x score reduction for user words
-                3.0f + ln((userCount + 1).toFloat())
+                // REDUCED BOOST:
+                // Old: 3.0 + 1.0*ln
+                // New: 1.2 base + 0.4 log factor.
+                // "Okay" (count 50) -> Divisor ~2.7 (was ~7.0)
+                // "Bug" (count 5) -> Divisor ~1.9
+                1.2f + (0.4f * ln((userCount + 1).toFloat()))
             } else {
                 1.0f
             }
@@ -764,6 +748,7 @@ class PredictionEngine {
             .take(3)
             .map { it.first }
     }
+
 
 
 
