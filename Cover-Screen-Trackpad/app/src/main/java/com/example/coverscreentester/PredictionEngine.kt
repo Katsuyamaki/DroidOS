@@ -66,6 +66,11 @@ class PredictionEngine {
 
     private val root = TrieNode()
     private val wordList = ArrayList<String>()
+
+
+// --- USER STATS ---
+    private val USER_STATS_FILE = "user_stats.json"
+    private val userFrequencyMap = HashMap<String, Int>()
     
     // =================================================================================
     // OPTIMIZATION: Pre-indexed word lookup by first and last letter
@@ -96,6 +101,8 @@ class PredictionEngine {
     // =================================================================================
     // END DATA STRUCTURES
     // =================================================================================
+
+
 
     init {
         loadDefaults()
@@ -134,10 +141,77 @@ class PredictionEngine {
     }
 
 
+// =================================================================================
+    // USER STATS & PRIORITY LOGIC
+    // =================================================================================
+    
+    private fun loadUserStats(context: Context) {
+        try {
+            val file = java.io.File(context.filesDir, USER_STATS_FILE)
+            if (file.exists()) {
+                val content = file.readText()
+                // Simple parsing: "word":count
+                content.replace("{", "").replace("}", "").split(",").forEach {
+                    val parts = it.split(":")
+                    if (parts.size == 2) {
+                        val w = parts[0].trim().replace("\"", "")
+                        val c = parts[1].trim().toIntOrNull() ?: 0
+                        userFrequencyMap[w] = c
+                    }
+                }
+                android.util.Log.d("DroidOS_Prediction", "Loaded stats for ${userFrequencyMap.size} words")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("DroidOS_Prediction", "Failed to load user stats", e)
+        }
+    }
+
+    private fun saveUserStats(context: Context) {
+        Thread {
+            try {
+                val sb = StringBuilder("{")
+                synchronized(userFrequencyMap) {
+                    var first = true
+                    for ((k, v) in userFrequencyMap) {
+                        if (!first) sb.append(",")
+                        sb.append("\"$k\":$v")
+                        first = false
+                    }
+                }
+                sb.append("}")
+                val file = java.io.File(context.filesDir, USER_STATS_FILE)
+                file.writeText(sb.toString())
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }.start()
+    }
+
+    /**
+     * Call this when the user clicks a word in the suggestion bar.
+     * Boosts the word's priority for future predictions.
+     */
+    fun recordSelection(context: Context, word: String) {
+        if (word.isBlank()) return
+        val clean = word.lowercase(Locale.ROOT)
+        
+        synchronized(userFrequencyMap) {
+            val count = userFrequencyMap.getOrDefault(clean, 0)
+            userFrequencyMap[clean] = count + 1
+        }
+        
+        // Also ensure it is learned as a custom word if not in dictionary
+        if (!hasWord(clean)) {
+            learnWord(context, clean)
+        }
+        
+        saveUserStats(context)
+    }
 
     fun loadDictionary(context: Context) {
         Thread {
             try {
+                loadUserStats(context)
                 val start = System.currentTimeMillis()
                 val newRoot = TrieNode()
                 val newWordList = ArrayList<String>()
@@ -469,10 +543,9 @@ class PredictionEngine {
     // FUNCTION: getSuggestions
     // SUMMARY: Returns suggested words for a given prefix, sorted by popularity.
     //          Filters out blocked words to prevent them from appearing in suggestions.
+
 // =================================================================================
-    // FUNCTION: getSuggestions
-    // SUMMARY: Returns suggested words for a given prefix, sorted by popularity.
-    //          Filters out blocked words to prevent them from appearing in suggestions.
+    // FUNCTION: getSuggestions (Updated for Priority Sort)
     // =================================================================================
     fun getSuggestions(prefix: String, maxResults: Int = 3): List<String> {
         if (prefix.isEmpty()) return emptyList()
@@ -485,18 +558,38 @@ class PredictionEngine {
 
         val candidates = ArrayList<Pair<String, Int>>()
         collectCandidates(current, candidates)
-        candidates.sortWith(compareBy<Pair<String, Int>> { it.second }.thenBy { it.first.length })
+        
+        // SORTING LOGIC:
+        // 1. User Frequency (Highest First)
+        // 2. Dictionary Rank (Lowest First)
+        // 3. Length (Shortest First)
+        val sortedCandidates = candidates.sortedWith(Comparator { a, b ->
+            val wordA = a.first
+            val wordB = b.first
+            
+            val countA = userFrequencyMap[wordA] ?: 0
+            val countB = userFrequencyMap[wordB] ?: 0
+            
+            if (countA != countB) {
+                return@Comparator countB - countA // Higher user count wins
+            }
+            
+            val rankA = a.second
+            val rankB = b.second
+            if (rankA != rankB) {
+                return@Comparator rankA - rankB // Lower dictionary rank wins
+            }
+            
+            wordA.length - wordB.length
+        })
 
-        // Filter out blocked words before returning
-        return candidates
+        return sortedCandidates
             .filter { !blockedWords.contains(it.first) }
-            .distinctBy { it.first } // FIX: Ensure unique words
+            .distinctBy { it.first }
             .take(maxResults)
             .map { it.first }
     }
-    // =================================================================================
-    // END BLOCK: getSuggestions
-    // =================================================================================
+
     // =================================================================================
     // FUNCTION: collectCandidates
     // SUMMARY: Recursively collects word candidates from trie nodes.
@@ -551,112 +644,131 @@ class PredictionEngine {
     //          3. Early termination when excellent match found
     //          4. Pre-computed templates for common words
     // =================================================================================
+
+
+
+// =================================================================================
+    // FUNCTION: decodeSwipe (Strict Length Filter + User Rescue)
+    // =================================================================================
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
-        // Minimal entry check
         if (swipePath.size < 3 || keyMap.isEmpty()) return emptyList()
         if (wordList.isEmpty()) {
             loadDefaults()
             return emptyList()
         }
 
-        // Check if keymap changed (clear template cache if so)
         val keyMapHash = keyMap.hashCode()
         if (keyMapHash != lastKeyMapHash) {
             templateCache.clear()
             lastKeyMapHash = keyMapHash
         }
 
-        // 1. Sample and normalize input path
+        // 1. Calculate Input Length (pixels)
+        val inputLength = getPathLength(swipePath)
+        // Guard against single tap being treated as swipe
+        if (inputLength < 10f) return emptyList()
+
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
         val normalizedInput = normalizePath(sampledInput)
         
-        // 2. Find start and end keys with distances
         val startPoint = sampledInput.first()
         val endPoint = sampledInput.last()
         
-        // Find closest keys to start and end points
+        // 2. Candidate Filtering
         val startKey = findClosestKey(startPoint, keyMap)
         val endKey = findClosestKey(endPoint, keyMap)
         
         if (startKey == null || endKey == null) return emptyList()
         
-        // 3. OPTIMIZED: Use first+last letter index for instant candidate lookup
         val indexKey = "${startKey.lowercase()}${endKey.lowercase()}"
-        var candidates = wordsByFirstLastLetter[indexKey] ?: emptyList<String>()
+        val candidates = HashSet<String>()
         
-        // 4. If exact match is sparse, also try nearby keys
+        // A. Add Geometric Matches
+        wordsByFirstLastLetter[indexKey]?.let { candidates.addAll(it) }
+        
+        // B. Fuzzy Fallback (if tight match is empty)
         if (candidates.size < 5) {
             val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
             val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
-            
-            val expanded = HashSet<String>()
             for (s in nearbyStart) {
                 for (e in nearbyEnd) {
                     val key = "${s.lowercase()}${e.lowercase()}"
-                    wordsByFirstLastLetter[key]?.let { expanded.addAll(it) }
+                    wordsByFirstLastLetter[key]?.let { candidates.addAll(it) }
                 }
             }
-            candidates = expanded.toList()
         }
         
-        // 5. Still empty? Fall back to first-letter-only lookup
-        if (candidates.isEmpty()) {
-            candidates = wordsByFirstLetter[startKey.first().lowercaseChar()] ?: emptyList()
+        // C. USER RESCUE (Critical Fix)
+        // Always include top user words, regardless of exact start/end key match.
+        // This ensures "bug" is tested even if you swiped slightly off "B" or "G".
+        synchronized(userFrequencyMap) {
+             val topUserWords = userFrequencyMap.entries
+                .sortedByDescending { it.value }
+                .take(10)
+                .map { it.key }
+             candidates.addAll(topUserWords)
         }
         
-        // 6. Last resort: use common words cache
-        if (candidates.isEmpty()) {
-            candidates = commonWordsCache.take(100)
-        }
-        
-        // 7. Score candidates (limit to top 50 by rank for speed)
+        // 3. Scoring with HARD Pruning
+        // We sort by user freq first so "take(50)" doesn't drop "bug"
         val rankedCandidates = candidates
             .filter { it.length >= MIN_WORD_LENGTH }
-            .sortedBy { getWordRank(it) }
-            .take(50)
+            .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }
+                .thenBy { getWordRank(it) })
+            .take(100) // Increased pool size to be safe
         
-        // 8. Score each candidate
         val scored = rankedCandidates.mapNotNull { word ->
             val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
             
+            // --- HARD LENGTH FILTER ---
+            // "Bringing" (long) vs "Bug" (short).
+            // If the word path is > 2.5x longer or < 0.5x shorter than swipe, DROP IT.
+            // This physically prevents "bringing" from matching a short swipe.
+            val templateLength = getPathLength(template.rawPoints)
+            val ratio = templateLength / inputLength
+            if (ratio > 2.5f || ratio < 0.4f) {
+                return@mapNotNull null 
+            }
+            // --------------------------
+
             if (template.sampledPoints == null) {
                 template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
                 template.normalizedPoints = normalizePath(template.sampledPoints!!)
             }
-            
-            if (template.sampledPoints?.size != SAMPLE_POINTS) return@mapNotNull null
             
             val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
             val locationScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
             
             val integrationScore = SHAPE_WEIGHT * shapeScore + LOCATION_WEIGHT * locationScore
             
-            // Frequency bonus
+            // PRIORITY LOGIC:
             val rank = template.rank
-            val frequencyBonus = 1.0f / (1.0f + 0.3f * ln((rank + 1).toFloat()))
-            val finalScore = integrationScore * (1.0f - 0.5f * frequencyBonus)
+            val freqBonus = 1.0f / (1.0f + 0.3f * ln((rank + 1).toFloat()))
+            
+            val userCount = userFrequencyMap[word] ?: 0
+            val userBoost = if (userCount > 0) {
+                // Strong Magnet: 3.0x score reduction for user words
+                3.0f + ln((userCount + 1).toFloat())
+            } else {
+                1.0f
+            }
+
+            val finalScore = (integrationScore * (1.0f - 0.5f * freqBonus)) / userBoost
             
             Pair(word, finalScore)
         }
         
-        // 9. Sort and return top 3 UNIQUE results
-        // FIX: Added distinctBy to prevent duplicates in the toolbar
-        val results = scored
+        return scored
             .sortedBy { it.second }
             .distinctBy { it.first } 
             .take(3)
             .map { it.first }
-        
-        // Minimal logging - only log the result
-        if (results.isNotEmpty()) {
-            android.util.Log.d("DroidOS_Swipe", "Result: $results")
-        }
-        
-        return results
     }
-    // =================================================================================
-    // END BLOCK: decodeSwipe (OPTIMIZED)
-    // =================================================================================
+
+
+
+
+
 
     // =================================================================================
     // FUNCTION: findClosestKey
@@ -734,6 +846,16 @@ class PredictionEngine {
     // END BLOCK: getOrCreateTemplate
     // =================================================================================
 
+/**
+     * Calculates the total absolute length of a path in pixels.
+     */
+    private fun getPathLength(points: List<PointF>): Float {
+        var length = 0f
+        for (i in 0 until points.size - 1) {
+            length += hypot(points[i+1].x - points[i].x, points[i+1].y - points[i].y)
+        }
+        return length
+    }
     /**
      * Uniformly sample N points along a path.
      * This makes paths of different lengths comparable.
