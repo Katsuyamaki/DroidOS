@@ -50,7 +50,7 @@ class PredictionEngine {
         private const val SHAPE_WEIGHT = 0.25f
         private const val LOCATION_WEIGHT = 0.85f
         private const val DIRECTION_WEIGHT = 0.5f   // Reduced to make room for turns
-        private const val TURN_WEIGHT = 0.7f        // NEW: Weight for turn matching
+        private const val TURN_WEIGHT = 0.9f        // NEW: Weight for turn matching
         
         // Files
         private const val USER_STATS_FILE = "user_stats.json"
