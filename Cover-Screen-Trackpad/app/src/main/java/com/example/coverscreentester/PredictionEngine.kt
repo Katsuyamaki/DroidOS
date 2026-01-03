@@ -684,15 +684,6 @@ class PredictionEngine {
     //          - NEW turn detection for shortcut, android, circle
     //          - Conservative dwell for as/ass, to/too
     //          - Original candidate collection and length filtering
-
-    // =================================================================================
-    // FUNCTION: decodeSwipe (v8 - Partial Match Override)
-    // SUMMARY: Integrates "Prefix Bonus" and "Partial Match Override".
-    //          If the user swipes "A-W-A" (Prefix of "Awake"), the path keys match perfectly.
-    //          Normally, the Shape Score penalizes "Awake" because the template "A-W-A-K-E"
-    //          is much longer/different shape than "A-W-A".
-    //          The Override detects this condition and ignores Shape/Location scores,
-    //          trusting the Key Match + Direction Score instead.
     // =================================================================================
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
         if (swipePath.size < 3 || keyMap.isEmpty()) return emptyList()
@@ -710,23 +701,66 @@ class PredictionEngine {
         val inputLength = getPathLength(swipePath)
         if (inputLength < 10f) return emptyList()
 
-        // 1. Prepare Input
+        // =======================================================================
+        // DWELL DETECTION (Conservative - for to/too, as/ass)
+        // =======================================================================
+        var dwellScore = 0f
+        if (swipePath.size > 12) {
+            val tailSize = maxOf(12, swipePath.size / 4)
+            val tailStart = maxOf(0, swipePath.size - tailSize)
+            val tail = swipePath.subList(tailStart, swipePath.size)
+            
+            var tailLength = 0f
+            for (i in 1 until tail.size) {
+                tailLength += hypot(tail[i].x - tail[i-1].x, tail[i].y - tail[i-1].y)
+            }
+            
+            val avgMovementPerPoint = tailLength / tail.size
+            dwellScore = when {
+                avgMovementPerPoint < 2f -> 1.0f
+                avgMovementPerPoint < 4f -> 0.6f
+                avgMovementPerPoint < 7f -> 0.2f
+                else -> 0f
+            }
+        }
+        val isDwellingAtEnd = dwellScore >= 0.6f
+        // =======================================================================
+        // END DWELL DETECTION
+        // =======================================================================
+
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
         val normalizedInput = normalizePath(sampledInput)
         val inputDirections = calculateDirectionVectors(sampledInput)
+
+        // NEW: Calculate turn points for input
         val inputTurns = detectTurns(inputDirections)
 
-        // 2. Extract Path Keys (The "Skeleton" of the swipe)
-        // Note: Thresholds inside extractPathKeys are optimized for sensitivity
+        // NEW: Extract sequence of keys the path passes through
+        // This is CRITICAL for distinguishing "awake" vs "awesome"
+
         val pathKeys = extractPathKeys(sampledInput, keyMap, 8)
+
+        val startPoint = sampledInput.first()
+        val endPoint = sampledInput.last()
+
+        // FIX: Define startKey and endKey (Missing in previous build)
+        val startKey = findClosestKey(startPoint, keyMap)
+        val endKey = findClosestKey(endPoint, keyMap)
         
-        val startKey = findClosestKey(sampledInput.first(), keyMap)
-        val endKey = findClosestKey(sampledInput.last(), keyMap)
-        
-        // 3. Candidate Collection
+// =======================================================================
+        // CANDIDATE COLLECTION (Enhanced with Path Key Matching)
+        // SUMMARY: Collects candidates using:
+        //          1. Start/End neighbor search (original)
+        //          2. PREFIX INJECTION (original)  
+        //          3. PATH KEY INJECTION - NEW: Add words containing detected path keys
+        //             This ensures "awake" is included when path shows a→w→...
+        //          4. User History (original)
+        // =======================================================================
         val candidates = HashSet<String>()
-        val nearbyStart = findNearbyKeys(sampledInput.first(), keyMap, 80f)
-        val nearbyEnd = findNearbyKeys(sampledInput.last(), keyMap, 80f)
+        
+        // 1. Neighbor Search (original)
+        val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
+        val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
         
         for (s in nearbyStart) {
             for (e in nearbyEnd) {
@@ -734,86 +768,121 @@ class PredictionEngine {
             }
         }
         
-        // Prefix injection: Crucial for "Awake" if we stop at 'A' (Awa)
+        // 2. PREFIX INJECTION (original)
         if (startKey != null) {
             wordsByFirstLetter[startKey.first()]?.let { words ->
-                // Increased candidate pool to ensure Awake is found even if low freq
-                candidates.addAll(words.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(60))
+                candidates.addAll(words.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(25))
             }
         }
+
+        // 3. PATH KEY INJECTION - NEW
+        // If path shows specific intermediate keys, add words that contain those keys
+        // This is CRITICAL for "awake" - if path shows a→w→..., we need words with 'w'
+        if (pathKeys.size >= 2) {
+            val secondKey = pathKeys.getOrNull(1)?.firstOrNull()?.lowercaseChar()
+            if (secondKey != null && startKey != null) {
+                // Add words that start with startKey AND contain secondKey
+                wordsByFirstLetter[startKey.first()]?.let { words ->
+                    val matchingWords = words.filter { word ->
+                        word.length >= 2 && word.drop(1).contains(secondKey)
+                    }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(30)
+                    candidates.addAll(matchingWords)
+                    
+                    // Debug: Log how many path-key words we added
+                    if (matchingWords.isNotEmpty()) {
+                        android.util.Log.d("DroidOS_PathKeys", "PathKey injection: Added ${matchingWords.size} words containing '$secondKey' (e.g., ${matchingWords.take(5).joinToString()})")
+                    }
+                }
+            }
+            
+            // Also check third key if present
+            val thirdKey = pathKeys.getOrNull(2)?.firstOrNull()?.lowercaseChar()
+            if (thirdKey != null && startKey != null && thirdKey != secondKey) {
+                wordsByFirstLetter[startKey.first()]?.let { words ->
+                    val matchingWords = words.filter { word ->
+                        word.length >= 3 && word.drop(1).contains(thirdKey)
+                    }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(20)
+                    candidates.addAll(matchingWords)
+                }
+            }
+        }
+
+        // 4. User History (original)
+        synchronized(userFrequencyMap) {
+            candidates.addAll(userFrequencyMap.entries
+                .sortedByDescending { it.value }
+                .take(15)
+                .map { it.key })
+        }
         
-        // 4. Scoring
+        // Debug: Log total candidates
+        android.util.Log.d("DroidOS_PathKeys", "Total candidates: ${candidates.size}")
+        // =======================================================================
+        // END CANDIDATE COLLECTION
+        // =======================================================================
+        
+        
+        // --- SCORING ---
         val scored = candidates
             .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
             .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }.thenBy { getWordRank(it) })
-            .take(200)
+            .take(150)
             .mapNotNull { word ->
                 val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
                 
+                // --- ADAPTIVE LENGTH FILTER (Original) ---
                 val tLen = getPathLength(template.rawPoints)
                 val ratio = tLen / inputLength
                 
-                // RATIO CHECK:
-                // Lowered from 0.4f to 0.2f. 
-                // Awa (short) vs Awake (long) -> ratio ~3.0 (OK)
-                // If swipe is super short, we still want to match if keys align.
-                if (ratio < 0.2f) return@mapNotNull null
-                
+                val maxRatio = if (inputLength < 150f) 1.5f else 5.0f
+                if (ratio > maxRatio || ratio < 0.4f) return@mapNotNull null
+
                 if (template.sampledPoints == null) {
                     template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
                     template.normalizedPoints = normalizePath(template.sampledPoints!!)
                     template.directionVectors = calculateDirectionVectors(template.sampledPoints!!)
                 }
                 
-                // A. Core Geometric Scores
                 val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
                 val locScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
                 val dirScore = calculateDirectionScore(inputDirections, template.directionVectors!!)
-                
-                // B. Turn & Key Scores
+
+                // NEW: Turn matching score
                 val templateTurns = detectTurns(template.directionVectors!!)
                 val turnScore = calculateTurnScore(inputTurns, templateTurns)
-                
-                // This returns 0.0 if "Awake" matches A-W-A. 
-                // Returns HIGH penalty (3.0 per miss) if "Awesome" matches A-W-A (Missing second A).
-                val pathKeyPenalty = calculatePathKeyScore(pathKeys, word)
 
-                // C. Integration
-                var integrationScore = (shapeScore * SHAPE_WEIGHT) +
+                // NEW: Path key matching score - penalizes words where path doesn't match
+                // This distinguishes "awake" (path goes through w) from "awesome" (path would need s)
+                val pathKeyScore = calculatePathKeyScore(pathKeys, word)
+
+                val integrationScore = (shapeScore * SHAPE_WEIGHT) +
                                        (locScore * LOCATION_WEIGHT) +
                                        (dirScore * DIRECTION_WEIGHT) +
                                        (turnScore * TURN_WEIGHT) +
-                                       (pathKeyPenalty * 2.5f)
-
-                // --- PARTIAL MATCH OVERRIDE ---
-                // If the user's path keys match the word perfectly (penalty 0),
-                // AND the word is significantly longer than the input (ratio > 1.2),
-                // it's likely a prefix match (e.g. "Awa" for "Awake").
-                // We IGNORE shape/location scores because the tail is missing.
-                if (pathKeyPenalty <= 0.1f && ratio > 1.2f) {
-                    // Trust the Key Match + Direction. Discard Shape/Location mismatch.
-                    integrationScore = (dirScore * DIRECTION_WEIGHT) + (turnScore * TURN_WEIGHT) + 0.1f
-                }
-
-                // D. Boosts
+                                       (pathKeyScore * 0.8f)  // NEW: Path key matching weight
+                
+                // --- BOOSTS (Original) ---
                 val rank = template.rank
                 val freqBonus = 1.0f / (1.0f + 0.15f * ln((rank + 1).toFloat()))
-                var userBoost = if ((userFrequencyMap[word] ?: 0) > 0) 1.2f else 1.0f
-
-                // Key Match Boosts
+                
+                var userBoost = if ((userFrequencyMap[word] ?: 0) > 0) 
+                    1.2f + (0.4f * ln(((userFrequencyMap[word] ?: 0) + 1).toFloat())) 
+                else 1.0f
+                
+                // DOUBLE LETTER BOOST (Conservative - only 3+ letter words)
+                val hasEndDouble = word.length >= 3 && 
+                    word.last().lowercaseChar() == word[word.length - 2].lowercaseChar()
+                
+                if (hasEndDouble && isDwellingAtEnd) {
+                    userBoost *= (1.10f + dwellScore * 0.15f)
+                }
+                
+                // EXACT KEY MATCH BONUS
                 if (startKey != null && word.startsWith(startKey, ignoreCase = true)) userBoost *= 1.15f
                 if (endKey != null && word.endsWith(endKey, ignoreCase = true)) userBoost *= 1.15f
                 
-                // Path Sequence Boost (if keys matched perfectly)
-                if (pathKeyPenalty == 0f) {
-                    if (word.length > pathKeys.size) {
-                        // "Awake" vs path "A-W-A" -> Bonus for being a predictive match
-                        userBoost *= 1.5f 
-                    } else {
-                        // Exact length match
-                        userBoost *= 1.2f
-                    }
-                }
+                // LONG WORD BONUS
+                if (word.length >= 6) userBoost *= 1.15f
 
                 val finalScore = (integrationScore * (1.0f - 0.5f * freqBonus)) / userBoost
                 Pair(word, finalScore)
@@ -821,7 +890,6 @@ class PredictionEngine {
         
         return scored.sortedBy { it.second }.distinctBy { it.first }.take(3).map { it.first }
     }
-
     // =================================================================================
     // END BLOCK: decodeSwipe
     // =================================================================================
@@ -857,6 +925,11 @@ class PredictionEngine {
         // Extract path keys for intermediate matching (fewer samples for speed)
         val pathKeys = extractPathKeys(sampledInput, keyMap, 6)
 
+        // DEBUG: Log path keys for live preview
+        if (pathKeys.isNotEmpty()) {
+            android.util.Log.d("DroidOS_Preview", "PREVIEW Keys: ${pathKeys.joinToString("→")}")
+        }
+
         // FAST CANDIDATE COLLECTION - fewer candidates for speed
         val candidates = HashSet<String>()
 
@@ -876,7 +949,17 @@ class PredictionEngine {
                 candidates.addAll(words.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(15))
             }
         }
-
+        if (pathKeys.size >= 2) {
+            val secondKey = pathKeys.getOrNull(1)?.firstOrNull()?.lowercaseChar()
+            if (secondKey != null && startKey != null) {
+                wordsByFirstLetter[startKey.first()]?.let { words ->
+                    val matchingWords = words.filter { word ->
+                        word.length >= 2 && word.drop(1).contains(secondKey)
+                    }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(20)
+                    candidates.addAll(matchingWords)
+                }
+            }
+        }
         // FAST SCORING - simplified for speed
         val scored = candidates
             .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
@@ -963,27 +1046,38 @@ class PredictionEngine {
     // =================================================================================
 
 
+
     // =================================================================================
-    // FUNCTION: extractPathKeys (v3 - High Sensitivity)
-    // SUMMARY: Extracts key characters with lowered thresholds to catch fast/small corners.
-    //          Crucial for "Awake" where the 'W' turn might be tight.
+    // FUNCTION: extractPathKeys (v4 - Sharp Turns Only, No Sampling)
+    // SUMMARY: Extracts ONLY the key waypoints: Start, Sharp Turns, and End.
+    //          Does NOT sample intermediate points (which creates noise).
+    //          A sharp turn is where direction changes significantly (dot < 0.4).
+    //          This prevents picking up 's' when swiping diagonally from 'a' to 'k'.
+    //
+    //          Example: "awake" swipe path has sharp turns at w, a, k
+    //          Result: a→w→a→k→e (not a→w→a→s→k→e)
     // =================================================================================
     private fun extractPathKeys(path: List<PointF>, keyMap: Map<String, PointF>, maxKeys: Int): List<String> {
         if (path.size < 3) return emptyList()
+
         val keys = ArrayList<String>()
 
         // 1. Always add Start Key
         val startKey = findClosestKey(path.first(), keyMap)
-        if (startKey != null) keys.add(startKey.lowercase())
+        if (startKey != null) {
+            keys.add(startKey.lowercase())
+        }
 
-        // 2. Detect Turns (Corner Keys)
-        var lastAddedIdx = 0
-        
-        // Use a smaller buffer (1) to catch turns immediately after start
-        for (i in 2 until path.size - 2) {
-            val p1 = path[i - 2]
+        // 2. Find ONLY sharp turns (significant direction changes)
+        // Use a larger window (5 points) to avoid noise from jitter
+        val windowSize = 5
+        var lastTurnIdx = 0
+
+        for (i in windowSize until path.size - windowSize) {
+            // Vector from 5 points ago to current point
+            val p1 = path[i - windowSize]
             val p2 = path[i]
-            val p3 = path[i + 2]
+            val p3 = path[i + windowSize]
 
             val v1x = p2.x - p1.x
             val v1y = p2.y - p1.y
@@ -993,20 +1087,19 @@ class PredictionEngine {
             val len1 = kotlin.math.hypot(v1x, v1y)
             val len2 = kotlin.math.hypot(v2x, v2y)
 
-            // REDUCED THRESHOLD: 10f -> 5f
-            // Catches tighter corners in small keyboards or fast swipes
-            if (len1 > 5f && len2 > 5f) {
+            // Need significant movement to count as a direction
+            if (len1 > 15f && len2 > 15f) {
                 val dot = (v1x * v2x + v1y * v2y) / (len1 * len2)
-                
-                // Dot < 0.75 is ~41 degrees. This is generous enough.
-                if (dot < 0.75) { 
-                    // REDUCED BUFFER: 4 -> 2
-                    // Allows capturing 'W' even if it's very close to 'A' in time/points
-                    if (i - lastAddedIdx > 2) {
-                        val key = findClosestKey(p2, keyMap)
-                        if (key != null && (keys.isEmpty() || keys.last() != key.lowercase())) {
-                            keys.add(key.lowercase())
-                            lastAddedIdx = i
+
+                // SHARP turn only: dot < 0.4 means angle > ~66 degrees
+                // This is stricter than before (was 0.75 = ~40 degrees)
+                if (dot < 0.4f) {
+                    // Minimum distance from last turn to avoid duplicates
+                    if (i - lastTurnIdx > windowSize * 2) {
+                        val key = findClosestKey(p2, keyMap)?.lowercase()
+                        if (key != null && (keys.isEmpty() || keys.last() != key)) {
+                            keys.add(key)
+                            lastTurnIdx = i
                         }
                     }
                 }
@@ -1014,67 +1107,103 @@ class PredictionEngine {
         }
 
         // 3. Always add End Key
-        val endKey = findClosestKey(path.last(), keyMap)
-        if (endKey != null && (keys.isEmpty() || keys.last() != endKey.lowercase())) {
-            keys.add(endKey.lowercase())
+        val endKey = findClosestKey(path.last(), keyMap)?.lowercase()
+        if (endKey != null && (keys.isEmpty() || keys.last() != endKey)) {
+            keys.add(endKey)
         }
+
+        // DEBUG: Log extracted keys
+        android.util.Log.d("DroidOS_PathKeys", "Extracted: ${keys.joinToString("→")} from ${path.size} pts (Sharp turns only)")
 
         return keys.take(maxKeys)
     }
-
     // =================================================================================
-    // FUNCTION: calculatePathKeyScore (v4 - Aggressive Penalty)
-    // SUMMARY: Penalizes words that do not contain the keys found at path corners.
-    //          Uses "Subsequence Matching": keys must appear in the word in correct order.
-    //          The penalty is boosted to 3.0f per miss to aggressively disqualify "Area".
+    // END BLOCK: extractPathKeys
+    // =================================================================================
+
+// =================================================================================
+    // FUNCTION: calculatePathKeyScore (v5 - Early Keys Weighted Heavily)
+    // SUMMARY: Penalizes words that don't match the path keys, with HEAVY emphasis on
+    //          the first 2-3 keys. If path starts "a→w→...", words starting "aw..." 
+    //          should be strongly preferred over words starting "as...".
+    //          
+    //          Key insight from debugging: When swiping "awake", the path often shows
+    //          a→w at the start, but then picks up 's' on the way to 'k'. We need to
+    //          prioritize the FIRST keys which are most reliable.
     // =================================================================================
     private fun calculatePathKeyScore(pathKeys: List<String>, word: String): Float {
         if (pathKeys.isEmpty()) return 0f
         
         val wordChars = word.lowercase()
+        var penalty = 0f
+        
+        // CRITICAL: Check if the FIRST path keys match the FIRST word letters
+        // This is the most reliable signal - the start of the swipe is intentional
+        val firstPathKey = pathKeys.firstOrNull()?.firstOrNull()
+        val firstWordChar = wordChars.firstOrNull()
+        
+        if (firstPathKey != null && firstWordChar != null && firstPathKey != firstWordChar) {
+            // First key mismatch - BIG penalty
+            penalty += 5.0f
+        }
+        
+        // Check SECOND path key against second word letter (if exists)
+        if (pathKeys.size >= 2 && wordChars.length >= 2) {
+            val secondPathKey = pathKeys[1].firstOrNull()
+            val secondWordChar = wordChars[1]
+            
+            if (secondPathKey != null && secondPathKey != secondWordChar) {
+                // Second key mismatch - also big penalty
+                // This catches "aw..." vs "as..." - if path shows 'w', penalize 's' words
+                penalty += 4.0f
+            }
+        }
+        
+        // Check THIRD path key (if exists) - still important but less critical
+        if (pathKeys.size >= 3 && wordChars.length >= 3) {
+            val thirdPathKey = pathKeys[2].firstOrNull()
+            val thirdWordChar = wordChars[2]
+            
+            if (thirdPathKey != null && thirdWordChar != null && thirdPathKey != thirdWordChar) {
+                penalty += 2.0f
+            }
+        }
+        
+        // Now do subsequence matching for the rest of the path
         var pathIdx = 0
         var wordIdx = 0
         var matchedKeys = 0
         
-        // Iterate through path keys and try to find them in the word (in order)
         while (pathIdx < pathKeys.size && wordIdx < wordChars.length) {
-            val pKey = pathKeys[pathIdx]
-            val wChar = wordChars[wordIdx].toString()
+            val pKey = pathKeys[pathIdx].firstOrNull() ?: continue
+            val wChar = wordChars[wordIdx]
             
             if (pKey == wChar) {
-                // Match found! Advance both.
                 matchedKeys++
                 pathIdx++
-                wordIdx++ 
+                wordIdx++
             } else {
-                // No match at current char. 
-                // Advance word index to search later in the word.
-                // (e.g. searching for 'K' in "Awake" -> skip 'w', 'a'...)
                 wordIdx++
             }
         }
         
-        // Calculate Unmatched Keys (Keys we swiped but didn't find in order)
-        // e.g. Swiping 'W' in "Area". 'W' is not in "Area". Unmatched = 1.
+        // Penalty for unmatched path keys (keys we swiped but aren't in the word)
         val unmatchedKeys = pathKeys.size - matchedKeys
+        penalty += unmatchedKeys * 2.0f  // Reduced from 3.0f since we have early key penalties
         
-        // PENALTY CALCULATION:
-        // Base penalty: 3.0f per missing key.
-        // This is massive. Standard weights are 0.8f, so 3.0 * 0.8 = 2.4 total score impact.
-        // Good matches usually have a total score < 0.5. This ensures "Area" is rejected.
-        var penalty = unmatchedKeys * 3.0f 
-        
-        // Length Penalty:
-        // If word is MUCH longer than the path (e.g. path 'a' vs 'android')
-        // We add a small penalty to prefer shorter matches for short swipes.
-        // "Awake" (5) vs Path "A-W-K-E" (4) -> Ratio 1.25 (OK)
-        // "Awesome" (7) vs Path "A-W-E" (3) -> Ratio 2.3 (Penalty)
-        if (word.length > pathKeys.size * 2.5) {
-             penalty += 0.5f
+        // Length penalty for very long words vs short paths
+        if (wordChars.length > pathKeys.size * 2.5) {
+            penalty += 0.5f
         }
 
+        // DEBUG: Log scoring
+        android.util.Log.d("DroidOS_PathKeys", "  '$word': path=${pathKeys.joinToString("-")} matched=$matchedKeys/${pathKeys.size} unmatched=$unmatchedKeys penalty=${"%.2f".format(penalty)}")
+        
         return penalty
     }
+    // =================================================================================
+    // END BLOCK: calculatePathKeyScore
+    // =================================================================================
 
     // =================================================================================
     // FUNCTION: areKeysAdjacent
@@ -1293,11 +1422,6 @@ class PredictionEngine {
      * Lower score = better match.
      */
 
-    // =================================================================================
-    // FUNCTION: calculateLocationScore (v2 - Prefix Friendly)
-    // SUMMARY: Reduced the massive penalty for endpoint mismatch.
-    //          Allows "Awake" to survive even if the swipe stops at "A".
-    // =================================================================================
     private fun calculateLocationScore(input: List<PointF>, template: List<PointF>): Float {
         var totalDist = 0f
         var totalWeight = 0f
@@ -1306,13 +1430,13 @@ class PredictionEngine {
         for (i in input.indices) {
             val dist = hypot(input[i].x - template[i].x, input[i].y - template[i].y)
             
-            // --- ENDPOINT WEIGHTING ---
-            // Start: 3.0x (Anchor is important)
-            // End:   2.5x (Reduced from 5.0x)
-            //        We want to punish sloppy endings, but NOT kill prefix matches.
+            // --- ENDPOINT WEIGHTING (Strict) ---
+            // Start: 3.0x
+            // End:   5.0x (Crucial for "Swipe" vs "Swiped")
+            // Middle: 1.0x
             val w = when {
                 i < size * 0.15 -> 3.0f
-                i > size * 0.85 -> 2.5f 
+                i > size * 0.85 -> 5.0f // Heavy penalty for missing the last key
                 else -> 1.0f
             }
             
