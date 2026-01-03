@@ -10908,148 +10908,6 @@ class SwipeTrailView(context: Context) : View(context) {
 // =================================================================================
 ```
 
-## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
-```kotlin
-package com.example.quadrantlauncher
-
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Bundle
-import android.provider.Settings
-import android.util.Log
-import android.view.accessibility.AccessibilityManager
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import rikka.shizuku.Shizuku
-
-class MainActivity : AppCompatActivity() {
-
-    companion object {
-        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
-    }
-
-    // === APP INFO DATA CLASS - START ===
-    // Represents an installed app with package name, activity class, and state info
-    // getIdentifier() returns a unique string for app identification including className when needed
-    data class AppInfo(
-        val label: String,
-        val packageName: String,
-        val className: String? = null,
-        var isFavorite: Boolean = false,
-        var isMinimized: Boolean = false
-    ) {
-        // Returns unique identifier for the app
-        fun getIdentifier(): String {
-            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
-                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
-                    "$packageName:gemini"
-                } else {
-                    packageName
-                }
-            } else {
-                packageName
-            }
-        }
-        
-        // === GET BASE PACKAGE - START ===
-        // Returns the base package name without any suffix
-        // Use this for shell commands that need the actual Android package name
-        fun getBasePackage(): String {
-            return if (packageName.contains(":")) {
-                packageName.substringBefore(":")
-            } else {
-                packageName
-            }
-        }
-        // === GET BASE PACKAGE - END ===
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is AppInfo) return false
-            return packageName == other.packageName && className == other.className && label == other.label
-        }
-
-        override fun hashCode(): Int {
-            var result = packageName.hashCode()
-            result = 31 * result + (className?.hashCode() ?: 0)
-            result = 31 * result + label.hashCode()
-            return result
-        }
-    }
-    // === APP INFO DATA CLASS - END ===
-
-    /* * FUNCTION: onCreate
-     * SUMMARY: Detects the display ID where the app icon was clicked and
-     * passes it to the service to ensure the bubble follows the user.
-     */
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Redirect to PermissionActivity if essential permissions are missing
-        if (!hasAllPermissions()) {
-            val intent = Intent(this, PermissionActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
-            return
-        }
-
-        // Determine which display this activity is running on
-        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            this.display?.displayId ?: 0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.displayId
-        }
-
-        Log.d("DroidOS_Main", "Launched on Display $displayId")
-
-        // Start service and pass the current display ID to recall the bubble
-        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
-        serviceIntent.putExtra("DISPLAY_ID", displayId)
-        startService(serviceIntent)
-
-        // Finish immediately so the launcher remains a service-only overlay
-        finish()
-    }
-
-    private fun hasAllPermissions(): Boolean {
-        // 1. Overlay
-        if (!Settings.canDrawOverlays(this)) return false
-
-        // 2. Shizuku
-        val shizukuGranted = try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            false
-        }
-        if (!shizukuGranted) return false
-
-        // 3. Accessibility
-        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
-
-        // 4. Notifications removed (Not strictly required for service to run)
-
-        return true
-    }
-
-    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        for (enabledService in enabledServices) {
-            val serviceInfo = enabledService.resolveInfo.serviceInfo
-            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
-                return true
-            }
-        }
-        return false
-    }
-}
-```
-
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/MainActivity.kt
 ```kotlin
 package com.example.coverscreentester
@@ -11386,6 +11244,148 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
 // =================================================================================
 // END FILE: MainActivity.kt
 // =================================================================================
+```
+
+## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
+```kotlin
+package com.example.quadrantlauncher
+
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityManager
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import rikka.shizuku.Shizuku
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
+    }
+
+    // === APP INFO DATA CLASS - START ===
+    // Represents an installed app with package name, activity class, and state info
+    // getIdentifier() returns a unique string for app identification including className when needed
+    data class AppInfo(
+        val label: String,
+        val packageName: String,
+        val className: String? = null,
+        var isFavorite: Boolean = false,
+        var isMinimized: Boolean = false
+    ) {
+        // Returns unique identifier for the app
+        fun getIdentifier(): String {
+            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
+                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
+                    "$packageName:gemini"
+                } else {
+                    packageName
+                }
+            } else {
+                packageName
+            }
+        }
+        
+        // === GET BASE PACKAGE - START ===
+        // Returns the base package name without any suffix
+        // Use this for shell commands that need the actual Android package name
+        fun getBasePackage(): String {
+            return if (packageName.contains(":")) {
+                packageName.substringBefore(":")
+            } else {
+                packageName
+            }
+        }
+        // === GET BASE PACKAGE - END ===
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is AppInfo) return false
+            return packageName == other.packageName && className == other.className && label == other.label
+        }
+
+        override fun hashCode(): Int {
+            var result = packageName.hashCode()
+            result = 31 * result + (className?.hashCode() ?: 0)
+            result = 31 * result + label.hashCode()
+            return result
+        }
+    }
+    // === APP INFO DATA CLASS - END ===
+
+    /* * FUNCTION: onCreate
+     * SUMMARY: Detects the display ID where the app icon was clicked and
+     * passes it to the service to ensure the bubble follows the user.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Redirect to PermissionActivity if essential permissions are missing
+        if (!hasAllPermissions()) {
+            val intent = Intent(this, PermissionActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Determine which display this activity is running on
+        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
+        }
+
+        Log.d("DroidOS_Main", "Launched on Display $displayId")
+
+        // Start service and pass the current display ID to recall the bubble
+        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
+        serviceIntent.putExtra("DISPLAY_ID", displayId)
+        startService(serviceIntent)
+
+        // Finish immediately so the launcher remains a service-only overlay
+        finish()
+    }
+
+    private fun hasAllPermissions(): Boolean {
+        // 1. Overlay
+        if (!Settings.canDrawOverlays(this)) return false
+
+        // 2. Shizuku
+        val shizukuGranted = try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+        if (!shizukuGranted) return false
+
+        // 3. Accessibility
+        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
+
+        // 4. Notifications removed (Not strictly required for service to run)
+
+        return true
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        for (enabledService in enabledServices) {
+            val serviceInfo = enabledService.resolveInfo.serviceInfo
+            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
+                return true
+            }
+        }
+        return false
+    }
+}
 ```
 
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadMenuManager.kt
@@ -18117,6 +18117,7 @@ class PredictionEngine {
     // BLOCK: TUNING PARAMETERS
     // SUMMARY: Core algorithm weights and thresholds.
     // =================================================================================
+
     companion object {
         val instance = PredictionEngine()
 
@@ -18126,14 +18127,14 @@ class PredictionEngine {
         private const val SEARCH_RADIUS = 70f
         
         // Weights: 
-        // Shape: Overall pattern similarity
-        // Location: Absolute position matching (endpoints critical)
-        // Direction: Flow/direction alignment
-        // Turn: NEW - Corner/turn pattern matching (for shortcut, android, circle)
+        // Shape: 0.25 -> kept low to allow messy sizing
+        // Location: 0.85 -> high trust in key hits
+        // Direction: 0.5 -> kept low
+        // Turn: 1.5 -> SIGNIFICANTLY INCREASED (was 0.9). Sharp corners are now king.
         private const val SHAPE_WEIGHT = 0.25f
         private const val LOCATION_WEIGHT = 0.85f
-        private const val DIRECTION_WEIGHT = 0.5f   // Reduced to make room for turns
-        private const val TURN_WEIGHT = 0.9f        // NEW: Weight for turn matching
+        private const val DIRECTION_WEIGHT = 0.5f   
+        private const val TURN_WEIGHT = 1.5f        
         
         // Files
         private const val USER_STATS_FILE = "user_stats.json"
@@ -18141,6 +18142,7 @@ class PredictionEngine {
         private const val USER_DICT_FILE = "user_words.txt"
         private const val MIN_WORD_LENGTH = 2
     }
+
     // =================================================================================
     // END BLOCK: TUNING PARAMETERS
     // =================================================================================
@@ -19227,44 +19229,43 @@ class PredictionEngine {
     //          Returns list of (position, sharpness) where sharpness indicates
     //          how abrupt the turn was (higher = sharper).
     // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: detectTurns (v3 - Ultra-Sharp Emphasis)
+    // =================================================================================
     private fun detectTurns(directions: List<PointF>): List<Pair<Float, Float>> {
         if (directions.size < 3) return emptyList()
         
         val turns = ArrayList<Pair<Float, Float>>()
         
-        // We'll detect turns by looking at direction changes over small windows
-        // Sharp turns: check consecutive pairs (i vs i+1)
-        // The key insight: a SHARP corner has a big angle change in just 1 step
-        
         for (i in 0 until directions.size - 1) {
             val curr = directions[i]
             val next = directions[i + 1]
             
-            // Skip stationary segments
             if ((curr.x == 0f && curr.y == 0f) || (next.x == 0f && next.y == 0f)) continue
             
-            // Dot product: 1.0 = same direction, 0 = perpendicular, -1 = opposite
+            // Dot product: 1.0 = straight, 0 = 90deg, -1 = U-turn
             val dot = curr.x * next.x + curr.y * next.y
             
-            // SHARP CORNER: dot < 0.3 means angle > ~72 degrees in ONE step
-            // This catches sharp corners that happen abruptly
-            if (dot < 0.3f) {
+            // ULTRA SHARP CORNER (e.g. "W", "Z", "M")
+            // dot < 0.2 means angle > 78 degrees
+            if (dot < 0.2f) {
                 val position = i.toFloat() / directions.size.toFloat()
-                // Sharpness: how much angle changed (0 to 2 scale)
-                // Lower dot = sharper turn = higher sharpness score
-                val sharpness = (1.0f - dot) * 1.5f  // Amplify sharp corners
+                // AMPLIFIED: Scale sharpness by 3.0x (was 1.5x)
+                // This makes a sharp corner worth 3 "normal" curves
+                val sharpness = (1.0f - dot) * 3.0f  
                 turns.add(Pair(position, sharpness))
             }
-            // MEDIUM CORNER: dot < 0.6 means angle > ~53 degrees
+            // MEDIUM CORNER (Standard curve)
+            // dot < 0.6 means angle > 53 degrees
             else if (dot < 0.6f) {
                 val position = i.toFloat() / directions.size.toFloat()
-                val sharpness = (1.0f - dot)  // Normal weighting
+                val sharpness = (1.0f - dot) * 0.8f // Reduce weight of soft curves
                 turns.add(Pair(position, sharpness))
             }
         }
         
-        // Also detect turns by looking at wider windows (for slightly rounded corners)
-        // Compare direction at i with direction at i+3 to catch turns spread over a few points
+        // Secondary pass for "spread out" turns (U-turns that take 3 points)
         for (i in 0 until directions.size - 3) {
             val curr = directions[i]
             val later = directions[i + 3]
@@ -19273,22 +19274,20 @@ class PredictionEngine {
             
             val dot = curr.x * later.x + curr.y * later.y
             
-            // Only add if it's a significant turn AND we didn't already catch it above
-            if (dot < 0.2f) {  // Very significant direction change over 3 steps
+            if (dot < 0.1f) {  
                 val position = (i + 1.5f) / directions.size.toFloat()
                 
-                // Check if we already have a turn near this position
                 val nearbyTurn = turns.any { abs(it.first - position) < 0.08f }
                 if (!nearbyTurn) {
-                    val sharpness = (1.0f - dot) * 0.8f  // Slightly less weight for spread-out turns
+                    val sharpness = (1.0f - dot) * 2.0f // Boost U-turns too
                     turns.add(Pair(position, sharpness))
                 }
             }
         }
         
-        // Sort by position
         return turns.sortedBy { it.first }
     }
+
     // =================================================================================
     // END BLOCK: detectTurns
     // =================================================================================
@@ -19309,26 +19308,28 @@ class PredictionEngine {
     //          - Missing sharp corners = big penalty (high score)
     //          - Turn count matters less than turn positions and sharpness
     // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: calculateTurnScore (v3 - Sharp Corner Enforcement)
+    // =================================================================================
     private fun calculateTurnScore(inputTurns: List<Pair<Float, Float>>, templateTurns: List<Pair<Float, Float>>): Float {
-        // If both have no turns, perfect match
         if (inputTurns.isEmpty() && templateTurns.isEmpty()) return 0f
         
         var score = 0f
         
-        // CRITICAL: If template has sharp turns but input doesn't, BIG penalty
-        // This helps "shortcut" (has turns) vs "spirit" (fewer/different turns)
-        val templateSharpTurns = templateTurns.filter { it.second > 0.8f }
-        val inputSharpTurns = inputTurns.filter { it.second > 0.8f }
+        // Filter for "Significant" turns (Sharpness > 1.5, which corresponds to our new 3.0x scale)
+        val templateSharpTurns = templateTurns.filter { it.second > 1.5f }
+        val inputSharpTurns = inputTurns.filter { it.second > 1.5f }
         
+        // HEAVY PENALTY for mismatching sharp corners
         if (templateSharpTurns.isNotEmpty() && inputSharpTurns.isEmpty()) {
-            // Template expects sharp corners but user didn't make any
-            score += 0.6f
+            // Template has a sharp corner (like "Android" 'N') but user missed it -> Fatal
+            score += 1.5f 
         } else if (templateSharpTurns.isEmpty() && inputSharpTurns.isNotEmpty()) {
-            // User made sharp corners but template doesn't have them
-            score += 0.4f
+            // User made a sharp jerk where none belongs -> Fatal
+            score += 1.0f
         }
         
-        // Match turns by position (greedy matching)
         val usedTemplate = BooleanArray(templateTurns.size)
         var matchedTurns = 0
         var totalSharpnessMatch = 0f
@@ -19343,9 +19344,8 @@ class PredictionEngine {
                 val posDist = abs(inputTurn.first - templateTurns[j].first)
                 val sharpnessDiff = abs(inputTurn.second - templateTurns[j].second)
                 
-                // Position must be within 25% of path length
-                if (posDist < 0.25f) {
-                    // Score based on position distance + sharpness similarity
+                // Position tolerance: 20%
+                if (posDist < 0.20f) {
                     val matchScore = posDist * 2f + sharpnessDiff * 0.5f
                     if (matchScore < bestScore) {
                         bestScore = matchScore
@@ -19359,31 +19359,30 @@ class PredictionEngine {
                 matchedTurns++
                 totalSharpnessMatch += bestScore
                 
-                // BONUS: If both turns are sharp and match well, reduce penalty
-                if (inputTurn.second > 0.8f && templateTurns[bestMatch].second > 0.8f) {
-                    score -= 0.1f  // Reward for matching sharp corners
+                // HUGE REWARD: If both are sharp and matched
+                if (inputTurn.second > 1.5f && templateTurns[bestMatch].second > 1.5f) {
+                    score -= 0.5f  // Massive bonus for hitting the corner
                 }
             } else {
-                // No matching turn found - penalty based on how sharp the turn was
-                score += 0.15f + inputTurn.second * 0.1f
+                // Penalty for extra turns in input
+                score += 0.2f + inputTurn.second * 0.2f
             }
         }
         
-        // Penalty for unmatched template turns
+        // Penalty for missing turns in template
         for (j in templateTurns.indices) {
             if (!usedTemplate[j]) {
-                // Missing an expected turn - penalty based on how sharp it was
-                score += 0.15f + templateTurns[j].second * 0.15f
+                score += 0.2f + templateTurns[j].second * 0.2f
             }
         }
         
-        // Add the position/sharpness matching penalty
         if (matchedTurns > 0) {
             score += totalSharpnessMatch / matchedTurns * 0.3f
         }
         
-        return max(0f, score)  // Don't go negative
+        return max(0f, score)
     }
+
     // =================================================================================
     // END BLOCK: calculateTurnScore
     // =================================================================================

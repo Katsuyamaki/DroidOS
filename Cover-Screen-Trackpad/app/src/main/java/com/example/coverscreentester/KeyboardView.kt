@@ -65,6 +65,8 @@ class KeyboardView @JvmOverloads constructor(
     
     private var isVoiceActive = false
 
+    private val predictionEngine = PredictionEngine.instance
+
     // =================================================================================
     // VIRTUAL MIRROR ORIENTATION MODE STATE
     // SUMMARY: When true, key input is blocked and touches are forwarded for
@@ -909,6 +911,18 @@ class KeyboardView @JvmOverloads constructor(
                         }
                     }
                     currentPath.add(android.graphics.PointF(currentX, currentY))
+
+                    // Predict every ~5 points (approx 80ms)
+                    if (currentPath.size % 5 == 0 && currentPath.size > 5) {
+                        // This is now SAFE. It uses the Executor inside PredictionEngine.
+                        predictionEngine.predictAsync(currentPath, getKeyCenters()) { candidates ->
+                            // This callback comes from a background thread.
+                            // We MUST post to the Main Thread to update UI.
+                            handler.post {
+                                updateSuggestionsForPartialSwipe(candidates) 
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1684,6 +1698,17 @@ class KeyboardView @JvmOverloads constructor(
                 view.setOnTouchListener(null)
             }
         }
+    }
+
+    // =================================================================================
+    // FUNCTION: updateSuggestionsForPartialSwipe
+    // SUMMARY: Takes candidates from decodePartialSwipe and displays them.
+    //          These are always considered "not new" as they are suggestions, not completions.
+    // =================================================================================
+    private fun updateSuggestionsForPartialSwipe(candidates: List<String>) {
+        // Convert to Candidate objects, always marking as isNew=false
+        val candidateObjects = candidates.map { Candidate(it, isNew = false) }
+        setSuggestions(candidateObjects)
     }
 
     // =================================================================================
