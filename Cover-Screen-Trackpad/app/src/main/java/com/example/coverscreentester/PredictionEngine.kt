@@ -33,6 +33,7 @@ class PredictionEngine {
 
 
 
+
     companion object {
         val instance = PredictionEngine()
 
@@ -42,12 +43,10 @@ class PredictionEngine {
         private const val SEARCH_RADIUS = 70f
         
         // Weights: 
-        // Shape 0.2: Reduced to trust pure key position more
-        // Location 0.9: VERY High trust in key hits (Fixes "Android")
-        // Direction 0.5: Drastically reduced to allow "Rounding Corners" in "Swipe"/"Awake"
-        private const val SHAPE_WEIGHT = 0.2f
-        private const val LOCATION_WEIGHT = 0.9f
-        private const val DIRECTION_WEIGHT = 0.5f 
+        // Location 0.85: Increased to fix "Swipe" vs "Swiped" (Endpoint accuracy)
+        private const val SHAPE_WEIGHT = 0.25f
+        private const val LOCATION_WEIGHT = 0.85f
+        private const val DIRECTION_WEIGHT = 0.8f 
         
         // Files
         private const val USER_STATS_FILE = "user_stats.json"
@@ -55,6 +54,7 @@ class PredictionEngine {
         private const val USER_DICT_FILE = "user_words.txt"
         private const val MIN_WORD_LENGTH = 2
     }
+
 
 
 
@@ -666,9 +666,8 @@ class PredictionEngine {
      * 4. Location channel scoring (absolute positions)  
      * 5. Integration with frequency weighting
      */
-
     // =================================================================================
-    // FUNCTION: decodeSwipe (Easier Dwell + Forgiving Weights)
+    // FUNCTION: decodeSwipe (Adaptive Length + Robust Neighbors)
     // =================================================================================
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
         if (swipePath.size < 3 || keyMap.isEmpty()) return emptyList()
@@ -686,16 +685,13 @@ class PredictionEngine {
         val inputLength = getPathLength(swipePath)
         if (inputLength < 10f) return emptyList()
 
-        // --- DWELL DETECTION (Tuned) ---
-        // Check if the user paused at the end.
+        // --- DWELL DETECTION ---
         var isDwellingAtEnd = false
         if (swipePath.size > 5) {
             val endPoint = swipePath.last()
             val tail = swipePath.subList(swipePath.size - 6, swipePath.size)
-            // RADIUS INCREASED: 20f -> 25f. 
-            // Makes it easier to trigger "Too" without being perfectly still.
             val closePoints = tail.count { hypot(it.x - endPoint.x, it.y - endPoint.y) < 25f }
-            if (closePoints >= 4) { // Reduced count 5 -> 4 for faster trigger
+            if (closePoints >= 4) {
                 isDwellingAtEnd = true
             }
         }
@@ -707,23 +703,32 @@ class PredictionEngine {
         val startPoint = sampledInput.first()
         val endPoint = sampledInput.last()
         
-        val startKey = findClosestKey(startPoint, keyMap) ?: return emptyList()
-        val endKey = findClosestKey(endPoint, keyMap) ?: return emptyList()
-        
+        // --- CANDIDATE COLLECTION (ROBUST) ---
         val candidates = HashSet<String>()
-        val indexKey = "${startKey.lowercase()}${endKey.lowercase()}"
-        wordsByFirstLastLetter[indexKey]?.let { candidates.addAll(it) }
         
-        if (candidates.size < 10) {
-            val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
-            val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
-            for (s in nearbyStart) {
-                for (e in nearbyEnd) {
-                    wordsByFirstLastLetter["${s}${e}"]?.let { candidates.addAll(it) }
-                }
+        val startKey = findClosestKey(startPoint, keyMap)
+        val endKey = findClosestKey(endPoint, keyMap)
+        
+        // 1. Neighbor Search (Always ON for robust matching)
+        val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
+        val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
+        
+        for (s in nearbyStart) {
+            for (e in nearbyEnd) {
+                wordsByFirstLastLetter["${s}${e}"]?.let { candidates.addAll(it) }
             }
         }
         
+        // 2. SHORTCUT / PREFIX INJECTION
+        // Blindly add top 25 freq words starting with the Start Key.
+        // Critical for "Android", "Shortcut" if end key is missed.
+        if (startKey != null) {
+            wordsByFirstLetter[startKey.first()]?.let { words ->
+                candidates.addAll(words.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(25))
+            }
+        }
+
+        // 3. User History
         synchronized(userFrequencyMap) {
             candidates.addAll(userFrequencyMap.entries
                 .sortedByDescending { it.value }
@@ -731,17 +736,24 @@ class PredictionEngine {
                 .map { it.key })
         }
         
+        // --- SCORING ---
         val scored = candidates
             .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
             .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }.thenBy { getWordRank(it) })
-            .take(100)
+            .take(150)
             .mapNotNull { word ->
                 val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
                 
-                // Relaxed Length Filter (3.0x)
+                // --- ADAPTIVE LENGTH FILTER ---
                 val tLen = getPathLength(template.rawPoints)
                 val ratio = tLen / inputLength
-                if (ratio > 3.0f || ratio < 0.4f) return@mapNotNull null
+                
+                // LOGIC: 
+                // Short swipes (like "As", < 150px) must be strict (1.5x limit).
+                // Long swipes (like "Android", > 300px) can be lazy (5.0x limit).
+                val maxRatio = if (inputLength < 150f) 1.5f else 5.0f
+                
+                if (ratio > maxRatio || ratio < 0.4f) return@mapNotNull null
 
                 if (template.sampledPoints == null) {
                     template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
@@ -757,6 +769,7 @@ class PredictionEngine {
                                        (locScore * LOCATION_WEIGHT) + 
                                        (dirScore * DIRECTION_WEIGHT)
                 
+                // --- BOOSTS ---
                 val rank = template.rank
                 val freqBonus = 1.0f / (1.0f + 0.15f * ln((rank + 1).toFloat()))
                 
@@ -764,10 +777,17 @@ class PredictionEngine {
                     1.2f + (0.4f * ln(((userFrequencyMap[word] ?: 0) + 1).toFloat())) 
                 else 1.0f
                 
-                // DWELL BOOST
-                if (isDwellingAtEnd && word.length > 2 && word.last() == word[word.length - 2]) {
-                    userBoost *= 1.25f // Increased boost slightly
+                // DWELL BOOST (Only if word > 3 letters OR matches pattern "Too", "See")
+                if (isDwellingAtEnd && word.length >= 3 && word.last() == word[word.length - 2]) {
+                    userBoost *= 1.25f 
                 }
+                
+                // EXACT KEY MATCH BONUS
+                if (startKey != null && word.startsWith(startKey, ignoreCase = true)) userBoost *= 1.15f
+                if (endKey != null && word.endsWith(endKey, ignoreCase = true)) userBoost *= 1.15f
+                
+                // LONG WORD BONUS
+                if (word.length >= 6) userBoost *= 1.15f
 
                 val finalScore = (integrationScore * (1.0f - 0.5f * freqBonus)) / userBoost
                 Pair(word, finalScore)
@@ -775,6 +795,8 @@ class PredictionEngine {
         
         return scored.sortedBy { it.second }.distinctBy { it.first }.take(3).map { it.first }
     }
+
+
 
 
     // =================================================================================
@@ -986,27 +1008,31 @@ class PredictionEngine {
      * Points at the beginning and end are weighted more heavily.
      * Lower score = better match.
      */
+
     private fun calculateLocationScore(input: List<PointF>, template: List<PointF>): Float {
-        if (input.size != template.size) return Float.MAX_VALUE
-        
         var totalDist = 0f
         var totalWeight = 0f
+        val size = input.size
         
         for (i in input.indices) {
-            val dx = input[i].x - template[i].x
-            val dy = input[i].y - template[i].y
-            val dist = sqrt(dx * dx + dy * dy)
+            val dist = hypot(input[i].x - template[i].x, input[i].y - template[i].y)
             
-            // Weight endpoints more heavily (helps distinguish similar words)
-            val position = i.toFloat() / (input.size - 1)
-            val weight = if (position < 0.15f || position > 0.85f) 2.0f else 1.0f
+            // --- ENDPOINT WEIGHTING (Strict) ---
+            // Start: 3.0x
+            // End:   5.0x (Crucial for "Swipe" vs "Swiped")
+            // Middle: 1.0x
+            val w = when {
+                i < size * 0.15 -> 3.0f
+                i > size * 0.85 -> 5.0f // Heavy penalty for missing the last key
+                else -> 1.0f
+            }
             
-            totalDist += dist * weight
-            totalWeight += weight
+            totalDist += dist * w
+            totalWeight += w
         }
-        
         return totalDist / totalWeight
     }
+
 
 
     // =================================================================================
