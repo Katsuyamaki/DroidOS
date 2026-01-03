@@ -36,24 +36,27 @@ class PredictionEngine {
     companion object {
         val instance = PredictionEngine()
 
-        // Tuning Parameters (Strict Gboard-style)
+        // Tuning Parameters
         private const val SAMPLE_POINTS = 64
         private const val NORMALIZATION_SIZE = 100f
         private const val SEARCH_RADIUS = 70f
         
         // Weights: 
-        // Location 0.7: High trust in key accuracy (helps "Awake")
-        // Direction 0.8: Lower multiplier, but squared input values (Fixes "Three")
-        private const val SHAPE_WEIGHT = 0.3f
-        private const val LOCATION_WEIGHT = 0.7f
-        private const val DIRECTION_WEIGHT = 0.8f 
+        // Shape 0.2: Reduced to trust pure key position more
+        // Location 0.9: VERY High trust in key hits (Fixes "Android")
+        // Direction 0.5: Drastically reduced to allow "Rounding Corners" in "Swipe"/"Awake"
+        private const val SHAPE_WEIGHT = 0.2f
+        private const val LOCATION_WEIGHT = 0.9f
+        private const val DIRECTION_WEIGHT = 0.5f 
         
-        // File Names
+        // Files
         private const val USER_STATS_FILE = "user_stats.json"
         private const val BLOCKED_DICT_FILE = "blocked_words.txt"
         private const val USER_DICT_FILE = "user_words.txt"
         private const val MIN_WORD_LENGTH = 2
     }
+
+
 
 
 
@@ -664,10 +667,8 @@ class PredictionEngine {
      * 5. Integration with frequency weighting
      */
 
-
-
     // =================================================================================
-    // FUNCTION: decodeSwipe (Updated with Direction + Length Filter)
+    // FUNCTION: decodeSwipe (Easier Dwell + Forgiving Weights)
     // =================================================================================
     fun decodeSwipe(swipePath: List<PointF>, keyMap: Map<String, PointF>): List<String> {
         if (swipePath.size < 3 || keyMap.isEmpty()) return emptyList()
@@ -676,35 +677,43 @@ class PredictionEngine {
             return emptyList()
         }
 
-        // Layout check
         val keyMapHash = keyMap.hashCode()
         if (keyMapHash != lastKeyMapHash) {
             templateCache.clear()
             lastKeyMapHash = keyMapHash
         }
 
-        // 1. Analysis
         val inputLength = getPathLength(swipePath)
         if (inputLength < 10f) return emptyList()
 
-        // 2. Preprocess Input (Sample -> Normalize -> Direction)
+        // --- DWELL DETECTION (Tuned) ---
+        // Check if the user paused at the end.
+        var isDwellingAtEnd = false
+        if (swipePath.size > 5) {
+            val endPoint = swipePath.last()
+            val tail = swipePath.subList(swipePath.size - 6, swipePath.size)
+            // RADIUS INCREASED: 20f -> 25f. 
+            // Makes it easier to trigger "Too" without being perfectly still.
+            val closePoints = tail.count { hypot(it.x - endPoint.x, it.y - endPoint.y) < 25f }
+            if (closePoints >= 4) { // Reduced count 5 -> 4 for faster trigger
+                isDwellingAtEnd = true
+            }
+        }
+
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
         val normalizedInput = normalizePath(sampledInput)
-        val inputDirections = calculateDirectionVectors(sampledInput) // NEW
+        val inputDirections = calculateDirectionVectors(sampledInput)
 
         val startPoint = sampledInput.first()
         val endPoint = sampledInput.last()
         
-        // 3. Candidate Filtering (Geometric + Fuzzy)
         val startKey = findClosestKey(startPoint, keyMap) ?: return emptyList()
         val endKey = findClosestKey(endPoint, keyMap) ?: return emptyList()
         
         val candidates = HashSet<String>()
         val indexKey = "${startKey.lowercase()}${endKey.lowercase()}"
-        
         wordsByFirstLastLetter[indexKey]?.let { candidates.addAll(it) }
         
-        // Fuzzy fallback if few results
         if (candidates.size < 10) {
             val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
             val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
@@ -715,7 +724,6 @@ class PredictionEngine {
             }
         }
         
-        // User History Rescue
         synchronized(userFrequencyMap) {
             candidates.addAll(userFrequencyMap.entries
                 .sortedByDescending { it.value }
@@ -723,67 +731,50 @@ class PredictionEngine {
                 .map { it.key })
         }
         
-        // 4. Scoring
         val scored = candidates
             .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
             .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }.thenBy { getWordRank(it) })
             .take(100)
-
             .mapNotNull { word ->
                 val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
                 
-                // --- STRICT LENGTH FILTER ---
-                // "Adapters" vs "All". Input=Short, Template=Long.
-                // Ratio > 1.8 means template is nearly 2x longer than swipe -> REJECT.
+                // Relaxed Length Filter (3.0x)
                 val tLen = getPathLength(template.rawPoints)
                 val ratio = tLen / inputLength
-                
-                // Tightened range: 0.5x to 1.8x (was 0.35 to 2.8)
-                if (ratio > 1.8f || ratio < 0.5f) return@mapNotNull null
+                if (ratio > 3.0f || ratio < 0.4f) return@mapNotNull null
 
-                // Ensure cached geometry
                 if (template.sampledPoints == null) {
                     template.sampledPoints = samplePath(template.rawPoints, SAMPLE_POINTS)
                     template.normalizedPoints = normalizePath(template.sampledPoints!!)
                     template.directionVectors = calculateDirectionVectors(template.sampledPoints!!)
                 }
-
-                // SCORING CHANNELS
+                
                 val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
                 val locScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
                 val dirScore = calculateDirectionScore(inputDirections, template.directionVectors!!)
                 
-                // Integrated Score
-                val rawScore = (shapeScore * SHAPE_WEIGHT) + 
-                               (locScore * LOCATION_WEIGHT) + 
-                               (dirScore * DIRECTION_WEIGHT)
-
-
-                // Frequency Boosts (Slightly increased to fix "Advert" vs "After")
-                val rank = template.rank
+                val integrationScore = (shapeScore * SHAPE_WEIGHT) + 
+                                       (locScore * LOCATION_WEIGHT) + 
+                                       (dirScore * DIRECTION_WEIGHT)
                 
-                // CHANGED: 0.1f -> 0.15f
-                // This gives common words (Rank < 100) a slightly stronger edge 
-                // against rare geometric matches (Rank > 5000)
+                val rank = template.rank
                 val freqBonus = 1.0f / (1.0f + 0.15f * ln((rank + 1).toFloat()))
                 
-                val userCount = userFrequencyMap[word] ?: 0
-                val userBoost = if (userCount > 0) 1.2f + (0.4f * ln((userCount + 1).toFloat())) else 1.0f
+                var userBoost = if ((userFrequencyMap[word] ?: 0) > 0) 
+                    1.2f + (0.4f * ln(((userFrequencyMap[word] ?: 0) + 1).toFloat())) 
+                else 1.0f
+                
+                // DWELL BOOST
+                if (isDwellingAtEnd && word.length > 2 && word.last() == word[word.length - 2]) {
+                    userBoost *= 1.25f // Increased boost slightly
+                }
 
-                val finalScore = (rawScore * (1.0f - 0.5f * freqBonus)) / userBoost
+                val finalScore = (integrationScore * (1.0f - 0.5f * freqBonus)) / userBoost
                 Pair(word, finalScore)
             }
-
         
         return scored.sortedBy { it.second }.distinctBy { it.first }.take(3).map { it.first }
     }
-
-
-
-
-
-
-
 
 
     // =================================================================================
@@ -830,29 +821,38 @@ class PredictionEngine {
     //          character in the word is missing from the keyMap. Logs first failure per
     //          batch to avoid log spam while still providing diagnostic info.
     // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: getOrCreateTemplate (With Micro-Loops for Double Letters)
+    // =================================================================================
     private fun getOrCreateTemplate(word: String, keyMap: Map<String, PointF>): WordTemplate? {
         templateCache[word]?.let { return it }
 
-        // Build raw points from key centers
         val rawPoints = ArrayList<PointF>()
-
+        var lastKeyPos: PointF? = null
+        
         for (char in word) {
             val keyPos = keyMap[char.toString().uppercase()] ?: keyMap[char.toString().lowercase()] ?: return null
             
-            // REMOVED: Duplicate key collapsing.
-            // If user swipes "Better", they likely dwell or loop on the T's.
-            // We want the template to reflect that length.
+
+            // DOUBLE LETTER LOGIC:
+            if (lastKeyPos != null && keyPos.x == lastKeyPos.x && keyPos.y == lastKeyPos.y) {
+                // INCREASED: 10f -> 15f. 
+                // Makes the "circle" gesture easier to register.
+                rawPoints.add(PointF(keyPos.x + 15f, keyPos.y + 15f))
+            }
+            
             rawPoints.add(PointF(keyPos.x, keyPos.y))
+            lastKeyPos = keyPos
         }
 
+        if (rawPoints.size < 2) return null
 
-        if (rawPoints.size < MIN_WORD_LENGTH) return null
-
-        val rank = getWordRank(word)
-        val template = WordTemplate(word, rank, rawPoints)
-        templateCache[word] = template
-        return template
+        val t = WordTemplate(word, getWordRank(word), rawPoints)
+        templateCache[word] = t
+        return t
     }
+
     // =================================================================================
     // END BLOCK: getOrCreateTemplate
     // =================================================================================
@@ -1013,6 +1013,7 @@ class PredictionEngine {
     // NEW: DIRECTION SCORING HELPERS
     // =================================================================================
     
+
     private fun calculateDirectionVectors(path: List<PointF>): List<PointF> {
         val vectors = ArrayList<PointF>()
         for (i in 0 until path.size - 1) {
@@ -1022,38 +1023,50 @@ class PredictionEngine {
             if (len > 0.001f) {
                 vectors.add(PointF(dx/len, dy/len))
             } else {
+                // Return 0,0 for stationary segments (handled by Score function now)
                 vectors.add(PointF(0f, 0f))
             }
         }
         return vectors
     }
 
+    // =================================================================================
+    // FUNCTION: calculateDirectionScore (Fixed for Double Letters & Pauses)
+    // =================================================================================
 
     // =================================================================================
-    // NEW: Direction Score (Non-Linear Penalty)
+    // FUNCTION: calculateDirectionScore (Linear + Stationary Skip)
     // =================================================================================
     private fun calculateDirectionScore(input: List<PointF>, template: List<PointF>): Float {
         var totalScore = 0f
+        var validPoints = 0
+        
         val count = min(input.size, template.size)
         if (count == 0) return 0f
 
         for (i in 0 until count) {
             val v1 = input[i]
             val v2 = template[i]
-            // Dot Product: 1.0 = aligned, 0.0 = 90deg, -1.0 = opposite
+            
+            // Skip stationary segments (Pause/Tap)
+            if ((v2.x == 0f && v2.y == 0f) || (v1.x == 0f && v1.y == 0f)) {
+                continue
+            }
+
+            // Dot Product: 1.0 = aligned, -1.0 = opposite
             val dot = v1.x * v2.x + v1.y * v2.y
             
-            // Base Penalty: 0.0 to 2.0
-            val penalty = (1.0f - dot)
-            
-            // SQUARE the penalty. 
-            // Small error (0.2) -> 0.04 (Ignored)
-            // Big error (2.0) -> 4.0 (Fatal)
-            // This forces "Three" to lose against "There" if the E->R turn is missing.
-            totalScore += (penalty * penalty)
+            // Penalty: Linear (Robust for complex words like "Either")
+            // Reverted from Squared to forgive messy scribbles.
+            totalScore += (1.0f - dot)
+            validPoints++
         }
-        return totalScore / count
+        
+        return if (validPoints > 0) totalScore / validPoints else 0f
     }
+
+
+
 
 
     /**
