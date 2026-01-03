@@ -731,9 +731,13 @@ class PredictionEngine {
         val sampledInput = samplePath(swipePath, SAMPLE_POINTS)
         val normalizedInput = normalizePath(sampledInput)
         val inputDirections = calculateDirectionVectors(sampledInput)
-        
+
         // NEW: Calculate turn points for input
         val inputTurns = detectTurns(inputDirections)
+
+        // NEW: Extract sequence of keys the path passes through
+        // This is CRITICAL for distinguishing "awake" vs "awesome"
+        val pathKeys = extractPathKeys(sampledInput, keyMap, 8)
 
         val startPoint = sampledInput.first()
         val endPoint = sampledInput.last()
@@ -793,15 +797,20 @@ class PredictionEngine {
                 val shapeScore = calculateShapeScore(normalizedInput, template.normalizedPoints!!)
                 val locScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
                 val dirScore = calculateDirectionScore(inputDirections, template.directionVectors!!)
-                
+
                 // NEW: Turn matching score
                 val templateTurns = detectTurns(template.directionVectors!!)
                 val turnScore = calculateTurnScore(inputTurns, templateTurns)
-                
-                val integrationScore = (shapeScore * SHAPE_WEIGHT) + 
-                                       (locScore * LOCATION_WEIGHT) + 
+
+                // NEW: Path key matching score - penalizes words where path doesn't match
+                // This distinguishes "awake" (path goes through w) from "awesome" (path would need s)
+                val pathKeyScore = calculatePathKeyScore(pathKeys, word)
+
+                val integrationScore = (shapeScore * SHAPE_WEIGHT) +
+                                       (locScore * LOCATION_WEIGHT) +
                                        (dirScore * DIRECTION_WEIGHT) +
-                                       (turnScore * TURN_WEIGHT)
+                                       (turnScore * TURN_WEIGHT) +
+                                       (pathKeyScore * 0.8f)  // NEW: Path key matching weight
                 
                 // --- BOOSTS (Original) ---
                 val rank = template.rank
@@ -864,6 +873,9 @@ class PredictionEngine {
         val startKey = findClosestKey(startPoint, keyMap)
         val endKey = findClosestKey(endPoint, keyMap)
 
+        // Extract path keys for intermediate matching (fewer samples for speed)
+        val pathKeys = extractPathKeys(sampledInput, keyMap, 6)
+
         // FAST CANDIDATE COLLECTION - fewer candidates for speed
         val candidates = HashSet<String>()
 
@@ -903,11 +915,14 @@ class PredictionEngine {
                     template.directionVectors = calculateDirectionVectors(template.sampledPoints!!)
                 }
 
-                // SIMPLIFIED SCORING - just location and direction for speed
+                // SIMPLIFIED SCORING - location, direction, and path key matching for speed
                 val locScore = calculateLocationScore(sampledInput, template.sampledPoints!!)
                 val dirScore = calculateDirectionScore(inputDirections, template.directionVectors!!)
 
-                val integrationScore = locScore * 0.6f + dirScore * 0.4f
+                // Add path key score for better intermediate key matching
+                val pathKeyScore = calculatePathKeyScore(pathKeys, word)
+
+                val integrationScore = locScore * 0.4f + dirScore * 0.2f + pathKeyScore * 0.6f  // Path keys most important for preview
 
                 // Basic boosts
                 val rank = template.rank
@@ -965,7 +980,156 @@ class PredictionEngine {
     // =================================================================================
     // END BLOCK: findNearbyKeys
     // =================================================================================
-    
+
+    // =================================================================================
+    // FUNCTION: extractPathKeys
+    // SUMMARY: Extracts the sequence of keys that a swipe path passes through.
+    //          Samples the path at regular intervals and finds the closest key at each.
+    //          This is CRITICAL for distinguishing words like "awake" vs "awesome"
+    //          where start/end are the same but the path goes through different keys.
+    // =================================================================================
+    private fun extractPathKeys(path: List<PointF>, keyMap: Map<String, PointF>, numSamples: Int = 8): List<String> {
+        if (path.size < 3) return emptyList()
+
+        val keys = ArrayList<String>()
+        val step = path.size / (numSamples + 1)
+
+        var lastKey: String? = null
+
+        // Sample at regular intervals including start and end
+        for (i in 0..numSamples) {
+            val idx = if (i == numSamples) path.size - 1 else i * step
+            if (idx < path.size) {
+                val point = path[idx]
+                val key = findClosestKey(point, keyMap)
+
+                // Only add if different from last key (avoid duplicates for same key region)
+                if (key != null && key != lastKey) {
+                    keys.add(key.lowercase())
+                    lastKey = key
+                }
+            }
+        }
+
+        return keys
+    }
+    // =================================================================================
+    // END BLOCK: extractPathKeys
+    // =================================================================================
+
+// =================================================================================
+    // FUNCTION: calculatePathKeyScore (v2 - Strict Sequential Matching)
+    // SUMMARY: Compares path keys to word letters with STRICT sequential matching.
+    //          Each path key must match the corresponding position in the word.
+    //          This prevents "area" from matching path ['a','w','a'] since 'w' ≠ 'r'.
+    //          
+    //          Algorithm:
+    //          1. Expand word to key sequence (e.g., "awake" → ['a','w','a','k','e'])
+    //          2. Sample both sequences to same length
+    //          3. Compare position-by-position
+    //          
+    //          Lower score = better match.
+    // =================================================================================
+    private fun calculatePathKeyScore(pathKeys: List<String>, word: String): Float {
+        if (pathKeys.size < 2 || word.length < 2) return 0f
+        
+        // Convert word to key sequence (just the letters)
+        val wordKeys = word.lowercase().map { it.toString() }
+        
+        // We need to compare sequences that may be different lengths
+        // Sample both to a common length for comparison
+        val compareLength = minOf(pathKeys.size, wordKeys.size)
+        if (compareLength < 2) return 0f
+        
+        var totalPenalty = 0f
+        var exactMatches = 0
+        var adjacentMatches = 0  // Keys that are keyboard-adjacent
+        
+        // Compare corresponding positions
+        for (i in 0 until compareLength) {
+            val pathIdx = (i * pathKeys.size) / compareLength
+            val wordIdx = (i * wordKeys.size) / compareLength
+            
+            if (pathIdx >= pathKeys.size || wordIdx >= wordKeys.size) continue
+            
+            val pathKey = pathKeys[pathIdx].firstOrNull()?.lowercaseChar() ?: continue
+            val wordKey = wordKeys[wordIdx].firstOrNull()?.lowercaseChar() ?: continue
+            
+            if (pathKey == wordKey) {
+                // Exact match - good!
+                exactMatches++
+            } else if (areKeysAdjacent(pathKey, wordKey)) {
+                // Adjacent keys - small penalty (typo tolerance)
+                adjacentMatches++
+                totalPenalty += 0.1f
+            } else {
+                // Non-adjacent mismatch - significant penalty!
+                // This catches 'w' vs 's' (not adjacent), 'w' vs 'r' (not adjacent)
+                totalPenalty += 0.4f
+            }
+        }
+        
+        // Penalty for length mismatch (path much shorter/longer than word)
+        val lengthRatio = pathKeys.size.toFloat() / wordKeys.size.toFloat()
+        if (lengthRatio < 0.5f || lengthRatio > 2.0f) {
+            totalPenalty += 0.3f
+        }
+        
+        // Bonus for high exact match ratio
+        val matchRatio = exactMatches.toFloat() / compareLength
+        totalPenalty -= matchRatio * 0.3f
+        
+        return maxOf(0f, totalPenalty)
+    }
+    // =================================================================================
+    // END BLOCK: calculatePathKeyScore
+    // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: areKeysAdjacent
+    // SUMMARY: Checks if two keys are adjacent on a QWERTY keyboard.
+    //          Used for typo tolerance - adjacent mismatches are less severe.
+    // =================================================================================
+    private fun areKeysAdjacent(key1: Char, key2: Char): Boolean {
+        val adjacencyMap = mapOf(
+            'q' to setOf('w', 'a'),
+            'w' to setOf('q', 'e', 'a', 's'),
+            'e' to setOf('w', 'r', 's', 'd'),
+            'r' to setOf('e', 't', 'd', 'f'),
+            't' to setOf('r', 'y', 'f', 'g'),
+            'y' to setOf('t', 'u', 'g', 'h'),
+            'u' to setOf('y', 'i', 'h', 'j'),
+            'i' to setOf('u', 'o', 'j', 'k'),
+            'o' to setOf('i', 'p', 'k', 'l'),
+            'p' to setOf('o', 'l'),
+            'a' to setOf('q', 'w', 's', 'z'),
+            's' to setOf('a', 'w', 'e', 'd', 'z', 'x'),
+            'd' to setOf('s', 'e', 'r', 'f', 'x', 'c'),
+            'f' to setOf('d', 'r', 't', 'g', 'c', 'v'),
+            'g' to setOf('f', 't', 'y', 'h', 'v', 'b'),
+            'h' to setOf('g', 'y', 'u', 'j', 'b', 'n'),
+            'j' to setOf('h', 'u', 'i', 'k', 'n', 'm'),
+            'k' to setOf('j', 'i', 'o', 'l', 'm'),
+            'l' to setOf('k', 'o', 'p'),
+            'z' to setOf('a', 's', 'x'),
+            'x' to setOf('z', 's', 'd', 'c'),
+            'c' to setOf('x', 'd', 'f', 'v'),
+            'v' to setOf('c', 'f', 'g', 'b'),
+            'b' to setOf('v', 'g', 'h', 'n'),
+            'n' to setOf('b', 'h', 'j', 'm'),
+            'm' to setOf('n', 'j', 'k')
+        )
+        
+        val adjacent1 = adjacencyMap[key1.lowercaseChar()] ?: emptySet()
+        return key2.lowercaseChar() in adjacent1
+    }
+    // =================================================================================
+    // END BLOCK: areKeysAdjacent
+    // =================================================================================
+    // =================================================================================
+    // END BLOCK: calculatePathKeyScore
+    // =================================================================================
+
     // =================================================================================
     // FUNCTION: getOrCreateTemplate
     // SUMMARY: Gets or creates a word template with key positions. Returns null if any

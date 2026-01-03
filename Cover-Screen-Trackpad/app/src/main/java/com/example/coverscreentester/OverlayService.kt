@@ -1359,6 +1359,40 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         cursorParams.gravity = Gravity.TOP or Gravity.LEFT; cursorParams.x = uiScreenWidth / 2; cursorParams.y = uiScreenHeight / 2; windowManager?.addView(cursorLayout, cursorParams)
     }
 
+    // =================================================================================
+    // FUNCTION: setBubbleAnchored
+    // SUMMARY: Locks UI elements (Bubble, Trackpad, Keyboard) in place.
+    // Hides drag handles to prevent accidental movement.
+    // =================================================================================
+
+    fun setBubbleAnchored(anchored: Boolean) {
+        prefs.prefAnchored = anchored
+        savePrefs()
+        
+        // 1. Lock Bubble (Disable movement listener logic handled in setupBubble)
+        // (The bubble touch listener checks prefs.prefAnchored or we reload it)
+        if (anchored) {
+            // Optional: Snap to corner if required, or just lock in place
+            // For now, we rely on the touch listener reading the pref
+        }
+        
+        // 2. Lock Trackpad (Hide resize/move handles)
+        val visibility = if (anchored) View.GONE else View.VISIBLE
+        for (handle in handleContainers) {
+            handle.visibility = visibility
+        }
+        for (visual in handleVisuals) {
+            visual.visibility = visibility
+        }
+        
+        // 3. Lock Keyboard (Hide drag bar and resize handle)
+        keyboardOverlay?.setAnchored(anchored)
+        
+        // 4. Update Mirror Mode if active (Mirror follows physical lock state)
+        // (Mirror logic is separate, but good to keep in sync if needed)
+        
+        showToast(if (anchored) "Locked" else "Unlocked")
+    }
     fun toggleTrackpad() { 
         isTrackpadVisible = !isTrackpadVisible
         
@@ -1694,7 +1728,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             "scroll_size" -> { prefs.prefScrollTouchSize = value as Int; updateScrollSize() }
             "scroll_visual" -> { prefs.prefScrollVisualSize = value as Int; updateScrollSize() }
             "cursor_size" -> { prefs.prefCursorSize = value as Int; updateCursorSize() }
-            "anchored" -> prefs.prefAnchored = parseBoolean(value)
+            "anchored" -> { 
+                prefs.prefAnchored = parseBoolean(value)
+                keyboardOverlay?.setAnchored(prefs.prefAnchored)
+                savePrefs() // Ensure this triggers save
+            }
             "automation_enabled" -> prefs.prefAutomationEnabled = parseBoolean(value)
             "bubble_size" -> updateBubbleSize(value as Int)
             "bubble_icon" -> cycleBubbleIcon()
@@ -1978,6 +2016,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             keyboardOverlay?.updatePosition(0, uiScreenHeight - defaultH)
             keyboardOverlay?.updateSize(uiScreenWidth, defaultH)
         }
+        // Sync Anchored State from Prefs
+        keyboardOverlay?.setAnchored(prefs.prefAnchored)
     }
 
 
