@@ -49,8 +49,8 @@ class PredictionEngine {
         // Turn: NEW - Corner/turn pattern matching (for shortcut, android, circle)
         private const val SHAPE_WEIGHT = 0.25f
         private const val LOCATION_WEIGHT = 0.85f
-        private const val DIRECTION_WEIGHT = 0.6f   // Reduced to make room for turns
-        private const val TURN_WEIGHT = 0.5f        // NEW: Weight for turn matching
+        private const val DIRECTION_WEIGHT = 0.5f   // Reduced to make room for turns
+        private const val TURN_WEIGHT = 0.7f        // NEW: Weight for turn matching
         
         // Files
         private const val USER_STATS_FILE = "user_stats.json"
@@ -1136,32 +1136,79 @@ class PredictionEngine {
     //          along the path and angle is the turn magnitude in radians.
     //          A turn is detected when consecutive direction vectors differ significantly.
     // =================================================================================
+// =================================================================================
+    // FUNCTION: detectTurns (v2 - Sharp Corner Detection)
+    // SUMMARY: Detects significant direction changes with emphasis on SHARP corners.
+    //          Sharp corners = abrupt changes over 1-2 points (more intentional)
+    //          Rounded corners = gradual changes over many points (less distinctive)
+    //          Returns list of (position, sharpness) where sharpness indicates
+    //          how abrupt the turn was (higher = sharper).
+    // =================================================================================
     private fun detectTurns(directions: List<PointF>): List<Pair<Float, Float>> {
         if (directions.size < 3) return emptyList()
         
         val turns = ArrayList<Pair<Float, Float>>()
-        val turnThreshold = 0.5f  // Dot product threshold (cos of ~60 degrees)
         
-        for (i in 1 until directions.size - 1) {
-            val prev = directions[i - 1]
+        // We'll detect turns by looking at direction changes over small windows
+        // Sharp turns: check consecutive pairs (i vs i+1)
+        // The key insight: a SHARP corner has a big angle change in just 1 step
+        
+        for (i in 0 until directions.size - 1) {
             val curr = directions[i]
+            val next = directions[i + 1]
             
             // Skip stationary segments
-            if ((prev.x == 0f && prev.y == 0f) || (curr.x == 0f && curr.y == 0f)) continue
+            if ((curr.x == 0f && curr.y == 0f) || (next.x == 0f && next.y == 0f)) continue
             
-            // Calculate dot product between consecutive direction vectors
-            val dot = prev.x * curr.x + prev.y * curr.y
+            // Dot product: 1.0 = same direction, 0 = perpendicular, -1 = opposite
+            val dot = curr.x * next.x + curr.y * next.y
             
-            // If dot product is low, there's a significant turn
-            if (dot < turnThreshold) {
+            // SHARP CORNER: dot < 0.3 means angle > ~72 degrees in ONE step
+            // This catches sharp corners that happen abruptly
+            if (dot < 0.3f) {
                 val position = i.toFloat() / directions.size.toFloat()
-                val turnMagnitude = 1.0f - dot  // 0 = no turn, 2 = complete reversal
-                turns.add(Pair(position, turnMagnitude))
+                // Sharpness: how much angle changed (0 to 2 scale)
+                // Lower dot = sharper turn = higher sharpness score
+                val sharpness = (1.0f - dot) * 1.5f  // Amplify sharp corners
+                turns.add(Pair(position, sharpness))
+            }
+            // MEDIUM CORNER: dot < 0.6 means angle > ~53 degrees
+            else if (dot < 0.6f) {
+                val position = i.toFloat() / directions.size.toFloat()
+                val sharpness = (1.0f - dot)  // Normal weighting
+                turns.add(Pair(position, sharpness))
             }
         }
         
-        return turns
+        // Also detect turns by looking at wider windows (for slightly rounded corners)
+        // Compare direction at i with direction at i+3 to catch turns spread over a few points
+        for (i in 0 until directions.size - 3) {
+            val curr = directions[i]
+            val later = directions[i + 3]
+            
+            if ((curr.x == 0f && curr.y == 0f) || (later.x == 0f && later.y == 0f)) continue
+            
+            val dot = curr.x * later.x + curr.y * later.y
+            
+            // Only add if it's a significant turn AND we didn't already catch it above
+            if (dot < 0.2f) {  // Very significant direction change over 3 steps
+                val position = (i + 1.5f) / directions.size.toFloat()
+                
+                // Check if we already have a turn near this position
+                val nearbyTurn = turns.any { abs(it.first - position) < 0.08f }
+                if (!nearbyTurn) {
+                    val sharpness = (1.0f - dot) * 0.8f  // Slightly less weight for spread-out turns
+                    turns.add(Pair(position, sharpness))
+                }
+            }
+        }
+        
+        // Sort by position
+        return turns.sortedBy { it.first }
     }
+    // =================================================================================
+    // END BLOCK: detectTurns
+    // =================================================================================
     // =================================================================================
     // END BLOCK: detectTurns
     // =================================================================================
@@ -1172,49 +1219,91 @@ class PredictionEngine {
     //          Rewards matching turn counts and positions, penalizes mismatches.
     //          Lower score = better match.
     // =================================================================================
+// =================================================================================
+    // FUNCTION: calculateTurnScore (v2 - Sharp Corner Emphasis)
+    // SUMMARY: Compares turn patterns with HEAVY emphasis on matching sharp corners.
+    //          - Matching sharp corners = big reward (low score)
+    //          - Missing sharp corners = big penalty (high score)
+    //          - Turn count matters less than turn positions and sharpness
+    // =================================================================================
     private fun calculateTurnScore(inputTurns: List<Pair<Float, Float>>, templateTurns: List<Pair<Float, Float>>): Float {
         // If both have no turns, perfect match
         if (inputTurns.isEmpty() && templateTurns.isEmpty()) return 0f
         
-        // Penalty for turn count mismatch
-        val countDiff = abs(inputTurns.size - templateTurns.size)
-        var score = countDiff * 0.3f  // Each missing/extra turn adds 0.3 penalty
+        var score = 0f
         
-        // If one has turns and other doesn't, big penalty
-        if ((inputTurns.isEmpty() && templateTurns.isNotEmpty()) ||
-            (inputTurns.isNotEmpty() && templateTurns.isEmpty())) {
-            return score + 0.5f
+        // CRITICAL: If template has sharp turns but input doesn't, BIG penalty
+        // This helps "shortcut" (has turns) vs "spirit" (fewer/different turns)
+        val templateSharpTurns = templateTurns.filter { it.second > 0.8f }
+        val inputSharpTurns = inputTurns.filter { it.second > 0.8f }
+        
+        if (templateSharpTurns.isNotEmpty() && inputSharpTurns.isEmpty()) {
+            // Template expects sharp corners but user didn't make any
+            score += 0.6f
+        } else if (templateSharpTurns.isEmpty() && inputSharpTurns.isNotEmpty()) {
+            // User made sharp corners but template doesn't have them
+            score += 0.4f
         }
         
         // Match turns by position (greedy matching)
         val usedTemplate = BooleanArray(templateTurns.size)
+        var matchedTurns = 0
+        var totalSharpnessMatch = 0f
         
         for (inputTurn in inputTurns) {
             var bestMatch = -1
-            var bestDist = Float.MAX_VALUE
+            var bestScore = Float.MAX_VALUE
             
             for (j in templateTurns.indices) {
                 if (usedTemplate[j]) continue
                 
                 val posDist = abs(inputTurn.first - templateTurns[j].first)
-                if (posDist < bestDist && posDist < 0.2f) {  // Must be within 20% of path
-                    bestDist = posDist
-                    bestMatch = j
+                val sharpnessDiff = abs(inputTurn.second - templateTurns[j].second)
+                
+                // Position must be within 25% of path length
+                if (posDist < 0.25f) {
+                    // Score based on position distance + sharpness similarity
+                    val matchScore = posDist * 2f + sharpnessDiff * 0.5f
+                    if (matchScore < bestScore) {
+                        bestScore = matchScore
+                        bestMatch = j
+                    }
                 }
             }
             
             if (bestMatch >= 0) {
                 usedTemplate[bestMatch] = true
-                // Small penalty for position difference
-                score += bestDist * 0.5f
+                matchedTurns++
+                totalSharpnessMatch += bestScore
+                
+                // BONUS: If both turns are sharp and match well, reduce penalty
+                if (inputTurn.second > 0.8f && templateTurns[bestMatch].second > 0.8f) {
+                    score -= 0.1f  // Reward for matching sharp corners
+                }
             } else {
-                // No matching turn found - penalty
-                score += 0.2f
+                // No matching turn found - penalty based on how sharp the turn was
+                score += 0.15f + inputTurn.second * 0.1f
             }
         }
         
-        return score
+        // Penalty for unmatched template turns
+        for (j in templateTurns.indices) {
+            if (!usedTemplate[j]) {
+                // Missing an expected turn - penalty based on how sharp it was
+                score += 0.15f + templateTurns[j].second * 0.15f
+            }
+        }
+        
+        // Add the position/sharpness matching penalty
+        if (matchedTurns > 0) {
+            score += totalSharpnessMatch / matchedTurns * 0.3f
+        }
+        
+        return max(0f, score)  // Don't go negative
     }
+    // =================================================================================
+    // END BLOCK: calculateTurnScore
+    // =================================================================================
     // =================================================================================
     // END BLOCK: calculateTurnScore
     // =================================================================================
