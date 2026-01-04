@@ -45,12 +45,8 @@ class KeyboardOverlay(
     private var initialWidth = 0
     private var initialHeight = 0
 
-    private val inputExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val TAG = "KeyboardOverlay"
 
-    // --- ANCHOR HANDLES ---
-    private var dragHandle: View? = null
-    private var resizeHandle: View? = null
     // =================================================================================
     // VIRTUAL MIRROR ORIENTATION MODE VARIABLES
     // SUMMARY: State for orientation mode when virtual mirror is active.
@@ -175,7 +171,6 @@ class KeyboardOverlay(
         }
     }
     
-
     fun setWindowBounds(x: Int, y: Int, width: Int, height: Int) {
         keyboardWidth = width
         keyboardHeight = height
@@ -200,8 +195,10 @@ class KeyboardOverlay(
                 .apply()
         }
     }
-    
-
+   
+    fun setAnchored(anchored: Boolean) {
+        isAnchored = anchored
+    }
 
     // Helper for OverlayService Profile Load
     fun updatePosition(x: Int, y: Int) {
@@ -458,17 +455,6 @@ class KeyboardOverlay(
         }
     }
 
-    fun setAnchored(anchored: Boolean) {
-        isAnchored = anchored
-        val visibility = if (anchored) View.GONE else View.VISIBLE
-        
-        // Hide/Show handles
-        dragHandle?.visibility = visibility
-        resizeHandle?.visibility = visibility
-        
-        // Force layout update if needed
-        keyboardContainer?.invalidate()
-    }
     // =================================================================================
     // FUNCTION: setVoiceActive
     // SUMMARY: Passes the voice state down to the keyboard view.
@@ -576,43 +562,6 @@ class KeyboardOverlay(
     }
     // =================================================================================
     // END BLOCK: handleDeferredTap
-    // =================================================================================
-// =================================================================================
-// =================================================================================
-    // FUNCTION: getKeyAtPosition
-    // SUMMARY: Returns the key tag at the given position, or null if no key found.
-    //          Used by mirror mode to check if finger is on a repeatable key.
-    // =================================================================================
-    fun getKeyAtPosition(x: Float, y: Float): String? {
-        return keyboardView?.getKeyAtPosition(x, y)
-    }
-    // =================================================================================
-    // END BLOCK: getKeyAtPosition
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: triggerKeyPress
-    // SUMMARY: Triggers a key press by key tag. Used by mirror mode key repeat to
-    //          fire repeated backspace/arrow presses without going through touch events.
-    // =================================================================================
-    fun triggerKeyPress(keyTag: String) {
-        keyboardView?.triggerKeyPress(keyTag)
-    }
-    // =================================================================================
-    // END BLOCK: triggerKeyPress
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: isPredictionBarArea
-    // SUMMARY: Returns true if the given coordinates are in the prediction bar area.
-    //          Used by mirror mode to ensure prediction bar taps always work,
-    //          even when key repeat was active.
-    // =================================================================================
-    fun isPredictionBarArea(x: Float, y: Float): Boolean {
-        return keyboardView?.isPredictionBarArea(x, y) ?: false
-    }
-    // =================================================================================
-    // END BLOCK: isPredictionBarArea
     // =================================================================================
 
     // =================================================================================
@@ -830,115 +779,21 @@ class KeyboardOverlay(
         updateAlpha(currentAlpha)
     }
 
-
     private fun addDragHandle() {
-        val handle = View(context)
-        dragHandle = handle // Store reference
-        // Apply initial visibility based on anchor state
-        handle.visibility = if (isAnchored) View.GONE else View.VISIBLE
-        val params = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 40) // 40px height for top bar
-        params.gravity = Gravity.TOP
-        
-        // Visual indicator for handle
-        val drawable = GradientDrawable()
-        drawable.colors = intArrayOf(0x44FFFFFF, 0x00000000) // Fade down
-        drawable.cornerRadii = floatArrayOf(16f, 16f, 16f, 16f, 0f, 0f, 0f, 0f)
-        handle.background = drawable
-        
-        keyboardContainer?.addView(handle, params)
-        
-        var startX = 0f
-        var startY = 0f
-        var initialWinX = 0
-        var initialWinY = 0
-        
-        handle.setOnTouchListener { v, event ->
-            if (isAnchored) return@setOnTouchListener false // Prevent move if anchored
-
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    isMoving = true
-                    startX = event.rawX
-                    startY = event.rawY
-                    initialWinX = keyboardParams?.x ?: 0
-                    initialWinY = keyboardParams?.y ?: 0
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (isMoving) {
-                        val dx = (event.rawX - startX).toInt()
-                        val dy = (event.rawY - startY).toInt()
-                        
-                        updatePosition(initialWinX + dx, initialWinY + dy)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    isMoving = false
-                    saveKeyboardPosition()
-                    true
-                }
-                else -> false
-            }
-        }
+        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 28); handleParams.gravity = Gravity.TOP
+        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#555555")); indicatorBg.cornerRadius = 3f; indicator.background = indicatorBg
+        val indicatorParams = FrameLayout.LayoutParams(50, 5); indicatorParams.gravity = Gravity.CENTER; indicatorParams.topMargin = 8
+        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleDrag(event); true }
+        keyboardContainer?.addView(handle, handleParams)
     }
-
-
 
     private fun addResizeHandle() {
-        val handle = View(context)
-        resizeHandle = handle // Store reference
-        // Apply initial visibility based on anchor state
-        handle.visibility = if (isAnchored) View.GONE else View.VISIBLE
-        val size = 60
-        val params = FrameLayout.LayoutParams(size, size)
-        params.gravity = Gravity.BOTTOM or Gravity.RIGHT
-        
-
-        // Corner visual
-        val drawable = GradientDrawable()
-        drawable.setColor(Color.parseColor("#44FFFFFF")) // FIX: Use explicit setter
-        drawable.cornerRadii = floatArrayOf(20f, 20f, 0f, 0f, 20f, 20f, 20f, 20f) // Rounded
-        handle.background = drawable
-
-        
-        val margin = 0
-        params.setMargins(0, 0, margin, margin)
-        
-        keyboardContainer?.addView(handle, params)
-        
-        var startX = 0f
-        var startY = 0f
-        
-        handle.setOnTouchListener { v, event ->
-            if (isAnchored) return@setOnTouchListener false // Prevent resize if anchored
-
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    isResizing = true
-                    startX = event.rawX
-                    startY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (isResizing) {
-                        val dx = (event.rawX - startX).toInt()
-                        val dy = (event.rawY - startY).toInt()
-                        startX = event.rawX
-                        startY = event.rawY
-                        resizeWindow(dx, dy)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    isResizing = false
-                    true
-                }
-                else -> false
-            }
-        }
+        val handle = FrameLayout(context); val handleParams = FrameLayout.LayoutParams(36, 36); handleParams.gravity = Gravity.BOTTOM or Gravity.RIGHT
+        val indicator = View(context); val indicatorBg = GradientDrawable(); indicatorBg.setColor(Color.parseColor("#3DDC84")); indicatorBg.cornerRadius = 4f; indicator.background = indicatorBg; indicator.alpha = 0.7f
+        val indicatorParams = FrameLayout.LayoutParams(14, 14); indicatorParams.gravity = Gravity.BOTTOM or Gravity.RIGHT; indicatorParams.setMargins(0, 0, 6, 6)
+        handle.addView(indicator, indicatorParams); handle.setOnTouchListener { _, event -> handleResize(event); true }
+        keyboardContainer?.addView(handle, handleParams)
     }
-
 
     private fun addCloseButton() {
         val button = FrameLayout(context); val buttonParams = FrameLayout.LayoutParams(28, 28); buttonParams.gravity = Gravity.TOP or Gravity.RIGHT; buttonParams.setMargins(0, 2, 4, 0)
@@ -1220,90 +1075,48 @@ class KeyboardOverlay(
     }
 
 
-
     // =================================================================================
     // FUNCTION: onSuggestionClick
     // SUMMARY: Handles when user taps a word in the prediction bar.
-    // FIX: Uses local 'targetDisplayId' and local 'inputExecutor'.
+    //          SCENARIO 1: Swipe Correction (Replaces last committed word)
+    //          SCENARIO 2: Manual Typing (Replaces current composing characters)
     // =================================================================================
     override fun onSuggestionClick(text: String, isNew: Boolean) {
-        android.util.Log.d(TAG, "Suggestion clicked: '$text' (isNew=$isNew)")
+        android.util.Log.d("DroidOS_Prediction", "Suggestion clicked: '$text' (isNew=$isNew)")
 
         // 1. Learn word if it was flagged as New
         if (isNew) {
             predictionEngine.learnWord(context, text)
         }
 
-        // 2. Calculate Deletes needed
-        var deleteCount = 0
+        // 2. Handle Deletion (Key Injection)
         if (!lastCommittedSwipeWord.isNullOrEmpty()) {
-            deleteCount = lastCommittedSwipeWord!!.length
+            // SCENARIO 1: Correcting a previously swiped word
+            // We must delete the full word + the space we added
+            val deleteCount = lastCommittedSwipeWord!!.length
+            for (i in 0 until deleteCount) {
+                injectKey(KeyEvent.KEYCODE_DEL, 0)
+            }
         } else if (currentComposingWord.isNotEmpty()) {
-            deleteCount = currentComposingWord.length
-        }
-
-        // 3. Prepare Text
-        val textToInsert = "$text "
-
-        // 4. Update State IMMEDIATELY (UI Thread)
-        lastCommittedSwipeWord = textToInsert
-        currentComposingWord.clear()
-        updateSuggestionsWithSync(emptyList())
-
-        // 5. Execute Injection (Serialized on inputExecutor)
-        inputExecutor.execute {
-            try {
-                // Check if we are using the internal Null Keyboard (Fast Path)
-                val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
-                val isNullKeyboard = currentIme.contains(context.packageName) && currentIme.contains("NullInputMethodService")
-
-                // A. Perform Deletes
-                if (deleteCount > 0) {
-                    for (i in 0 until deleteCount) {
-                        if (isNullKeyboard) {
-                            val intent = android.content.Intent("com.example.coverscreentester.INJECT_KEY")
-                            intent.setPackage(context.packageName)
-                            intent.putExtra("keyCode", KeyEvent.KEYCODE_DEL)
-                            context.sendBroadcast(intent)
-                            Thread.sleep(5) 
-                        } else {
-                            // Shell Injection (Direct AIDL calls)
-                            // NOTE: Using 'targetDisplayId' (Constructor property)
-                            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, targetDisplayId, 1)
-                            Thread.sleep(5)
-                            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, targetDisplayId, 1)
-                            Thread.sleep(5)
-                        }
-                    }
-                    
-                    // B. SAFETY DELAY: Wait for Deletes to settle before typing
-                    Thread.sleep(100) 
-                }
-
-                // C. Insert New Text
-                if (isNullKeyboard) {
-                    val intent = android.content.Intent("com.example.coverscreentester.INJECT_TEXT")
-                    intent.setPackage(context.packageName)
-                    intent.putExtra("text", textToInsert)
-                    context.sendBroadcast(intent)
-                } else {
-                    val escaped = textToInsert.replace(" ", "%s").replace("'", "\\'")
-                    shellService?.runCommand("input -d $targetDisplayId text \"$escaped\"")
-                }
-
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "Suggestion Commit Failed", e)
+            // SCENARIO 2: Completing a manually typed word (e.g. "partia" -> "partially")
+            // We delete the characters typed so far
+            val deleteCount = currentComposingWord.length
+            for (i in 0 until deleteCount) {
+                injectKey(KeyEvent.KEYCODE_DEL, 0)
             }
         }
+
+        // 3. Insert new word (always add space for flow)
+        val newText = "$text "
+        injectText(newText)
+        
+        // 4. Update State
+        lastCommittedSwipeWord = newText
+        currentComposingWord.clear() // Reset manual typing state
+        
+        // Clear suggestions immediately since we just committed
+        updateSuggestionsWithSync(emptyList()) 
     }
-    // =================================================================================
-    // END BLOCK: onSuggestionClick
-    // =================================================================================
-
-    // =================================================================================
-    // END BLOCK: onSuggestionClick
-    // =================================================================================
-
 
 
     // =================================================================================
@@ -1392,8 +1205,13 @@ class KeyboardOverlay(
     // END BLOCK: onSwipeDetected
     // =================================================================================
 
-
     // =================================================================================
+    // FUNCTION: onSwipeProgress (LIVE SWIPE PREVIEW)
+    // SUMMARY: Called during swipe to show real-time predictions as user swipes.
+    //          Uses a lightweight prediction that doesn't commit text.
+    //          This helps users see what word will be typed and helps debug.
+    // =================================================================================
+// =================================================================================
     // FUNCTION: onSwipeProgress (LIVE SWIPE PREVIEW - Single Prediction)
     // SUMMARY: Called during swipe to show real-time prediction as user swipes.
     //          Shows ONLY the top prediction (like GBoard) for cleaner UX.
@@ -1432,7 +1250,12 @@ class KeyboardOverlay(
             }
         }.start()
     }
-
+    // =================================================================================
+    // END BLOCK: onSwipeProgress
+    // =================================================================================
+    // =================================================================================
+    // END BLOCK: onSwipeProgress
+    // =================================================================================
 
     // =================================================================================
     // FUNCTION: updateSuggestions
