@@ -45,6 +45,7 @@ class KeyboardOverlay(
     private var initialWidth = 0
     private var initialHeight = 0
 
+    private val inputExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val TAG = "KeyboardOverlay"
 
     // --- ANCHOR HANDLES ---
@@ -1182,48 +1183,90 @@ class KeyboardOverlay(
     }
 
 
+
     // =================================================================================
     // FUNCTION: onSuggestionClick
     // SUMMARY: Handles when user taps a word in the prediction bar.
-    //          SCENARIO 1: Swipe Correction (Replaces last committed word)
-    //          SCENARIO 2: Manual Typing (Replaces current composing characters)
+    // FIX: Uses local 'targetDisplayId' and local 'inputExecutor'.
     // =================================================================================
     override fun onSuggestionClick(text: String, isNew: Boolean) {
-        android.util.Log.d("DroidOS_Prediction", "Suggestion clicked: '$text' (isNew=$isNew)")
+        android.util.Log.d(TAG, "Suggestion clicked: '$text' (isNew=$isNew)")
 
         // 1. Learn word if it was flagged as New
         if (isNew) {
             predictionEngine.learnWord(context, text)
         }
 
-        // 2. Handle Deletion (Key Injection)
+        // 2. Calculate Deletes needed
+        var deleteCount = 0
         if (!lastCommittedSwipeWord.isNullOrEmpty()) {
-            // SCENARIO 1: Correcting a previously swiped word
-            // We must delete the full word + the space we added
-            val deleteCount = lastCommittedSwipeWord!!.length
-            for (i in 0 until deleteCount) {
-                injectKey(KeyEvent.KEYCODE_DEL, 0)
-            }
+            deleteCount = lastCommittedSwipeWord!!.length
         } else if (currentComposingWord.isNotEmpty()) {
-            // SCENARIO 2: Completing a manually typed word (e.g. "partia" -> "partially")
-            // We delete the characters typed so far
-            val deleteCount = currentComposingWord.length
-            for (i in 0 until deleteCount) {
-                injectKey(KeyEvent.KEYCODE_DEL, 0)
-            }
+            deleteCount = currentComposingWord.length
         }
 
-        // 3. Insert new word (always add space for flow)
-        val newText = "$text "
-        injectText(newText)
-        
-        // 4. Update State
-        lastCommittedSwipeWord = newText
-        currentComposingWord.clear() // Reset manual typing state
-        
-        // Clear suggestions immediately since we just committed
-        updateSuggestionsWithSync(emptyList()) 
+        // 3. Prepare Text
+        val textToInsert = "$text "
+
+        // 4. Update State IMMEDIATELY (UI Thread)
+        lastCommittedSwipeWord = textToInsert
+        currentComposingWord.clear()
+        updateSuggestionsWithSync(emptyList())
+
+        // 5. Execute Injection (Serialized on inputExecutor)
+        inputExecutor.execute {
+            try {
+                // Check if we are using the internal Null Keyboard (Fast Path)
+                val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
+                val isNullKeyboard = currentIme.contains(context.packageName) && currentIme.contains("NullInputMethodService")
+
+                // A. Perform Deletes
+                if (deleteCount > 0) {
+                    for (i in 0 until deleteCount) {
+                        if (isNullKeyboard) {
+                            val intent = android.content.Intent("com.example.coverscreentester.INJECT_KEY")
+                            intent.setPackage(context.packageName)
+                            intent.putExtra("keyCode", KeyEvent.KEYCODE_DEL)
+                            context.sendBroadcast(intent)
+                            Thread.sleep(5) 
+                        } else {
+                            // Shell Injection (Direct AIDL calls)
+                            // NOTE: Using 'targetDisplayId' (Constructor property)
+                            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, targetDisplayId, 1)
+                            Thread.sleep(5)
+                            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, targetDisplayId, 1)
+                            Thread.sleep(5)
+                        }
+                    }
+                    
+                    // B. SAFETY DELAY: Wait for Deletes to settle before typing
+                    Thread.sleep(100) 
+                }
+
+                // C. Insert New Text
+                if (isNullKeyboard) {
+                    val intent = android.content.Intent("com.example.coverscreentester.INJECT_TEXT")
+                    intent.setPackage(context.packageName)
+                    intent.putExtra("text", textToInsert)
+                    context.sendBroadcast(intent)
+                } else {
+                    val escaped = textToInsert.replace(" ", "%s").replace("'", "\\'")
+                    shellService?.runCommand("input -d $targetDisplayId text \"$escaped\"")
+                }
+
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Suggestion Commit Failed", e)
+            }
+        }
     }
+    // =================================================================================
+    // END BLOCK: onSuggestionClick
+    // =================================================================================
+
+    // =================================================================================
+    // END BLOCK: onSuggestionClick
+    // =================================================================================
+
 
 
     // =================================================================================

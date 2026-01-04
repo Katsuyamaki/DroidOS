@@ -157,6 +157,8 @@ Cover-Screen-Trackpad/
             example/
               coverscreentester/
                 IShellService.aidl
+        assets/
+          clean_dictionary.py
         java/
           com/
             example/
@@ -296,6 +298,416 @@ interface IShellService {
     boolean isAutoBrightness();
     boolean setBrightnessViaDisplayManager(int displayId, float brightness);
     void setBrightness(int value);
+}
+```
+
+## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/AppPreferences.kt
+```kotlin
+package com.example.quadrantlauncher
+
+import android.content.Context
+
+object AppPreferences {
+
+    private const val PREFS_NAME = "AppLauncherPrefs"
+    private const val KEY_FAVORITES = "KEY_FAVORITES"
+    private const val KEY_LAST_LAYOUT = "KEY_LAST_LAYOUT"
+    private const val KEY_LAST_CUSTOM_LAYOUT_NAME = "KEY_LAST_CUSTOM_LAYOUT_NAME"
+    private const val KEY_PROFILES = "KEY_PROFILES"
+    private const val KEY_CUSTOM_LAYOUTS = "KEY_CUSTOM_LAYOUTS"
+    private const val KEY_FONT_SIZE = "KEY_FONT_SIZE"
+    private const val KEY_ICON_URI = "KEY_ICON_URI"
+    
+    // Settings
+    private const val KEY_KILL_ON_EXECUTE = "KEY_KILL_ON_EXECUTE"
+    private const val KEY_TARGET_DISPLAY_INDEX = "KEY_TARGET_DISPLAY_INDEX"
+    private const val KEY_IS_INSTANT_MODE = "KEY_IS_INSTANT_MODE"
+    private const val KEY_LAST_QUEUE = "KEY_LAST_QUEUE"
+    private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
+    private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
+    private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
+    private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
+
+    // === BLACKLIST STORAGE - START ===
+    // Stores blacklisted apps using "packageName:activityName" format
+    // This allows us to blacklist "com.google.android.googlequicksearchbox:.SearchActivity"
+    // while keeping "com.google.android.googlequicksearchbox:robin.main.MainActivity" (Gemini) available
+    private const val KEY_BLACKLIST = "KEY_BLACKLIST"
+    // === BLACKLIST STORAGE - END ===
+
+    // Reorder Methods
+    private const val KEY_REORDER_METHOD_DRAG = "KEY_REORDER_METHOD_DRAG"
+    private const val KEY_REORDER_METHOD_TAP = "KEY_REORDER_METHOD_TAP"
+    private const val KEY_REORDER_METHOD_SCROLL = "KEY_REORDER_METHOD_SCROLL"
+    
+    // Drawer Geometry
+    private const val KEY_DRAWER_HEIGHT = "KEY_DRAWER_HEIGHT"
+    private const val KEY_DRAWER_WIDTH = "KEY_DRAWER_WIDTH"
+    private const val KEY_AUTO_RESIZE_KEYBOARD = "KEY_AUTO_RESIZE_KEYBOARD"
+    
+    // Custom Resolutions
+    private const val KEY_CUSTOM_RESOLUTION_NAMES = "KEY_CUSTOM_RESOLUTION_NAMES"
+
+    private fun getPrefs(context: Context) =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun savePackage(context: Context, key: String, packageName: String) {
+        getPrefs(context).edit().putString(key, packageName).apply()
+    }
+
+    fun loadPackage(context: Context, key: String): String? {
+        return getPrefs(context).getString(key, null)
+    }
+
+    fun getSimpleName(pkg: String?): String {
+        if (pkg == null) return "Select App"
+        val name = pkg.substringAfterLast('.')
+        return if (name.isNotEmpty()) name else pkg
+    }
+
+    fun getFavorites(context: Context): MutableSet<String> {
+        return getPrefs(context).getStringSet(KEY_FAVORITES, mutableSetOf()) ?: mutableSetOf()
+    }
+
+    fun isFavorite(context: Context, packageName: String): Boolean {
+        return getFavorites(context).contains(packageName)
+    }
+
+    fun toggleFavorite(context: Context, packageName: String): Boolean {
+        val favorites = getFavorites(context)
+        val newSet = HashSet(favorites)
+        val isAdded: Boolean
+        if (newSet.contains(packageName)) {
+            newSet.remove(packageName)
+            isAdded = false
+        } else {
+            newSet.add(packageName)
+            isAdded = true
+        }
+        getPrefs(context).edit().putStringSet(KEY_FAVORITES, newSet).apply()
+        return isAdded
+    }
+    
+    // --- GLOBAL LAYOUT PREFS ---
+    fun saveLastLayout(context: Context, layoutId: Int) {
+        getPrefs(context).edit().putInt(KEY_LAST_LAYOUT, layoutId).apply()
+    }
+
+    fun getLastLayout(context: Context): Int {
+        return getPrefs(context).getInt(KEY_LAST_LAYOUT, 2)
+    }
+    
+    fun saveLastCustomLayoutName(context: Context, name: String?) {
+        getPrefs(context).edit().putString(KEY_LAST_CUSTOM_LAYOUT_NAME, name).apply()
+    }
+
+    fun getLastCustomLayoutName(context: Context): String? {
+        return getPrefs(context).getString(KEY_LAST_CUSTOM_LAYOUT_NAME, null)
+    }
+
+    // --- PER-DISPLAY SETTINGS ---
+    
+    fun saveDisplayResolution(context: Context, displayId: Int, resIndex: Int) {
+        getPrefs(context).edit().putInt("RES_D$displayId", resIndex).apply()
+    }
+
+    fun getDisplayResolution(context: Context, displayId: Int): Int {
+        return getPrefs(context).getInt("RES_D$displayId", 0)
+    }
+
+    fun saveDisplayDpi(context: Context, displayId: Int, dpi: Int) {
+        getPrefs(context).edit().putInt("DPI_D$displayId", dpi).apply()
+    }
+
+    fun getDisplayDpi(context: Context, displayId: Int): Int {
+        return getPrefs(context).getInt("DPI_D$displayId", -1)
+    }
+
+    // --- PROFILES ---
+    fun getProfileNames(context: Context): MutableSet<String> {
+        return getPrefs(context).getStringSet(KEY_PROFILES, mutableSetOf()) ?: mutableSetOf()
+    }
+
+    fun saveProfile(context: Context, name: String, layout: Int, resIndex: Int, dpi: Int, apps: List<String>) {
+        val names = getProfileNames(context)
+        val newNames = HashSet(names)
+        newNames.add(name)
+        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).apply()
+        val appString = apps.joinToString(",")
+        val data = "$layout|$resIndex|$dpi|$appString"
+        getPrefs(context).edit().putString("PROFILE_$name", data).apply()
+    }
+
+    fun getProfileData(context: Context, name: String): String? {
+        return getPrefs(context).getString("PROFILE_$name", null)
+    }
+
+    fun deleteProfile(context: Context, name: String) {
+        val names = getProfileNames(context)
+        val newNames = HashSet(names)
+        newNames.remove(name)
+        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).remove("PROFILE_$name").apply()
+    }
+
+    fun renameProfile(context: Context, oldName: String, newName: String): Boolean {
+        if (oldName == newName) return false
+        if (newName.isEmpty()) return false
+        val names = getProfileNames(context)
+        if (!names.contains(oldName)) return false
+        val data = getProfileData(context, oldName) ?: return false
+        val newNames = HashSet(names)
+        newNames.remove(oldName)
+        newNames.add(newName)
+        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).apply()
+        getPrefs(context).edit().putString("PROFILE_$newName", data).remove("PROFILE_$oldName").apply()
+        return true
+    }
+
+    // --- CUSTOM LAYOUTS ---
+    fun getCustomLayoutNames(context: Context): MutableSet<String> {
+        return getPrefs(context).getStringSet(KEY_CUSTOM_LAYOUTS, mutableSetOf()) ?: mutableSetOf()
+    }
+
+    fun saveCustomLayout(context: Context, name: String, rectsData: String) {
+        val names = getCustomLayoutNames(context)
+        val newNames = HashSet(names)
+        newNames.add(name)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).apply()
+        getPrefs(context).edit().putString("LAYOUT_$name", rectsData).apply()
+    }
+
+    fun getCustomLayoutData(context: Context, name: String): String? {
+        return getPrefs(context).getString("LAYOUT_$name", null)
+    }
+    
+    fun deleteCustomLayout(context: Context, name: String) {
+        val names = getCustomLayoutNames(context)
+        val newNames = HashSet(names)
+        newNames.remove(name)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).remove("LAYOUT_$name").apply()
+    }
+    
+    fun renameCustomLayout(context: Context, oldName: String, newName: String): Boolean {
+        if (oldName == newName) return false
+        if (newName.isEmpty()) return false
+        val names = getCustomLayoutNames(context)
+        if (!names.contains(oldName)) return false
+        val data = getCustomLayoutData(context, oldName) ?: return false
+        val newNames = HashSet(names)
+        newNames.remove(oldName)
+        newNames.add(newName)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).apply()
+        getPrefs(context).edit().putString("LAYOUT_$newName", data).remove("LAYOUT_$oldName").apply()
+        return true
+    }
+    
+    // --- CUSTOM RESOLUTIONS ---
+    fun getCustomResolutionNames(context: Context): MutableSet<String> {
+        return getPrefs(context).getStringSet(KEY_CUSTOM_RESOLUTION_NAMES, mutableSetOf()) ?: mutableSetOf()
+    }
+
+    fun saveCustomResolution(context: Context, name: String, value: String) {
+        val names = getCustomResolutionNames(context)
+        val newNames = HashSet(names)
+        newNames.add(name)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).apply()
+        getPrefs(context).edit().putString("RES_$name", value).apply()
+    }
+    
+    fun getCustomResolutionValue(context: Context, name: String): String? {
+        return getPrefs(context).getString("RES_$name", null)
+    }
+
+    fun deleteCustomResolution(context: Context, name: String) {
+        val names = getCustomResolutionNames(context)
+        val newNames = HashSet(names)
+        newNames.remove(name)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).remove("RES_$name").apply()
+    }
+    
+    fun renameCustomResolution(context: Context, oldName: String, newName: String): Boolean {
+        if (oldName == newName) return false
+        if (newName.isEmpty()) return false
+        val names = getCustomResolutionNames(context)
+        if (!names.contains(oldName)) return false
+        val data = getCustomResolutionValue(context, oldName) ?: return false
+        val newNames = HashSet(names)
+        newNames.remove(oldName)
+        newNames.add(newName)
+        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).apply()
+        getPrefs(context).edit().putString("RES_$newName", data).remove("RES_$oldName").apply()
+        return true
+    }
+
+    // --- FONT SIZE & ICONS & DRAWER ---
+    fun saveFontSize(context: Context, size: Float) {
+        getPrefs(context).edit().putFloat(KEY_FONT_SIZE, size).apply()
+    }
+
+    fun getFontSize(context: Context): Float {
+        return getPrefs(context).getFloat(KEY_FONT_SIZE, 16f)
+    }
+
+    fun saveIconUri(context: Context, uri: String) {
+        getPrefs(context).edit().putString(KEY_ICON_URI, uri).apply()
+    }
+
+    fun getIconUri(context: Context): String? {
+        return getPrefs(context).getString(KEY_ICON_URI, null)
+    }
+    
+    fun setDrawerHeightPercent(context: Context, percent: Int) {
+        getPrefs(context).edit().putInt(KEY_DRAWER_HEIGHT, percent).apply()
+    }
+    
+    fun getDrawerHeightPercent(context: Context): Int {
+        return getPrefs(context).getInt(KEY_DRAWER_HEIGHT, 70)
+    }
+    
+    fun setDrawerWidthPercent(context: Context, percent: Int) {
+        getPrefs(context).edit().putInt(KEY_DRAWER_WIDTH, percent).apply()
+    }
+    
+    fun getDrawerWidthPercent(context: Context): Int {
+        return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 90)
+    }
+    
+    fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD, enable).apply()
+    }
+    
+    fun getAutoResizeKeyboard(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
+    }
+
+    // --- SETTINGS ---
+    fun setKillOnExecute(context: Context, kill: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_KILL_ON_EXECUTE, kill).apply()
+    }
+
+    fun getKillOnExecute(context: Context): Boolean {
+        // Default is FALSE for Kill On Execute
+        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, false)
+    }
+
+    fun setAutoRestartTrackpad(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_AUTO_RESTART_TRACKPAD, enable).apply()
+    }
+
+    fun getAutoRestartTrackpad(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_AUTO_RESTART_TRACKPAD, false) // Default Off
+    }
+
+    fun setTargetDisplayIndex(context: Context, index: Int) {
+        getPrefs(context).edit().putInt(KEY_TARGET_DISPLAY_INDEX, index).apply()
+    }
+
+    fun getTargetDisplayIndex(context: Context): Int {
+        return getPrefs(context).getInt(KEY_TARGET_DISPLAY_INDEX, 1)
+    }
+
+    fun setInstantMode(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_IS_INSTANT_MODE, enable).apply()
+    }
+
+    fun getInstantMode(context: Context): Boolean {
+        // Default is TRUE for Instant Mode
+        return getPrefs(context).getBoolean(KEY_IS_INSTANT_MODE, true)
+    }
+    
+    fun saveLastQueue(context: Context, apps: List<String>) {
+        val str = apps.joinToString(",")
+        getPrefs(context).edit().putString(KEY_LAST_QUEUE, str).apply()
+    }
+    
+    fun getLastQueue(context: Context): List<String> {
+        val str = getPrefs(context).getString(KEY_LAST_QUEUE, "") ?: ""
+        if (str.isEmpty()) return emptyList()
+        return str.split(",").filter { it.isNotEmpty() }
+    }
+    
+    fun setShowShizukuWarning(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_SHOW_SHIZUKU_WARNING, enable).apply()
+    }
+
+    fun getShowShizukuWarning(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_SHOW_SHIZUKU_WARNING, true)
+    }
+    
+    fun setUseAltScreenOff(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_USE_ALT_SCREEN_OFF, enable).apply()
+    }
+
+    fun getUseAltScreenOff(context: Context): Boolean {
+        // Default false (use standard SurfaceControl method)
+        return getPrefs(context).getBoolean(KEY_USE_ALT_SCREEN_OFF, false)
+    }
+    
+    // --- REORDER PREFERENCES ---
+    fun setReorderTimeout(context: Context, seconds: Int) {
+        getPrefs(context).edit().putInt(KEY_REORDER_TIMEOUT, seconds).apply()
+    }
+    
+    fun getReorderTimeout(context: Context): Int {
+        return getPrefs(context).getInt(KEY_REORDER_TIMEOUT, 2) // Default 2 seconds
+    }
+    
+    fun setReorderDrag(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_DRAG, enable).apply()
+    }
+    
+    fun getReorderDrag(context: Context): Boolean {
+        // CHANGED: Default to FALSE so Tap works out of box
+        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_DRAG, false)
+    }
+    
+    fun setReorderTap(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_TAP, enable).apply()
+    }
+    
+    fun getReorderTap(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_TAP, true) // Default Enabled
+    }
+    
+    fun setReorderScroll(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_SCROLL, enable).apply()
+    }
+    
+    fun getReorderScroll(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_SCROLL, true) // Default Enabled
+    }
+
+    // === BLACKLIST METHODS - START ===
+    fun getBlacklist(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_BLACKLIST, emptySet()) ?: emptySet()
+    }
+
+    fun isBlacklisted(context: Context, identifier: String): Boolean {
+        return getBlacklist(context).contains(identifier)
+    }
+
+    fun addToBlacklist(context: Context, identifier: String) {
+        val current = getBlacklist(context).toMutableSet()
+        current.add(identifier)
+        getPrefs(context).edit().putStringSet(KEY_BLACKLIST, current).apply()
+    }
+
+    fun removeFromBlacklist(context: Context, identifier: String) {
+        val current = getBlacklist(context).toMutableSet()
+        current.remove(identifier)
+        getPrefs(context).edit().putStringSet(KEY_BLACKLIST, current).apply()
+    }
+
+    fun toggleBlacklist(context: Context, identifier: String): Boolean {
+        return if (isBlacklisted(context, identifier)) {
+            removeFromBlacklist(context, identifier)
+            false
+        } else {
+            addToBlacklist(context, identifier)
+            true
+        }
+    }
+    // === BLACKLIST METHODS - END ===
 }
 ```
 
@@ -1409,6 +1821,19 @@ class TriSplitActivity : AppCompatActivity() {
         </shape>
     </item>
 </selector>
+```
+
+## File: Cover-Screen-Launcher/app/src/main/res/drawable/ic_block.xml
+```xml
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,2H7C5.9,2 5,2.9 5,4v16c0,1.1 0.9,2 2,2h10c1.1,0 2,-0.9 2,-2V4C19,2.9 18.1,2 17,2z M17,20H7V4h10V20z M9,6h6v2H9V6z M9,10h6v2H9V10z M9,14h6v2H9V14z"/>
+</vector>
 ```
 
 ## File: Cover-Screen-Launcher/app/src/main/res/drawable/ic_box_outline.xml
@@ -2530,6 +2955,163 @@ class TriSplitActivity : AppCompatActivity() {
 </FrameLayout>
 ```
 
+## File: Cover-Screen-Launcher/app/src/main/res/layout/layout_rofi_drawer.xml
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#80000000"
+    android:clickable="true"
+    android:focusable="true"
+    android:filterTouchesWhenObscured="false">
+
+    <LinearLayout
+        android:id="@+id/drawer_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@drawable/bg_drawer"
+        android:elevation="10dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:filterTouchesWhenObscured="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/icon_search_mode"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_menu_search"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="App List"/>
+
+            <EditText
+                android:id="@+id/rofi_search_bar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="Search apps..."
+                android:textColor="#FFFFFF"
+                android:textColorHint="#666666"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:singleLine="true"
+                android:textSize="16sp"
+                android:imeOptions="actionDone"/>
+
+            <ImageView
+                android:id="@+id/icon_execute"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_media_play"
+                android:tint="#00FF00"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Launch"/>
+
+            <ImageView
+                android:id="@+id/icon_mode_window"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_window_split" 
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Layouts"/>
+
+            <ImageView
+                android:id="@+id/icon_mode_resolution"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_mode_resolution"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Resolution"/>
+
+            <ImageView
+                android:id="@+id/icon_mode_dpi"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_mode_dpi"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="DPI"/>
+
+            <!-- BLACKLIST MODE ICON - START -->
+            <!-- Icon for accessing blacklist management tab -->
+            <ImageView
+                android:id="@+id/icon_mode_blacklist"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_block"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Blacklist"/>
+            <!-- BLACKLIST MODE ICON - END -->
+
+            <ImageView
+                android:id="@+id/icon_mode_profiles"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_mode_profiles"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Profiles"/>
+
+            <ImageView
+                android:id="@+id/icon_mode_settings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_menu_preferences"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Settings"/>
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/selected_apps_recycler"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:minHeight="50dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:visibility="gone"/>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp"
+            android:background="#444444" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rofi_recycler_view"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical" />
+
+    </LinearLayout>
+</FrameLayout>
+```
+
 ## File: Cover-Screen-Launcher/app/src/main/res/layout/list_item_app.xml
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -3479,6 +4061,140 @@ interface IShellService {
     void setBrightness(int value);
     boolean setBrightnessViaDisplayManager(int displayId, float brightness);
 }
+```
+
+## File: Cover-Screen-Trackpad/app/src/main/assets/clean_dictionary.py
+```python
+import os
+import re
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+INPUT_FILE = "dictionary.txt"
+OUTPUT_FILE = "dictionary.txt" # Overwrites original
+
+# 1. STRICT ALLOWLISTS (Short words are the noisiest in swipe)
+# Only these 1-letter words are allowed
+VALID_1_LETTER = {"a", "i"}
+
+# Only these 2-letter words are allowed
+VALID_2_LETTER = {
+    "am", "an", "as", "at", "be", "by", "do", "go", "ha", "he", "hi", 
+    "if", "in", "is", "it", "me", "my", "no", "of", "oh", "ok", "on", 
+    "or", "ox", "so", "to", "up", "us", "we", "ye", "yo"
+}
+
+# Only these 3-letter words are allowed (Common English + standard abbreviations)
+VALID_3_LETTER = {
+    "act", "add", "ado", "age", "ago", "aid", "aim", "air", "ale", "all", "and", "ant", "any", "ape", "apt", "arc", "are", "ark", "arm", "art", "ash", "ask", "ate", "awe", "axe", "aye",
+    "bad", "bag", "ban", "bar", "bat", "bay", "bed", "bee", "beg", "bet", "bib", "bid", "big", "bin", "bit", "bob", "bog", "boo", "bow", "box", "boy", "bra", "bud", "bug", "bum", "bun", "bus", "but", "buy", "bye",
+    "cab", "cad", "cam", "can", "cap", "car", "cat", "cod", "cog", "con", "coo", "cop", "cot", "cow", "coy", "cry", "cub", "cue", "cup", "cut",
+    "dab", "dad", "dam", "day", "den", "dew", "did", "die", "dig", "dim", "din", "dip", "doc", "doe", "dog", "don", "dot", "dry", "dub", "dud", "due", "dug", "duo", "dye",
+    "ear", "eat", "ebb", "eel", "egg", "ego", "eke", "elf", "elk", "elm", "end", "era", "err", "eve", "ewe", "eye",
+    "fad", "fan", "far", "fat", "fax", "fed", "fee", "few", "fib", "fig", "fin", "fit", "fix", "flu", "fly", "foe", "fog", "for", "fox", "fry", "fun", "fur",
+    "gab", "gag", "gal", "gap", "gas", "gay", "gel", "gem", "get", "gig", "gin", "god", "got", "gum", "gun", "gut", "guy", "gym",
+    "had", "hag", "ham", "has", "hat", "hay", "hem", "hen", "her", "hey", "hid", "him", "hip", "hit", "hoe", "hog", "hop", "hot", "how", "hub", "hue", "hug", "hum", "hut",
+    "ice", "icy", "ill", "imp", "ink", "inn", "ion", "ire", "irk", "its", "ivy",
+    "jab", "jam", "jar", "jaw", "jay", "jet", "jig", "job", "jog", "joy", "jug",
+    "kea", "keg", "key", "kid", "kin", "kit",
+    "lab", "lad", "lag", "lap", "law", "lay", "led", "lee", "leg", "let", "lid", "lie", "lip", "lit", "lob", "log", "loo", "lot", "low", "lug",
+    "mad", "man", "map", "mat", "may", "men", "met", "mid", "mix", "mob", "mom", "mop", "mud", "mug", "mum",
+    "nab", "nag", "nap", "nay", "net", "new", "nil", "nip", "nod", "nor", "not", "now", "nun", "nut",
+    "oak", "oar", "oat", "odd", "off", "oft", "oil", "old", "one", "opt", "orb", "ore", "our", "out", "owl", "own",
+    "pad", "pal", "pan", "par", "pat", "paw", "pay", "pea", "peg", "pen", "pet", "pew", "pie", "pig", "pin", "pit", "ply", "pod", "pop", "pot", "pro", "pry", "pub", "pun", "pup", "put",
+    "rag", "ram", "ran", "rap", "rat", "raw", "ray", "red", "rib", "rid", "rig", "rim", "rip", "rob", "rod", "rot", "row", "rub", "rue", "rug", "rum", "run", "rut", "rye",
+    "sad", "sag", "sap", "sat", "saw", "sax", "say", "sea", "see", "set", "sew", "sex", "she", "shy", "sin", "sip", "sir", "sit", "six", "ski", "sky", "sly", "sob", "sod", "son", "sop", "sow", "soy", "spa", "spy", "sub", "sue", "sum", "sun",
+    "tab", "tag", "tan", "tap", "tar", "tat", "tax", "tea", "tee", "ten", "the", "thy", "tic", "tie", "tin", "tip", " toe", "tog", "ton", "too", "top", "tow", "toy", "try", "tub", "tug", "two",
+    "urn", "use",
+    "van", "vat", "vet", "via", "vow",
+    "wad", "wag", "war", "was", "wax", "way", "web", "wed", "wee", "wet", "who", "why", "wig", "win", "wit", "woe", "won", "woo", "wow", "wry",
+    "yak", "yam", "yap", "yes", "yet", "yew", "you",
+    "zap", "zip", "zoo"
+}
+
+# 2. BLACKLIST
+# Remove specific junk words or patterns
+BLOCKED_PATTERNS = [
+    r".*sex$",      # Ends in sex (animalsex, worldsex), unless it is 'sex' (handled by length check)
+    r"^[^aeiouy]+$" # Words with NO vowels (e.g. 'tgp', 'mnt') - usually abbreviations
+]
+# Exceptions to the "ends with sex" rule (valid words)
+SEX_EXCEPTIONS = {"sex", "unisex", "middlesex", "essex"}
+
+def clean_dictionary():
+    print(f"Reading {INPUT_FILE}...")
+    
+    if not os.path.exists(INPUT_FILE):
+        print(f"Error: {INPUT_FILE} not found.")
+        return
+
+    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+        raw_words = f.read().splitlines()
+
+    cleaned_words = []
+    removed_count = 0
+
+    seen = set()
+
+    for w in raw_words:
+        w = w.strip().lower()
+        
+        # Filter 1: Basic Validity
+        if not w or not w.isalpha():
+            continue
+
+        # Filter 2: Length-based strict allowlists
+        if len(w) == 1:
+            if w not in VALID_1_LETTER:
+                removed_count += 1
+                continue
+        elif len(w) == 2:
+            if w not in VALID_2_LETTER:
+                # print(f"Removing 2-letter junk: {w}")
+                removed_count += 1
+                continue
+        elif len(w) == 3:
+            if w not in VALID_3_LETTER:
+                # print(f"Removing 3-letter junk: {w}")
+                removed_count += 1
+                continue
+
+        # Filter 3: Pattern Blocking
+        is_blocked = False
+        
+        # Check "No Vowels" (junk abbreviations)
+        if re.match(r"^[^aeiouy]+$", w):
+            removed_count += 1
+            continue
+
+        # Check "sex" suffix spam
+        if w.endswith("sex") and w not in SEX_EXCEPTIONS:
+            print(f"Removing spam: {w}")
+            removed_count += 1
+            continue
+
+        # Deduplicate
+        if w in seen:
+            continue
+            
+        seen.add(w)
+        cleaned_words.append(w)
+
+    # Sort alphabetically
+    cleaned_words.sort()
+
+    print(f"Original count: {len(raw_words)}")
+    print(f"Removed: {removed_count}")
+    print(f"New count: {len(cleaned_words)}")
+
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write("\n".join(cleaned_words))
+    
+    print(f"Successfully cleaned dictionary saved to {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    clean_dictionary()
 ```
 
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardActivity.kt
@@ -7249,586 +7965,6 @@ You are free to use, modify, and distribute this software, but all modifications
 <br>
 
 ---
-```
-
-## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/AppPreferences.kt
-```kotlin
-package com.example.quadrantlauncher
-
-import android.content.Context
-
-object AppPreferences {
-
-    private const val PREFS_NAME = "AppLauncherPrefs"
-    private const val KEY_FAVORITES = "KEY_FAVORITES"
-    private const val KEY_LAST_LAYOUT = "KEY_LAST_LAYOUT"
-    private const val KEY_LAST_CUSTOM_LAYOUT_NAME = "KEY_LAST_CUSTOM_LAYOUT_NAME"
-    private const val KEY_PROFILES = "KEY_PROFILES"
-    private const val KEY_CUSTOM_LAYOUTS = "KEY_CUSTOM_LAYOUTS"
-    private const val KEY_FONT_SIZE = "KEY_FONT_SIZE"
-    private const val KEY_ICON_URI = "KEY_ICON_URI"
-    
-    // Settings
-    private const val KEY_KILL_ON_EXECUTE = "KEY_KILL_ON_EXECUTE"
-    private const val KEY_TARGET_DISPLAY_INDEX = "KEY_TARGET_DISPLAY_INDEX"
-    private const val KEY_IS_INSTANT_MODE = "KEY_IS_INSTANT_MODE"
-    private const val KEY_LAST_QUEUE = "KEY_LAST_QUEUE"
-    private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
-    private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
-    private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
-    private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
-
-    // === BLACKLIST STORAGE - START ===
-    // Stores blacklisted apps using "packageName:activityName" format
-    // This allows us to blacklist "com.google.android.googlequicksearchbox:.SearchActivity"
-    // while keeping "com.google.android.googlequicksearchbox:robin.main.MainActivity" (Gemini) available
-    private const val KEY_BLACKLIST = "KEY_BLACKLIST"
-    // === BLACKLIST STORAGE - END ===
-
-    // Reorder Methods
-    private const val KEY_REORDER_METHOD_DRAG = "KEY_REORDER_METHOD_DRAG"
-    private const val KEY_REORDER_METHOD_TAP = "KEY_REORDER_METHOD_TAP"
-    private const val KEY_REORDER_METHOD_SCROLL = "KEY_REORDER_METHOD_SCROLL"
-    
-    // Drawer Geometry
-    private const val KEY_DRAWER_HEIGHT = "KEY_DRAWER_HEIGHT"
-    private const val KEY_DRAWER_WIDTH = "KEY_DRAWER_WIDTH"
-    private const val KEY_AUTO_RESIZE_KEYBOARD = "KEY_AUTO_RESIZE_KEYBOARD"
-    
-    // Custom Resolutions
-    private const val KEY_CUSTOM_RESOLUTION_NAMES = "KEY_CUSTOM_RESOLUTION_NAMES"
-
-    private fun getPrefs(context: Context) =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    fun savePackage(context: Context, key: String, packageName: String) {
-        getPrefs(context).edit().putString(key, packageName).apply()
-    }
-
-    fun loadPackage(context: Context, key: String): String? {
-        return getPrefs(context).getString(key, null)
-    }
-
-    fun getSimpleName(pkg: String?): String {
-        if (pkg == null) return "Select App"
-        val name = pkg.substringAfterLast('.')
-        return if (name.isNotEmpty()) name else pkg
-    }
-
-    fun getFavorites(context: Context): MutableSet<String> {
-        return getPrefs(context).getStringSet(KEY_FAVORITES, mutableSetOf()) ?: mutableSetOf()
-    }
-
-    fun isFavorite(context: Context, packageName: String): Boolean {
-        return getFavorites(context).contains(packageName)
-    }
-
-    fun toggleFavorite(context: Context, packageName: String): Boolean {
-        val favorites = getFavorites(context)
-        val newSet = HashSet(favorites)
-        val isAdded: Boolean
-        if (newSet.contains(packageName)) {
-            newSet.remove(packageName)
-            isAdded = false
-        } else {
-            newSet.add(packageName)
-            isAdded = true
-        }
-        getPrefs(context).edit().putStringSet(KEY_FAVORITES, newSet).apply()
-        return isAdded
-    }
-    
-    // --- GLOBAL LAYOUT PREFS ---
-    fun saveLastLayout(context: Context, layoutId: Int) {
-        getPrefs(context).edit().putInt(KEY_LAST_LAYOUT, layoutId).apply()
-    }
-
-    fun getLastLayout(context: Context): Int {
-        return getPrefs(context).getInt(KEY_LAST_LAYOUT, 2)
-    }
-    
-    fun saveLastCustomLayoutName(context: Context, name: String?) {
-        getPrefs(context).edit().putString(KEY_LAST_CUSTOM_LAYOUT_NAME, name).apply()
-    }
-
-    fun getLastCustomLayoutName(context: Context): String? {
-        return getPrefs(context).getString(KEY_LAST_CUSTOM_LAYOUT_NAME, null)
-    }
-
-    // --- PER-DISPLAY SETTINGS ---
-    
-    fun saveDisplayResolution(context: Context, displayId: Int, resIndex: Int) {
-        getPrefs(context).edit().putInt("RES_D$displayId", resIndex).apply()
-    }
-
-    fun getDisplayResolution(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("RES_D$displayId", 0)
-    }
-
-    fun saveDisplayDpi(context: Context, displayId: Int, dpi: Int) {
-        getPrefs(context).edit().putInt("DPI_D$displayId", dpi).apply()
-    }
-
-    fun getDisplayDpi(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("DPI_D$displayId", -1)
-    }
-
-    // --- PROFILES ---
-    fun getProfileNames(context: Context): MutableSet<String> {
-        return getPrefs(context).getStringSet(KEY_PROFILES, mutableSetOf()) ?: mutableSetOf()
-    }
-
-    fun saveProfile(context: Context, name: String, layout: Int, resIndex: Int, dpi: Int, apps: List<String>) {
-        val names = getProfileNames(context)
-        val newNames = HashSet(names)
-        newNames.add(name)
-        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).apply()
-        val appString = apps.joinToString(",")
-        val data = "$layout|$resIndex|$dpi|$appString"
-        getPrefs(context).edit().putString("PROFILE_$name", data).apply()
-    }
-
-    fun getProfileData(context: Context, name: String): String? {
-        return getPrefs(context).getString("PROFILE_$name", null)
-    }
-
-    fun deleteProfile(context: Context, name: String) {
-        val names = getProfileNames(context)
-        val newNames = HashSet(names)
-        newNames.remove(name)
-        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).remove("PROFILE_$name").apply()
-    }
-
-    fun renameProfile(context: Context, oldName: String, newName: String): Boolean {
-        if (oldName == newName) return false
-        if (newName.isEmpty()) return false
-        val names = getProfileNames(context)
-        if (!names.contains(oldName)) return false
-        val data = getProfileData(context, oldName) ?: return false
-        val newNames = HashSet(names)
-        newNames.remove(oldName)
-        newNames.add(newName)
-        getPrefs(context).edit().putStringSet(KEY_PROFILES, newNames).apply()
-        getPrefs(context).edit().putString("PROFILE_$newName", data).remove("PROFILE_$oldName").apply()
-        return true
-    }
-
-    // --- CUSTOM LAYOUTS ---
-    fun getCustomLayoutNames(context: Context): MutableSet<String> {
-        return getPrefs(context).getStringSet(KEY_CUSTOM_LAYOUTS, mutableSetOf()) ?: mutableSetOf()
-    }
-
-    fun saveCustomLayout(context: Context, name: String, rectsData: String) {
-        val names = getCustomLayoutNames(context)
-        val newNames = HashSet(names)
-        newNames.add(name)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).apply()
-        getPrefs(context).edit().putString("LAYOUT_$name", rectsData).apply()
-    }
-
-    fun getCustomLayoutData(context: Context, name: String): String? {
-        return getPrefs(context).getString("LAYOUT_$name", null)
-    }
-    
-    fun deleteCustomLayout(context: Context, name: String) {
-        val names = getCustomLayoutNames(context)
-        val newNames = HashSet(names)
-        newNames.remove(name)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).remove("LAYOUT_$name").apply()
-    }
-    
-    fun renameCustomLayout(context: Context, oldName: String, newName: String): Boolean {
-        if (oldName == newName) return false
-        if (newName.isEmpty()) return false
-        val names = getCustomLayoutNames(context)
-        if (!names.contains(oldName)) return false
-        val data = getCustomLayoutData(context, oldName) ?: return false
-        val newNames = HashSet(names)
-        newNames.remove(oldName)
-        newNames.add(newName)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_LAYOUTS, newNames).apply()
-        getPrefs(context).edit().putString("LAYOUT_$newName", data).remove("LAYOUT_$oldName").apply()
-        return true
-    }
-    
-    // --- CUSTOM RESOLUTIONS ---
-    fun getCustomResolutionNames(context: Context): MutableSet<String> {
-        return getPrefs(context).getStringSet(KEY_CUSTOM_RESOLUTION_NAMES, mutableSetOf()) ?: mutableSetOf()
-    }
-
-    fun saveCustomResolution(context: Context, name: String, value: String) {
-        val names = getCustomResolutionNames(context)
-        val newNames = HashSet(names)
-        newNames.add(name)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).apply()
-        getPrefs(context).edit().putString("RES_$name", value).apply()
-    }
-    
-    fun getCustomResolutionValue(context: Context, name: String): String? {
-        return getPrefs(context).getString("RES_$name", null)
-    }
-
-    fun deleteCustomResolution(context: Context, name: String) {
-        val names = getCustomResolutionNames(context)
-        val newNames = HashSet(names)
-        newNames.remove(name)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).remove("RES_$name").apply()
-    }
-    
-    fun renameCustomResolution(context: Context, oldName: String, newName: String): Boolean {
-        if (oldName == newName) return false
-        if (newName.isEmpty()) return false
-        val names = getCustomResolutionNames(context)
-        if (!names.contains(oldName)) return false
-        val data = getCustomResolutionValue(context, oldName) ?: return false
-        val newNames = HashSet(names)
-        newNames.remove(oldName)
-        newNames.add(newName)
-        getPrefs(context).edit().putStringSet(KEY_CUSTOM_RESOLUTION_NAMES, newNames).apply()
-        getPrefs(context).edit().putString("RES_$newName", data).remove("RES_$oldName").apply()
-        return true
-    }
-
-    // --- FONT SIZE & ICONS & DRAWER ---
-    fun saveFontSize(context: Context, size: Float) {
-        getPrefs(context).edit().putFloat(KEY_FONT_SIZE, size).apply()
-    }
-
-    fun getFontSize(context: Context): Float {
-        return getPrefs(context).getFloat(KEY_FONT_SIZE, 16f)
-    }
-
-    fun saveIconUri(context: Context, uri: String) {
-        getPrefs(context).edit().putString(KEY_ICON_URI, uri).apply()
-    }
-
-    fun getIconUri(context: Context): String? {
-        return getPrefs(context).getString(KEY_ICON_URI, null)
-    }
-    
-    fun setDrawerHeightPercent(context: Context, percent: Int) {
-        getPrefs(context).edit().putInt(KEY_DRAWER_HEIGHT, percent).apply()
-    }
-    
-    fun getDrawerHeightPercent(context: Context): Int {
-        return getPrefs(context).getInt(KEY_DRAWER_HEIGHT, 70)
-    }
-    
-    fun setDrawerWidthPercent(context: Context, percent: Int) {
-        getPrefs(context).edit().putInt(KEY_DRAWER_WIDTH, percent).apply()
-    }
-    
-    fun getDrawerWidthPercent(context: Context): Int {
-        return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 90)
-    }
-    
-    fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD, enable).apply()
-    }
-    
-    fun getAutoResizeKeyboard(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
-    }
-
-    // --- SETTINGS ---
-    fun setKillOnExecute(context: Context, kill: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_KILL_ON_EXECUTE, kill).apply()
-    }
-
-    fun getKillOnExecute(context: Context): Boolean {
-        // Default is FALSE for Kill On Execute
-        return getPrefs(context).getBoolean(KEY_KILL_ON_EXECUTE, false)
-    }
-
-    fun setAutoRestartTrackpad(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_AUTO_RESTART_TRACKPAD, enable).apply()
-    }
-
-    fun getAutoRestartTrackpad(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_AUTO_RESTART_TRACKPAD, false) // Default Off
-    }
-
-    fun setTargetDisplayIndex(context: Context, index: Int) {
-        getPrefs(context).edit().putInt(KEY_TARGET_DISPLAY_INDEX, index).apply()
-    }
-
-    fun getTargetDisplayIndex(context: Context): Int {
-        return getPrefs(context).getInt(KEY_TARGET_DISPLAY_INDEX, 1)
-    }
-
-    fun setInstantMode(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_IS_INSTANT_MODE, enable).apply()
-    }
-
-    fun getInstantMode(context: Context): Boolean {
-        // Default is TRUE for Instant Mode
-        return getPrefs(context).getBoolean(KEY_IS_INSTANT_MODE, true)
-    }
-    
-    fun saveLastQueue(context: Context, apps: List<String>) {
-        val str = apps.joinToString(",")
-        getPrefs(context).edit().putString(KEY_LAST_QUEUE, str).apply()
-    }
-    
-    fun getLastQueue(context: Context): List<String> {
-        val str = getPrefs(context).getString(KEY_LAST_QUEUE, "") ?: ""
-        if (str.isEmpty()) return emptyList()
-        return str.split(",").filter { it.isNotEmpty() }
-    }
-    
-    fun setShowShizukuWarning(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_SHOW_SHIZUKU_WARNING, enable).apply()
-    }
-
-    fun getShowShizukuWarning(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_SHOW_SHIZUKU_WARNING, true)
-    }
-    
-    fun setUseAltScreenOff(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_USE_ALT_SCREEN_OFF, enable).apply()
-    }
-
-    fun getUseAltScreenOff(context: Context): Boolean {
-        // Default false (use standard SurfaceControl method)
-        return getPrefs(context).getBoolean(KEY_USE_ALT_SCREEN_OFF, false)
-    }
-    
-    // --- REORDER PREFERENCES ---
-    fun setReorderTimeout(context: Context, seconds: Int) {
-        getPrefs(context).edit().putInt(KEY_REORDER_TIMEOUT, seconds).apply()
-    }
-    
-    fun getReorderTimeout(context: Context): Int {
-        return getPrefs(context).getInt(KEY_REORDER_TIMEOUT, 2) // Default 2 seconds
-    }
-    
-    fun setReorderDrag(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_DRAG, enable).apply()
-    }
-    
-    fun getReorderDrag(context: Context): Boolean {
-        // CHANGED: Default to FALSE so Tap works out of box
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_DRAG, false)
-    }
-    
-    fun setReorderTap(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_TAP, enable).apply()
-    }
-    
-    fun getReorderTap(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_TAP, true) // Default Enabled
-    }
-    
-    fun setReorderScroll(context: Context, enable: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_REORDER_METHOD_SCROLL, enable).apply()
-    }
-    
-    fun getReorderScroll(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_REORDER_METHOD_SCROLL, true) // Default Enabled
-    }
-
-    // === BLACKLIST METHODS - START ===
-    fun getBlacklist(context: Context): Set<String> {
-        return getPrefs(context).getStringSet(KEY_BLACKLIST, emptySet()) ?: emptySet()
-    }
-
-    fun isBlacklisted(context: Context, identifier: String): Boolean {
-        return getBlacklist(context).contains(identifier)
-    }
-
-    fun addToBlacklist(context: Context, identifier: String) {
-        val current = getBlacklist(context).toMutableSet()
-        current.add(identifier)
-        getPrefs(context).edit().putStringSet(KEY_BLACKLIST, current).apply()
-    }
-
-    fun removeFromBlacklist(context: Context, identifier: String) {
-        val current = getBlacklist(context).toMutableSet()
-        current.remove(identifier)
-        getPrefs(context).edit().putStringSet(KEY_BLACKLIST, current).apply()
-    }
-
-    fun toggleBlacklist(context: Context, identifier: String): Boolean {
-        return if (isBlacklisted(context, identifier)) {
-            removeFromBlacklist(context, identifier)
-            false
-        } else {
-            addToBlacklist(context, identifier)
-            true
-        }
-    }
-    // === BLACKLIST METHODS - END ===
-}
-```
-
-## File: Cover-Screen-Launcher/app/src/main/res/drawable/ic_block.xml
-```xml
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M17,2H7C5.9,2 5,2.9 5,4v16c0,1.1 0.9,2 2,2h10c1.1,0 2,-0.9 2,-2V4C19,2.9 18.1,2 17,2z M17,20H7V4h10V20z M9,6h6v2H9V6z M9,10h6v2H9V10z M9,14h6v2H9V14z"/>
-</vector>
-```
-
-## File: Cover-Screen-Launcher/app/src/main/res/layout/layout_rofi_drawer.xml
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#80000000"
-    android:clickable="true"
-    android:focusable="true"
-    android:filterTouchesWhenObscured="false">
-
-    <LinearLayout
-        android:id="@+id/drawer_container"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:background="@drawable/bg_drawer"
-        android:elevation="10dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:filterTouchesWhenObscured="false">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <ImageView
-                android:id="@+id/icon_search_mode"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@android:drawable/ic_menu_search"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="App List"/>
-
-            <EditText
-                android:id="@+id/rofi_search_bar"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:background="@null"
-                android:hint="Search apps..."
-                android:textColor="#FFFFFF"
-                android:textColorHint="#666666"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:singleLine="true"
-                android:textSize="16sp"
-                android:imeOptions="actionDone"/>
-
-            <ImageView
-                android:id="@+id/icon_execute"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@android:drawable/ic_media_play"
-                android:tint="#00FF00"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Launch"/>
-
-            <ImageView
-                android:id="@+id/icon_mode_window"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_window_split" 
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Layouts"/>
-
-            <ImageView
-                android:id="@+id/icon_mode_resolution"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_mode_resolution"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Resolution"/>
-
-            <ImageView
-                android:id="@+id/icon_mode_dpi"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_mode_dpi"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="DPI"/>
-
-            <!-- BLACKLIST MODE ICON - START -->
-            <!-- Icon for accessing blacklist management tab -->
-            <ImageView
-                android:id="@+id/icon_mode_blacklist"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_block"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Blacklist"/>
-            <!-- BLACKLIST MODE ICON - END -->
-
-            <ImageView
-                android:id="@+id/icon_mode_profiles"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_mode_profiles"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Profiles"/>
-
-            <ImageView
-                android:id="@+id/icon_mode_settings"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:padding="6dp"
-                android:src="@android:drawable/ic_menu_preferences"
-                android:tint="#AAAAAA"
-                android:background="@drawable/bg_item_press"
-                android:tooltipText="Settings"/>
-        </LinearLayout>
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/selected_apps_recycler"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:minHeight="50dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"
-            android:visibility="gone"/>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="8dp"
-            android:background="#444444" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rofi_recycler_view"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:scrollbars="vertical" />
-
-    </LinearLayout>
-</FrameLayout>
 ```
 
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/InterAppCommandReceiver.kt
@@ -23026,6 +23162,148 @@ class SwipeTrailView(context: Context) : View(context) {
 // =================================================================================
 ```
 
+## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
+```kotlin
+package com.example.quadrantlauncher
+
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityManager
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import rikka.shizuku.Shizuku
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
+    }
+
+    // === APP INFO DATA CLASS - START ===
+    // Represents an installed app with package name, activity class, and state info
+    // getIdentifier() returns a unique string for app identification including className when needed
+    data class AppInfo(
+        val label: String,
+        val packageName: String,
+        val className: String? = null,
+        var isFavorite: Boolean = false,
+        var isMinimized: Boolean = false
+    ) {
+        // Returns unique identifier for the app
+        fun getIdentifier(): String {
+            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
+                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
+                    "$packageName:gemini"
+                } else {
+                    packageName
+                }
+            } else {
+                packageName
+            }
+        }
+        
+        // === GET BASE PACKAGE - START ===
+        // Returns the base package name without any suffix
+        // Use this for shell commands that need the actual Android package name
+        fun getBasePackage(): String {
+            return if (packageName.contains(":")) {
+                packageName.substringBefore(":")
+            } else {
+                packageName
+            }
+        }
+        // === GET BASE PACKAGE - END ===
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is AppInfo) return false
+            return packageName == other.packageName && className == other.className && label == other.label
+        }
+
+        override fun hashCode(): Int {
+            var result = packageName.hashCode()
+            result = 31 * result + (className?.hashCode() ?: 0)
+            result = 31 * result + label.hashCode()
+            return result
+        }
+    }
+    // === APP INFO DATA CLASS - END ===
+
+    /* * FUNCTION: onCreate
+     * SUMMARY: Detects the display ID where the app icon was clicked and
+     * passes it to the service to ensure the bubble follows the user.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Redirect to PermissionActivity if essential permissions are missing
+        if (!hasAllPermissions()) {
+            val intent = Intent(this, PermissionActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Determine which display this activity is running on
+        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
+        }
+
+        Log.d("DroidOS_Main", "Launched on Display $displayId")
+
+        // Start service and pass the current display ID to recall the bubble
+        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
+        serviceIntent.putExtra("DISPLAY_ID", displayId)
+        startService(serviceIntent)
+
+        // Finish immediately so the launcher remains a service-only overlay
+        finish()
+    }
+
+    private fun hasAllPermissions(): Boolean {
+        // 1. Overlay
+        if (!Settings.canDrawOverlays(this)) return false
+
+        // 2. Shizuku
+        val shizukuGranted = try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+        if (!shizukuGranted) return false
+
+        // 3. Accessibility
+        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
+
+        // 4. Notifications removed (Not strictly required for service to run)
+
+        return true
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        for (enabledService in enabledServices) {
+            val serviceInfo = enabledService.resolveInfo.serviceInfo
+            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
+                return true
+            }
+        }
+        return false
+    }
+}
+```
+
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/MainActivity.kt
 ```kotlin
 package com.example.coverscreentester
@@ -23362,148 +23640,6 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
 // =================================================================================
 // END FILE: MainActivity.kt
 // =================================================================================
-```
-
-## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
-```kotlin
-package com.example.quadrantlauncher
-
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Bundle
-import android.provider.Settings
-import android.util.Log
-import android.view.accessibility.AccessibilityManager
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import rikka.shizuku.Shizuku
-
-class MainActivity : AppCompatActivity() {
-
-    companion object {
-        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
-    }
-
-    // === APP INFO DATA CLASS - START ===
-    // Represents an installed app with package name, activity class, and state info
-    // getIdentifier() returns a unique string for app identification including className when needed
-    data class AppInfo(
-        val label: String,
-        val packageName: String,
-        val className: String? = null,
-        var isFavorite: Boolean = false,
-        var isMinimized: Boolean = false
-    ) {
-        // Returns unique identifier for the app
-        fun getIdentifier(): String {
-            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
-                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
-                    "$packageName:gemini"
-                } else {
-                    packageName
-                }
-            } else {
-                packageName
-            }
-        }
-        
-        // === GET BASE PACKAGE - START ===
-        // Returns the base package name without any suffix
-        // Use this for shell commands that need the actual Android package name
-        fun getBasePackage(): String {
-            return if (packageName.contains(":")) {
-                packageName.substringBefore(":")
-            } else {
-                packageName
-            }
-        }
-        // === GET BASE PACKAGE - END ===
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is AppInfo) return false
-            return packageName == other.packageName && className == other.className && label == other.label
-        }
-
-        override fun hashCode(): Int {
-            var result = packageName.hashCode()
-            result = 31 * result + (className?.hashCode() ?: 0)
-            result = 31 * result + label.hashCode()
-            return result
-        }
-    }
-    // === APP INFO DATA CLASS - END ===
-
-    /* * FUNCTION: onCreate
-     * SUMMARY: Detects the display ID where the app icon was clicked and
-     * passes it to the service to ensure the bubble follows the user.
-     */
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Redirect to PermissionActivity if essential permissions are missing
-        if (!hasAllPermissions()) {
-            val intent = Intent(this, PermissionActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
-            return
-        }
-
-        // Determine which display this activity is running on
-        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            this.display?.displayId ?: 0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.displayId
-        }
-
-        Log.d("DroidOS_Main", "Launched on Display $displayId")
-
-        // Start service and pass the current display ID to recall the bubble
-        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
-        serviceIntent.putExtra("DISPLAY_ID", displayId)
-        startService(serviceIntent)
-
-        // Finish immediately so the launcher remains a service-only overlay
-        finish()
-    }
-
-    private fun hasAllPermissions(): Boolean {
-        // 1. Overlay
-        if (!Settings.canDrawOverlays(this)) return false
-
-        // 2. Shizuku
-        val shizukuGranted = try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            false
-        }
-        if (!shizukuGranted) return false
-
-        // 3. Accessibility
-        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
-
-        // 4. Notifications removed (Not strictly required for service to run)
-
-        return true
-    }
-
-    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        for (enabledService in enabledServices) {
-            val serviceInfo = enabledService.resolveInfo.serviceInfo
-            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
-                return true
-            }
-        }
-        return false
-    }
-}
 ```
 
 ## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadMenuManager.kt
@@ -34573,59 +34709,155 @@ class PredictionEngine {
             }
         }
 
-        // 3. PATH KEY INJECTION - NEW
-        // If path shows specific intermediate keys, add words that contain those keys
-        // This is CRITICAL for "awake" - if path shows a→w→..., we need words with 'w'
-        if (pathKeys.size >= 2) {
-            val secondKey = pathKeys.getOrNull(1)?.firstOrNull()?.lowercaseChar()
-            if (secondKey != null && startKey != null) {
-                // Add words that start with startKey AND contain secondKey
-                wordsByFirstLetter[startKey.first()]?.let { words ->
-                    val matchingWords = words.filter { word ->
-                        word.length >= 2 && word.drop(1).contains(secondKey)
-                    }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(30)
-                    candidates.addAll(matchingWords)
-                    
-                    // Debug: Log how many path-key words we added
-                    if (matchingWords.isNotEmpty()) {
-                        android.util.Log.d("DroidOS_PathKeys", "PathKey injection: Added ${matchingWords.size} words containing '$secondKey' (e.g., ${matchingWords.take(5).joinToString()})")
-                    }
-                }
-            }
-            
-            // Also check third key if present
-            val thirdKey = pathKeys.getOrNull(2)?.firstOrNull()?.lowercaseChar()
-            if (thirdKey != null && startKey != null && thirdKey != secondKey) {
-                wordsByFirstLetter[startKey.first()]?.let { words ->
-                    val matchingWords = words.filter { word ->
-                        word.length >= 3 && word.drop(1).contains(thirdKey)
-                    }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(20)
-                    candidates.addAll(matchingWords)
-                }
-            }
-        }
+                // 3. PATH KEY INJECTION (Enhanced)
 
-        // 4. User History (original)
-        synchronized(userFrequencyMap) {
-            candidates.addAll(userFrequencyMap.entries
-                .sortedByDescending { it.value }
-                .take(15)
-                .map { it.key })
-        }
+                // If path shows specific intermediate keys, add words that contain those keys.
+
+                // We increased limits (30->150) to ensure "awake" isn't pushed out by common words.
+
+                if (pathKeys.size >= 2) {
+
+                    val secondKey = pathKeys.getOrNull(1)?.firstOrNull()?.lowercaseChar()
+
+                    if (secondKey != null && startKey != null) {
+
+                        wordsByFirstLetter[startKey.first()]?.let { words ->
+
+                            val matchingWords = words.filter { word ->
+
+                                word.length >= 2 && word.drop(1).contains(secondKey)
+
+                            }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(150) // Increased from 30
+
+                            candidates.addAll(matchingWords)
+
+                        }
+
+                    }
+
         
-        // Debug: Log total candidates
-        android.util.Log.d("DroidOS_PathKeys", "Total candidates: ${candidates.size}")
-        // =======================================================================
-        // END CANDIDATE COLLECTION
-        // =======================================================================
+
+                    // Also check third key if present
+
+                    val thirdKey = pathKeys.getOrNull(2)?.firstOrNull()?.lowercaseChar()
+
+                    if (thirdKey != null && startKey != null && thirdKey != secondKey) {
+
+                        wordsByFirstLetter[startKey.first()]?.let { words ->
+
+                            val matchingWords = words.filter { word ->
+
+                                word.length >= 3 && word.drop(1).contains(thirdKey)
+
+                            }.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(150) // Increased from 20
+
+                            candidates.addAll(matchingWords)
+
+                        }
+
+                    }
+
+                    
+
+                    // 3.5 STRICT SEQUENCE MATCH (New)
+
+                    // If we have a complex path (e.g. a->w->a->e), specifically look for words
+
+                    // that contain ALL these keys in relative order.
+
+                    if (pathKeys.size >= 3 && startKey != null) {
+
+                        wordsByFirstLetter[startKey.first()]?.let { words ->
+
+                            // Get all intermediate keys (excluding start)
+
+                            val requiredKeys = pathKeys.drop(1).map { it.firstOrNull()?.lowercaseChar() }.filterNotNull()
+
+                            
+
+                            val strictMatches = words.filter { word ->
+
+                                var lastIdx = 0
+
+                                var matches = true
+
+                                for (rk in requiredKeys) {
+
+                                    val idx = word.indexOf(rk, lastIdx)
+
+                                    if (idx == -1) { 
+
+                                        matches = false; break 
+
+                                    }
+
+                                    lastIdx = idx + 1
+
+                                }
+
+                                matches
+
+                            }.take(50) // Force include these specific matches
+
+                            
+
+                            if (strictMatches.isNotEmpty()) {
+
+                                candidates.addAll(strictMatches)
+
+                                android.util.Log.d("DroidOS_PathKeys", "Strict Match found: ${strictMatches.take(5)}")
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
         
+
+                // 4. User History (original)
+
+                synchronized(userFrequencyMap) {
+
+                    candidates.addAll(userFrequencyMap.entries
+
+                        .sortedByDescending { it.value }
+
+                        .take(30) // Increased from 15
+
+                        .map { it.key })
+
+                }
+
         
-        // --- SCORING ---
-        val scored = candidates
-            .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
-            .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }.thenBy { getWordRank(it) })
-            .take(150)
-            .mapNotNull { word ->
+
+                // Debug: Log total candidates
+
+                android.util.Log.d("DroidOS_PathKeys", "Total candidates: ${candidates.size}")
+
+        
+
+                // =======================================================================
+
+                // END CANDIDATE COLLECTION
+
+                // =======================================================================
+
+        
+
+                // --- SCORING ---
+
+                val scored = candidates
+
+                    .filter { !isWordBlocked(it) && it.length >= MIN_WORD_LENGTH }
+
+                    .sortedWith(compareByDescending<String> { userFrequencyMap[it] ?: 0 }.thenBy { getWordRank(it) })
+
+                    .take(400) // Increased from 150 to prevent dropping valid low-frequency words
+
+                    .mapNotNull { word ->
                 val template = getOrCreateTemplate(word, keyMap) ?: return@mapNotNull null
                 
                 // --- ADAPTIVE LENGTH FILTER (Original) ---
@@ -34889,12 +35121,11 @@ class PredictionEngine {
             if (len1 > 15f && len2 > 15f) {
                 val dot = (v1x * v2x + v1y * v2y) / (len1 * len2)
 
-                // SHARP turn only: dot < 0.4 means angle > ~66 degrees
-                // This is stricter than before (was 0.75 = ~40 degrees)
-                if (dot < 0.4f) {
-                    // Minimum distance from last turn to avoid duplicates
-                    if (i - lastTurnIdx > windowSize * 2) {
-                        val key = findClosestKey(p2, keyMap)?.lowercase()
+                                    // SHARP turn only: dot < 0.6 means angle > ~53 degrees
+                                    // Relaxed from 0.4 to catch 'k' in 'awake' and 'x' in 'expect'
+                                    if (dot < 0.6f) {
+                                        // Minimum distance from last turn to avoid duplicates
+                                        if (i - lastTurnIdx > windowSize * 2) {                        val key = findClosestKey(p2, keyMap)?.lowercase()
                         if (key != null && (keys.isEmpty() || keys.last() != key)) {
                             keys.add(key)
                             lastTurnIdx = i
