@@ -572,7 +572,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var mirrorKbWidth = 0f
     private var mirrorKbHeight = 0f
 
-    private var isInOrientationMode = false
+private var isInOrientationMode = false
     private var lastOrientX = 0f
     private var lastOrientY = 0f
     private val MOVEMENT_THRESHOLD = 15f  // Pixels - ignore movement smaller than this
@@ -580,6 +580,34 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var lastOrientationTouchTime = 0L
 
     // =================================================================================
+    // MIRROR MODE KEY REPEAT VARIABLES
+    // SUMMARY: Variables for repeating backspace/arrow keys when held during orange
+    //          trail orientation mode. Only active in mirror mode, doesn't affect
+    //          normal blue trail swipe typing.
+    // =================================================================================
+    private val mirrorRepeatHandler = Handler(Looper.getMainLooper())
+    private var mirrorRepeatKey: String? = null
+    private var isMirrorRepeating = false
+    private val MIRROR_REPEAT_INITIAL_DELAY = 400L
+    private val MIRROR_REPEAT_INTERVAL = 50L
+    
+    // Keys that can repeat in mirror orientation mode (backspace + arrows)
+    private val mirrorRepeatableKeys = setOf("BKSP", "⌫", "←", "→", "↑", "↓", "◄", "▲", "▼", "►")
+    
+    private val mirrorRepeatRunnable = object : Runnable {
+        override fun run() {
+            mirrorRepeatKey?.let { key ->
+                if (isMirrorRepeating && isInOrientationMode) {
+                    Log.d(TAG, "Mirror repeat: $key")
+                    keyboardOverlay?.triggerKeyPress(key)
+                    mirrorRepeatHandler.postDelayed(this, MIRROR_REPEAT_INTERVAL)
+                }
+            }
+        }
+    }
+    // =================================================================================
+    // END BLOCK: MIRROR MODE KEY REPEAT VARIABLES
+    // =================================================================================    // =================================================================================
     // RUNNABLE: orientationModeTimeout
     // SUMMARY: Fires when finger has been still for delay period.
     //          Switches from orange trail to blue trail.
@@ -2873,18 +2901,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // END BLOCK: syncMirrorKeyboardLayer
     // =================================================================================
 
-    // =================================================================================
-    // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Handles touch events forwarded from physical keyboard.
-    //          Scales coordinates to match mirror keyboard dimensions.
-    //          Shows orange trail on both displays during orientation mode.
-    // =================================================================================
-    // =================================================================================
+// =================================================================================
     // FUNCTION: onMirrorKeyboardTouch
     // SUMMARY: Virtual Mirror Mode touch handling.
     //          - Every new touch: Show mirror + orange trail
     //          - After timeout: Switch to blue trail, allow typing
     //          - Single taps (quick touch) should also type after orientation
+    //          - HOLD REPEAT: If finger stays on backspace/arrow key during orange
+    //            trail, the key will repeat. The orientation timeout is CANCELLED
+    //            when on a repeatable key so it stays orange and keeps repeating.
     // @return true to block input, false to allow input
     // =================================================================================
     fun onMirrorKeyboardTouch(x: Float, y: Float, action: Int): Boolean {
@@ -2908,7 +2933,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 // Make mirror VISIBLE on touch
                 mirrorKeyboardView?.alpha = 0.9f
                 mirrorKeyboardContainer?.alpha = 1f
-                // FIX: No container background - KeyboardView has its own background
 
                 // Start orientation mode
                 isInOrientationMode = true
@@ -2928,12 +2952,46 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 keyboardOverlay?.startOrientationTrail(x, y)
                 mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
-                // Start timeout
-                orientationModeHandler.removeCallbacks(orientationModeTimeout)
-                orientationModeHandler.postDelayed(
-                    orientationModeTimeout,
-                    prefs.prefMirrorOrientDelayMs
-                )
+                // =================================================================================
+                // MIRROR KEY REPEAT START
+                // SUMMARY: Check if finger is on a repeatable key (backspace/arrows).
+                //          If so, CANCEL the orientation timeout (stay orange) and start
+                //          the repeat timer. If NOT on a repeatable key, start the normal
+                //          orientation timeout to switch to blue for swipe typing.
+                // =================================================================================
+                val touchedKey = keyboardOverlay?.getKeyAtPosition(x, y)
+                if (touchedKey != null && mirrorRepeatableKeys.contains(touchedKey)) {
+                    Log.d(TAG, "Mirror touch on repeatable key: $touchedKey - CANCELLING orientation timeout, starting repeat")
+                    mirrorRepeatKey = touchedKey
+                    isMirrorRepeating = false  // Not repeating yet, waiting for delay
+                    
+                    // CRITICAL: Cancel orientation timeout - we want to stay in orange mode for repeat
+                    orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                    
+                    // Start repeat timer
+                    mirrorRepeatHandler.removeCallbacks(mirrorRepeatRunnable)
+                    mirrorRepeatHandler.postDelayed({
+                        if (mirrorRepeatKey == touchedKey && isInOrientationMode) {
+                            Log.d(TAG, "Mirror repeat starting for: $touchedKey")
+                            isMirrorRepeating = true
+                            // Fire first repeat immediately, then continue
+                            keyboardOverlay?.triggerKeyPress(touchedKey)
+                            mirrorRepeatHandler.postDelayed(mirrorRepeatRunnable, MIRROR_REPEAT_INTERVAL)
+                        }
+                    }, MIRROR_REPEAT_INITIAL_DELAY)
+                } else {
+                    // Not on a repeatable key - start normal orientation timeout
+                    mirrorRepeatKey = null
+                    isMirrorRepeating = false
+                    orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                    orientationModeHandler.postDelayed(
+                        orientationModeTimeout,
+                        prefs.prefMirrorOrientDelayMs
+                    )
+                }
+                // =================================================================================
+                // END BLOCK: MIRROR KEY REPEAT START
+                // =================================================================================
 
                 return true  // Block input during orange
             }
@@ -2949,15 +3007,74 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     keyboardOverlay?.addOrientationTrailPoint(x, y)
                     mirrorTrailView?.addPoint(mirrorX, mirrorY)
 
-                    // Reset timeout only on significant movement
+                    // Only process movement if significant
                     if (distance > MOVEMENT_THRESHOLD) {
                         lastOrientX = x
                         lastOrientY = y
-                        orientationModeHandler.removeCallbacks(orientationModeTimeout)
-                        orientationModeHandler.postDelayed(
-                            orientationModeTimeout,
-                            prefs.prefMirrorOrientDelayMs
-                        )
+
+                        // =================================================================================
+                        // MIRROR KEY REPEAT - CHECK ON MOVE
+                        // SUMMARY: On significant movement, check if we moved to a different key.
+                        //          - If was repeating and moved off key: stop repeat, start orientation timeout
+                        //          - If was repeating and still on same key: continue repeating
+                        //          - If wasn't repeating: reset orientation timeout as before
+                        // =================================================================================
+                        val currentKey = keyboardOverlay?.getKeyAtPosition(x, y)
+                        
+                        if (mirrorRepeatKey != null) {
+                            // Was on a repeatable key
+                            if (currentKey != mirrorRepeatKey) {
+                                Log.d(TAG, "Mirror repeat cancelled - moved from $mirrorRepeatKey to $currentKey")
+                                stopMirrorKeyRepeat()
+                                
+                                // Now check if we moved to ANOTHER repeatable key
+                                if (currentKey != null && mirrorRepeatableKeys.contains(currentKey)) {
+                                    Log.d(TAG, "Moved to another repeatable key: $currentKey - starting new repeat")
+                                    mirrorRepeatKey = currentKey
+                                    isMirrorRepeating = false
+                                    mirrorRepeatHandler.postDelayed({
+                                        if (mirrorRepeatKey == currentKey && isInOrientationMode) {
+                                            isMirrorRepeating = true
+                                            keyboardOverlay?.triggerKeyPress(currentKey)
+                                            mirrorRepeatHandler.postDelayed(mirrorRepeatRunnable, MIRROR_REPEAT_INTERVAL)
+                                        }
+                                    }, MIRROR_REPEAT_INITIAL_DELAY)
+                                } else {
+                                    // Moved to non-repeatable key - start orientation timeout
+                                    orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                                    orientationModeHandler.postDelayed(
+                                        orientationModeTimeout,
+                                        prefs.prefMirrorOrientDelayMs
+                                    )
+                                }
+                            }
+                            // else: still on same repeatable key, keep repeating (do nothing)
+                        } else {
+                            // Wasn't on a repeatable key - check if moved to one
+                            if (currentKey != null && mirrorRepeatableKeys.contains(currentKey)) {
+                                Log.d(TAG, "Moved onto repeatable key: $currentKey - cancelling timeout, starting repeat")
+                                orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                                mirrorRepeatKey = currentKey
+                                isMirrorRepeating = false
+                                mirrorRepeatHandler.postDelayed({
+                                    if (mirrorRepeatKey == currentKey && isInOrientationMode) {
+                                        isMirrorRepeating = true
+                                        keyboardOverlay?.triggerKeyPress(currentKey)
+                                        mirrorRepeatHandler.postDelayed(mirrorRepeatRunnable, MIRROR_REPEAT_INTERVAL)
+                                    }
+                                }, MIRROR_REPEAT_INITIAL_DELAY)
+                            } else {
+                                // Still not on repeatable key - reset orientation timeout
+                                orientationModeHandler.removeCallbacks(orientationModeTimeout)
+                                orientationModeHandler.postDelayed(
+                                    orientationModeTimeout,
+                                    prefs.prefMirrorOrientDelayMs
+                                )
+                            }
+                        }
+                        // =================================================================================
+                        // END BLOCK: MIRROR KEY REPEAT - CHECK ON MOVE
+                        // =================================================================================
                     }
 
                     return true  // Block input
@@ -2974,17 +3091,33 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 orientationModeHandler.removeCallbacks(orientationModeTimeout)
 
                 val wasInOrientation = isInOrientationMode
+                val wasRepeating = isMirrorRepeating
+                val repeatKey = mirrorRepeatKey
+
+                // Stop any active key repeat
+                stopMirrorKeyRepeat()
 
                 if (isInOrientationMode) {
                     // Quick tap - lifted during orange phase
-                    Log.d(TAG, "Quick tap detected - triggering deferred key press")
                     isInOrientationMode = false
                     keyboardOverlay?.setOrientationMode(false)
                     mirrorTrailView?.clear()
                     keyboardOverlay?.clearOrientationTrail()
 
-                    // CRITICAL: Trigger the key press that was deferred
-                    keyboardOverlay?.handleDeferredTap(x, y)
+                    // =================================================================================
+                    // MIRROR DEFERRED TAP WITH REPEAT CHECK
+                    // SUMMARY: If key was repeating, don't trigger another key press on lift.
+                    //          If key was NOT repeating (quick tap), trigger normal deferred tap.
+                    // =================================================================================
+                    if (!wasRepeating) {
+                        Log.d(TAG, "Quick tap detected - triggering deferred key press")
+                        keyboardOverlay?.handleDeferredTap(x, y)
+                    } else {
+                        Log.d(TAG, "Skipping deferred tap - key was repeating ($repeatKey)")
+                    }
+                    // =================================================================================
+                    // END BLOCK: MIRROR DEFERRED TAP WITH REPEAT CHECK
+                    // =================================================================================
                 } else {
                     // Normal lift after blue phase - clear mirror trail
                     mirrorTrailView?.clear()
@@ -2992,7 +3125,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
                 // Fade mirror
                 mirrorKeyboardView?.alpha = 0.3f
-                // FIX: No container background to change
 
                 // Schedule fade out
                 mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
@@ -3009,6 +3141,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
 
     // =================================================================================
+    // FUNCTION: stopMirrorKeyRepeat
+    // SUMMARY: Stops any active mirror mode key repeat. Called on touch up or when
+    //          finger moves off the repeatable key.
+    // =================================================================================
+    private fun stopMirrorKeyRepeat() {
+        mirrorRepeatHandler.removeCallbacks(mirrorRepeatRunnable)
+        mirrorRepeatKey = null
+        isMirrorRepeating = false
+    }
+    // =================================================================================
+    // END BLOCK: stopMirrorKeyRepeat
+    // =================================================================================    // =================================================================================
     // FUNCTION: clearMirrorTrail
     // SUMMARY: Clears the orange orientation trail from the mirror keyboard display.
     // =================================================================================

@@ -447,8 +447,32 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     // END BLOCK: handleDeferredTap
     // =================================================================================
+// =================================================================================
+    // FUNCTION: getKeyAtPosition
+    // SUMMARY: Returns the key tag at the given coordinates, or null if no key found.
+    //          Used by mirror mode to check if finger is on a repeatable key.
+    // =================================================================================
+    fun getKeyAtPosition(x: Float, y: Float): String? {
+        val touchedView = findKeyView(x, y)
+        return touchedView?.tag as? String
+    }
+    // =================================================================================
+    // END BLOCK: getKeyAtPosition
+    // =================================================================================
 
     // =================================================================================
+    // FUNCTION: triggerKeyPress
+    // SUMMARY: Triggers a key press by key tag without going through touch events.
+    //          Used by mirror mode key repeat for backspace/arrow key repetition.
+    //          Directly calls handleKeyPress to inject the key event.
+    // =================================================================================
+    fun triggerKeyPress(keyTag: String) {
+        Log.d("KeyboardView", "triggerKeyPress: $keyTag")
+        handleKeyPress(keyTag, fromRepeat = true)
+    }
+    // =================================================================================
+    // END BLOCK: triggerKeyPress
+    // =================================================================================    // =================================================================================
     // FUNCTION: findCandidateAt
     // SUMMARY: Checks if the given coordinates are within one of the prediction
     //          candidates (cand1, cand2, cand3). Returns the text and isNew flag

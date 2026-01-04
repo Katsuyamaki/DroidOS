@@ -563,8 +563,29 @@ class KeyboardOverlay(
     // =================================================================================
     // END BLOCK: handleDeferredTap
     // =================================================================================
+// =================================================================================
+    // FUNCTION: getKeyAtPosition
+    // SUMMARY: Returns the key tag at the given position, or null if no key found.
+    //          Used by mirror mode to check if finger is on a repeatable key.
+    // =================================================================================
+    fun getKeyAtPosition(x: Float, y: Float): String? {
+        return keyboardView?.getKeyAtPosition(x, y)
+    }
+    // =================================================================================
+    // END BLOCK: getKeyAtPosition
+    // =================================================================================
 
     // =================================================================================
+    // FUNCTION: triggerKeyPress
+    // SUMMARY: Triggers a key press by key tag. Used by mirror mode key repeat to
+    //          fire repeated backspace/arrow presses without going through touch events.
+    // =================================================================================
+    fun triggerKeyPress(keyTag: String) {
+        keyboardView?.triggerKeyPress(keyTag)
+    }
+    // =================================================================================
+    // END BLOCK: triggerKeyPress
+    // =================================================================================   // =================================================================================
     // FUNCTION: getKeyboardState
     // SUMMARY: Gets current keyboard state (layer) from KeyboardView.
     // =================================================================================
