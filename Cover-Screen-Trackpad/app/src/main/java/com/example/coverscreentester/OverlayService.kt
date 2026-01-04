@@ -1722,8 +1722,7 @@ private var isInOrientationMode = false
             "scroll_size" -> { prefs.prefScrollTouchSize = value as Int; updateScrollSize() }
             "scroll_visual" -> { prefs.prefScrollVisualSize = value as Int; updateScrollSize() }
             "cursor_size" -> { prefs.prefCursorSize = value as Int; updateCursorSize() }
-            "anchored" -> prefs.prefAnchored = parseBoolean(value)
-            "automation_enabled" -> prefs.prefAutomationEnabled = parseBoolean(value)
+"anchored" -> { prefs.prefAnchored = parseBoolean(value); keyboardOverlay?.setAnchored(prefs.prefAnchored) }            "automation_enabled" -> prefs.prefAutomationEnabled = parseBoolean(value)
             "bubble_size" -> updateBubbleSize(value as Int)
             "bubble_icon" -> cycleBubbleIcon()
             "bubble_alpha" -> updateBubbleAlpha(value as Int)
