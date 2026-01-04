@@ -565,7 +565,55 @@ class KeyboardOverlay(
         keyboardView?.handleDeferredTap(x, y)
     }
 // =================================================================================
-    // FUNCTION: getKeyAtPosition
+// =================================================================================
+    // FUNCTION: findCandidateAt
+    // SUMMARY: Returns the candidate text at given position, or null if not on a candidate.
+    //          Used by mirror mode to detect drag-to-delete gestures.
+    // =================================================================================
+    fun findCandidateAt(x: Float, y: Float): String? {
+        return keyboardView?.findCandidateAt(x, y)?.first
+    }
+    // =================================================================================
+    // END BLOCK: findCandidateAt
+    // =================================================================================
+    
+    // =================================================================================
+    // FUNCTION: isOverBackspace
+    // SUMMARY: Returns true if the given position is over the backspace key.
+    //          Used by mirror mode to detect drag-to-delete gestures.
+    // =================================================================================
+    fun isOverBackspace(x: Float, y: Float): Boolean {
+        return keyboardView?.isOverBackspace(x, y) ?: false
+    }
+    // =================================================================================
+    // END BLOCK: isOverBackspace
+    // =================================================================================
+    
+    // =================================================================================
+// =================================================================================
+    // FUNCTION: triggerSuggestionDropped
+    // SUMMARY: Triggers the onSuggestionDropped callback for drag-to-delete in mirror mode.
+    //          Calls our own onSuggestionDropped since KeyboardOverlay implements KeyboardListener.
+    // =================================================================================
+    fun triggerSuggestionDropped(text: String) {
+        onSuggestionDropped(text)
+    }
+    // =================================================================================
+    // END BLOCK: triggerSuggestionDropped
+    // =================================================================================    
+    // =================================================================================
+    // FUNCTION: cancelCurrentSwipe
+    // SUMMARY: Cancels any in-progress swipe gesture. Used when drag-to-delete is detected
+    //          to prevent the drag from being interpreted as a swipe word.
+    // =================================================================================
+    fun cancelCurrentSwipe() {
+        keyboardView?.cancelCurrentSwipe()
+    }
+    // =================================================================================
+    // END BLOCK: cancelCurrentSwipe
+    // =================================================================================
+
+// FUNCTION: getKeyAtPosition
     // SUMMARY: Returns the key tag at the given position, or null if no key found.
     //          Used by mirror mode to check if finger is on a repeatable key.
     // =================================================================================

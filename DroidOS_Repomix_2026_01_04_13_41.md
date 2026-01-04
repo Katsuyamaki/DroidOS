@@ -170,7 +170,6 @@ Cover-Screen-Trackpad/
                 KeyboardPickerActivity.kt
                 KeyboardUtils.kt
                 KeyboardView.kt
-                KeyboardView.kt.md
                 MainActivity.kt
                 ManualAdjustActivity.kt
                 NullInputMethodService.kt
@@ -780,6 +779,148 @@ class IconPickerActivity : ComponentActivity() {
         } catch (e: Exception) {
             finish()
         }
+    }
+}
+```
+
+## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
+```kotlin
+package com.example.quadrantlauncher
+
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityManager
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import rikka.shizuku.Shizuku
+
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
+    }
+
+    // === APP INFO DATA CLASS - START ===
+    // Represents an installed app with package name, activity class, and state info
+    // getIdentifier() returns a unique string for app identification including className when needed
+    data class AppInfo(
+        val label: String,
+        val packageName: String,
+        val className: String? = null,
+        var isFavorite: Boolean = false,
+        var isMinimized: Boolean = false
+    ) {
+        // Returns unique identifier for the app
+        fun getIdentifier(): String {
+            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
+                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
+                    "$packageName:gemini"
+                } else {
+                    packageName
+                }
+            } else {
+                packageName
+            }
+        }
+        
+        // === GET BASE PACKAGE - START ===
+        // Returns the base package name without any suffix
+        // Use this for shell commands that need the actual Android package name
+        fun getBasePackage(): String {
+            return if (packageName.contains(":")) {
+                packageName.substringBefore(":")
+            } else {
+                packageName
+            }
+        }
+        // === GET BASE PACKAGE - END ===
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is AppInfo) return false
+            return packageName == other.packageName && className == other.className && label == other.label
+        }
+
+        override fun hashCode(): Int {
+            var result = packageName.hashCode()
+            result = 31 * result + (className?.hashCode() ?: 0)
+            result = 31 * result + label.hashCode()
+            return result
+        }
+    }
+    // === APP INFO DATA CLASS - END ===
+
+    /* * FUNCTION: onCreate
+     * SUMMARY: Detects the display ID where the app icon was clicked and
+     * passes it to the service to ensure the bubble follows the user.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Redirect to PermissionActivity if essential permissions are missing
+        if (!hasAllPermissions()) {
+            val intent = Intent(this, PermissionActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Determine which display this activity is running on
+        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            this.display?.displayId ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.displayId
+        }
+
+        Log.d("DroidOS_Main", "Launched on Display $displayId")
+
+        // Start service and pass the current display ID to recall the bubble
+        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
+        serviceIntent.putExtra("DISPLAY_ID", displayId)
+        startService(serviceIntent)
+
+        // Finish immediately so the launcher remains a service-only overlay
+        finish()
+    }
+
+    private fun hasAllPermissions(): Boolean {
+        // 1. Overlay
+        if (!Settings.canDrawOverlays(this)) return false
+
+        // 2. Shizuku
+        val shizukuGranted = try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+        if (!shizukuGranted) return false
+
+        // 3. Accessibility
+        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
+
+        // 4. Notifications removed (Not strictly required for service to run)
+
+        return true
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        for (enabledService in enabledServices) {
+            val serviceInfo = enabledService.resolveInfo.serviceInfo
+            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
+                return true
+            }
+        }
+        return false
     }
 }
 ```
@@ -4317,1902 +4458,6 @@ object KeyboardUtils {
         KeyDef("▼", KEY_DOWN),
         KeyDef("►", KEY_RIGHT)
     )
-}
-```
-
-## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardView.kt.md
-```markdown
-package com.example.coverscreentester
-
-import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.util.AttributeSet
-import android.util.SparseArray
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.HapticFeedbackConstants
-import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
-import kotlin.math.roundToInt
-import android.annotation.SuppressLint
-import android.util.Log
-
-class KeyboardView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
-) : LinearLayout(context, attrs, defStyleAttr) {
-
-    data class Candidate(val text: String, val isNew: Boolean = false)
-
-    // =================================================================================
-    // INTERFACE: KeyboardListener
-    // SUMMARY: Callbacks for keyboard events including key presses, swipe gestures,
-    //          and the NEW live swipe preview for real-time predictions.
-    // =================================================================================
-    interface KeyboardListener {
-        fun onKeyPress(keyCode: Int, char: Char?, metaState: Int)
-        fun onTextInput(text: String)
-        fun onSpecialKey(key: SpecialKey, metaState: Int)
-        fun onScreenToggle()
-        fun onScreenModeChange()
-        fun onSuggestionClick(text: String, isNew: Boolean) // Updated
-        fun onSwipeDetected(path: List<android.graphics.PointF>)
-        fun onSuggestionDropped(text: String) // New: Drag to Delete
-        fun onLayerChanged(state: KeyboardState) // Sync to mirror keyboard
-
-        // NEW: Live swipe preview - called during swipe to show predictions in real-time
-        // This enables GBoard-style "predict as you swipe" functionality
-        fun onSwipeProgress(path: List<android.graphics.PointF>) {}  // Default empty impl for backwards compat
-    }
-    // =================================================================================
-    // END BLOCK: KeyboardListener interface
-    // =================================================================================
-
-    enum class SpecialKey {
-        BACKSPACE, ENTER, SPACE, SHIFT, CAPS_LOCK, SYMBOLS, ABC,
-        TAB, ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT,
-        HOME, END, DELETE, ESCAPE, CTRL, ALT,
-        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT, HIDE_KEYBOARD
-    }
-
-    enum class KeyboardState {
-        LOWERCASE, UPPERCASE, CAPS_LOCK, SYMBOLS_1, SYMBOLS_2
-    }
-
-    private var listener: KeyboardListener? = null
-    private var currentState = KeyboardState.LOWERCASE
-    private var vibrationEnabled = true
-
-    private var isCtrlActive = false
-    private var isAltActive = false
-
-    private var isVoiceActive = false
-
-    // =================================================================================
-    // LIVE SWIPE PREVIEW THROTTLING
-    // SUMMARY: Variables to control how often we send live swipe previews.
-    //          Too frequent = laggy, too slow = not responsive.
-    // =================================================================================
-    private var lastSwipePreviewTime = 0L
-    private val SWIPE_PREVIEW_INTERVAL_MS = 150L  // Update predictions every 150ms
-    private val SWIPE_PREVIEW_MIN_POINTS = 5      // Need at least 5 points before previewing
-    // =================================================================================
-    // END BLOCK: LIVE SWIPE PREVIEW THROTTLING
-    // =================================================================================
-
-    // =================================================================================
-    // VIRTUAL MIRROR ORIENTATION MODE STATE
-    // SUMMARY: When true, key input is blocked and touches are forwarded for
-    //          orientation trail rendering. Set by KeyboardOverlay during mirror mode.
-    // =================================================================================
-    private var isOrientationModeActive = false
-    // =================================================================================
-    // END BLOCK: VIRTUAL MIRROR ORIENTATION MODE STATE
-    // =================================================================================
-
-    private val BASE_KEY_HEIGHT = 40
-    private val BASE_FONT_SIZE = 14f
-    private var scaleFactor = 1.0f
-    
-    private var keyHeight = BASE_KEY_HEIGHT
-    private var keySpacing = 2
-    private var fontSize = BASE_FONT_SIZE
-
-    // --- REPEAT LOGIC ---
-    private val repeatHandler = Handler(Looper.getMainLooper())
-    private var currentRepeatKey: String? = null
-    private var isRepeating = false
-    private val REPEAT_INITIAL_DELAY = 400L
-    private val REPEAT_INTERVAL = 50L 
-
-    // --- MULTITOUCH STATE ---
-    private val activePointers = SparseArray<View>()
-    
-    // Caps Lock Logic
-    private var capsLockPending = false
-    private val capsHandler = Handler(Looper.getMainLooper())
-
-    private val repeatRunnable = object : Runnable {
-        override fun run() {
-            currentRepeatKey?.let { key ->
-                if (isRepeating) {
-                    handleKeyPress(key, fromRepeat = true)
-                    repeatHandler.postDelayed(this, REPEAT_INTERVAL)
-                }
-            }
-        }
-    }
-    
-    private val capsLockRunnable = Runnable {
-        capsLockPending = true
-        toggleCapsLock()
-    }
-
-    // UI Elements for Suggestions
-    private var suggestionStrip: LinearLayout? = null
-    private var cand1: TextView? = null
-    private var cand2: TextView? = null
-    private var cand3: TextView? = null
-    private var div1: View? = null
-    private var div2: View? = null
-    private val handler = Handler(Looper.getMainLooper())
-
-// =================================================================================
-    // GESTURE TYPING STATE
-    // SUMMARY: Variables for swipe/gesture typing detection. Swipe is only tracked for
-    //          single-finger gestures. Multitouch cancels swipe detection to prevent
-    //          false triggers during fast two-thumb typing.
-    // =================================================================================
-    private var swipeTrail: SwipeTrailView? = null
-    private val keyCenters = HashMap<String, android.graphics.PointF>()
-    private var isSwiping = false
-    private val SWIPE_THRESHOLD = 35f // pixels of movement to trigger swipe mode (increased from 20)
-    private val SWIPE_MIN_DISTANCE = 80f // minimum start-to-end distance for valid swipe
-    private val SWIPE_MIN_PATH_POINTS = 10 // minimum path points for valid swipe (increased from 5)
-    private var startTouchX = 0f
-    private var startTouchY = 0f
-    private var swipePointerId = -1 // Track which pointer started the swipe (-1 = none)
-
-    // Store the full path for the decoder
-    private val currentPath = ArrayList<android.graphics.PointF>()
-    // =================================================================================
-    // END BLOCK: GESTURE TYPING STATE
-    // =================================================================================
-// =================================================================================
-    // PREDICTION BAR DRAG TRACKING
-    // SUMMARY: Track when a gesture starts on the prediction bar so we can bypass
-    //          mirror mode for the entire drag gesture (not just the initial touch).
-    //          This allows drag-to-delete to work in mirror mode.
-    // =================================================================================
-    private var gestureStartedOnPredictionBar = false
-    // =================================================================================
-    // END BLOCK: PREDICTION BAR DRAG TRACKING
-    // =================================================================================
-
-    // --- SPACEBAR TRACKPAD VARIABLES ---
-
-    var isPredictiveBarEmpty: Boolean = true
-
-    
-    // Actions triggered by Spacebar Trackpad
-    var cursorMoveAction: ((Float, Float, Boolean) -> Unit)? = null // dx, dy, isDragging
-    var cursorClickAction: ((Boolean) -> Unit)? = null // isRight
-
-    var touchDownAction: (() -> Unit)? = null
-    var touchUpAction: (() -> Unit)? = null
-    var touchTapAction: (() -> Unit)? = null
-
-
-    // =================================================================================
-    // VIRTUAL MIRROR MODE CALLBACK
-    // SUMMARY: Callback to forward touch events to OverlayService for mirror keyboard.
-    //          Called at the START of every touch event. If it returns true, the touch
-    //          is in orientation mode and normal key input should be blocked.
-    // @param x - Touch X coordinate
-    // @param y - Touch Y coordinate  
-    // @param action - MotionEvent action (DOWN, MOVE, UP, CANCEL)
-    // @return true if orientation mode is active (block key input), false otherwise
-    // =================================================================================
-    var mirrorTouchCallback: ((Float, Float, Int) -> Boolean)? = null
-    // =================================================================================
-    // END BLOCK: VIRTUAL MIRROR MODE CALLBACK
-    // =================================================================================
-
-    private var spacebarPointerId = -1
-    private var isSpaceTrackpadActive = false
-    private var lastSpaceX = 0f
-    private var lastSpaceY = 0f
-    private val touchSlop = 15f
-    private val cursorSensitivity = 2.5f
-    private var currentActiveKey: View? = null
-
-    // Touch Mode State
-    private var isTrackpadTouchMode = false
-
-    private val trackpadResetRunnable = Runnable { 
-        isTrackpadTouchMode = false
-        
-        // Find Spacebar and turn off highlight
-        val spaceView = findViewWithTag<View>("SPACE")
-        if (spaceView != null) {
-            setKeyVisual(spaceView, false, "SPACE")
-            spaceView.invalidate() // Force redraw
-        }
-        this.invalidate() // Force keyboard redraw
-    }
-
-
-    // Hold / Drag Logic
-    private var isDragging = false
-    private var hasMovedWhileDown = false
-
-    private val holdToDragRunnable = Runnable {
-        if (isTrackpadTouchMode) {
-            isDragging = true
-            touchDownAction?.invoke() // Inject Down
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            startTrackpadTimer()
-            android.util.Log.d("SpaceTrackpad", "Hold detected -> Touch DOWN injected, drag mode activated")
-        }
-    }
-
-
-    private fun startTrackpadTimer() {
-        isTrackpadTouchMode = true
-        
-        // FORCE VISUAL: Keep Spacebar Green while timer is active
-        val spaceView = findViewWithTag<View>("SPACE")
-        if (spaceView != null) {
-            setKeyVisual(spaceView, true, "SPACE")
-            spaceView.invalidate()
-        }
-        
-        handler.removeCallbacks(trackpadResetRunnable)
-        handler.postDelayed(trackpadResetRunnable, 1000)
-    }
-
-
-    private fun handleSpacebarClick(xRelativeToKey: Float, keyWidth: Int) {
-        val zone = xRelativeToKey / keyWidth
-        // 0: Left (0-33%), 2: Middle (33-66%), 1: Right (66-100%)
-        val isRightClick = zone > 0.66f
-        
-        // Trigger click in OverlayService
-        cursorClickAction?.invoke(isRightClick)
-        
-        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-    }
-
-    private fun moveMouse(dx: Float, dy: Float) {
-        if (dx == 0f && dy == 0f) return
-
-        // Active movement triggers Touch Mode
-        startTrackpadTimer()
-
-        // Send delta to OverlayService to move the fake cursor
-        // Pass dragging state to service
-        cursorMoveAction?.invoke(dx * cursorSensitivity, dy * cursorSensitivity, isDragging)
-    }
-
-
-
-    // We attach the trail view externally from the Overlay
-    fun attachTrailView(view: SwipeTrailView) {
-        this.swipeTrail = view
-    }
-
-    // Expose key centers for the overlay to retrieve
-    fun getKeyCenters(): Map<String, android.graphics.PointF> {
-        return keyCenters
-    }
-
-    private val lowercaseRows = listOf(
-        listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-        listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
-        listOf("SHIFT", "z", "x", "c", "v", "b", "n", "m", "BKSP")
-    )
-
-    private val uppercaseRows = listOf(
-        listOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"),
-        listOf("A", "S", "D", "F", "G", "H", "J", "K", "L"),
-        listOf("SHIFT", "Z", "X", "C", "V", "B", "N", "M", "BKSP")
-    )
-
-    private val symbols1Rows = listOf(
-        listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-        listOf("@", "#", "\$", "%", "&", "-", "+", "(", ")"),
-        listOf("SYM2", "*", "\"", "'", ":", ";", "!", "?", "BKSP")
-    )
-
-    private val symbols2Rows = listOf(
-        listOf("~", "`", "|", "^", "=", "{", "}", "[", "]", "\\"),
-        listOf("<", ">", "/", "_", "©", "®", "™", "°", "•"),
-        // Replaced MODE with root to keep layout balanced, MODE is now contextual on SCREEN key
-        listOf("√", "€", "£", "¥", "¢", "§", "¶", "∆", "BKSP")
-    )
-
-    // Row 4 
-    private val row4Lower = listOf("SYM", ",", "SPACE", ".")
-    private val row4Sym = listOf("ABC", ",", "SPACE", ".")
-
-    // Row 5 
-    private val arrowRow = listOf("TAB", "CTRL", "ALT", "←", "↑", "↓", "→", "ESC")
-    
-    // Row 6 (Moved SCREEN to far left)
-    private val navRow = listOf("SCREEN", "HIDE_KB", "MUTE", "VOL-", "VOL+", "BACK", "FWD", "MIC")
-
-    // Keys allowed to repeat when held
-
-    private val alwaysRepeatable = setOf(
-        "BKSP", "⌫", "DEL", "SPACE", "ENTER", 
-        "◄", "▲", "▼", "►", 
-        "VOL_UP", "VOL_DOWN", "FWD_DEL", "MUTE",
-        "HOME", "END", "PGUP", "PGDN"
-    )
-
-
-    init {
-        orientation = VERTICAL
-        setBackgroundColor(Color.parseColor("#1A1A1A"))
-        setPadding(4, 4, 4, 4)
-        buildKeyboard()
-    }
-
-    fun setKeyboardListener(l: KeyboardListener) { listener = l }
-    fun setVibrationEnabled(enabled: Boolean) { vibrationEnabled = enabled }
-    
-    fun setScale(scale: Float) {
-        this.scaleFactor = scale.coerceIn(0.5f, 2.0f)
-        this.keyHeight = (BASE_KEY_HEIGHT * scaleFactor).toInt()
-        this.fontSize = BASE_FONT_SIZE * scaleFactor
-        buildKeyboard()
-    }
-
-    fun setVoiceActive(active: Boolean) {
-        if (isVoiceActive != active) {
-            isVoiceActive = active
-            // Try to find and update just the MIC key to save resources
-            val micView = findViewWithTag<View>("MIC")
-            if (micView != null) {
-                setKeyVisual(micView, false, "MIC")
-            } else {
-                invalidate() // Fallback: Redraw full view
-            }
-        }
-    }
-
-    // =================================================================================
-    // FUNCTION: setOrientationModeActive
-    // SUMMARY: Sets whether orientation mode is active. When active, normal key input
-    //          is blocked to allow the user to see the orientation trail and find
-    //          their finger position on the physical keyboard.
-    // @param active - true to block key input, false to resume normal operation
-    // =================================================================================
-    fun setOrientationModeActive(active: Boolean) {
-        isOrientationModeActive = active
-
-        // If exiting orientation mode, clear any pending key states
-        if (!active) {
-            currentActiveKey?.let {
-                val tag = it.tag as? String
-                if (tag != null) setKeyVisual(it, false, tag)
-            }
-            currentActiveKey = null
-        }
-    }
-    // =================================================================================
-    // END BLOCK: setOrientationModeActive
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: startSwipeFromPosition
-    // SUMMARY: Initializes swipe tracking from a given position mid-gesture.
-    //          Called when switching from orange (orientation) to blue (typing) trail.
-    //          Sets up all the swipe state so subsequent MOVE events are tracked.
-    // =================================================================================
-    fun startSwipeFromPosition(x: Float, y: Float) {
-        Log.d("KeyboardView", "Starting swipe from position ($x, $y)")
-
-        // Initialize swipe tracking as if this was the ACTION_DOWN point
-        startTouchX = x
-        startTouchY = y
-        isSwiping = true  // Already swiping
-        swipePointerId = 0  // Assume primary pointer
-
-        // Clear and start the blue trail
-        swipeTrail?.clear()
-        swipeTrail?.visibility = View.VISIBLE
-        swipeTrail?.addPoint(x, y)
-
-        // Start the path collection
-        currentPath.clear()
-        currentPath.add(android.graphics.PointF(x, y))
-    }
-    // =================================================================================
-    // END BLOCK: startSwipeFromPosition
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: handleDeferredTap
-    // SUMMARY: Called when a quick tap happens during mirror orientation mode.
-    //          Handles all keys including spacebar for single character input.
-    //          Also handles taps on prediction bar candidates.
-    // =================================================================================
-    fun handleDeferredTap(x: Float, y: Float) {
-        // First, check if tap is on a prediction candidate
-        val tappedCandidate = findCandidateAt(x, y)
-        if (tappedCandidate != null) {
-            Log.d("KeyboardView", "Deferred tap on prediction: '${tappedCandidate.first}'")
-            listener?.onSuggestionClick(tappedCandidate.first, tappedCandidate.second)
-            return
-        }
-
-        // Otherwise, check for keyboard key
-        val touchedView = findKeyView(x, y)
-        val keyTag = touchedView?.tag as? String
-
-        if (touchedView != null && keyTag != null) {
-            Log.d("KeyboardView", "Deferred tap on key: $keyTag")
-
-            if (keyTag == "SPACE") {
-                // For spacebar, trigger space character
-                listener?.onSpecialKey(SpecialKey.SPACE, 0)
-            } else {
-                // For other keys, trigger the full key press sequence
-                onKeyDown(keyTag, touchedView)
-                onKeyUp(keyTag, touchedView)
-            }
-        }
-    }
-    // =================================================================================
-    // END BLOCK: handleDeferredTap
-    // =================================================================================
-// =================================================================================
-    // FUNCTION: getKeyAtPosition
-    // SUMMARY: Returns the key tag at the given coordinates, or null if no key found.
-    //          Used by mirror mode to check if finger is on a repeatable key.
-    // =================================================================================
-    fun getKeyAtPosition(x: Float, y: Float): String? {
-        val touchedView = findKeyView(x, y)
-        return touchedView?.tag as? String
-    }
-    // =================================================================================
-    // END BLOCK: getKeyAtPosition
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: triggerKeyPress
-    // SUMMARY: Triggers a key press by key tag without going through touch events.
-    //          Used by mirror mode key repeat for backspace/arrow key repetition.
-    //          Directly calls handleKeyPress to inject the key event.
-    // =================================================================================
-    fun triggerKeyPress(keyTag: String) {
-        Log.d("KeyboardView", "triggerKeyPress: $keyTag")
-        handleKeyPress(keyTag, fromRepeat = true)
-    }
-    // =================================================================================
-    // END BLOCK: triggerKeyPress
-    // =================================================================================    // =================================================================================
-    // FUNCTION: findCandidateAt
-    // SUMMARY: Checks if the given coordinates are within one of the prediction
-    //          candidates (cand1, cand2, cand3). Returns the text and isNew flag
-    //          if found, null otherwise.
-    // =================================================================================
-    private fun findCandidateAt(x: Float, y: Float): Pair<String, Boolean>? {
-        val candidates = listOf(cand1, cand2, cand3)
-
-        for (candView in candidates) {
-            if (candView == null || candView.visibility != View.VISIBLE) continue
-
-            // Get the view's position relative to this KeyboardView
-            val loc = IntArray(2)
-            candView.getLocationInWindow(loc)
-
-            val myLoc = IntArray(2)
-            this.getLocationInWindow(myLoc)
-
-            // Calculate relative position
-            val relX = loc[0] - myLoc[0]
-            val relY = loc[1] - myLoc[1]
-
-            // Check if tap is within this candidate
-            if (x >= relX && x < relX + candView.width &&
-                y >= relY && y < relY + candView.height) {
-
-                val text = candView.text?.toString() ?: continue
-                // Check if it's a "new" word by text color (cyan = new)
-                val isNew = candView.currentTextColor == Color.CYAN
-
-                return Pair(text, isNew)
-            }
-        }
-
-        return null
-    }
-    // =================================================================================
-    // END BLOCK: findCandidateAt
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: getKeyboardState / setKeyboardState
-    // SUMMARY: Gets/sets the current keyboard layer state for syncing to mirror.
-    // =================================================================================
-    fun getKeyboardState(): KeyboardState {
-        return currentState
-    }
-
-    fun setKeyboardState(state: KeyboardState) {
-        if (currentState != state) {
-            currentState = state
-            buildKeyboard()
-        }
-    }
-
-    fun getShiftState(): Pair<Boolean, Boolean> {
-        // Returns (isShifted, isCapsLock)
-        return Pair(
-            currentState == KeyboardState.UPPERCASE,
-            currentState == KeyboardState.CAPS_LOCK
-        )
-    }
-
-    fun getCtrlAltState(): Pair<Boolean, Boolean> {
-        return Pair(isCtrlActive, isAltActive)
-    }
-
-    fun setCtrlAltState(ctrl: Boolean, alt: Boolean) {
-        if (isCtrlActive != ctrl || isAltActive != alt) {
-            isCtrlActive = ctrl
-            isAltActive = alt
-            buildKeyboard()
-        }
-    }
-    // =================================================================================
-    // END BLOCK: getKeyboardState / setKeyboardState
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: isOrientationModeActive
-    // SUMMARY: Returns whether orientation mode is currently active.
-    // @return true if orientation mode is blocking key input
-    // =================================================================================
-    fun isOrientationModeActive(): Boolean {
-        return isOrientationModeActive
-    }
-    // =================================================================================
-    // END BLOCK: isOrientationModeActive
-    // =================================================================================
-
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        super.onLayout(changed, l, t, r, b)
-        if (changed) {
-            mapKeys()
-        }
-    }
-
-    private fun mapKeys() {
-        keyCenters.clear()
-
-        // 1. Get the absolute position of the KeyboardView itself
-        val parentLoc = IntArray(2)
-        this.getLocationOnScreen(parentLoc)
-        val parentX = parentLoc[0]
-        val parentY = parentLoc[1]
-
-        // 2. Traverse all children to find tagged TextViews
-        fun traverse(view: View) {
-            if (view is android.view.ViewGroup) {
-                for (i in 0 until view.childCount) {
-                    traverse(view.getChildAt(i))
-                }
-            }
-
-            // Check if this view (could be ViewGroup or TextView) has a tag
-            if (view.tag is String) {
-                val key = view.tag as String
-                // We only care about single letters for swipe decoding (A-Z)
-                if (key.length == 1 && Character.isLetter(key[0])) {
-                    val loc = IntArray(2)
-                    view.getLocationOnScreen(loc)
-
-                    // Calculate center relative to the KeyboardView (0,0 is top-left of keyboard)
-                    // This matches the MotionEvent coordinates we get in dispatchTouchEvent
-                    val centerX = (loc[0] - parentX) + (view.width / 2f)
-                    val centerY = (loc[1] - parentY) + (view.height / 2f)
-
-                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
-                    // Also store lowercase for easier matching
-                    keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
-                }
-            }
-        }
-        traverse(this)
-
-        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size / 2} (Unique Letters)")
-        if (keyCenters.isNotEmpty()) {
-             android.util.Log.d("DroidOS_Swipe", "Example 'H': ${keyCenters["h"]}")
-        }
-    }
-
-
-
-
-
-    private fun buildKeyboard() {
-        removeAllViews()
-
-        // --- 1. SUGGESTION STRIP ---
-        suggestionStrip = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, (35 * scaleFactor).toInt()) 
-            setBackgroundColor(Color.parseColor("#222222"))
-            setPadding(0, 0, 0, 4)
-            
-            // Mouse Click Handler for Empty Bar
-            setOnTouchListener { v, event ->
-                if (isPredictiveBarEmpty) {
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> true // Capture touch
-                        MotionEvent.ACTION_UP -> {
-                            val w = v.width.toFloat()
-                            val x = event.x
-                            if (x < w * 0.33f) {
-                                // Left Click Section (Left 33%)
-                                cursorClickAction?.invoke(false) 
-                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            } else if (x > w * 0.66f) {
-                                // Right Click Section (Right 33%)
-                                cursorClickAction?.invoke(true)
-                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            } else {
-                                // Middle Section
-                            }
-                            v.performClick()
-                            true
-                        }
-                        else -> false
-                    }
-                } else {
-                    false // Pass through to candidates
-                }
-            }
-        }
-
-        
-        // Check initial state (hide children if empty by default)
-        if (isPredictiveBarEmpty) {
-            cand1?.visibility = View.GONE; cand2?.visibility = View.GONE; cand3?.visibility = View.GONE
-            div1?.visibility = View.GONE; div2?.visibility = View.GONE
-        }
-        // --- END SUGGESTION STRIP ---
-
-
-        fun createCandidateView(): TextView {
-            return TextView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = fontSize * 0.9f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setBackgroundResource(android.R.drawable.list_selector_background)
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }
-        }
-
-        cand1 = createCandidateView(); suggestionStrip?.addView(cand1)
-        // Divider
-        val div1 = View(context).apply { layoutParams = LinearLayout.LayoutParams(1, LayoutParams.MATCH_PARENT); setBackgroundColor(Color.GRAY) }
-        suggestionStrip?.addView(div1)
-
-        cand2 = createCandidateView(); suggestionStrip?.addView(cand2)
-        // Divider
-        val div2 = View(context).apply { layoutParams = LinearLayout.LayoutParams(1, LayoutParams.MATCH_PARENT); setBackgroundColor(Color.GRAY) }
-        suggestionStrip?.addView(div2)
-
-        cand3 = createCandidateView(); suggestionStrip?.addView(cand3)
-
-        addView(suggestionStrip)
-        // --- END SUGGESTION STRIP ---
-        
-        val topRows = when (currentState) {
-            KeyboardState.LOWERCASE -> lowercaseRows
-            KeyboardState.UPPERCASE, KeyboardState.CAPS_LOCK -> uppercaseRows
-            KeyboardState.SYMBOLS_1 -> symbols1Rows
-            KeyboardState.SYMBOLS_2 -> symbols2Rows
-        }
-        for ((index, rowKeys) in topRows.withIndex()) {
-            addView(createRow(rowKeys, index))
-        }
-        
-        val bottomContainer = LinearLayout(context)
-        bottomContainer.orientation = HORIZONTAL
-        bottomContainer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-        
-        val leftCol = LinearLayout(context)
-        leftCol.orientation = VERTICAL
-        val leftParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 8.5f)
-        leftCol.layoutParams = leftParams
-        
-        val r4Keys = if (currentState == KeyboardState.LOWERCASE || currentState == KeyboardState.UPPERCASE || currentState == KeyboardState.CAPS_LOCK) row4Lower else row4Sym
-        leftCol.addView(createRow(r4Keys, 3))
-        leftCol.addView(createRow(arrowRow, 4))
-        
-        bottomContainer.addView(leftCol)
-        
-        val enterContainer = FrameLayout(context)
-        val enterParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1.5f)
-        enterParams.setMargins(dpToPx(keySpacing), dpToPx(keySpacing), 0, 0)
-        enterContainer.layoutParams = enterParams
-        
-        val enterKey = createKey("ENTER", 1f)
-        val kParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        enterKey.layoutParams = kParams
-        
-        enterContainer.addView(enterKey)
-        bottomContainer.addView(enterContainer)
-
-        addView(bottomContainer)
-
-        addView(createRow(navRow, 5))
-
-        // Notify listener of layer change for mirror sync
-        listener?.onLayerChanged(currentState)
-    }
-
-    private fun createRow(keys: List<String>, rowIndex: Int): LinearLayout {
-        val row = LinearLayout(context)
-        row.orientation = HORIZONTAL
-        row.gravity = Gravity.CENTER
-        row.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(keyHeight)).apply {
-            setMargins(0, dpToPx(keySpacing), 0, 0)
-        }
-        if (rowIndex == 1) row.setPadding(dpToPx((12 * scaleFactor).toInt()), 0, dpToPx((12 * scaleFactor).toInt()), 0)
-        
-        for (key in keys) { 
-            val weight = getKeyWeight(key, rowIndex)
-            row.addView(createKey(key, weight)) 
-        }
-        return row
-    }
-
-    private fun getKeyWeight(key: String, rowIndex: Int): Float {
-        if (rowIndex >= 4) return 1f 
-        return when (key) {
-            "SPACE" -> 4.0f
-            "SHIFT", "BKSP" -> 1.5f
-            "SYM", "SYM1", "SYM2", "ABC" -> 1.3f
-            else -> 1f
-        }
-    }
-
-    private fun createKey(key: String, weight: Float): View {
-        val container = FrameLayout(context)
-        val params = if (weight > 0) {
-            LayoutParams(0, LayoutParams.MATCH_PARENT, weight)
-        } else {
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        }
-        
-        params.setMargins(dpToPx(keySpacing), 0, dpToPx(keySpacing), 0)
-        container.layoutParams = params
-
-        val keyView = TextView(context)
-        keyView.gravity = Gravity.CENTER
-        val rowFontSize = if (key in arrowRow || key in navRow) fontSize - 4 else fontSize
-        keyView.setTextSize(TypedValue.COMPLEX_UNIT_SP, rowFontSize)
-        keyView.setTextColor(Color.WHITE)
-        keyView.text = getDisplayText(key)
-
-        val bg = GradientDrawable()
-        bg.cornerRadius = dpToPx(6).toFloat()
-        bg.setColor(getKeyColor(key))
-        keyView.background = bg
-        
-        val viewParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        container.addView(keyView, viewParams)
-
-        container.tag = key
-        return container
-    }
-
-    // --- MULTITOUCH HANDLING ---
-
-// =================================================================================
-    // FUNCTION: dispatchTouchEvent
-    // SUMMARY: Intercepts touch events to detect swipe/gesture typing. Key safeguards:
-    //          1. Only tracks swipe for single-finger gestures (pointer index 0)
-    //          2. Multitouch (second finger down) cancels any active swipe detection
-    //          3. Requires minimum movement threshold AND minimum path distance
-    //          4. Validates swipe has enough points and traveled enough distance
-    //          This prevents false swipe triggers during fast two-thumb typing.
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: dispatchTouchEvent
-    // SUMMARY: Intercepts touch events to detect swipe/gesture typing. Key safeguards:
-    //          1. Skips swipe detection if touch starts on SPACE (trackpad mode)
-    //          2. Skips swipe detection if a candidate is being dragged to delete
-    //          3. Only tracks swipe for single-finger gestures
-    //          4. Validates swipe has enough points and distance
-    // =================================================================================
-    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-        // =================================================================================
-        // VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING (EXCEPT PREDICTION BAR)
-        // SUMMARY: When orientation mode is active, we must block swipe typing here
-        //          because dispatchTouchEvent runs BEFORE onTouchEvent. If we don't
-        //          block here, swipe paths get collected and committed even though
-        //          onTouchEvent blocks individual key presses.
-        //          EXCEPTION: Prediction bar touches bypass mirror mode entirely so
-        //          users can tap/drag suggestions (including drag-to-delete).
-        //          CRITICAL: Only bypass if gesture STARTED on prediction bar, not if
-        //          a swipe trail passes through it.
-        // =================================================================================
-        
-        // Track gesture start - ONLY set flag on ACTION_DOWN
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            val isPredictionBarTouch = suggestionStrip != null && event.y < (suggestionStrip?.bottom ?: 0)
-            gestureStartedOnPredictionBar = isPredictionBarTouch
-        }
-        
-        // Reset on gesture end
-        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            // We'll reset AFTER processing below
-        }
-        
-        // ONLY bypass if gesture STARTED on prediction bar (not if trail passes through)
-        if (gestureStartedOnPredictionBar) {
-            val result = super.dispatchTouchEvent(event)
-            // Reset flag on gesture end
-            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                gestureStartedOnPredictionBar = false
-            }
-            return result
-        }
-        
-        val callback = mirrorTouchCallback
-        if (callback != null) {
-            val shouldBlock = callback.invoke(event.x, event.y, event.actionMasked)
-            if (shouldBlock) {
-                // Orientation mode - block ALL input including swipe
-                isOrientationModeActive = true
-
-                // Cancel any in-progress swipe
-                if (isSwiping) {
-                    isSwiping = false
-                    swipeTrail?.clear()
-                    swipeTrail?.visibility = View.INVISIBLE
-                }
-                currentPath.clear()
-                swipePointerId = -1
-
-                // Still call super so child views can process, but return true to consume
-                super.dispatchTouchEvent(event)
-                return true
-            }
-        }
-
-        // Also check the flag directly (for when callback isn't active)
-        if (isOrientationModeActive) {
-            // Cancel any in-progress swipe
-            if (isSwiping) {
-                isSwiping = false
-                swipeTrail?.clear()
-                swipeTrail?.visibility = View.INVISIBLE
-            }
-            currentPath.clear()
-            swipePointerId = -1
-
-            super.dispatchTouchEvent(event)
-            return true
-        }
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING (EXCEPT PREDICTION BAR)
-        // =================================================================================        // =================================================================================
-        // --- 1. PREVENT SWIPE TRAIL ON SPACEBAR ---
-        // If the touch starts on the SPACE key, we skip the swipe detection logic entirely.
-        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
-            val touchedView = findKeyView(event.x, event.y)
-            if (touchedView?.tag == "SPACE") {
-                return super.dispatchTouchEvent(event)
-            }
-        }
-
-        // --- 2. CALL SUPER FIRST ---
-        // This delivers touch events to child views (including suggestion candidates)
-        // handleCandidateTouch will set activeDragCandidate/isCandidateDragging
-        val superResult = super.dispatchTouchEvent(event)
-
-        // --- 3. CHECK IF CANDIDATE IS BEING DRAGGED ---
-        // If user is dragging a suggestion candidate, cancel any swipe tracking
-        // and skip the swipe detection logic below
-        if (activeDragCandidate != null) {
-            // Cancel any active swipe tracking
-            if (isSwiping) {
-                isSwiping = false
-                swipeTrail?.clear()
-                swipeTrail?.visibility = View.INVISIBLE
-            }
-            currentPath.clear()
-            swipePointerId = -1
-            return superResult
-        }
-
-        // --- 4. SWIPE / GESTURE TRACKING LOGIC ---
-        val action = event.actionMasked
-        val pointerIndex = event.actionIndex
-        val pointerId = event.getPointerId(pointerIndex)
-
-        when (action) {
-            android.view.MotionEvent.ACTION_DOWN -> {
-                // First finger down - initialize potential swipe tracking
-                isSwiping = false
-                swipePointerId = pointerId
-                startTouchX = event.x
-                startTouchY = event.y
-                swipeTrail?.clear()
-                swipeTrail?.addPoint(event.x, event.y)
-                currentPath.clear()
-                currentPath.add(android.graphics.PointF(event.x, event.y))
-            }
-
-            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
-                // Second finger touched - CANCEL swipe detection (user is typing with two thumbs)
-                if (isSwiping) {
-                    isSwiping = false
-                    swipeTrail?.clear()
-                    swipeTrail?.visibility = View.INVISIBLE
-                    currentPath.clear()
-                }
-                swipePointerId = -1 // Disable swipe tracking for this gesture
-            }
-
-            android.view.MotionEvent.ACTION_MOVE -> {
-                // Only track movement for the original swipe pointer
-                if (swipePointerId == -1) return superResult
-
-                // Find the index of our tracked pointer
-                val trackedIndex = event.findPointerIndex(swipePointerId)
-                if (trackedIndex == -1) return superResult
-
-                val currentX = event.getX(trackedIndex)
-                val currentY = event.getY(trackedIndex)
-
-                if (!isSwiping) {
-                    val dx = Math.abs(currentX - startTouchX)
-                    val dy = Math.abs(currentY - startTouchY)
-                    // Require movement in BOTH axes or significant movement in one
-                    val totalMovement = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-                    if (totalMovement > SWIPE_THRESHOLD) {
-                        isSwiping = true
-                        currentRepeatKey = null
-                        repeatHandler.removeCallbacks(repeatRunnable)
-                        swipeTrail?.visibility = View.VISIBLE
-                    }
-                }
-
-                if (isSwiping) {
-                    swipeTrail?.addPoint(currentX, currentY)
-                    // Sample historical points for smoother path
-                    if (event.historySize > 0) {
-                        for (h in 0 until event.historySize) {
-                            val hx = event.getHistoricalX(trackedIndex, h)
-                            val hy = event.getHistoricalY(trackedIndex, h)
-                            currentPath.add(android.graphics.PointF(hx, hy))
-                        }
-                    }
-                    currentPath.add(android.graphics.PointF(currentX, currentY))
-
-                    // =======================================================================
-                    // LIVE SWIPE PREVIEW
-                    // SUMMARY: Send current path to listener for real-time predictions.
-                    //          Throttled to avoid performance issues.
-                    // =======================================================================
-                    val now = System.currentTimeMillis()
-                    if (currentPath.size >= SWIPE_PREVIEW_MIN_POINTS &&
-                        now - lastSwipePreviewTime > SWIPE_PREVIEW_INTERVAL_MS) {
-                        lastSwipePreviewTime = now
-                        listener?.onSwipeProgress(ArrayList(currentPath))
-                    }
-                    // =======================================================================
-                    // END BLOCK: LIVE SWIPE PREVIEW
-                    // =======================================================================
-                }
-            }
-
-            android.view.MotionEvent.ACTION_UP -> {
-                if (isSwiping && pointerId == swipePointerId) {
-                    swipeTrail?.clear()
-                    swipeTrail?.visibility = View.INVISIBLE
-
-                    // FIX: Clear any key highlight that may have been set during swipe
-                    currentActiveKey?.let { key ->
-                        val tag = key.tag as? String
-                        if (tag != null) setKeyVisual(key, false, tag)
-                    }
-                    currentActiveKey = null
-
-                    // Validate swipe before triggering decoder
-                    val isValidSwipe = validateSwipe()
-
-                    if (isValidSwipe) {
-                        // LOG: Swipe passed validation, sending to decoder
-                        android.util.Log.d("DroidOS_Swipe", "DISPATCH: Sending ${currentPath.size} points to onSwipeDetected")
-
-                        // Check if listener exists
-                        if (listener == null) {
-                            android.util.Log.e("DroidOS_Swipe", "DISPATCH FAIL: listener is NULL!")
-                        } else {
-                            listener?.onSwipeDetected(ArrayList(currentPath))
-                        }
-                    } else {
-                        android.util.Log.d("DroidOS_Swipe", "DISPATCH SKIP: validateSwipe returned false")
-                    }
-
-                    isSwiping = false
-                    swipePointerId = -1
-                    currentPath.clear()
-                    return true
-                }
-                // Clean up even if this wasn't our tracked pointer
-                swipeTrail?.clear()
-                swipePointerId = -1
-            }
-
-            android.view.MotionEvent.ACTION_POINTER_UP -> {
-                // One finger lifted but another still down - just clean up if it was our pointer
-                if (pointerId == swipePointerId) {
-                    isSwiping = false
-                    swipePointerId = -1
-                    swipeTrail?.clear()
-                    swipeTrail?.visibility = View.INVISIBLE
-                    currentPath.clear()
-                }
-            }
-
-            android.view.MotionEvent.ACTION_CANCEL -> {
-                isSwiping = false
-                swipePointerId = -1
-                swipeTrail?.clear()
-                swipeTrail?.visibility = View.INVISIBLE
-                currentPath.clear()
-            }
-        }
-        return superResult
-    }
-    // =================================================================================
-    // END BLOCK: dispatchTouchEvent
-    // =================================================================================
-
-
-    // =================================================================================
-    // FUNCTION: validateSwipe
-    // SUMMARY: Checks if the recorded path qualifies as a valid swipe gesture.
-    //          Requirements: minimum number of points AND minimum TOTAL PATH LENGTH.
-    //          Uses total traveled distance (not start-to-end) to handle words that
-    //          start and end on the same or nearby letters (e.g., "test", "that").
-    //          LOGGING: Always logs validation result to diagnose failures.
-    // =================================================================================
-    private fun validateSwipe(): Boolean {
-        // CHECK 1: Minimum path points
-        if (currentPath.size < SWIPE_MIN_PATH_POINTS) {
-            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path too short (${currentPath.size} < $SWIPE_MIN_PATH_POINTS points)")
-            return false
-        }
-
-        // CHECK 2: Calculate TOTAL PATH LENGTH (not start-to-end distance)
-        // This properly handles words like "test" where start and end keys are the same
-        var totalPathLength = 0f
-        for (i in 1 until currentPath.size) {
-            val prev = currentPath[i - 1]
-            val curr = currentPath[i]
-            val dx = curr.x - prev.x
-            val dy = curr.y - prev.y
-            totalPathLength += Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-        }
-
-        if (totalPathLength < SWIPE_MIN_DISTANCE) {
-            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path length too short (${totalPathLength.toInt()}px < ${SWIPE_MIN_DISTANCE.toInt()}px)")
-            return false
-        }
-
-        android.util.Log.d("DroidOS_Swipe", "VALIDATE OK: ${currentPath.size} points, ${totalPathLength.toInt()}px total path length")
-        return true
-    }
-    // =================================================================================
-    // END BLOCK: validateSwipe with total path length check
-    // =================================================================================
-
-
-
-
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val action = event.actionMasked
-        val pointerIndex = event.actionIndex
-        val pointerId = event.getPointerId(pointerIndex)
-        val x = event.getX(pointerIndex)
-        val y = event.getY(pointerIndex)
-
-        // =================================================================================
-        // BLOCK: VIRTUAL MIRROR MODE - INTERCEPT TOUCHES (EXCEPT PREDICTIONS)
-        // SUMMARY: All key touches go through orientation mode, but prediction bar
-        //          touches should work immediately so users can tap suggestions.
-        // =================================================================================
-
-// Check if touch is in the prediction bar area (top portion of keyboard)
-        // ONLY bypass mirror mode if gesture STARTED on prediction bar
-        val bypassMirrorMode = gestureStartedOnPredictionBar
-
-        val touchedView = findKeyView(x, y)
-        val keyTag = touchedView?.tag as? String
-
-        val callback = mirrorTouchCallback
-        if (callback != null && !bypassMirrorMode) {
-            val shouldBlock = callback.invoke(x, y, action)
-            if (shouldBlock) {
-                // Orientation mode is active - set flag and block ALL input
-                isOrientationModeActive = true
-
-                // Clear any active key highlight
-                currentActiveKey?.let { key ->
-                    val tag = key.tag as? String
-                    if (tag != null) setKeyVisual(key, false, tag)
-                }
-                currentActiveKey = null
-
-                // CRITICAL: Return immediately - do not process as key input
-                return true
-            }
-        }
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE - INTERCEPT TOUCHES
-        // =================================================================================
-
-        // =================================================================================
-        // ORIENTATION MODE CHECK (fallback, but skip for prediction bar)
-        // =================================================================================
-        if (isOrientationModeActive && !bypassMirrorMode) {            currentActiveKey?.let {
-                val tag = it.tag as? String
-                if (tag != null) setKeyVisual(it, false, tag)
-            }
-            currentActiveKey = null
-            return true
-        }
-        // =================================================================================
-        // END BLOCK: ORIENTATION MODE CHECK
-        // =================================================================================
-
-        // Note: touchedView and keyTag already computed above
-
-        // --- SPACEBAR TRACKPAD HANDLING ---
-        if ((keyTag == "SPACE" && action == MotionEvent.ACTION_DOWN) || spacebarPointerId == pointerId) {
-            when (action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                    if (keyTag == "SPACE") {
-                        spacebarPointerId = pointerId
-                        lastSpaceX = x
-                        lastSpaceY = y
-
-                        isSpaceTrackpadActive = false
-                        isDragging = false
-                        hasMovedWhileDown = false
-
-                        // If in Touch Mode, start the "Hold to Drag" timer
-                        if (isTrackpadTouchMode) {
-                            handler.postDelayed(holdToDragRunnable, 300) // Wait 300ms to detect Hold
-                            android.util.Log.d("SpaceTrackpad", "Touch Mode: Started hold-to-drag timer")
-                        }
-
-                        // Visual feedback only
-                        if (touchedView != null) setKeyVisual(touchedView, true, "SPACE")
-                        return true
-                    }
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (pointerId == spacebarPointerId) {
-                        val dx = x - lastSpaceX
-                        val dy = y - lastSpaceY
-
-                        // Check if user moved significantly
-                        if (kotlin.math.hypot(dx, dy) > touchSlop) {
-                            hasMovedWhileDown = true
-
-                            // If we moved BEFORE the hold timer fired, cancel the hold
-                            // (Unless we are already dragging, in which case we continue dragging)
-                            if (!isDragging) {
-                                handler.removeCallbacks(holdToDragRunnable)
-                            }
-
-                            isSpaceTrackpadActive = true
-                        }
-
-                        // Move Cursor
-                        if (isSpaceTrackpadActive) {
-                            moveMouse(dx, dy)
-                            lastSpaceX = x
-                            lastSpaceY = y
-                        }
-                        return true
-                    }
-                }
-
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                    if (pointerId == spacebarPointerId) {
-                        handler.removeCallbacks(holdToDragRunnable)
-
-                        // VISUAL LOGIC:
-                        // Only reset to Grey if we are NOT staying in Touch Mode.
-                        // If we are in Touch Mode, startTrackpadTimer() will ensure it stays Green.
-                        val stayingInMode = isTrackpadTouchMode || isSpaceTrackpadActive
-                        
-                        val spaceView = if (touchedView?.tag == "SPACE") touchedView else findViewWithTag("SPACE")
-                        if (spaceView != null && !stayingInMode) {
-                            setKeyVisual(spaceView, false, "SPACE")
-                        }
-
-                        if (isTrackpadTouchMode) {
-                            if (isDragging) {
-                                touchUpAction?.invoke()
-                                isDragging = false
-                            } else if (!hasMovedWhileDown) {
-                                touchTapAction?.invoke()
-                            }
-                            startTrackpadTimer()
-                        } else {
-                            if (!isSpaceTrackpadActive) {
-                                // Normal Space Tap (Turns Grey immediately above)
-                                if (isPredictiveBarEmpty) {
-                                    listener?.onSpecialKey(SpecialKey.SPACE, 0)
-                                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                } else {
-                                    listener?.onSpecialKey(SpecialKey.SPACE, 0)
-                                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                }
-                            } else {
-                                // Drag Finished -> Enter Touch Mode (Stays Green)
-                                startTrackpadTimer()
-                            }
-                        }
-                        
-                        spacebarPointerId = -1
-                        isSpaceTrackpadActive = false
-                        return true
-                    }
-                }
-
-
-                MotionEvent.ACTION_CANCEL -> {
-                    if (pointerId == spacebarPointerId) {
-                        handler.removeCallbacks(holdToDragRunnable)
-                        if (isDragging) { touchUpAction?.invoke(); isDragging = false }
-                        spacebarPointerId = -1
-                        isSpaceTrackpadActive = false
-                        
-                        // Only turn off visual if timer isn't running
-                        if (!isTrackpadTouchMode) {
-                            val spaceView = findViewWithTag<View>("SPACE")
-                            if (spaceView != null) setKeyVisual(spaceView, false, "SPACE")
-                        }
-                        return true
-                    }
-                }
-
-            }
-        }
-
-        // --- STANDARD KEYBOARD HANDLING (Fixes Stuck Highlights) ---
-        // We track the active key and update it as the finger slides.
-        
-        when (action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                if (touchedView != null && keyTag != null && keyTag != "SPACE") {
-                    currentActiveKey = touchedView
-                    onKeyDown(keyTag, touchedView)
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                // If we slid to a new key
-                if (touchedView != currentActiveKey) {
-                    // Deactivate old key
-                    currentActiveKey?.let {
-                        val oldTag = it.tag as? String
-                        if (oldTag != null) {
-                            setKeyVisual(it, false, oldTag)
-                            // CRITICAL: Stop any repeat when sliding off a key
-                            if (oldTag == currentRepeatKey) {
-                                stopRepeat()
-                            }
-                        }
-                    }
-
-                    // Activate new
-                    if (touchedView != null && keyTag != null && keyTag != "SPACE") {
-                        currentActiveKey = touchedView
-                        onKeyDown(keyTag, touchedView) // Visual on + Haptic
-                    } else {
-                        currentActiveKey = null
-                    }
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                currentActiveKey?.let {
-                    val tag = it.tag as? String
-                    if (tag != null) {
-                        // Commit the input
-                        onKeyUp(tag, it)
-                    }
-                }
-                currentActiveKey = null
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                currentActiveKey?.let {
-                    val tag = it.tag as? String
-                    if (tag != null) setKeyVisual(it, false, tag)
-                }
-                currentActiveKey = null
-            }
-        }
-        
-        return true
-    }
-
-
-
-
-
-    private fun findKeyView(targetX: Float, targetY: Float): View? {
-        return findKeyRecursively(this, targetX, targetY)
-    }
-
-    private fun findKeyRecursively(parent: ViewGroup, targetX: Float, targetY: Float): View? {
-        for (i in 0 until parent.childCount) {
-            val child = parent.getChildAt(i)
-            if (child.visibility != View.VISIBLE) continue
-            val cx = child.x
-            val cy = child.y
-            if (targetX >= cx && targetX < cx + child.width && targetY >= cy && targetY < cy + child.height) {
-                if (child.tag != null) return child
-                if (child is ViewGroup) return findKeyRecursively(child, targetX - cx, targetY - cy)
-            }
-        }
-        return null
-    }
-
-// =================================================================================
-    // FUNCTION: onKeyDown
-    // SUMMARY: Handles initial touch on a key. For swipe-compatible keys (single letters),
-    //          we ONLY provide visual/haptic feedback here. The actual character input is
-    //          deferred to onKeyUp to prevent double-letters during swipe typing.
-    //          Special/modifier keys still trigger immediately for responsiveness.
-    // =================================================================================
-
-    // =================================================================================
-    // KEY HANDLING LOGIC (DEFERRED TOGGLES)
-    // =================================================================================
-    // Keys that trigger layout changes (?123, ABC) or state toggles (CTRL, ALT)
-    // must fire on UP to prevent "Flickering" caused by immediate layout rebuilds
-    // while the finger is still pressing the screen.
-    private val deferredKeys = setOf("SHIFT", "?123", "ABC", "SYM", "SYM1", "SYM2", "CTRL", "ALT", "MODE", "SCREEN")
-
-    // =================================================================================
-    // FUNCTION: onKeyDown
-    // SUMMARY: Handles initial touch on a key. For swipe-compatible keys (single letters),
-    //          we ONLY provide visual/haptic feedback here. The actual character input is
-    //          deferred to onKeyUp to prevent double-letters during swipe typing.
-    //          Special/modifier keys still trigger immediately for responsiveness.
-    //          FIX: ALL key presses are blocked during active swipe to match Gboard behavior.
-    // =================================================================================
-    private fun onKeyDown(key: String, view: View) {
-        // FIX: Block ALL key presses during active swipe
-        // This prevents SHIFT, ENTER, BACKSPACE etc from triggering mid-swipe
-        if (isSwiping) {
-            // Still provide visual feedback so user sees they touched something
-            setKeyVisual(view, true, key)
-            return
-        }
-
-        setKeyVisual(view, true, key)
-
-        // Haptic Feedback
-        if (vibrationEnabled) {
-            val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v?.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION") v?.vibrate(30)
-            }
-        }
-
-        val isSwipeableKey = key.length == 1 && Character.isLetter(key[0])
-        val isDeferred = deferredKeys.contains(key)
-
-        // FIRE IMMEDIATE: Navigation, Numbers, Punctuation, Backspace
-        // But only if NOT a swipeable key and NOT a deferred key
-        if (!isSwipeableKey && !isDeferred) {
-            handleKeyPress(key, fromRepeat = false)
-
-            if (isKeyRepeatable(key)) {
-                currentRepeatKey = key
-                isRepeating = true
-                repeatHandler.postDelayed(repeatRunnable, REPEAT_INITIAL_DELAY)
-            }
-        }
-
-        // SPECIAL: SHIFT Caps Lock Timer
-        if (key == "SHIFT") {
-            capsLockPending = false
-            capsHandler.postDelayed(capsLockRunnable, 500)
-        }
-    }
-    // =================================================================================
-    // END BLOCK: onKeyDown
-    // =================================================================================
-
-
-    // =================================================================================
-    // END BLOCK: KEY HANDLING LOGIC
-    // =================================================================================
-
-    // =================================================================================
-    // END BLOCK: onKeyDown
-    // =================================================================================
-
-// =================================================================================
-    // FUNCTION: onKeyUp
-    // SUMMARY: Handles key release. For swipe-compatible keys (single letters), this is
-    //          where we actually commit the character - BUT ONLY if we're not currently
-    //          in a swipe gesture. This prevents double letters with swipe typing.
-    //          FIX: ALL key presses are blocked during active swipe to match Gboard behavior.
-    //          Also handles SHIFT toggle and repeat cancellation.
-    // =================================================================================
-
-    private fun onKeyUp(key: String, view: View) {
-        setKeyVisual(view, false, key)
-
-        // Stop any active key repeat
-        if (key == currentRepeatKey) stopRepeat()
-
-        // FIX: Block ALL key presses during active swipe
-        // This includes letter keys, special keys, and deferred keys
-        if (isSwiping) {
-            // Cancel SHIFT caps lock timer if it was started
-            if (key == "SHIFT") {
-                capsHandler.removeCallbacks(capsLockRunnable)
-                capsLockPending = false
-            }
-            return
-        }
-
-        // Determine if this is a swipeable key that was deferred
-        val isSwipeableKey = key.length == 1 && Character.isLetter(key[0])
-
-        if (isSwipeableKey) {
-            // SWIPEABLE KEY + NOT SWIPING = Normal tap, commit the character now
-            handleKeyPress(key, fromRepeat = false)
-        }
-
-        // --- Handle Deferred Keys (CTRL, ALT, SYM, etc) ---
-        // These are skipped in onKeyDown to prevent rebuild loops.
-        // We must fire them here on release.
-        val isDeferred = deferredKeys.contains(key)
-        if (isDeferred && key != "SHIFT") {
-             handleKeyPress(key, fromRepeat = false)
-        }
-
-        // SHIFT toggle handling
-        if (key == "SHIFT") {
-            capsHandler.removeCallbacks(capsLockRunnable)
-            if (!capsLockPending) toggleShift()
-            capsLockPending = false
-        }
-    }
-
-    // =================================================================================
-    // END BLOCK: onKeyUp
-    // =================================================================================
-
-    private fun setKeyVisual(container: View, pressed: Boolean, key: String, overrideColor: Int? = null) {
-        val tv = (container as? ViewGroup)?.getChildAt(0) as? TextView ?: return
-        val bg = tv.background as? GradientDrawable ?: return
-
-        if (overrideColor != null) {
-            bg.setColor(overrideColor)
-        } else if (pressed) {
-            bg.setColor(Color.parseColor("#3DDC84"))
-        } else {
-            bg.setColor(getKeyColor(key))
-        }
-    }
-
-    private fun stopRepeat() {
-        isRepeating = false
-        currentRepeatKey = null
-        repeatHandler.removeCallbacks(repeatRunnable)
-    }
-
-    private fun isKeyRepeatable(key: String): Boolean {
-        // 1. Strict Whitelist Check (Nav & Deletion)
-        if (alwaysRepeatable.contains(key)) return true
-        
-        // 2. Single letters/numbers (Standard typing) should repeat
-        if (key.length == 1) return true
-        
-        // 3. Explicitly BLOCK everything else (SHIFT, ?123, CTRL, ALT, TAB, ESC)
-        // This ensures they only trigger ONCE per press (Sticky/Toggle behavior)
-        return false
-    }
-
-    private fun getDisplayText(key: String): String = when (key) {
-        "SHIFT" -> if (currentState == KeyboardState.CAPS_LOCK) "⬆" else "⇧"
-        "BKSP" -> "⌫"; "ENTER" -> "↵"; "SPACE" -> " "
-        "SYM", "SYM1", "SYM2" -> "?123"; "ABC" -> "ABC"
-        "TAB" -> "⇥"; "CTRL" -> "Ctrl"; "ALT" -> "Alt"; "ESC" -> "Esc"
-        "←" -> "◀"; "→" -> "▶"; "↑" -> "▲"; "↓" -> "▼"
-        "MUTE" -> "Mute"; "VOL-" -> "Vol-"; "VOL+" -> "Vol+"
-        "BACK" -> "Back"; "FWD" -> "Fwd"; "MIC" -> "🎤"
-        "SCREEN" -> if (isSymbolsActive()) "MODE" else "📺"
-        "HIDE_KB" -> "▼"
-        else -> key
-    }
-
-    private fun getKeyColor(key: String): Int {
-        if (key == "CTRL" && isCtrlActive) return Color.parseColor("#3DDC84")
-        if (key == "ALT" && isAltActive) return Color.parseColor("#3DDC84")
-        
-        // NEW: Voice Active Indicator
-        // UPDATED: Voice Key Color
-        // Green if active, standard dark gray if inactive (removed red alert color)
-        if (key == "MIC") {
-            return if (isVoiceActive) Color.parseColor("#3DDC84") else Color.parseColor("#252525")
-        }
-
-        if (key == "SCREEN") {
-            return if (isSymbolsActive()) Color.parseColor("#FF9800") else Color.parseColor("#FF5555")
-        }
-        
-        if (key in arrowRow || key in navRow) return Color.parseColor("#252525")
-        
-        return when (key) {
-            "SHIFT" -> when (currentState) {
-                KeyboardState.CAPS_LOCK -> Color.parseColor("#3DDC84")
-                KeyboardState.UPPERCASE -> Color.parseColor("#4A90D9")
-                else -> Color.parseColor("#3A3A3A")
-            }
-            "ENTER" -> Color.parseColor("#4A90D9")
-            "BKSP", "SYM", "SYM1", "SYM2", "ABC" -> Color.parseColor("#3A3A3A")
-            "SPACE" -> Color.parseColor("#2D2D2D")
-            else -> Color.parseColor("#2D2D2D")
-        }
-    }
-    
-    private fun isSymbolsActive(): Boolean {
-        return currentState == KeyboardState.SYMBOLS_1 || currentState == KeyboardState.SYMBOLS_2
-    }
-
-    private fun getMetaState(): Int {
-        var meta = 0
-        if (isCtrlActive) meta = meta or 0x1000 
-        if (isAltActive) meta = meta or 0x02 
-        return meta
-    }
-
-    private fun handleKeyPress(key: String, fromRepeat: Boolean = false) {
-        var meta = getMetaState()
-        if (fromRepeat && !isKeyRepeatable(key)) return
-
-        when (key) {
-            "CTRL" -> { if (!fromRepeat) { isCtrlActive = !isCtrlActive; buildKeyboard() } }
-            "ALT" -> { if (!fromRepeat) { isAltActive = !isAltActive; buildKeyboard() } }
-            "SHIFT" -> { /* Handled in onKeyUp/Down */ }
-            
-            "BKSP" -> listener?.onSpecialKey(SpecialKey.BACKSPACE, meta)
-            "ENTER" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ENTER, meta) }
-            "SPACE" -> listener?.onSpecialKey(SpecialKey.SPACE, meta)
-            "TAB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.TAB, meta) }
-            "ESC" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ESCAPE, meta) }
-            
-            "←" -> listener?.onSpecialKey(SpecialKey.ARROW_LEFT, meta)
-            "→" -> listener?.onSpecialKey(SpecialKey.ARROW_RIGHT, meta)
-            "↑" -> listener?.onSpecialKey(SpecialKey.ARROW_UP, meta)
-            "↓" -> listener?.onSpecialKey(SpecialKey.ARROW_DOWN, meta)
-            
-            "MUTE" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.MUTE, meta) }
-            "VOL-" -> listener?.onSpecialKey(SpecialKey.VOL_DOWN, meta)
-            "VOL+" -> listener?.onSpecialKey(SpecialKey.VOL_UP, meta)
-            "BACK" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.BACK_NAV, meta) }
-            "FWD" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.FWD_NAV, meta) }
-            "MIC" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.VOICE_INPUT, meta) }
-            
-            "SCREEN" -> { 
-                if (!fromRepeat) {
-                    if (isSymbolsActive()) {
-                        listener?.onScreenModeChange()
-                    } else {
-                        listener?.onScreenToggle()
-                    }
-                }
-            }
-            "HIDE_KB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.HIDE_KEYBOARD, meta) }
-            
-            "SYM", "SYM1" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_1; buildKeyboard() } }
-            "SYM2" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_2; buildKeyboard() } }
-            "ABC" -> { if (!fromRepeat) { currentState = KeyboardState.LOWERCASE; buildKeyboard() } }
-            
-            else -> {
-                if (key.length == 1) {
-                    val char = key[0]
-                    val pair = getSymbolKeyCode(char)
-                    val code = pair.first
-                    val shiftNeeded = pair.second
-                    if (shiftNeeded) meta = meta or KeyEvent.META_SHIFT_ON
-                    listener?.onKeyPress(code, char, meta)
-                    if (!fromRepeat && currentState == KeyboardState.UPPERCASE) { 
-                        currentState = KeyboardState.LOWERCASE
-                        buildKeyboard()
-                    }
-                }
-            }
-        }
-        if (!fromRepeat && key != "CTRL" && key != "ALT" && key != "SHIFT") {
-            if (isCtrlActive || isAltActive) {
-                isCtrlActive = false; isAltActive = false; buildKeyboard()
-            }
-        }
-    }
-
-    private fun getSymbolKeyCode(c: Char): Pair<Int, Boolean> {
-        return when (c) {
-            in 'a'..'z' -> KeyEvent.keyCodeFromString("KEYCODE_${c.uppercase()}") to false
-            in 'A'..'Z' -> KeyEvent.keyCodeFromString("KEYCODE_${c}") to true
-            in '0'..'9' -> KeyEvent.keyCodeFromString("KEYCODE_${c}") to false
-            ' ' -> KeyEvent.KEYCODE_SPACE to false
-            '.' -> KeyEvent.KEYCODE_PERIOD to false
-            ',' -> KeyEvent.KEYCODE_COMMA to false
-            ';' -> KeyEvent.KEYCODE_SEMICOLON to false
-            ':' -> KeyEvent.KEYCODE_SEMICOLON to true
-            '=' -> KeyEvent.KEYCODE_EQUALS to false
-            '+' -> KeyEvent.KEYCODE_PLUS to false
-            '-' -> KeyEvent.KEYCODE_MINUS to false
-            '_' -> KeyEvent.KEYCODE_MINUS to true
-            '/' -> KeyEvent.KEYCODE_SLASH to false
-            '?' -> KeyEvent.KEYCODE_SLASH to true
-            '`' -> KeyEvent.KEYCODE_GRAVE to false
-            '~' -> KeyEvent.KEYCODE_GRAVE to true
-            '[' -> KeyEvent.KEYCODE_LEFT_BRACKET to false
-            '{' -> KeyEvent.KEYCODE_LEFT_BRACKET to true
-            ']' -> KeyEvent.KEYCODE_RIGHT_BRACKET to false
-            '}' -> KeyEvent.KEYCODE_RIGHT_BRACKET to true
-            '\\' -> KeyEvent.KEYCODE_BACKSLASH to false
-            '|' -> KeyEvent.KEYCODE_BACKSLASH to true
-            '\'' -> KeyEvent.KEYCODE_APOSTROPHE to false
-            '"' -> KeyEvent.KEYCODE_APOSTROPHE to true
-            '!' -> KeyEvent.KEYCODE_1 to true
-            '@' -> KeyEvent.KEYCODE_2 to true
-            '#' -> KeyEvent.KEYCODE_3 to true
-            '$' -> KeyEvent.KEYCODE_4 to true
-            '%' -> KeyEvent.KEYCODE_5 to true
-            '^' -> KeyEvent.KEYCODE_6 to true
-            '&' -> KeyEvent.KEYCODE_7 to true
-            '*' -> KeyEvent.KEYCODE_8 to true
-            '(' -> KeyEvent.KEYCODE_9 to true
-            ')' -> KeyEvent.KEYCODE_0 to true
-            '√' -> KeyEvent.KEYCODE_UNKNOWN to false // Filler
-            else -> KeyEvent.KEYCODE_UNKNOWN to false
-        }
-    }
-
-    private fun toggleShift() {
-        currentState = when (currentState) {
-            KeyboardState.LOWERCASE -> KeyboardState.UPPERCASE
-            KeyboardState.UPPERCASE -> KeyboardState.LOWERCASE
-            KeyboardState.CAPS_LOCK -> KeyboardState.LOWERCASE
-            else -> currentState
-        }
-        buildKeyboard()
-    }
-
-    private fun toggleCapsLock() {
-        currentState = when (currentState) {
-            KeyboardState.LOWERCASE, KeyboardState.UPPERCASE -> KeyboardState.CAPS_LOCK
-            KeyboardState.CAPS_LOCK -> KeyboardState.LOWERCASE
-            else -> currentState
-        }
-        if (vibrationEnabled) {
-            val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else { @Suppress("DEPRECATION") v?.vibrate(50) }
-        }
-        buildKeyboard()
-    }
-
-    private fun dpToPx(dp: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, dp.toFloat(), resources.displayMetrics
-    ).roundToInt()
-
-
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        handler.removeCallbacks(trackpadResetRunnable)
-        handler.removeCallbacks(holdToDragRunnable)
-        // ... (keep existing cleanup like stopRepeat)
-    }
-
-    // --- DRAG TO DELETE LOGIC ---
-    private var dragStartX = 0f
-    private var dragStartY = 0f
-    private var isCandidateDragging = false
-    private var activeDragCandidate: String? = null
-
-    @SuppressLint("ClickableViewAccessibility")
-    fun setSuggestions(candidates: List<Candidate>) {
-        if (suggestionStrip == null) return
-
-        // Update empty state flag
-        isPredictiveBarEmpty = candidates.isEmpty() || candidates.all { it.text.isEmpty() }
-
-        if (isPredictiveBarEmpty) {
-            cand1?.visibility = View.GONE
-            cand2?.visibility = View.GONE
-            cand3?.visibility = View.GONE
-            div1?.visibility = View.GONE
-            div2?.visibility = View.GONE
-            return
-        }
-
-        div1?.visibility = View.VISIBLE
-        div2?.visibility = View.VISIBLE
-
-        val views = listOf(cand1, cand2, cand3)
-
-        for (i in 0 until 3) {
-            val view = views[i] ?: continue
-            if (i < candidates.size) {
-                val item = candidates[i]
-                view.text = item.text
-                view.visibility = View.VISIBLE
-
-                // HIGHLIGHT NEW WORDS
-                if (item.isNew) {
-                    view.setTextColor(Color.CYAN)
-                    view.typeface = android.graphics.Typeface.DEFAULT_BOLD
-                } else {
-                    view.setTextColor(Color.WHITE)
-                    view.typeface = android.graphics.Typeface.DEFAULT
-                }
-
-                // TOUCH LISTENER: Handle Click vs Drag
-                view.setOnTouchListener { v, event ->
-                    handleCandidateTouch(v, event, item)
-                }
-            } else {
-                view.visibility = View.INVISIBLE
-                view.setOnTouchListener(null)
-            }
-        }
-    }
-
-    // =================================================================================
-    // FUNCTION: handleCandidateTouch
-    // SUMMARY: Handles touch events on suggestion candidates. Detects click vs drag.
-    //          Dragging to backspace triggers word deletion (block from dictionary).
-    //          DEBUG: Comprehensive logging to trace touch flow.
-    // =================================================================================
-    private fun handleCandidateTouch(view: View, event: MotionEvent, item: Candidate): Boolean {
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE DOWN: '${item.text}' at (${event.rawX.toInt()}, ${event.rawY.toInt()})")
-                dragStartX = event.rawX
-                dragStartY = event.rawY
-                isCandidateDragging = false
-                activeDragCandidate = item.text
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                val dx = event.rawX - dragStartX
-                val dy = event.rawY - dragStartY
-                val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
-
-                // Threshold to start dragging (20px)
-                if (!isCandidateDragging && dist > 20) {
-                    isCandidateDragging = true
-                    android.util.Log.d("DroidOS_Drag", "CANDIDATE DRAG START: '${item.text}' (moved ${dist.toInt()}px)")
-                    // Visual feedback: Dim the candidate
-                    view.alpha = 0.5f
-                }
-
-                if (isCandidateDragging) {
-                    // Check if hovering over BACKSPACE
-                    val bkspKey = findViewWithTag<View>("BKSP")
-                    if (bkspKey != null) {
-                        val loc = IntArray(2)
-                        bkspKey.getLocationOnScreen(loc)
-                        val kx = loc[0]
-                        val ky = loc[1]
-                        val kw = bkspKey.width
-                        val kh = bkspKey.height
-
-                        // Check intersection
-                        val isOverBksp = event.rawX >= kx && event.rawX <= kx + kw &&
-                                         event.rawY >= ky && event.rawY <= ky + kh
-
-                        if (isOverBksp) {
-                            // HOVERING: Turn Red
-                            setKeyVisual(bkspKey, false, "BKSP", overrideColor = Color.RED)
-                        } else {
-                            // NORMAL
-                            setKeyVisual(bkspKey, false, "BKSP")
-                        }
-                    }
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE UP: '${item.text}' isCandidateDragging=$isCandidateDragging")
-                view.alpha = 1.0f
-                val bkspKey = findViewWithTag<View>("BKSP")
-                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP") // Reset color
-
-                if (isCandidateDragging) {
-                    // Check Drop Target
-                    if (bkspKey != null) {
-                        val loc = IntArray(2)
-                        bkspKey.getLocationOnScreen(loc)
-                        val isOverBksp = event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
-                                         event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height
-
-                        android.util.Log.d("DroidOS_Drag", "DROP CHECK: rawX=${event.rawX.toInt()}, rawY=${event.rawY.toInt()}, bksp=(${loc[0]},${loc[1]},${bkspKey.width},${bkspKey.height}), isOver=$isOverBksp")
-
-                        if (isOverBksp) {
-                            // DROPPED ON BACKSPACE -> DELETE
-                            android.util.Log.d("DroidOS_Drag", "DROP ON BKSP: Calling onSuggestionDropped('${item.text}')")
-                            listener?.onSuggestionDropped(item.text)
-                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                        }
-                    } else {
-                        android.util.Log.e("DroidOS_Drag", "ERROR: bkspKey is NULL!")
-                    }
-                } else {
-                    // CLICK -> SELECT
-                    android.util.Log.d("DroidOS_Drag", "CANDIDATE CLICK: '${item.text}'")
-                    listener?.onSuggestionClick(item.text, item.isNew)
-                    view.performClick()
-                }
-                isCandidateDragging = false
-                activeDragCandidate = null
-                return true
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE CANCEL: '${item.text}'")
-                view.alpha = 1.0f
-                isCandidateDragging = false
-                activeDragCandidate = null
-                val bkspKey = findViewWithTag<View>("BKSP")
-                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP")
-                return true
-            }
-        }
-        return false
-    }
-    // =================================================================================
-    // END BLOCK: handleCandidateTouch with debug logging
-    // =================================================================================
-
 }
 ```
 
@@ -9758,148 +8003,6 @@ You are free to use, modify, and distribute this software, but all modifications
 ---
 ```
 
-## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/MainActivity.kt
-```kotlin
-package com.example.quadrantlauncher
-
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Bundle
-import android.provider.Settings
-import android.util.Log
-import android.view.accessibility.AccessibilityManager
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import rikka.shizuku.Shizuku
-
-class MainActivity : AppCompatActivity() {
-
-    companion object {
-        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
-    }
-
-    // === APP INFO DATA CLASS - START ===
-    // Represents an installed app with package name, activity class, and state info
-    // getIdentifier() returns a unique string for app identification including className when needed
-    data class AppInfo(
-        val label: String,
-        val packageName: String,
-        val className: String? = null,
-        var isFavorite: Boolean = false,
-        var isMinimized: Boolean = false
-    ) {
-        // Returns unique identifier for the app
-        fun getIdentifier(): String {
-            return if (!className.isNullOrEmpty() && packageName == "com.google.android.googlequicksearchbox") {
-                if (className.lowercase().contains("assistant") || className.lowercase().contains("gemini")) {
-                    "$packageName:gemini"
-                } else {
-                    packageName
-                }
-            } else {
-                packageName
-            }
-        }
-        
-        // === GET BASE PACKAGE - START ===
-        // Returns the base package name without any suffix
-        // Use this for shell commands that need the actual Android package name
-        fun getBasePackage(): String {
-            return if (packageName.contains(":")) {
-                packageName.substringBefore(":")
-            } else {
-                packageName
-            }
-        }
-        // === GET BASE PACKAGE - END ===
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is AppInfo) return false
-            return packageName == other.packageName && className == other.className && label == other.label
-        }
-
-        override fun hashCode(): Int {
-            var result = packageName.hashCode()
-            result = 31 * result + (className?.hashCode() ?: 0)
-            result = 31 * result + label.hashCode()
-            return result
-        }
-    }
-    // === APP INFO DATA CLASS - END ===
-
-    /* * FUNCTION: onCreate
-     * SUMMARY: Detects the display ID where the app icon was clicked and
-     * passes it to the service to ensure the bubble follows the user.
-     */
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Redirect to PermissionActivity if essential permissions are missing
-        if (!hasAllPermissions()) {
-            val intent = Intent(this, PermissionActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
-            return
-        }
-
-        // Determine which display this activity is running on
-        val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            this.display?.displayId ?: 0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.displayId
-        }
-
-        Log.d("DroidOS_Main", "Launched on Display $displayId")
-
-        // Start service and pass the current display ID to recall the bubble
-        val serviceIntent = Intent(this, FloatingLauncherService::class.java)
-        serviceIntent.putExtra("DISPLAY_ID", displayId)
-        startService(serviceIntent)
-
-        // Finish immediately so the launcher remains a service-only overlay
-        finish()
-    }
-
-    private fun hasAllPermissions(): Boolean {
-        // 1. Overlay
-        if (!Settings.canDrawOverlays(this)) return false
-
-        // 2. Shizuku
-        val shizukuGranted = try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            false
-        }
-        if (!shizukuGranted) return false
-
-        // 3. Accessibility
-        if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false
-
-        // 4. Notifications removed (Not strictly required for service to run)
-
-        return true
-    }
-
-    private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        for (enabledService in enabledServices) {
-            val serviceInfo = enabledService.resolveInfo.serviceInfo
-            if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
-                return true
-            }
-        }
-        return false
-    }
-}
-```
-
 ## File: Cover-Screen-Trackpad/app/src/main/assets/clean_dictionary.py
 ```python
 import os
@@ -13421,820 +11524,6 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
 // =================================================================================
 ```
 
-## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadMenuManager.kt
-```kotlin
-package com.example.coverscreentester
-
-import android.content.Context
-import android.graphics.PixelFormat
-import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.View
-import android.view.WindowManager
-import android.widget.ImageView
-import android.widget.TextView
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import android.graphics.Color
-import android.view.ViewGroup
-import android.view.MotionEvent
-import java.util.ArrayList
-
-class TrackpadMenuManager(
-    private val context: Context,
-    private val windowManager: WindowManager,
-    private val service: OverlayService
-) {
-    private var drawerView: View? = null
-    private var recyclerView: RecyclerView? = null
-    private var drawerParams: WindowManager.LayoutParams? = null
-    private var isVisible = false
-    
-    // Manual Adjust State
-    private var isResizeMode = false // Default to Move Mode
-
-    // Tab Constants - Order must match layout_trackpad_drawer.xml tab order
-    private val TAB_MAIN = 0
-    private val TAB_PRESETS = 1
-    private val TAB_MOVE = 2
-    private val TAB_KB_MOVE = 3
-    private val TAB_MIRROR = 4      // NEW: Mirror keyboard config
-    private val TAB_CONFIG = 5
-    private val TAB_TUNE = 6
-    private val TAB_HARDKEYS = 7
-    private val TAB_BUBBLE = 8
-    private val TAB_PROFILES = 9
-    private val TAB_HELP = 10
-    
-    private var currentTab = TAB_MAIN
-
-    fun show() {
-        if (isVisible) return
-        if (drawerView == null) setupDrawer()
-        try {
-            windowManager.addView(drawerView, drawerParams)
-            isVisible = true
-            loadTab(currentTab)
-            
-            // CRITICAL FIX: Force Cursor and Bubble to top of stack
-            // Since Menu was just added, it is currently on top. 
-            // We must re-add the others to cover it.
-            service.enforceZOrder()
-            
-        } catch (e: SecurityException) {
-            android.widget.Toast.makeText(context, "Missing Overlay Permission! Open App to Fix.", android.widget.Toast.LENGTH_LONG).show()
-            e.printStackTrace()
-        } catch (e: Exception) { 
-            e.printStackTrace() 
-        }
-    }
-
-    fun hide() {
-        if (!isVisible) return
-        try {
-            windowManager.removeView(drawerView)
-            isVisible = false
-        } catch (e: Exception) { }
-    }
-
-    fun toggle() {
-        if (isVisible) hide() else show()
-    }
-
-    fun bringToFront() {
-        if (!isVisible || drawerView == null) return
-        try {
-            // Detach and Re-attach to move to top of Z-Order stack
-            windowManager.removeView(drawerView)
-            windowManager.addView(drawerView, drawerParams)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private fun setupDrawer() {
-        // Use ContextWrapper to ensure correct theme (Matches Launcher)
-        val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)
-        val inflater = LayoutInflater.from(themedContext)
-        drawerView = inflater.inflate(R.layout.layout_trackpad_drawer, null)
-
-        // Close button logic
-        drawerView?.findViewById<View>(R.id.btn_close_menu)?.setOnClickListener { hide() }
-        
-        recyclerView = drawerView?.findViewById(R.id.menu_recycler)
-        recyclerView?.layoutManager = LinearLayoutManager(context)
-
-        // Tab click listeners
-        val tabs = listOf(
-            R.id.tab_main to TAB_MAIN,
-            R.id.tab_presets to TAB_PRESETS,
-            R.id.tab_move to TAB_MOVE,
-            R.id.tab_kb_move to TAB_KB_MOVE,
-            R.id.tab_mirror to TAB_MIRROR,      // NEW
-            R.id.tab_config to TAB_CONFIG,
-            R.id.tab_tune to TAB_TUNE,
-            R.id.tab_hardkeys to TAB_HARDKEYS,
-            R.id.tab_bubble to TAB_BUBBLE,
-            R.id.tab_profiles to TAB_PROFILES,
-            R.id.tab_help to TAB_HELP
-        )
-
-        for ((id, index) in tabs) {
-            drawerView?.findViewById<ImageView>(id)?.setOnClickListener { 
-                loadTab(index) 
-            }
-        }
-
-        // =========================
-        // WINDOW CONFIG (MATCHING DROIDOS LAUNCHER)
-        // =========================
-        drawerParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, 
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, 
-            PixelFormat.TRANSLUCENT
-        )
-        // Explicitly set Gravity to TOP|START for absolute positioning
-        drawerParams?.gravity = Gravity.TOP or Gravity.START
-        
-        // Initial Center Calculation
-        val metrics = context.resources.displayMetrics
-        val screenWidth = metrics.widthPixels
-        val screenHeight = metrics.heightPixels
-        
-        // Approx Menu Size (320dp width + margins, ~400dp height)
-        val density = metrics.density
-        val menuW = (360 * density).toInt() 
-        val menuH = (400 * density).toInt()
-        
-        drawerParams?.x = (screenWidth - menuW) / 2
-        drawerParams?.y = (screenHeight - menuH) / 2
-        
-        // =========================
-        // INTERACTION LOGIC
-        // =========================
-        // 1. Background Click -> Removed (Handled by FLAG_NOT_TOUCH_MODAL)
-        
-        // 2. Menu Card Click -> Block (Consume)
-        drawerView?.findViewById<View>(R.id.menu_container)?.setOnClickListener { 
-            // Do nothing
-        }
-        
-        // 3. DRAG HANDLE LOGIC
-        val dragHandle = drawerView?.findViewById<View>(R.id.menu_drag_handle)
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-
-        dragHandle?.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = drawerParams!!.x
-                    initialY = drawerParams!!.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    drawerParams!!.x = initialX + (event.rawX - initialTouchX).toInt()
-                    drawerParams!!.y = initialY + (event.rawY - initialTouchY).toInt()
-                    
-                    try {
-                        windowManager.updateViewLayout(drawerView, drawerParams)
-                    } catch (e: Exception) {}
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-
-    private fun loadTab(index: Int) {
-        currentTab = index
-        updateTabIcons(index)
-        
-        val items = when(index) {
-            TAB_MAIN -> getMainItems()
-            TAB_PRESETS -> getPresetItems()
-            TAB_MOVE -> getMoveItems(false)
-            TAB_KB_MOVE -> getMoveItems(true)
-            TAB_MIRROR -> getMirrorItems()      // NEW
-            TAB_CONFIG -> getConfigItems()
-            TAB_TUNE -> getTuneItems()
-            TAB_HARDKEYS -> getHardkeyItems()   // Hardkey bindings configuration
-            TAB_BUBBLE -> getBubbleItems()
-            TAB_PROFILES -> getProfileItems()
-            TAB_HELP -> getHelpItems()
-            else -> emptyList()
-        }
-        
-        recyclerView?.adapter = TrackpadMenuAdapter(items)
-    }
-
-    private fun updateTabIcons(activeIdx: Int) {
-        val tabIds = listOf(R.id.tab_main, R.id.tab_presets, R.id.tab_move, R.id.tab_kb_move, R.id.tab_mirror, R.id.tab_config, R.id.tab_tune, R.id.tab_hardkeys, R.id.tab_bubble, R.id.tab_profiles, R.id.tab_help)
-        for ((i, id) in tabIds.withIndex()) {
-            val view = drawerView?.findViewById<ImageView>(id)
-            if (i == activeIdx) view?.setColorFilter(Color.parseColor("#3DDC84")) 
-            else view?.setColorFilter(Color.GRAY)
-        }
-    }
-
-    // =========================
-    // GET MAIN ITEMS - Generates main menu items list
-    // =========================
-    private fun getMainItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        list.add(TrackpadMenuAdapter.MenuItem("MAIN CONTROLS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // --- COMMENTED OUT PER REQUEST ---
-        /*
-        list.add(TrackpadMenuAdapter.MenuItem("Switch Screen (0 <-> 1)", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { 
-            service.switchDisplay() 
-            hide()
-        })
-        */
-        // ---------------------------------
-
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
-            service.resetBubblePosition()
-            hide()
-        })
-        
-        // --- COMMENTED OUT PER REQUEST ---
-        /*
-        list.add(TrackpadMenuAdapter.MenuItem("Move Trackpad Here", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { service.forceMoveToCurrentDisplay(); hide() })
-        */
-        
-        // Renamed: "Target: ..." -> "Toggle Remote Display"
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Remote Display", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN) })
-
-        // =================================================================================
-        // VIRTUAL MIRROR MODE TOGGLE
-        // SUMMARY: Enhanced toggle for AR glasses/remote displays.
-        //          When enabled:
-        //          - Auto-switches cursor to virtual display
-        //          - Shows keyboard and trackpad
-        //          - Loads mirror-mode specific profile
-        //          When disabled:
-        //          - Returns to local display
-        //          - Restores previous visibility state
-        //          - Saves/loads separate profile
-        // =================================================================================
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Virtual Mirror Mode",
-            if(p.prefVirtualMirrorMode) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
-            TrackpadMenuAdapter.Type.TOGGLE,
-            if(p.prefVirtualMirrorMode) 1 else 0
-        ) { _ ->
-            service.toggleVirtualMirrorMode()
-            hide()  // Close menu since display context may change
-        })
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE TOGGLE
-        // =================================================================================
-
-        // --- ANCHOR TOGGLE: Locks trackpad and keyboard position/size ---
-        list.add(TrackpadMenuAdapter.MenuItem("Anchor (Lock Position)", 
-            if(p.prefAnchored) R.drawable.ic_lock_closed else R.drawable.ic_lock_open, 
-            TrackpadMenuAdapter.Type.TOGGLE, 
-            if(p.prefAnchored) 1 else 0) { v ->
-            service.updatePref("anchored", v)
-            loadTab(TAB_MAIN)  // Refresh to update icon
-        })
-        // --- END ANCHOR TOGGLE ---
-        
-        // Toggle Trackpad (Using correct icon
-        // Toggle Trackpad
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Trackpad", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) {
-            service.toggleTrackpad()
-            hide()
-        })
-
-
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Keyboard", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
-            if (service.isCustomKeyboardVisible) service.performSmartHide()
-            else service.toggleCustomKeyboard()
-        })
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Cursor", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.resetCursorCenter() })
-        
-        // Renamed: "Hide App" -> "Hide All"
-        list.add(TrackpadMenuAdapter.MenuItem("Hide All", android.R.drawable.ic_menu_close_clear_cancel, TrackpadMenuAdapter.Type.ACTION) { service.hideApp() })
-        
-        // Renamed: "Force Kill Service" -> "Close/Restart App"
-        list.add(TrackpadMenuAdapter.MenuItem("Close/Restart App", android.R.drawable.ic_delete, TrackpadMenuAdapter.Type.ACTION) { service.forceExit() })
-        return list
-    }
-    // =========================
-    // END GET MAIN ITEMS
-    // =========================
-
-
-    
-// =========================
-    // GET PRESET ITEMS - Layout presets for split screen modes
-    // Freeform (type 0) loads saved profile, NOT a split preset
-    // =========================
-    private fun getPresetItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        list.add(TrackpadMenuAdapter.MenuItem("SPLIT SCREEN PRESETS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // Freeform FIRST - this loads the saved profile (not a split preset)
-        list.add(TrackpadMenuAdapter.MenuItem("Freeform (Use Profile)", android.R.drawable.ic_menu_edit, TrackpadMenuAdapter.Type.ACTION) { 
-            service.applyLayoutPreset(0)
-            hide()
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("KB Top / TP Bottom", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
-            service.applyLayoutPreset(1)
-            hide()
-        })
-        list.add(TrackpadMenuAdapter.MenuItem("TP Top / KB Bottom", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { 
-            service.applyLayoutPreset(2)
-            hide()
-        })
-        return list
-    }
-    // =========================
-    // END GET PRESET ITEMS
-    // =========================
-    private fun getMoveItems(isKeyboard: Boolean): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val target = if (isKeyboard) "Keyboard" else "Trackpad"
-        
-        list.add(TrackpadMenuAdapter.MenuItem(if (isKeyboard) "KEYBOARD POSITION" else "TRACKPAD POSITION", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // 1. Mode Switcher (Toggle Item)
-        val modeText = if (isResizeMode) "Resize (Size)" else "Position (Move)"
-        val modeIcon = if (isResizeMode) android.R.drawable.ic_menu_crop else android.R.drawable.ic_menu_mylocation
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Mode: $modeText", modeIcon, TrackpadMenuAdapter.Type.ACTION) {
-            isResizeMode = !isResizeMode
-            loadTab(currentTab) // Refresh UI to update text
-        })
-        
-        // 2. The D-Pad
-        val actionText = if (isResizeMode) "Resize" else "Move"
-        list.add(TrackpadMenuAdapter.MenuItem("$target $actionText", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
-            val step = 20
-            val command = cmd as String
-            
-            // isResizeMode determines whether we move X/Y or change W/H
-            when(command) {
-                "UP" -> service.manualAdjust(isKeyboard, isResizeMode, 0, -step)
-                "DOWN" -> service.manualAdjust(isKeyboard, isResizeMode, 0, step)
-                "LEFT" -> service.manualAdjust(isKeyboard, isResizeMode, -step, 0)
-                "RIGHT" -> service.manualAdjust(isKeyboard, isResizeMode, step, 0)
-                "CENTER" -> {
-                    if (isKeyboard) service.resetKeyboardPosition() else service.resetTrackpadPosition()
-                }
-            }
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Rotate 90°", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) {
-            if (isKeyboard) service.rotateKeyboard() else service.performRotation()
-        })
-            
-        if (isKeyboard) {
-            val p = service.prefs
-            list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha) { v ->
-                service.updatePref("keyboard_alpha", v)
-            })
-        }
-            
-        return list
-    }
-
-    // =========================
-    // GET MIRROR ITEMS - Mirror keyboard configuration
-    // =========================
-    private var isMirrorResizeMode = false
-    
-    private fun getMirrorItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        list.add(TrackpadMenuAdapter.MenuItem("MIRROR KEYBOARD", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // Virtual Mirror Mode Toggle
-        list.add(TrackpadMenuAdapter.MenuItem("Virtual Mirror Mode", android.R.drawable.ic_menu_view, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefVirtualMirrorMode) 1 else 0) { v ->
-            service.updatePref("virtual_mirror_mode", v as Boolean)
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("POSITION & SIZE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        // Mode Switcher (Position vs Resize)
-        val modeText = if (isMirrorResizeMode) "Resize (Size)" else "Position (Move)"
-        val modeIcon = if (isMirrorResizeMode) android.R.drawable.ic_menu_crop else android.R.drawable.ic_menu_mylocation
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Mode: $modeText", modeIcon, TrackpadMenuAdapter.Type.ACTION) {
-            isMirrorResizeMode = !isMirrorResizeMode
-            loadTab(currentTab) // Refresh UI
-        })
-        
-        // D-Pad for position/size
-        val actionText = if (isMirrorResizeMode) "Resize" else "Move"
-        list.add(TrackpadMenuAdapter.MenuItem("Mirror $actionText", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
-            val step = 20
-            val command = cmd as String
-            
-            when(command) {
-                "UP" -> service.adjustMirrorKeyboard(isMirrorResizeMode, 0, -step)
-                "DOWN" -> service.adjustMirrorKeyboard(isMirrorResizeMode, 0, step)
-                "LEFT" -> service.adjustMirrorKeyboard(isMirrorResizeMode, -step, 0)
-                "RIGHT" -> service.adjustMirrorKeyboard(isMirrorResizeMode, step, 0)
-                "CENTER" -> service.resetMirrorKeyboardPosition()
-            }
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        // Mirror Keyboard Opacity Slider
-        list.add(TrackpadMenuAdapter.MenuItem("Mirror Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefMirrorAlpha, 255) { v ->
-            service.updatePref("mirror_alpha", v)
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        // Orange Trail Delay Slider (100ms - 3000ms, show as 0.1s - 3.0s)
-        val currentDelayMs = p.prefMirrorOrientDelayMs
-        list.add(TrackpadMenuAdapter.MenuItem("Orient Delay: ${currentDelayMs}ms", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, (currentDelayMs / 100).toInt(), 30) { v ->
-            val newDelayMs = (v as Int) * 100L
-            service.updatePref("mirror_orient_delay", newDelayMs)
-            loadTab(currentTab) // Refresh to show new value
-        })
-        
-        return list
-    }
-    // =========================
-    // END GET MIRROR ITEMS
-    // =========================
-
-    // =========================
-    // GET CONFIG ITEMS - Trackpad configuration settings
-    // FIXED: Tap to Scroll Boolean Logic
-    // ========================= 
-    private fun getConfigItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        list.add(TrackpadMenuAdapter.MenuItem("TRACKPAD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem("SENSITIVITY", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        list.add(TrackpadMenuAdapter.MenuItem("Cursor Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.cursorSpeed * 10).toInt()) { v -> service.updatePref("cursor_speed", (v as Int) / 10f) })
-        list.add(TrackpadMenuAdapter.MenuItem("Scroll Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.scrollSpeed * 10).toInt(), 50) { v -> service.updatePref("scroll_speed", (v as Int) / 10f) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        list.add(TrackpadMenuAdapter.MenuItem("Border Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
-        list.add(TrackpadMenuAdapter.MenuItem("Background Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBgAlpha, 255) { v -> service.updatePref("bg_alpha", v) })
-        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        
-        list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize, 200) { v -> service.updatePref("scroll_size", v) })
-        list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("BEHAVIOR", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Reverse Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefReverseScroll) 1 else 0) { v -> service.updatePref("reverse_scroll", v) })
-        
-        // MODIFIED: Correct Boolean Check for Toast
-        list.add(TrackpadMenuAdapter.MenuItem("Tap to Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefTapScroll) 1 else 0) { v -> 
-            service.updatePref("tap_scroll", v)
-            // Fix: Cast strictly to Boolean or check against false directly
-            if (v == false) {
-                android.widget.Toast.makeText(context, "Beta mouse scrolling is activated - warning - scroll slowly for optimal results", android.widget.Toast.LENGTH_LONG).show()
-            }
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Haptic Feedback", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefVibrate) 1 else 0) { v -> service.updatePref("vibrate", v) })
-        return list
-    }
-    // =========================
-    // END GET CONFIG ITEMS
-    // =========================
-
-    // =========================
-    // GET TUNE ITEMS - Keyboard configuration settings
-    // =========================
-    private fun getTuneItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        list.add(TrackpadMenuAdapter.MenuItem("KEYBOARD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // NEW: Launch Proxy Activity for Picker
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Null KB to block default)", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
-            service.forceSystemKeyboardVisible()
-            hide() // Close menu
-            
-            try {
-                val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-            } catch(e: Exception) {
-                android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha, 255) { v -> service.updatePref("keyboard_alpha", v) })
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Scale", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyScale, 200) { v -> service.updatePref("keyboard_key_scale", v) })
-                list.add(TrackpadMenuAdapter.MenuItem("Auto Display Off", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefAutomationEnabled) 1 else 0) {
-                    v -> service.updatePref("automation_enabled", v as Boolean)
-                })
-
-        // MOVED & RENAMED: Cover Screen KB Blocker
-        list.add(TrackpadMenuAdapter.MenuItem("Cover Screen KB blocker (restart app after reverting)", android.R.drawable.ic_lock_lock, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefBlockSoftKeyboard) 1 else 0) {
-            v -> service.updatePref("block_soft_kb", v as Boolean)
-        })
-
-        return list
-    }
-    // =========================
-    // END GET TUNE ITEMS
-    // =========================
-
-    // =========================
-    // HARDKEY ACTIONS LIST
-    // =========================
-    private val hardkeyActions = listOf(
-        "none" to "None (System Default)",
-        "left_click" to "Left Click (Hold to Drag)",
-        "right_click" to "Right Click (Hold to Drag)",
-        "scroll_up" to "Scroll Up",
-        "scroll_down" to "Scroll Down",
-        "display_toggle_alt" to "Display (Alt Mode)",
-        "display_toggle_std" to "Display (Std Mode)",
-        "display_wake" to "Display Wake",
-        "alt_position" to "Alt KB Position",
-        "toggle_keyboard" to "Toggle Keyboard",
-        "toggle_trackpad" to "Toggle Trackpad",
-        "open_menu" to "Open Menu",
-        "reset_cursor" to "Reset Cursor",
-        "toggle_bubble" to "Launcher Bubble", // <--- NEW ITEM
-        "action_back" to "Back",
-        "action_home" to "Home",
-        "action_forward" to "Forward (Browser)",
-        "action_vol_up" to "Volume Up",
-        "action_vol_down" to "Volume Down"
-    )
-    
-    private fun getActionDisplayName(actionId: String): String {
-        return hardkeyActions.find { it.first == actionId }?.second ?: actionId
-    }
-    // =========================
-    // END HARDKEY ACTIONS LIST
-    // =========================
-
-    // =========================
-    // SHOW ACTION PICKER - In-Menu Replacement for Dialog
-    // Replaces the current menu list with selection options to avoid Service/Dialog crashes
-    // =========================
-    private fun showActionPicker(prefKey: String, currentValue: String) {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        
-        // 1. Header
-        list.add(TrackpadMenuAdapter.MenuItem("Select Action", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // 2. Cancel / Back Option
-        list.add(TrackpadMenuAdapter.MenuItem("<< Go Back", android.R.drawable.ic_menu_revert, TrackpadMenuAdapter.Type.ACTION) {
-            // Reload the previous tab to "go back"
-            loadTab(TAB_HARDKEYS)
-        })
-
-        // 3. Action Options
-        for ((id, name) in hardkeyActions) {
-            // Show a "Check" icon if this is the currently selected value
-            // Otherwise show 0 (no icon) or a generic dot
-            val iconRes = if (id == currentValue) android.R.drawable.checkbox_on_background else 0
-            
-            list.add(TrackpadMenuAdapter.MenuItem(name, iconRes, TrackpadMenuAdapter.Type.ACTION) {
-                // On Click: Update Pref and Go Back
-                service.updatePref(prefKey, id)
-                loadTab(TAB_HARDKEYS)
-            })
-        }
-        
-        // 4. Update the View
-        recyclerView?.adapter = TrackpadMenuAdapter(list)
-    }
-    // =========================
-    // END SHOW ACTION PICKER
-    // =========================
-
-    // =========================
-    // GET HARDKEY ITEMS - Hardkey bindings configuration menu
-    // Allows users to customize Vol Up/Down and Power button actions
-    // =========================
-    private fun getHardkeyItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        // NEW MAIN HEADER
-        list.add(TrackpadMenuAdapter.MenuItem("KEYBINDS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // Subheader
-        list.add(TrackpadMenuAdapter.MenuItem("VOLUME UP", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Tap: ${getActionDisplayName(p.hardkeyVolUpTap)}",
-            android.R.drawable.ic_media_play,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_up_tap", p.hardkeyVolUpTap) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Double-Tap: ${getActionDisplayName(p.hardkeyVolUpDouble)}",
-            android.R.drawable.ic_media_ff,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_up_double", p.hardkeyVolUpDouble) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Hold: ${getActionDisplayName(p.hardkeyVolUpHold)}",
-            android.R.drawable.ic_menu_crop,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_up_hold", p.hardkeyVolUpHold) })
-        
-        // Subheader
-        list.add(TrackpadMenuAdapter.MenuItem("VOLUME DOWN", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Tap: ${getActionDisplayName(p.hardkeyVolDownTap)}",
-            android.R.drawable.ic_media_play,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_down_tap", p.hardkeyVolDownTap) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Double-Tap: ${getActionDisplayName(p.hardkeyVolDownDouble)}",
-            android.R.drawable.ic_media_ff,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_down_double", p.hardkeyVolDownDouble) })
-        
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Hold: ${getActionDisplayName(p.hardkeyVolDownHold)}",
-            android.R.drawable.ic_menu_crop,
-            TrackpadMenuAdapter.Type.ACTION
-        ) { showActionPicker("hardkey_vol_down_hold", p.hardkeyVolDownHold) })
-        
-        // Subheader
-        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.SUBHEADER))
-        
-        // Max 500ms
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Double-Tap Speed (ms)",
-            android.R.drawable.ic_menu_recent_history,
-            TrackpadMenuAdapter.Type.SLIDER,
-            p.doubleTapMs,
-            500 
-        ) { v ->
-            service.updatePref("double_tap_ms", v)
-        })
-        
-        // Max 800ms
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Hold Duration (ms)",
-            android.R.drawable.ic_menu_recent_history,
-            TrackpadMenuAdapter.Type.SLIDER,
-            p.holdDurationMs,
-            800 
-        ) { v ->
-            service.updatePref("hold_duration_ms", v)
-        })
-        
-        return list
-    }
-    // =========================
-    // END GET HARDKEY ITEMS
-    // =========================
-
-
-    // =========================
-    // GET BUBBLE ITEMS - Bubble launcher customization
-    // Size slider, Icon cycle, Opacity slider
-    // =========================
-    private fun getBubbleItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val p = service.prefs
-        
-        list.add(TrackpadMenuAdapter.MenuItem("BUBBLE CUSTOMIZATION", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        // Size slider: 50-200 (50=half, 100=standard, 200=double)
-        list.add(TrackpadMenuAdapter.MenuItem("Bubble Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleSize, 200) { v ->
-            service.updatePref("bubble_size", v)
-        })
-        
-        // Icon cycle action
-        val iconNames = arrayOf("Trackpad", "Cursor", "Main", "Keyboard", "Compass", "Location")
-        val currentIconName = iconNames.getOrElse(p.prefBubbleIconIndex) { "Default" }
-        list.add(TrackpadMenuAdapter.MenuItem("Icon: $currentIconName", android.R.drawable.ic_menu_gallery, TrackpadMenuAdapter.Type.ACTION) { 
-            service.updatePref("bubble_icon", true)
-            loadTab(TAB_BUBBLE) // Refresh to show new icon name
-        })
-        
-        // Opacity slider: 50-255
-        list.add(TrackpadMenuAdapter.MenuItem("Bubble Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleAlpha, 255) { v ->
-            service.updatePref("bubble_alpha", v)
-        })
-        
-        // Reset button
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_revert, TrackpadMenuAdapter.Type.ACTION) { 
-            service.resetBubblePosition()
-        })
-        
-        // --- PERSISTENCE TOGGLE ---
-        list.add(TrackpadMenuAdapter.MenuItem("SERVICE BEHAVIOR", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        val persistHelp = if (p.prefPersistentService) "Bubble stays when app closes" else "Bubble closes with app"
-        list.add(TrackpadMenuAdapter.MenuItem("Keep Alive (Background)", 
-            android.R.drawable.ic_menu_manage, 
-            TrackpadMenuAdapter.Type.TOGGLE, 
-            if(p.prefPersistentService) 1 else 0) { v ->
-            service.updatePref("persistent_service", v)
-            loadTab(TAB_BUBBLE) // Refresh description
-        })
-        list.add(TrackpadMenuAdapter.MenuItem(persistHelp, 0, TrackpadMenuAdapter.Type.INFO))
-        
-        return list
-    }
-    // =========================
-    // END GET BUBBLE ITEMS
-    // =========================
-
-    private fun getProfileItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        val currentRes = "${service.currentDisplayId}: ${service.getProfileKey().replace("P_", "").replace("_", " x ")}"
-        
-        list.add(TrackpadMenuAdapter.MenuItem("LAYOUT PROFILES", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Current: $currentRes", R.drawable.ic_tab_profiles, TrackpadMenuAdapter.Type.INFO))
-        
-        // CHANGED TITLE
-        list.add(TrackpadMenuAdapter.MenuItem("Save Layout and Presets", android.R.drawable.ic_menu_save, TrackpadMenuAdapter.Type.ACTION) { 
-            service.saveLayout()
-            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
-        })
-
-        // NEW: Reload Profile
-        list.add(TrackpadMenuAdapter.MenuItem("Reload Profile", android.R.drawable.ic_popup_sync, TrackpadMenuAdapter.Type.ACTION) { 
-            service.loadLayout() // Reloads based on current resolution/display
-            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
-        })
-        
-        list.add(TrackpadMenuAdapter.MenuItem("Delete Profile", android.R.drawable.ic_menu_delete, TrackpadMenuAdapter.Type.ACTION) { 
-            service.deleteCurrentProfile()
-            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
-        })
-        
-        // --- SAVED LAYOUTS LIST ---
-        list.add(TrackpadMenuAdapter.MenuItem("SAVED LAYOUTS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        val saved = service.getSavedProfileList()
-        if (saved.isEmpty()) {
-            list.add(TrackpadMenuAdapter.MenuItem("No saved layouts found.", 0, TrackpadMenuAdapter.Type.INFO))
-        } else {
-            for (res in saved) {
-                list.add(TrackpadMenuAdapter.MenuItem("• $res", 0, TrackpadMenuAdapter.Type.INFO))
-            }
-        }
-        
-        return list
-    }
-
-    private fun getHelpItems(): List<TrackpadMenuAdapter.MenuItem> {
-        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        
-        list.add(TrackpadMenuAdapter.MenuItem("INSTRUCTIONS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        val text = 
-            "TRACKPAD CONTROLS\n" +
-            "• Tap: Left Click\n" +
-            "• 2-Finger Tap: Right Click\n" +
-            "• Hold + Slide: Drag & Drop\n" +
-            "• Edge (Top/Bottom): V-Scroll\n" +
-            "• Edge (Left/Right): H-Scroll\n\n" +
-            "KEYBOARD OVERLAY\n" +
-            "• Drag Top Bar: Move Window\n" +
-            "• Drag Bottom-Right: Resize\n" +
-            "• Hold Corner: Toggle Key/Mouse\n\n" +
-            "HARDWARE KEYS\n" +
-            "• Use the 'Hardkeys' tab to map\n" +
-            "  Volume Up/Down to clicks,\n" +
-            "  scrolling, or screen controls."
-            
-        list.add(TrackpadMenuAdapter.MenuItem(text, 0, TrackpadMenuAdapter.Type.INFO))
-        
-        list.add(TrackpadMenuAdapter.MenuItem("LAUNCHER & APP", 0, TrackpadMenuAdapter.Type.HEADER))
-        val text2 = 
-            "• Floating Bubble: Tap to open this menu. Drag to move.\n" +
-            "• Setup App: Open 'DroidOS Trackpad' from your Android App Drawer to adjust permissions or restart the service."
-        list.add(TrackpadMenuAdapter.MenuItem(text2, 0, TrackpadMenuAdapter.Type.INFO))
-        
-        return list
-    }
-}
-```
-
 ## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/FloatingLauncherService.kt
 ```kotlin
 package com.example.quadrantlauncher
@@ -16194,6 +13483,820 @@ class FloatingLauncherService : AccessibilityService() {
 }
 ```
 
+## File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/TrackpadMenuManager.kt
+```kotlin
+package com.example.coverscreentester
+
+import android.content.Context
+import android.graphics.PixelFormat
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import android.graphics.Color
+import android.view.ViewGroup
+import android.view.MotionEvent
+import java.util.ArrayList
+
+class TrackpadMenuManager(
+    private val context: Context,
+    private val windowManager: WindowManager,
+    private val service: OverlayService
+) {
+    private var drawerView: View? = null
+    private var recyclerView: RecyclerView? = null
+    private var drawerParams: WindowManager.LayoutParams? = null
+    private var isVisible = false
+    
+    // Manual Adjust State
+    private var isResizeMode = false // Default to Move Mode
+
+    // Tab Constants - Order must match layout_trackpad_drawer.xml tab order
+    private val TAB_MAIN = 0
+    private val TAB_PRESETS = 1
+    private val TAB_MOVE = 2
+    private val TAB_KB_MOVE = 3
+    private val TAB_MIRROR = 4      // NEW: Mirror keyboard config
+    private val TAB_CONFIG = 5
+    private val TAB_TUNE = 6
+    private val TAB_HARDKEYS = 7
+    private val TAB_BUBBLE = 8
+    private val TAB_PROFILES = 9
+    private val TAB_HELP = 10
+    
+    private var currentTab = TAB_MAIN
+
+    fun show() {
+        if (isVisible) return
+        if (drawerView == null) setupDrawer()
+        try {
+            windowManager.addView(drawerView, drawerParams)
+            isVisible = true
+            loadTab(currentTab)
+            
+            // CRITICAL FIX: Force Cursor and Bubble to top of stack
+            // Since Menu was just added, it is currently on top. 
+            // We must re-add the others to cover it.
+            service.enforceZOrder()
+            
+        } catch (e: SecurityException) {
+            android.widget.Toast.makeText(context, "Missing Overlay Permission! Open App to Fix.", android.widget.Toast.LENGTH_LONG).show()
+            e.printStackTrace()
+        } catch (e: Exception) { 
+            e.printStackTrace() 
+        }
+    }
+
+    fun hide() {
+        if (!isVisible) return
+        try {
+            windowManager.removeView(drawerView)
+            isVisible = false
+        } catch (e: Exception) { }
+    }
+
+    fun toggle() {
+        if (isVisible) hide() else show()
+    }
+
+    fun bringToFront() {
+        if (!isVisible || drawerView == null) return
+        try {
+            // Detach and Re-attach to move to top of Z-Order stack
+            windowManager.removeView(drawerView)
+            windowManager.addView(drawerView, drawerParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun setupDrawer() {
+        // Use ContextWrapper to ensure correct theme (Matches Launcher)
+        val themedContext = android.view.ContextThemeWrapper(context, R.style.Theme_CoverScreenTester)
+        val inflater = LayoutInflater.from(themedContext)
+        drawerView = inflater.inflate(R.layout.layout_trackpad_drawer, null)
+
+        // Close button logic
+        drawerView?.findViewById<View>(R.id.btn_close_menu)?.setOnClickListener { hide() }
+        
+        recyclerView = drawerView?.findViewById(R.id.menu_recycler)
+        recyclerView?.layoutManager = LinearLayoutManager(context)
+
+        // Tab click listeners
+        val tabs = listOf(
+            R.id.tab_main to TAB_MAIN,
+            R.id.tab_presets to TAB_PRESETS,
+            R.id.tab_move to TAB_MOVE,
+            R.id.tab_kb_move to TAB_KB_MOVE,
+            R.id.tab_mirror to TAB_MIRROR,      // NEW
+            R.id.tab_config to TAB_CONFIG,
+            R.id.tab_tune to TAB_TUNE,
+            R.id.tab_hardkeys to TAB_HARDKEYS,
+            R.id.tab_bubble to TAB_BUBBLE,
+            R.id.tab_profiles to TAB_PROFILES,
+            R.id.tab_help to TAB_HELP
+        )
+
+        for ((id, index) in tabs) {
+            drawerView?.findViewById<ImageView>(id)?.setOnClickListener { 
+                loadTab(index) 
+            }
+        }
+
+        // =========================
+        // WINDOW CONFIG (MATCHING DROIDOS LAUNCHER)
+        // =========================
+        drawerParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, 
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, 
+            PixelFormat.TRANSLUCENT
+        )
+        // Explicitly set Gravity to TOP|START for absolute positioning
+        drawerParams?.gravity = Gravity.TOP or Gravity.START
+        
+        // Initial Center Calculation
+        val metrics = context.resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
+        
+        // Approx Menu Size (320dp width + margins, ~400dp height)
+        val density = metrics.density
+        val menuW = (360 * density).toInt() 
+        val menuH = (400 * density).toInt()
+        
+        drawerParams?.x = (screenWidth - menuW) / 2
+        drawerParams?.y = (screenHeight - menuH) / 2
+        
+        // =========================
+        // INTERACTION LOGIC
+        // =========================
+        // 1. Background Click -> Removed (Handled by FLAG_NOT_TOUCH_MODAL)
+        
+        // 2. Menu Card Click -> Block (Consume)
+        drawerView?.findViewById<View>(R.id.menu_container)?.setOnClickListener { 
+            // Do nothing
+        }
+        
+        // 3. DRAG HANDLE LOGIC
+        val dragHandle = drawerView?.findViewById<View>(R.id.menu_drag_handle)
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+
+        dragHandle?.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = drawerParams!!.x
+                    initialY = drawerParams!!.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    drawerParams!!.x = initialX + (event.rawX - initialTouchX).toInt()
+                    drawerParams!!.y = initialY + (event.rawY - initialTouchY).toInt()
+                    
+                    try {
+                        windowManager.updateViewLayout(drawerView, drawerParams)
+                    } catch (e: Exception) {}
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun loadTab(index: Int) {
+        currentTab = index
+        updateTabIcons(index)
+        
+        val items = when(index) {
+            TAB_MAIN -> getMainItems()
+            TAB_PRESETS -> getPresetItems()
+            TAB_MOVE -> getMoveItems(false)
+            TAB_KB_MOVE -> getMoveItems(true)
+            TAB_MIRROR -> getMirrorItems()      // NEW
+            TAB_CONFIG -> getConfigItems()
+            TAB_TUNE -> getTuneItems()
+            TAB_HARDKEYS -> getHardkeyItems()   // Hardkey bindings configuration
+            TAB_BUBBLE -> getBubbleItems()
+            TAB_PROFILES -> getProfileItems()
+            TAB_HELP -> getHelpItems()
+            else -> emptyList()
+        }
+        
+        recyclerView?.adapter = TrackpadMenuAdapter(items)
+    }
+
+    private fun updateTabIcons(activeIdx: Int) {
+        val tabIds = listOf(R.id.tab_main, R.id.tab_presets, R.id.tab_move, R.id.tab_kb_move, R.id.tab_mirror, R.id.tab_config, R.id.tab_tune, R.id.tab_hardkeys, R.id.tab_bubble, R.id.tab_profiles, R.id.tab_help)
+        for ((i, id) in tabIds.withIndex()) {
+            val view = drawerView?.findViewById<ImageView>(id)
+            if (i == activeIdx) view?.setColorFilter(Color.parseColor("#3DDC84")) 
+            else view?.setColorFilter(Color.GRAY)
+        }
+    }
+
+    // =========================
+    // GET MAIN ITEMS - Generates main menu items list
+    // =========================
+    private fun getMainItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        list.add(TrackpadMenuAdapter.MenuItem("MAIN CONTROLS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // --- COMMENTED OUT PER REQUEST ---
+        /*
+        list.add(TrackpadMenuAdapter.MenuItem("Switch Screen (0 <-> 1)", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { 
+            service.switchDisplay() 
+            hide()
+        })
+        */
+        // ---------------------------------
+
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
+            service.resetBubblePosition()
+            hide()
+        })
+        
+        // --- COMMENTED OUT PER REQUEST ---
+        /*
+        list.add(TrackpadMenuAdapter.MenuItem("Move Trackpad Here", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { service.forceMoveToCurrentDisplay(); hide() })
+        */
+        
+        // Renamed: "Target: ..." -> "Toggle Remote Display"
+        list.add(TrackpadMenuAdapter.MenuItem("Toggle Remote Display", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN) })
+
+        // =================================================================================
+        // VIRTUAL MIRROR MODE TOGGLE
+        // SUMMARY: Enhanced toggle for AR glasses/remote displays.
+        //          When enabled:
+        //          - Auto-switches cursor to virtual display
+        //          - Shows keyboard and trackpad
+        //          - Loads mirror-mode specific profile
+        //          When disabled:
+        //          - Returns to local display
+        //          - Restores previous visibility state
+        //          - Saves/loads separate profile
+        // =================================================================================
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Virtual Mirror Mode",
+            if(p.prefVirtualMirrorMode) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
+            TrackpadMenuAdapter.Type.TOGGLE,
+            if(p.prefVirtualMirrorMode) 1 else 0
+        ) { _ ->
+            service.toggleVirtualMirrorMode()
+            hide()  // Close menu since display context may change
+        })
+        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE TOGGLE
+        // =================================================================================
+
+        // --- ANCHOR TOGGLE: Locks trackpad and keyboard position/size ---
+        list.add(TrackpadMenuAdapter.MenuItem("Anchor (Lock Position)", 
+            if(p.prefAnchored) R.drawable.ic_lock_closed else R.drawable.ic_lock_open, 
+            TrackpadMenuAdapter.Type.TOGGLE, 
+            if(p.prefAnchored) 1 else 0) { v ->
+            service.updatePref("anchored", v)
+            loadTab(TAB_MAIN)  // Refresh to update icon
+        })
+        // --- END ANCHOR TOGGLE ---
+        
+        // Toggle Trackpad (Using correct icon
+        // Toggle Trackpad
+        list.add(TrackpadMenuAdapter.MenuItem("Toggle Trackpad", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) {
+            service.toggleTrackpad()
+            hide()
+        })
+
+
+        list.add(TrackpadMenuAdapter.MenuItem("Toggle Keyboard", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
+            if (service.isCustomKeyboardVisible) service.performSmartHide()
+            else service.toggleCustomKeyboard()
+        })
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Cursor", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.resetCursorCenter() })
+        
+        // Renamed: "Hide App" -> "Hide All"
+        list.add(TrackpadMenuAdapter.MenuItem("Hide All", android.R.drawable.ic_menu_close_clear_cancel, TrackpadMenuAdapter.Type.ACTION) { service.hideApp() })
+        
+        // Renamed: "Force Kill Service" -> "Close/Restart App"
+        list.add(TrackpadMenuAdapter.MenuItem("Close/Restart App", android.R.drawable.ic_delete, TrackpadMenuAdapter.Type.ACTION) { service.forceExit() })
+        return list
+    }
+    // =========================
+    // END GET MAIN ITEMS
+    // =========================
+
+
+    
+// =========================
+    // GET PRESET ITEMS - Layout presets for split screen modes
+    // Freeform (type 0) loads saved profile, NOT a split preset
+    // =========================
+    private fun getPresetItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        list.add(TrackpadMenuAdapter.MenuItem("SPLIT SCREEN PRESETS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Freeform FIRST - this loads the saved profile (not a split preset)
+        list.add(TrackpadMenuAdapter.MenuItem("Freeform (Use Profile)", android.R.drawable.ic_menu_edit, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(0)
+            hide()
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("KB Top / TP Bottom", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(1)
+            hide()
+        })
+        list.add(TrackpadMenuAdapter.MenuItem("TP Top / KB Bottom", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { 
+            service.applyLayoutPreset(2)
+            hide()
+        })
+        return list
+    }
+    // =========================
+    // END GET PRESET ITEMS
+    // =========================
+    private fun getMoveItems(isKeyboard: Boolean): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val target = if (isKeyboard) "Keyboard" else "Trackpad"
+        
+        list.add(TrackpadMenuAdapter.MenuItem(if (isKeyboard) "KEYBOARD POSITION" else "TRACKPAD POSITION", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // 1. Mode Switcher (Toggle Item)
+        val modeText = if (isResizeMode) "Resize (Size)" else "Position (Move)"
+        val modeIcon = if (isResizeMode) android.R.drawable.ic_menu_crop else android.R.drawable.ic_menu_mylocation
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Mode: $modeText", modeIcon, TrackpadMenuAdapter.Type.ACTION) {
+            isResizeMode = !isResizeMode
+            loadTab(currentTab) // Refresh UI to update text
+        })
+        
+        // 2. The D-Pad
+        val actionText = if (isResizeMode) "Resize" else "Move"
+        list.add(TrackpadMenuAdapter.MenuItem("$target $actionText", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
+            val step = 20
+            val command = cmd as String
+            
+            // isResizeMode determines whether we move X/Y or change W/H
+            when(command) {
+                "UP" -> service.manualAdjust(isKeyboard, isResizeMode, 0, -step)
+                "DOWN" -> service.manualAdjust(isKeyboard, isResizeMode, 0, step)
+                "LEFT" -> service.manualAdjust(isKeyboard, isResizeMode, -step, 0)
+                "RIGHT" -> service.manualAdjust(isKeyboard, isResizeMode, step, 0)
+                "CENTER" -> {
+                    if (isKeyboard) service.resetKeyboardPosition() else service.resetTrackpadPosition()
+                }
+            }
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Rotate 90°", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) {
+            if (isKeyboard) service.rotateKeyboard() else service.performRotation()
+        })
+            
+        if (isKeyboard) {
+            val p = service.prefs
+            list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha) { v ->
+                service.updatePref("keyboard_alpha", v)
+            })
+        }
+            
+        return list
+    }
+
+    // =========================
+    // GET MIRROR ITEMS - Mirror keyboard configuration
+    // =========================
+    private var isMirrorResizeMode = false
+    
+    private fun getMirrorItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        list.add(TrackpadMenuAdapter.MenuItem("MIRROR KEYBOARD", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Virtual Mirror Mode Toggle
+        list.add(TrackpadMenuAdapter.MenuItem("Virtual Mirror Mode", android.R.drawable.ic_menu_view, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefVirtualMirrorMode) 1 else 0) { v ->
+            service.updatePref("virtual_mirror_mode", v as Boolean)
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("POSITION & SIZE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        // Mode Switcher (Position vs Resize)
+        val modeText = if (isMirrorResizeMode) "Resize (Size)" else "Position (Move)"
+        val modeIcon = if (isMirrorResizeMode) android.R.drawable.ic_menu_crop else android.R.drawable.ic_menu_mylocation
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Mode: $modeText", modeIcon, TrackpadMenuAdapter.Type.ACTION) {
+            isMirrorResizeMode = !isMirrorResizeMode
+            loadTab(currentTab) // Refresh UI
+        })
+        
+        // D-Pad for position/size
+        val actionText = if (isMirrorResizeMode) "Resize" else "Move"
+        list.add(TrackpadMenuAdapter.MenuItem("Mirror $actionText", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.DPAD) { cmd ->
+            val step = 20
+            val command = cmd as String
+            
+            when(command) {
+                "UP" -> service.adjustMirrorKeyboard(isMirrorResizeMode, 0, -step)
+                "DOWN" -> service.adjustMirrorKeyboard(isMirrorResizeMode, 0, step)
+                "LEFT" -> service.adjustMirrorKeyboard(isMirrorResizeMode, -step, 0)
+                "RIGHT" -> service.adjustMirrorKeyboard(isMirrorResizeMode, step, 0)
+                "CENTER" -> service.resetMirrorKeyboardPosition()
+            }
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        // Mirror Keyboard Opacity Slider
+        list.add(TrackpadMenuAdapter.MenuItem("Mirror Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefMirrorAlpha, 255) { v ->
+            service.updatePref("mirror_alpha", v)
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        // Orange Trail Delay Slider (100ms - 3000ms, show as 0.1s - 3.0s)
+        val currentDelayMs = p.prefMirrorOrientDelayMs
+        list.add(TrackpadMenuAdapter.MenuItem("Orient Delay: ${currentDelayMs}ms", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, (currentDelayMs / 100).toInt(), 30) { v ->
+            val newDelayMs = (v as Int) * 100L
+            service.updatePref("mirror_orient_delay", newDelayMs)
+            loadTab(currentTab) // Refresh to show new value
+        })
+        
+        return list
+    }
+    // =========================
+    // END GET MIRROR ITEMS
+    // =========================
+
+    // =========================
+    // GET CONFIG ITEMS - Trackpad configuration settings
+    // FIXED: Tap to Scroll Boolean Logic
+    // ========================= 
+    private fun getConfigItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        list.add(TrackpadMenuAdapter.MenuItem("TRACKPAD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        list.add(TrackpadMenuAdapter.MenuItem("SENSITIVITY", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        list.add(TrackpadMenuAdapter.MenuItem("Cursor Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.cursorSpeed * 10).toInt()) { v -> service.updatePref("cursor_speed", (v as Int) / 10f) })
+        list.add(TrackpadMenuAdapter.MenuItem("Scroll Speed", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.SLIDER, (p.scrollSpeed * 10).toInt(), 50) { v -> service.updatePref("scroll_speed", (v as Int) / 10f) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("APPEARANCE", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        list.add(TrackpadMenuAdapter.MenuItem("Border Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefAlpha, 255) { v -> service.updatePref("alpha", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Background Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBgAlpha, 255) { v -> service.updatePref("bg_alpha", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Handle Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefHandleSize / 2) { v -> service.updatePref("handle_size", v) })        
+        list.add(TrackpadMenuAdapter.MenuItem("Scroll Bar Width", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefScrollTouchSize, 200) { v -> service.updatePref("scroll_size", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Cursor Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefCursorSize) { v -> service.updatePref("cursor_size", v) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("BEHAVIOR", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Reverse Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefReverseScroll) 1 else 0) { v -> service.updatePref("reverse_scroll", v) })
+        
+        // MODIFIED: Correct Boolean Check for Toast
+        list.add(TrackpadMenuAdapter.MenuItem("Tap to Scroll", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefTapScroll) 1 else 0) { v -> 
+            service.updatePref("tap_scroll", v)
+            // Fix: Cast strictly to Boolean or check against false directly
+            if (v == false) {
+                android.widget.Toast.makeText(context, "Beta mouse scrolling is activated - warning - scroll slowly for optimal results", android.widget.Toast.LENGTH_LONG).show()
+            }
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Haptic Feedback", R.drawable.ic_tab_settings, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefVibrate) 1 else 0) { v -> service.updatePref("vibrate", v) })
+        return list
+    }
+    // =========================
+    // END GET CONFIG ITEMS
+    // =========================
+
+    // =========================
+    // GET TUNE ITEMS - Keyboard configuration settings
+    // =========================
+    private fun getTuneItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        list.add(TrackpadMenuAdapter.MenuItem("KEYBOARD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // NEW: Launch Proxy Activity for Picker
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Null KB to block default)", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
+            service.forceSystemKeyboardVisible()
+            hide() // Close menu
+            
+            try {
+                val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch(e: Exception) {
+                android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha, 255) { v -> service.updatePref("keyboard_alpha", v) })
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Scale", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyScale, 200) { v -> service.updatePref("keyboard_key_scale", v) })
+                list.add(TrackpadMenuAdapter.MenuItem("Auto Display Off", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefAutomationEnabled) 1 else 0) {
+                    v -> service.updatePref("automation_enabled", v as Boolean)
+                })
+
+        // MOVED & RENAMED: Cover Screen KB Blocker
+        list.add(TrackpadMenuAdapter.MenuItem("Cover Screen KB blocker (restart app after reverting)", android.R.drawable.ic_lock_lock, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefBlockSoftKeyboard) 1 else 0) {
+            v -> service.updatePref("block_soft_kb", v as Boolean)
+        })
+
+        return list
+    }
+    // =========================
+    // END GET TUNE ITEMS
+    // =========================
+
+    // =========================
+    // HARDKEY ACTIONS LIST
+    // =========================
+    private val hardkeyActions = listOf(
+        "none" to "None (System Default)",
+        "left_click" to "Left Click (Hold to Drag)",
+        "right_click" to "Right Click (Hold to Drag)",
+        "scroll_up" to "Scroll Up",
+        "scroll_down" to "Scroll Down",
+        "display_toggle_alt" to "Display (Alt Mode)",
+        "display_toggle_std" to "Display (Std Mode)",
+        "display_wake" to "Display Wake",
+        "alt_position" to "Alt KB Position",
+        "toggle_keyboard" to "Toggle Keyboard",
+        "toggle_trackpad" to "Toggle Trackpad",
+        "open_menu" to "Open Menu",
+        "reset_cursor" to "Reset Cursor",
+        "toggle_bubble" to "Launcher Bubble", // <--- NEW ITEM
+        "action_back" to "Back",
+        "action_home" to "Home",
+        "action_forward" to "Forward (Browser)",
+        "action_vol_up" to "Volume Up",
+        "action_vol_down" to "Volume Down"
+    )
+    
+    private fun getActionDisplayName(actionId: String): String {
+        return hardkeyActions.find { it.first == actionId }?.second ?: actionId
+    }
+    // =========================
+    // END HARDKEY ACTIONS LIST
+    // =========================
+
+    // =========================
+    // SHOW ACTION PICKER - In-Menu Replacement for Dialog
+    // Replaces the current menu list with selection options to avoid Service/Dialog crashes
+    // =========================
+    private fun showActionPicker(prefKey: String, currentValue: String) {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        
+        // 1. Header
+        list.add(TrackpadMenuAdapter.MenuItem("Select Action", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // 2. Cancel / Back Option
+        list.add(TrackpadMenuAdapter.MenuItem("<< Go Back", android.R.drawable.ic_menu_revert, TrackpadMenuAdapter.Type.ACTION) {
+            // Reload the previous tab to "go back"
+            loadTab(TAB_HARDKEYS)
+        })
+
+        // 3. Action Options
+        for ((id, name) in hardkeyActions) {
+            // Show a "Check" icon if this is the currently selected value
+            // Otherwise show 0 (no icon) or a generic dot
+            val iconRes = if (id == currentValue) android.R.drawable.checkbox_on_background else 0
+            
+            list.add(TrackpadMenuAdapter.MenuItem(name, iconRes, TrackpadMenuAdapter.Type.ACTION) {
+                // On Click: Update Pref and Go Back
+                service.updatePref(prefKey, id)
+                loadTab(TAB_HARDKEYS)
+            })
+        }
+        
+        // 4. Update the View
+        recyclerView?.adapter = TrackpadMenuAdapter(list)
+    }
+    // =========================
+    // END SHOW ACTION PICKER
+    // =========================
+
+    // =========================
+    // GET HARDKEY ITEMS - Hardkey bindings configuration menu
+    // Allows users to customize Vol Up/Down and Power button actions
+    // =========================
+    private fun getHardkeyItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        // NEW MAIN HEADER
+        list.add(TrackpadMenuAdapter.MenuItem("KEYBINDS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("VOLUME UP", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Tap: ${getActionDisplayName(p.hardkeyVolUpTap)}",
+            android.R.drawable.ic_media_play,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_up_tap", p.hardkeyVolUpTap) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Double-Tap: ${getActionDisplayName(p.hardkeyVolUpDouble)}",
+            android.R.drawable.ic_media_ff,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_up_double", p.hardkeyVolUpDouble) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Hold: ${getActionDisplayName(p.hardkeyVolUpHold)}",
+            android.R.drawable.ic_menu_crop,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_up_hold", p.hardkeyVolUpHold) })
+        
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("VOLUME DOWN", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Tap: ${getActionDisplayName(p.hardkeyVolDownTap)}",
+            android.R.drawable.ic_media_play,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_down_tap", p.hardkeyVolDownTap) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Double-Tap: ${getActionDisplayName(p.hardkeyVolDownDouble)}",
+            android.R.drawable.ic_media_ff,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_down_double", p.hardkeyVolDownDouble) })
+        
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Hold: ${getActionDisplayName(p.hardkeyVolDownHold)}",
+            android.R.drawable.ic_menu_crop,
+            TrackpadMenuAdapter.Type.ACTION
+        ) { showActionPicker("hardkey_vol_down_hold", p.hardkeyVolDownHold) })
+        
+        // Subheader
+        list.add(TrackpadMenuAdapter.MenuItem("TIMING", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+        
+        // Max 500ms
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Double-Tap Speed (ms)",
+            android.R.drawable.ic_menu_recent_history,
+            TrackpadMenuAdapter.Type.SLIDER,
+            p.doubleTapMs,
+            500 
+        ) { v ->
+            service.updatePref("double_tap_ms", v)
+        })
+        
+        // Max 800ms
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "Hold Duration (ms)",
+            android.R.drawable.ic_menu_recent_history,
+            TrackpadMenuAdapter.Type.SLIDER,
+            p.holdDurationMs,
+            800 
+        ) { v ->
+            service.updatePref("hold_duration_ms", v)
+        })
+        
+        return list
+    }
+    // =========================
+    // END GET HARDKEY ITEMS
+    // =========================
+
+
+    // =========================
+    // GET BUBBLE ITEMS - Bubble launcher customization
+    // Size slider, Icon cycle, Opacity slider
+    // =========================
+    private fun getBubbleItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val p = service.prefs
+        
+        list.add(TrackpadMenuAdapter.MenuItem("BUBBLE CUSTOMIZATION", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        // Size slider: 50-200 (50=half, 100=standard, 200=double)
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Size", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleSize, 200) { v ->
+            service.updatePref("bubble_size", v)
+        })
+        
+        // Icon cycle action
+        val iconNames = arrayOf("Trackpad", "Cursor", "Main", "Keyboard", "Compass", "Location")
+        val currentIconName = iconNames.getOrElse(p.prefBubbleIconIndex) { "Default" }
+        list.add(TrackpadMenuAdapter.MenuItem("Icon: $currentIconName", android.R.drawable.ic_menu_gallery, TrackpadMenuAdapter.Type.ACTION) { 
+            service.updatePref("bubble_icon", true)
+            loadTab(TAB_BUBBLE) // Refresh to show new icon name
+        })
+        
+        // Opacity slider: 50-255
+        list.add(TrackpadMenuAdapter.MenuItem("Bubble Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefBubbleAlpha, 255) { v ->
+            service.updatePref("bubble_alpha", v)
+        })
+        
+        // Reset button
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_revert, TrackpadMenuAdapter.Type.ACTION) { 
+            service.resetBubblePosition()
+        })
+        
+        // --- PERSISTENCE TOGGLE ---
+        list.add(TrackpadMenuAdapter.MenuItem("SERVICE BEHAVIOR", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        val persistHelp = if (p.prefPersistentService) "Bubble stays when app closes" else "Bubble closes with app"
+        list.add(TrackpadMenuAdapter.MenuItem("Keep Alive (Background)", 
+            android.R.drawable.ic_menu_manage, 
+            TrackpadMenuAdapter.Type.TOGGLE, 
+            if(p.prefPersistentService) 1 else 0) { v ->
+            service.updatePref("persistent_service", v)
+            loadTab(TAB_BUBBLE) // Refresh description
+        })
+        list.add(TrackpadMenuAdapter.MenuItem(persistHelp, 0, TrackpadMenuAdapter.Type.INFO))
+        
+        return list
+    }
+    // =========================
+    // END GET BUBBLE ITEMS
+    // =========================
+
+    private fun getProfileItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        val currentRes = "${service.currentDisplayId}: ${service.getProfileKey().replace("P_", "").replace("_", " x ")}"
+        
+        list.add(TrackpadMenuAdapter.MenuItem("LAYOUT PROFILES", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Current: $currentRes", R.drawable.ic_tab_profiles, TrackpadMenuAdapter.Type.INFO))
+        
+        // CHANGED TITLE
+        list.add(TrackpadMenuAdapter.MenuItem("Save Layout and Presets", android.R.drawable.ic_menu_save, TrackpadMenuAdapter.Type.ACTION) { 
+            service.saveLayout()
+            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
+        })
+
+        // NEW: Reload Profile
+        list.add(TrackpadMenuAdapter.MenuItem("Reload Profile", android.R.drawable.ic_popup_sync, TrackpadMenuAdapter.Type.ACTION) { 
+            service.loadLayout() // Reloads based on current resolution/display
+            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
+        })
+        
+        list.add(TrackpadMenuAdapter.MenuItem("Delete Profile", android.R.drawable.ic_menu_delete, TrackpadMenuAdapter.Type.ACTION) { 
+            service.deleteCurrentProfile()
+            drawerView?.postDelayed({ loadTab(TAB_PROFILES) }, 200)
+        })
+        
+        // --- SAVED LAYOUTS LIST ---
+        list.add(TrackpadMenuAdapter.MenuItem("SAVED LAYOUTS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        val saved = service.getSavedProfileList()
+        if (saved.isEmpty()) {
+            list.add(TrackpadMenuAdapter.MenuItem("No saved layouts found.", 0, TrackpadMenuAdapter.Type.INFO))
+        } else {
+            for (res in saved) {
+                list.add(TrackpadMenuAdapter.MenuItem("• $res", 0, TrackpadMenuAdapter.Type.INFO))
+            }
+        }
+        
+        return list
+    }
+
+    private fun getHelpItems(): List<TrackpadMenuAdapter.MenuItem> {
+        val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
+        
+        list.add(TrackpadMenuAdapter.MenuItem("INSTRUCTIONS", 0, TrackpadMenuAdapter.Type.HEADER))
+        
+        val text = 
+            "TRACKPAD CONTROLS\n" +
+            "• Tap: Left Click\n" +
+            "• 2-Finger Tap: Right Click\n" +
+            "• Hold + Slide: Drag & Drop\n" +
+            "• Edge (Top/Bottom): V-Scroll\n" +
+            "• Edge (Left/Right): H-Scroll\n\n" +
+            "KEYBOARD OVERLAY\n" +
+            "• Drag Top Bar: Move Window\n" +
+            "• Drag Bottom-Right: Resize\n" +
+            "• Hold Corner: Toggle Key/Mouse\n\n" +
+            "HARDWARE KEYS\n" +
+            "• Use the 'Hardkeys' tab to map\n" +
+            "  Volume Up/Down to clicks,\n" +
+            "  scrolling, or screen controls."
+            
+        list.add(TrackpadMenuAdapter.MenuItem(text, 0, TrackpadMenuAdapter.Type.INFO))
+        
+        list.add(TrackpadMenuAdapter.MenuItem("LAUNCHER & APP", 0, TrackpadMenuAdapter.Type.HEADER))
+        val text2 = 
+            "• Floating Bubble: Tap to open this menu. Drag to move.\n" +
+            "• Setup App: Open 'DroidOS Trackpad' from your Android App Drawer to adjust permissions or restart the service."
+        list.add(TrackpadMenuAdapter.MenuItem(text2, 0, TrackpadMenuAdapter.Type.INFO))
+        
+        return list
+    }
+}
+```
+
 ## File: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlauncher/ShellUserService.kt
 ```kotlin
 package com.example.quadrantlauncher
@@ -17154,16 +15257,7 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     // END BLOCK: GESTURE TYPING STATE
     // =================================================================================
-// =================================================================================
-    // PREDICTION BAR DRAG TRACKING
-    // SUMMARY: Track when a gesture starts on the prediction bar so we can bypass
-    //          mirror mode for the entire drag gesture (not just the initial touch).
-    //          This allows drag-to-delete to work in mirror mode.
-    // =================================================================================
-    private var gestureStartedOnPredictionBar = false
-    // =================================================================================
-    // END BLOCK: PREDICTION BAR DRAG TRACKING
-    // =================================================================================
+
 
     // --- SPACEBAR TRACKPAD VARIABLES ---
 
@@ -17474,7 +15568,7 @@ class KeyboardView @JvmOverloads constructor(
     //          candidates (cand1, cand2, cand3). Returns the text and isNew flag
     //          if found, null otherwise.
     // =================================================================================
-    private fun findCandidateAt(x: Float, y: Float): Pair<String, Boolean>? {
+    internal fun findCandidateAt(x: Float, y: Float): Pair<String, Boolean>? {
         val candidates = listOf(cand1, cand2, cand3)
 
         for (candView in candidates) {
@@ -17508,7 +15602,45 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     // END BLOCK: findCandidateAt
     // =================================================================================
-
+// =================================================================================
+    // FUNCTION: isOverBackspace
+    // SUMMARY: Returns true if the given coordinates are over the backspace key.
+    //          Used by mirror mode to detect drag-to-delete gestures.
+    // =================================================================================
+    fun isOverBackspace(x: Float, y: Float): Boolean {
+        val bkspKey = findViewWithTag<View>("BKSP") ?: return false
+        
+        val loc = IntArray(2)
+        bkspKey.getLocationInWindow(loc)
+        
+        val myLoc = IntArray(2)
+        this.getLocationInWindow(myLoc)
+        
+        // Calculate relative position
+        val relX = loc[0] - myLoc[0]
+        val relY = loc[1] - myLoc[1]
+        
+        return x >= relX && x < relX + bkspKey.width &&
+               y >= relY && y < relY + bkspKey.height
+    }
+    // =================================================================================
+    // END BLOCK: isOverBackspace
+    // =================================================================================
+    
+    // =================================================================================
+    // FUNCTION: cancelCurrentSwipe
+    // SUMMARY: Cancels any in-progress swipe gesture. Clears the path and trail.
+    // =================================================================================
+    fun cancelCurrentSwipe() {
+        isSwiping = false
+        swipeTrail?.clear()
+        swipeTrail?.visibility = View.INVISIBLE
+        currentPath.clear()
+        swipePointerId = -1
+    }
+    // =================================================================================
+    // END BLOCK: cancelCurrentSwipe
+    // =================================================================================
     // =================================================================================
     // FUNCTION: getKeyboardState / setKeyboardState
     // SUMMARY: Gets/sets the current keyboard layer state for syncing to mirror.
@@ -17814,44 +15946,12 @@ class KeyboardView @JvmOverloads constructor(
     // =================================================================================
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         // =================================================================================
-        // VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING (EXCEPT PREDICTION BAR)
+        // VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING
         // SUMMARY: When orientation mode is active, we must block swipe typing here
         //          because dispatchTouchEvent runs BEFORE onTouchEvent. If we don't
         //          block here, swipe paths get collected and committed even though
         //          onTouchEvent blocks individual key presses.
-        //          EXCEPTION: Prediction bar touches bypass mirror mode entirely so
-        //          users can tap/drag suggestions (including drag-to-delete).
-        //          CRITICAL: Only bypass if gesture STARTED on prediction bar, not if
-        //          a swipe trail passes through it.
         // =================================================================================
-        
-// Track gesture start - ONLY set flag on ACTION_DOWN
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            val isPredictionBarTouch = suggestionStrip != null && event.y < (suggestionStrip?.bottom ?: 0)
-            gestureStartedOnPredictionBar = isPredictionBarTouch
-            Log.d("DroidOS_Drag", "dispatchTouchEvent DOWN: y=${event.y.toInt()}, stripBottom=${suggestionStrip?.bottom}, isPredBar=$isPredictionBarTouch, gestureStarted=$gestureStartedOnPredictionBar")
-        }
-        
-        // Debug log for all events when gesture started on prediction bar
-        if (gestureStartedOnPredictionBar) {
-            Log.d("DroidOS_Drag", "dispatchTouchEvent BYPASS: action=${event.actionMasked}, x=${event.x.toInt()}, y=${event.y.toInt()}")
-        }
-        
-        // Reset on gesture end
-        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            // We'll reset AFTER processing below
-        }
-        
-        // ONLY bypass if gesture STARTED on prediction bar (not if trail passes through)
-        if (gestureStartedOnPredictionBar) {
-            val result = super.dispatchTouchEvent(event)
-            // Reset flag on gesture end
-            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                gestureStartedOnPredictionBar = false
-            }
-            return result
-        }
-        
         val callback = mirrorTouchCallback
         if (callback != null) {
             val shouldBlock = callback.invoke(event.x, event.y, event.actionMasked)
@@ -17889,8 +15989,9 @@ class KeyboardView @JvmOverloads constructor(
             return true
         }
         // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING (EXCEPT PREDICTION BAR)
-        // =================================================================================        // =================================================================================
+        // END BLOCK: VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING
+        // =================================================================================
+
         // --- 1. PREVENT SWIPE TRAIL ON SPACEBAR ---
         // If the touch starts on the SPACE key, we skip the swipe detection logic entirely.
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
@@ -18123,15 +16224,14 @@ class KeyboardView @JvmOverloads constructor(
         //          touches should work immediately so users can tap suggestions.
         // =================================================================================
 
-// Check if touch is in the prediction bar area (top portion of keyboard)
-        // ONLY bypass mirror mode if gesture STARTED on prediction bar
-        val bypassMirrorMode = gestureStartedOnPredictionBar
+        // Check if touch is in the prediction bar area (top portion of keyboard)
+        val isPredictionBarTouch = suggestionStrip != null && y < (suggestionStrip?.bottom ?: 0)
 
         val touchedView = findKeyView(x, y)
         val keyTag = touchedView?.tag as? String
 
         val callback = mirrorTouchCallback
-        if (callback != null && !bypassMirrorMode) {
+        if (callback != null && !isPredictionBarTouch) {
             val shouldBlock = callback.invoke(x, y, action)
             if (shouldBlock) {
                 // Orientation mode is active - set flag and block ALL input
@@ -18155,7 +16255,8 @@ class KeyboardView @JvmOverloads constructor(
         // =================================================================================
         // ORIENTATION MODE CHECK (fallback, but skip for prediction bar)
         // =================================================================================
-        if (isOrientationModeActive && !bypassMirrorMode) {            currentActiveKey?.let {
+        if (isOrientationModeActive && !isPredictionBarTouch) {
+            currentActiveKey?.let {
                 val tag = it.tag as? String
                 if (tag != null) setKeyVisual(it, false, tag)
             }
@@ -19454,7 +17555,55 @@ class KeyboardOverlay(
         keyboardView?.handleDeferredTap(x, y)
     }
 // =================================================================================
-    // FUNCTION: getKeyAtPosition
+// =================================================================================
+    // FUNCTION: findCandidateAt
+    // SUMMARY: Returns the candidate text at given position, or null if not on a candidate.
+    //          Used by mirror mode to detect drag-to-delete gestures.
+    // =================================================================================
+    fun findCandidateAt(x: Float, y: Float): String? {
+        return keyboardView?.findCandidateAt(x, y)?.first
+    }
+    // =================================================================================
+    // END BLOCK: findCandidateAt
+    // =================================================================================
+    
+    // =================================================================================
+    // FUNCTION: isOverBackspace
+    // SUMMARY: Returns true if the given position is over the backspace key.
+    //          Used by mirror mode to detect drag-to-delete gestures.
+    // =================================================================================
+    fun isOverBackspace(x: Float, y: Float): Boolean {
+        return keyboardView?.isOverBackspace(x, y) ?: false
+    }
+    // =================================================================================
+    // END BLOCK: isOverBackspace
+    // =================================================================================
+    
+    // =================================================================================
+// =================================================================================
+    // FUNCTION: triggerSuggestionDropped
+    // SUMMARY: Triggers the onSuggestionDropped callback for drag-to-delete in mirror mode.
+    //          Calls our own onSuggestionDropped since KeyboardOverlay implements KeyboardListener.
+    // =================================================================================
+    fun triggerSuggestionDropped(text: String) {
+        onSuggestionDropped(text)
+    }
+    // =================================================================================
+    // END BLOCK: triggerSuggestionDropped
+    // =================================================================================    
+    // =================================================================================
+    // FUNCTION: cancelCurrentSwipe
+    // SUMMARY: Cancels any in-progress swipe gesture. Used when drag-to-delete is detected
+    //          to prevent the drag from being interpreted as a swipe word.
+    // =================================================================================
+    fun cancelCurrentSwipe() {
+        keyboardView?.cancelCurrentSwipe()
+    }
+    // =================================================================================
+    // END BLOCK: cancelCurrentSwipe
+    // =================================================================================
+
+// FUNCTION: getKeyAtPosition
     // SUMMARY: Returns the key tag at the given position, or null if no key found.
     //          Used by mirror mode to check if finger is on a repeatable key.
     // =================================================================================
@@ -22370,7 +20519,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
     // END BLOCK: VIRTUAL MIRROR MODE STATE
     // =================================================================================
-
+    // MIRROR MODE DRAG-TO-DELETE TRACKING (BLUE PHASE)
+    // SUMMARY: Track when blue phase starts on a prediction candidate so we can detect
+    //          drag-to-delete gestures. The drag happens in BLUE phase after orienting.
+    // =================================================================================
+    private var bluePhaseDragCandidate: String? = null
+    // =================================================================================
+    // END BLOCK: MIRROR MODE DRAG-TO-DELETE TRACKING
+    // =================================================================================
     private var isVoiceActive = false
     
     
@@ -22784,7 +20940,7 @@ private var isInOrientationMode = false
     //          Switches from orange trail to blue trail.
     //          Initializes swipe tracking so path collection starts NOW.
     // =================================================================================
-    private val orientationModeTimeout = Runnable {
+private val orientationModeTimeout = Runnable {
         Log.d(TAG, ">>> TIMEOUT - switching to BLUE trail <<<")
 
         isInOrientationMode = false
@@ -22795,6 +20951,19 @@ private var isInOrientationMode = false
 
         // Exit orientation mode
         keyboardOverlay?.setOrientationMode(false)
+
+        // =================================================================================
+        // BLUE PHASE DRAG-TO-DELETE: Check if finger is on prediction candidate
+        // SUMMARY: When switching to blue phase, check if finger is on a prediction word.
+        //          If so, store it for potential drag-to-delete gesture.
+        // =================================================================================
+        bluePhaseDragCandidate = keyboardOverlay?.findCandidateAt(lastOrientX, lastOrientY)
+        if (bluePhaseDragCandidate != null) {
+            Log.d(TAG, "Blue phase starting on candidate: '$bluePhaseDragCandidate'")
+        }
+        // =================================================================================
+        // END BLOCK: BLUE PHASE DRAG-TO-DELETE CHECK
+        // =================================================================================
 
         // Set BLUE trail color for typing phase
         mirrorTrailView?.setTrailColor(0xFF4488FF.toInt())  // Blue
@@ -22810,7 +20979,7 @@ private var isInOrientationMode = false
         // Keep mirror visible - only adjust alpha, no background color
         mirrorKeyboardView?.alpha = 0.7f
         // FIX: Removed setBackgroundColor - container is transparent
-    }
+    }    
     // =================================================================================
     // END BLOCK: orientationModeTimeout
     // =================================================================================
@@ -25096,9 +23265,11 @@ private var isInOrientationMode = false
         when (action) {
             MotionEvent.ACTION_DOWN -> {
                 Log.d(TAG, "Mirror touch DOWN - starting ORANGE trail")
+                
+                // Reset blue phase drag tracking for new gesture
+                bluePhaseDragCandidate = null
 
-                // Cancel any pending fade
-                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
+                // Cancel any pending fade                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
 
                 // Make mirror VISIBLE on touch
                 mirrorKeyboardView?.alpha = 0.9f
@@ -25291,6 +23462,27 @@ private var isInOrientationMode = false
                 } else {
                     // Normal lift after blue phase - clear mirror trail
                     mirrorTrailView?.clear()
+                    
+                    // =================================================================================
+                    // BLUE PHASE DRAG-TO-DELETE CHECK
+                    // SUMMARY: If blue phase started on a candidate and ended on backspace,
+                    //          trigger the delete action instead of normal swipe commit.
+                    // =================================================================================
+                    val draggedCandidate = bluePhaseDragCandidate
+                    if (draggedCandidate != null) {
+                        if (keyboardOverlay?.isOverBackspace(x, y) == true) {
+                            Log.d(TAG, "Blue phase drag-to-delete: '$draggedCandidate' dropped on backspace")
+                            keyboardOverlay?.triggerSuggestionDropped(draggedCandidate)
+                            // Don't process as swipe - clear the path
+                            keyboardOverlay?.cancelCurrentSwipe()
+                        } else {
+                            Log.d(TAG, "Blue phase drag cancelled - not over backspace")
+                        }
+                    }
+                    bluePhaseDragCandidate = null // Reset for next gesture
+                    // =================================================================================
+                    // END BLOCK: BLUE PHASE DRAG-TO-DELETE CHECK
+                    // =================================================================================
                 }
 
                 // Fade mirror
