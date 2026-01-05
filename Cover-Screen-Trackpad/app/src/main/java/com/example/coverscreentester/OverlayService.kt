@@ -596,10 +596,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // Keys that can repeat in mirror orientation mode (backspace + arrows)
     private val mirrorRepeatableKeys = setOf("BKSP", "⌫", "←", "→", "↑", "↓", "◄", "▲", "▼", "►")
     
+
     private val mirrorRepeatRunnable = object : Runnable {
         override fun run() {
             mirrorRepeatKey?.let { key ->
-                if (isMirrorRepeating && isInOrientationMode) {
+                // FIXED: Removed '&& isInOrientationMode' check.
+                // This allows repeat to work in Blue Mode (where isInOrientationMode is false).
+                if (isMirrorRepeating) {
                     Log.d(TAG, "Mirror repeat: $key")
                     keyboardOverlay?.triggerKeyPress(key)
                     mirrorRepeatHandler.postDelayed(this, MIRROR_REPEAT_INTERVAL)
@@ -607,6 +610,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
         }
     }
+
     // =================================================================================
     // END BLOCK: MIRROR MODE KEY REPEAT VARIABLES
     // =================================================================================    // =================================================================================
@@ -3022,21 +3026,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 return true
             }
 
+
             MotionEvent.ACTION_MOVE -> {
                 // 1. DRAG MODE
                 if (isMirrorDragActive) {
-                     // Check if we are over the Backspace key
+                     // Always draw the ORANGE trail so user can see where they are dragging
+                     mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())
+                     mirrorTrailView?.addPoint(mirrorX, mirrorY)
+
+                     // Check for Backspace Hover
                      val currentKey = keyboardOverlay?.getKeyAtPosition(x, y)
                      val isBackspace = (currentKey == "BKSP" || currentKey == "⌫" || currentKey == "BACKSPACE")
                      
                      if (isBackspace) {
-                         // [VISUAL] Turn Trail RED to confirm delete
-                         mirrorTrailView?.setTrailColor(Color.RED)
-                         mirrorTrailView?.addPoint(mirrorX, mirrorY)
+                         // Highlight the BACKSPACE KEY itself (Red)
+                         mirrorKeyboardView?.highlightKey("BKSP", true, Color.RED)
                      } else {
-                         // Normal drag (no trail or blueish to indicate holding)
-                         mirrorTrailView?.setTrailColor(0xFF4488FF.toInt())
-                         mirrorTrailView?.clear() // Clear trail if not on backspace (optional, or keep it blue)
+                         // Clear highlight
+                         mirrorKeyboardView?.highlightKey("BKSP", false)
                      }
 
                      val now = SystemClock.uptimeMillis()
@@ -3045,6 +3052,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                      event.recycle()
                      return true
                 }
+
 
                 // 2. ORANGE MODE (Orientation)
                 if (isInOrientationMode) {
@@ -3096,9 +3104,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 }
             }
 
+
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // 1. END DRAG (Check for Drop on Backspace)
                 if (isMirrorDragActive) {
+                     // Clear any key highlights
+                     mirrorKeyboardView?.highlightKey("BKSP", false)
+
                      val upKey = keyboardOverlay?.getKeyAtPosition(x, y)
                      Log.d(TAG, "Drag Drop on Key: $upKey") // Debug log
                      

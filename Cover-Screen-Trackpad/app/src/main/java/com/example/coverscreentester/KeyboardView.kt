@@ -1493,7 +1493,9 @@ class KeyboardView @JvmOverloads constructor(
     // END BLOCK: onKeyUp
     // =================================================================================
 
-    private fun setKeyVisual(container: View, pressed: Boolean, key: String, overrideColor: Int? = null) {
+
+    // Changed to public to allow external highlighting (e.g. from OverlayService during drag)
+    fun setKeyVisual(container: View, pressed: Boolean, key: String, overrideColor: Int? = null) {
         val tv = (container as? ViewGroup)?.getChildAt(0) as? TextView ?: return
         val bg = tv.background as? GradientDrawable ?: return
 
@@ -1505,6 +1507,15 @@ class KeyboardView @JvmOverloads constructor(
             bg.setColor(getKeyColor(key))
         }
     }
+
+    // New helper to highlight a specific key by tag
+    fun highlightKey(tag: String, active: Boolean, color: Int? = null) {
+        val view = findViewWithTag<View>(tag)
+        if (view != null) {
+            setKeyVisual(view, active, tag, color)
+        }
+    }
+
 
     private fun stopRepeat() {
         isRepeating = false
