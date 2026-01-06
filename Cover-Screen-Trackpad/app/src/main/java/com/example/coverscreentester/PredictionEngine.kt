@@ -410,17 +410,18 @@ class PredictionEngine {
         // 1. Standardize the word immediately
         val cleanWord = word.trim().lowercase(java.util.Locale.ROOT)
         
+
         // FILTER: Don't learn garbage (random letters/typos)
         if (looksLikeGarbage(cleanWord)) {
-            android.util.Log.d("DroidOS_Prediction", "Ignored garbage input: $cleanWord")
-            return
+             android.util.Log.d("DroidOS_Prediction", "Ignored garbage input: $cleanWord")
+             return
         }
 
-        // FILTER: Don't learn blocked words
-        if (isWordBlocked(cleanWord)) return
-
+        // CHANGE: Removed isWordBlocked check to allow unblocking via learnWord
+        
         // OPTIMIZATION: Don't relearn if we already know it
         if (hasWord(cleanWord)) return
+
 
         Thread {
             try {

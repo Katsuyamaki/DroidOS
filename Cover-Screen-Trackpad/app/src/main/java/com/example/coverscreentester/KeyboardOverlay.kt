@@ -1366,19 +1366,17 @@ class KeyboardOverlay(
             return
         }
 
+
         // 1. Get dictionary suggestions (already filtered for blocked words)
         val suggestions = predictionEngine.getSuggestions(prefix, 3)
-
         val candidates = ArrayList<KeyboardView.Candidate>()
 
-        // 2. Add Raw Input as first option (but NOT if it's blocked)
-        val lowerPrefix = prefix.lowercase()
-        val isBlocked = predictionEngine.isWordBlocked(lowerPrefix)
+        // 2. Add Raw Input as first option (Always allow raw input to enable unblocking)
+        // If the word is blocked, it won't be in the dictionary (hasWord=false), so it will show as New (Cyan).
+        // Clicking it will trigger learnWord(), which now unblocks it.
+        val rawExists = predictionEngine.hasWord(prefix)
+        candidates.add(KeyboardView.Candidate(prefix, isNew = !rawExists))
 
-        if (!isBlocked) {
-            val rawExists = predictionEngine.hasWord(prefix)
-            candidates.add(KeyboardView.Candidate(prefix, isNew = !rawExists))
-        }
 
         // 3. Add dictionary suggestions (avoiding duplicates)
         for (s in suggestions) {
