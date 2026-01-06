@@ -37,7 +37,6 @@ class SettingsActivity : Activity() {
         
         val seekHandleTouch = findViewById<SeekBar>(R.id.seekBarHandleTouch)
         val seekScrollTouch = findViewById<SeekBar>(R.id.seekBarScrollTouch)
-        val seekKeyScale = findViewById<SeekBar>(R.id.seekBarKeyScale)
         
         val btnSave = findViewById<Button>(R.id.btnSave)
         val btnBack = findViewById<Button>(R.id.btnBack)
@@ -63,7 +62,6 @@ class SettingsActivity : Activity() {
         seekScrollVisual.progress = prefs.getInt("scroll_visual_size", 4)
         seekHandleTouch.progress = prefs.getInt("handle_touch_size", 60)
         seekScrollTouch.progress = prefs.getInt("scroll_touch_size", 60)
-        seekKeyScale.progress = prefs.getInt("keyboard_key_scale", 135) // CHANGED: Default 135
 
         // Listeners
         seekBarCursor.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -88,7 +86,6 @@ class SettingsActivity : Activity() {
         seekScrollVisual.setOnSeekBarChangeListener(createPreviewListener("scroll_visual"))
         seekHandleTouch.setOnSeekBarChangeListener(createPreviewListener("handle_touch"))
         seekScrollTouch.setOnSeekBarChangeListener(createPreviewListener("scroll_touch"))
-        seekKeyScale.setOnSeekBarChangeListener(createPreviewListener("keyboard_scale"))
 
         btnSave.setOnClickListener {
             val cVal = if (seekBarCursor.progress < 1) 0.1f else seekBarCursor.progress / 10f
@@ -108,7 +105,6 @@ class SettingsActivity : Activity() {
                 .putInt("scroll_visual_size", seekScrollVisual.progress)
                 .putInt("handle_touch_size", seekHandleTouch.progress)
                 .putInt("scroll_touch_size", seekScrollTouch.progress)
-                .putInt("keyboard_key_scale", seekKeyScale.progress)
                 .apply()
 
             val intent = Intent(this, OverlayService::class.java)

@@ -119,18 +119,7 @@
             android:layout_gravity="center"
             android:layout_marginBottom="10dp"/>
             
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Keyboard Key Size (%)"
-            android:textColor="#FFFFFF"/>
-        <SeekBar
-            android:id="@+id/seekBarKeyScale"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="200"
-            android:progress="100"
-            android:layout_marginBottom="16dp"/>
+
 
         <TextView
             android:layout_width="match_parent"

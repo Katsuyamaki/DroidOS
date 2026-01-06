@@ -1779,7 +1779,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             "persistent_service" -> prefs.prefPersistentService = parseBoolean(value)
             "block_soft_kb" -> { prefs.prefBlockSoftKeyboard = parseBoolean(value); setSoftKeyboardBlocking(prefs.prefBlockSoftKeyboard) }
             "keyboard_alpha" -> { prefs.prefKeyboardAlpha = value as Int; keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha) }
-            "keyboard_key_scale" -> { prefs.prefKeyScale = value as Int; keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f) }
+
             "hardkey_vol_up_tap" -> prefs.hardkeyVolUpTap = value as String
             "hardkey_vol_up_double" -> prefs.hardkeyVolUpDouble = value as String
             "hardkey_vol_up_hold" -> prefs.hardkeyVolUpHold = value as String
@@ -2527,6 +2527,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         settingsStr.append("${prefs.prefBubbleIconIndex};")
         settingsStr.append("${prefs.prefBubbleX};")
         settingsStr.append("${prefs.prefBubbleY};")
+        settingsStr.append("${if(prefs.prefVibrate) 1 else 0};")
         settingsStr.append("${prefs.hardkeyVolUpTap};")
         settingsStr.append("${prefs.hardkeyVolUpDouble};")
         settingsStr.append("${prefs.hardkeyVolUpHold};")
@@ -2534,7 +2535,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         settingsStr.append("${prefs.hardkeyVolDownDouble};")
         settingsStr.append("${prefs.hardkeyVolDownHold};")
         settingsStr.append("${prefs.hardkeyPowerDouble};")
-        settingsStr.append("$currentKbX;$currentKbY;$currentKbW;$currentKbH") // Indices 27-30
+        settingsStr.append("$currentKbX;$currentKbY;$currentKbW;$currentKbH")
 
         p.putString("SETTINGS_$key", settingsStr.toString())
         p.apply()
@@ -2560,7 +2561,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         val settings = p.getString("SETTINGS_$key", null)
         if (settings != null) {
             val parts = settings.split(";")
-            if (parts.size >= 15) {
+            if (parts.size >= 32) {
                 prefs.cursorSpeed = parts[0].toFloat()
                 prefs.scrollSpeed = parts[1].toFloat()
                 prefs.prefTapScroll = parts[2] == "1"
@@ -2580,23 +2581,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
                 prefs.prefAutomationEnabled = parts[13] == "1"
                 prefs.prefAnchored = parts[14] == "1"
+
+                prefs.prefVibrate = parts[20] == "1"
+                prefs.hardkeyVolUpTap = parts[21]
+                prefs.hardkeyVolUpDouble = parts[22]
+                prefs.hardkeyVolUpHold = parts[23]
+                prefs.hardkeyVolDownTap = parts[24]
+                prefs.hardkeyVolDownDouble = parts[25]
+                prefs.hardkeyVolDownHold = parts[26]
                 
                 // ... (Apply other visuals) ...
                 updateBorderColor(currentBorderColor)
                 updateScrollSize()
                 updateHandleSize()
 
-                // 3. Load Keyboard Bounds (Indices 27-30)
-                if (parts.size >= 31) {
-                     savedKbX = parts[27].toInt()
-                     savedKbY = parts[28].toInt()
-                     savedKbW = parts[29].toInt()
-                     savedKbH = parts[30].toInt()
-                     
-                     // Force apply to keyboard overlay
-                     keyboardOverlay?.setWindowBounds(savedKbX, savedKbY, savedKbW, savedKbH)
-                     Log.d(TAG, "Loaded Keyboard Layout: $savedKbX, $savedKbY, $savedKbW x $savedKbH, Scale: ${prefs.prefKeyScale}%")
-                }
+                // 3. Load Keyboard Bounds (Indices 28-31)
+                 savedKbX = parts[28].toInt()
+                 savedKbY = parts[29].toInt()
+                 savedKbW = parts[30].toInt()
+                 savedKbH = parts[31].toInt()
+                 
+                 // Force apply to keyboard overlay
+                 keyboardOverlay?.setWindowBounds(savedKbX, savedKbY, savedKbW, savedKbH)
+                 Log.d(TAG, "Loaded Keyboard Layout: $savedKbX, $savedKbY, $savedKbW x $savedKbH, Scale: ${prefs.prefKeyScale}%")
             }
         }
         showToast("Profile Loaded")
