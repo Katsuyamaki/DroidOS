@@ -53,17 +53,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
-            Log.d("OverlayService", "CommandReceiver: $action")
-
-            // Universal Matcher for Old (example) and New (katsuyamaki) package names
-            fun matches(suffix: String): Boolean {
-                return action.endsWith(suffix)
-            }
-
-            if (matches("STOP_SERVICE") || matches("EXIT")) {
-                Log.d("OverlayService", "Stopping Service via Broadcast")
-                forceExit()
-                return
+            
+            // Helper to match both OLD and NEW package names
+            fun matches(cmd: String): Boolean {
+                return action.endsWith(cmd)
             }
 
             if (matches("SOFT_RESTART")) {
@@ -80,12 +73,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     setupUI(targetId)
                     enforceZOrder()
                 }
-            } else if (matches("TOGGLE_MIRROR")) {
+            } else if (matches("TOGGLE_MIRROR") || matches("TOGGLE_VIRTUAL_MIRROR")) {
                 Log.d("OverlayService", "Toggling Mirror Mode")
                 handler.post { toggleVirtualMirrorMode() }
             } else if (matches("OPEN_DRAWER")) {
                 Log.d("OverlayService", "Opening Drawer")
                 handler.post { toggleDrawer() }
+            } else if (matches("STOP_SERVICE")) {
+                Log.d("OverlayService", "Stopping Service")
+                forceExit()
             }
         }
     }
@@ -973,20 +969,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     override fun onCreate() {
         super.onCreate()
 
+        // Register BOTH new and old prefixes to support all scripts/buttons
         val commandFilter = IntentFilter().apply {
-            // Register BOTH new and old namespaces to fix broken ADB scripts
-            val actions = listOf(
-                "SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", 
-                "TOGGLE_MIRROR", "OPEN_DRAWER", "STOP_SERVICE", "EXIT"
-            )
-            val prefixes = listOf(
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.",
-                "com.example.coverscreentester."
-            )
+            val cmds = listOf("SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", "TOGGLE_MIRROR", "TOGGLE_VIRTUAL_MIRROR", "OPEN_DRAWER", "STOP_SERVICE")
+            val prefixes = listOf("com.katsuyamaki.DroidOSTrackpadKeyboard.", "com.example.coverscreentester.")
             
-            for (prefix in prefixes) {
-                for (act in actions) {
-                    addAction("$prefix$act")
+            for (p in prefixes) {
+                for (c in cmds) {
+                    addAction("$p$c")
                 }
             }
         }
@@ -1722,20 +1712,81 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
+    // [Fixed] Helper to schedule the restart alarm
+    private fun scheduleRestart() {
+        try {
+            Log.i(TAG, "Scheduling Safety Restart (1s)...")
+            
+            // 1. Explicit Intent with Action
+            val restartIntent = Intent(applicationContext, OverlayService::class.java)
+            restartIntent.action = "$packageName.SOFT_RESTART"
+            restartIntent.setPackage(packageName)
+            
+            // 2. Use getForegroundService for Android 8+ (Stronger wake-up capability)
+            val flags = if (Build.VERSION.SDK_INT >= 23) 
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_CANCEL_CURRENT
+            else 
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_CANCEL_CURRENT
+
+            val pendingIntent = if (Build.VERSION.SDK_INT >= 26) {
+                android.app.PendingIntent.getForegroundService(applicationContext, 1, restartIntent, flags)
+            } else {
+                android.app.PendingIntent.getService(applicationContext, 1, restartIntent, flags)
+            }
+            
+            // 3. Robust Alarm Scheduling (Fallback for Permission/Device issues)
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val triggerTime = System.currentTimeMillis() + 1000
+
+            if (Build.VERSION.SDK_INT >= 31) {
+                // Try setExact, fallback if permission missing
+                try {
+                    alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Missing SCHEDULE_EXACT_ALARM, using standard set()")
+                    alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                }
+            } else {
+                // For older versions, use setExactAndAllowWhileIdle for Doze penetration
+                if (Build.VERSION.SDK_INT >= 23) {
+                     alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                } else {
+                     alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule restart", e)
+        }
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        if (!prefs.prefPersistentService) forceExit()
+        // [Fixed] If Keep Alive is ON, schedule restart BEFORE system kills us.
+        // Many ROMs force-kill services on swipe, so we must register the alarm now.
+        if (prefs.prefPersistentService) {
+            scheduleRestart()
+            // We do NOT call forceExit() here; we let the system decide if it wants to kill us.
+            // If it does kill us, the alarm brings us back.
+        } else {
+            forceExit()
+        }
     }
 
     fun forceExit() {
-        Log.i(TAG, "forceExit called. Killing process.")
+        Log.i(TAG, "forceExit called")
         try {
-            // Clean up views first
             removeOldViews()
-            stopSelf()
             
-            // Force kill to ensure a clean restart state
-            android.os.Process.killProcess(android.os.Process.myPid())
+            // If triggered manually (Button/Broadcast), schedule restart if enabled
+            if (prefs.prefPersistentService) {
+                scheduleRestart()
+                handler.post { Toast.makeText(applicationContext, "Restarting...", Toast.LENGTH_SHORT).show() }
+            }
+
+            stopSelf()
+            // Allow small window for Alarm registration IPC
+            Thread.sleep(200) 
+            Process.killProcess(Process.myPid())
             System.exit(0)
         } catch (e: Exception) {
             e.printStackTrace()

@@ -122,19 +122,27 @@
                       without requiring the Activity to be in foreground.
              USAGE (ADB): adb shell am broadcast -a com.example.coverscreentester.SOFT_RESTART
              ================================================================================= -->
-        <receiver
-            android:name=".InterAppCommandReceiver"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.example.coverscreentester.SOFT_RESTART" />
-                <action android:name="com.example.coverscreentester.MOVE_TO_VIRTUAL" />
-                <action android:name="com.example.coverscreentester.RETURN_TO_PHYSICAL" />
-                <action android:name="com.example.coverscreentester.ENFORCE_ZORDER" />
-                <action android:name="com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR" />
-                <action android:name="com.example.coverscreentester.GET_STATUS" />
-            </intent-filter>
-        </receiver>
+                <receiver android:name=".InterAppCommandReceiver" android:enabled="true" android:exported="true">
+                    <intent-filter>
+                        <action android:name="com.example.coverscreentester.SOFT_RESTART" />
+                        <action android:name="com.example.coverscreentester.MOVE_TO_VIRTUAL" />
+                        <action android:name="com.example.coverscreentester.RETURN_TO_PHYSICAL" />
+                        <action android:name="com.example.coverscreentester.ENFORCE_ZORDER" />
+                        <action android:name="com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR" />
+                        <action android:name="com.example.coverscreentester.OPEN_DRAWER" />
+                        <action android:name="com.example.coverscreentester.GET_STATUS" />
+                        <action android:name="com.example.coverscreentester.STOP_SERVICE" />
+        
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.SOFT_RESTART" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_VIRTUAL" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.RETURN_TO_PHYSICAL" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.ENFORCE_ZORDER" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.TOGGLE_VIRTUAL_MIRROR" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.OPEN_DRAWER" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.GET_STATUS" />
+                        <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.STOP_SERVICE" />
+                    </intent-filter>
+                </receiver>
         <!-- END BLOCK: INTER-APP COMMAND RECEIVER -->
 
         <provider
