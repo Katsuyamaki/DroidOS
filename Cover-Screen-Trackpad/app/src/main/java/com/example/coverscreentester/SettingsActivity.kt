@@ -11,20 +11,22 @@ import android.widget.Switch
 
 class SettingsActivity : Activity() {
 
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
         val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
 
-        // =================================================================================
-        // 1. DEFINE VARIABLES FIRST (findViewById)
-        // =================================================================================
+        // 1. Define UI Elements
         val swTapScroll = findViewById<Switch>(R.id.swTapScroll)
         val swVibrate = findViewById<Switch>(R.id.swVibrate)
-        val swReverseScroll = findViewById<Switch>(R.id.swReverseScroll) // Matches usage below
+        val swReverseScroll = findViewById<Switch>(R.id.swReverseScroll) // Matches XML
         val swVPos = findViewById<Switch>(R.id.swVPos)
         val swHPos = findViewById<Switch>(R.id.swHPos)
+        
+        // ... rest of the file ...
+
         
         val seekBarCursor = findViewById<SeekBar>(R.id.seekBarCursorSpeed)
         val seekBarScroll = findViewById<SeekBar>(R.id.seekBarScrollSpeed)
@@ -40,7 +42,7 @@ class SettingsActivity : Activity() {
         val btnBack = findViewById<Button>(R.id.btnBack)
 
         // =================================================================================
-        // 2. LOAD SAVED VALUES (Now that variables exist)
+        // 2. LOAD SAVED VALUES
         // =================================================================================
         swTapScroll.isChecked = prefs.getBoolean("tap_scroll", true)
         swVibrate.isChecked = prefs.getBoolean("vibrate", true)
