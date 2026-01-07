@@ -2133,6 +2133,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             keyboardOverlay?.updatePosition(0, uiScreenHeight - defaultH)
             keyboardOverlay?.updateSize(uiScreenWidth, defaultH)
         }
+
+        // [FIX] Apply Saved Scale immediately after creation
+        // loadLayout() runs before this init, so we must manually apply the pref here
+        keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
     }
 
 
@@ -2140,10 +2144,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
         if (keyboardOverlay == null) initCustomKeyboard()
-        val isNowVisible = if (keyboardOverlay?.isShowing() == true) { keyboardOverlay?.hide(); false } else { keyboardOverlay?.show(); true }
+        
+        val isNowVisible = if (keyboardOverlay?.isShowing() == true) { 
+            keyboardOverlay?.hide()
+            false 
+        } else { 
+            keyboardOverlay?.show()
+            // [FIX] Enforce scale when showing to prevent resets
+            keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
+            true 
+        }
+        
         isCustomKeyboardVisible = isNowVisible
         enforceZOrder()
-        if (prefs.prefAutomationEnabled && !suppressAutomation) { if (isNowVisible) turnScreenOn() else turnScreenOff() }
+        
+        if (prefs.prefAutomationEnabled && !suppressAutomation) { 
+            if (isNowVisible) turnScreenOn() else turnScreenOff() 
+        }
     }
 
     private fun turnScreenOn() { isScreenOff = false; Thread { try { shellService?.setBrightness(128); shellService?.setScreenOff(0, false) } catch(e: Exception) {} }.start(); showToast("Screen On") }
