@@ -800,29 +800,36 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
     private val switchReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                "SWITCH_DISPLAY" -> switchDisplay() 
-                "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                "RESET_CURSOR" -> resetCursorCenter()
-                "TOGGLE_DEBUG" -> toggleDebugMode()
-                "FORCE_KEYBOARD" -> toggleCustomKeyboard()
-                "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                "OPEN_MENU" -> { menuManager?.show(); enforceZOrder() }
-                "SET_TRACKPAD_VISIBILITY" -> {
+            val action = intent?.action ?: return
+            
+            // Helper to match both old (example) and new (katsuyamaki) package actions
+            fun matches(suffix: String): Boolean = action.endsWith(suffix)
+
+            when {
+                // Internal Actions (Exact Match)
+                action == "SWITCH_DISPLAY" -> switchDisplay()
+                action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
+                action == "RESET_CURSOR" -> resetCursorCenter()
+                action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                action == "OPEN_MENU" -> { menuManager?.show(); enforceZOrder() }
+                action == "SET_TRACKPAD_VISIBILITY" -> {
                     val visible = intent.getBooleanExtra("VISIBLE", true)
                     val menuDisplayId = intent.getIntExtra("MENU_DISPLAY_ID", -1)
                     if (visible) setTrackpadVisibility(true) 
                     else { if (menuDisplayId == -1 || menuDisplayId == currentDisplayId) setTrackpadVisibility(false) }
                 }
-                "SET_PREVIEW_MODE" -> setPreviewMode(intent.getBooleanExtra("PREVIEW_MODE", false))
-                
-                // =================================================================================
-                // INTER-APP COMMANDS: Soft Restart, Virtual Display Launch, Z-Order Fix
-                // USAGE (ADB): adb shell am broadcast -a com.example.coverscreentester.SOFT_RESTART
-                // =================================================================================
-                
-                // SOFT_RESTART: Recreates overlays without killing process/permissions
-                "com.example.coverscreentester.SOFT_RESTART" -> {
+                action == "SET_PREVIEW_MODE" -> setPreviewMode(intent.getBooleanExtra("PREVIEW_MODE", false))
+                action == "VOICE_TYPE_TRIGGERED" -> {
+                    isVoiceActive = true
+                    keyboardOverlay?.setVoiceActive(true)
+                    setOverlayFocusable(false)
+                    handler.postDelayed({ attemptRefocusInput() }, 300)
+                }
+                action == Intent.ACTION_SCREEN_ON -> triggerAggressiveBlocking()
+
+                // Universal ADB/External Commands (Suffix Match)
+                matches("SOFT_RESTART") -> {
                     Log.d(TAG, "Received SOFT_RESTART command")
                     val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
                     handler.post {
@@ -834,61 +841,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         }, 200)
                     }
                 }
-                
-                // MOVE_TO_VIRTUAL: Moves overlay to virtual display and enables mirror mode
-                "com.example.coverscreentester.MOVE_TO_VIRTUAL" -> {
+                matches("MOVE_TO_VIRTUAL") -> {
                     Log.d(TAG, "Received MOVE_TO_VIRTUAL command")
                     val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
-                    handler.post {
-                        moveToVirtualDisplayAndEnableMirror(virtualDisplayId)
-                    }
+                    handler.post { moveToVirtualDisplayAndEnableMirror(virtualDisplayId) }
                 }
-                
-                // RETURN_TO_PHYSICAL: Returns overlay to physical display, disables mirror mode
-                "com.example.coverscreentester.RETURN_TO_PHYSICAL" -> {
+                matches("RETURN_TO_PHYSICAL") -> {
                     Log.d(TAG, "Received RETURN_TO_PHYSICAL command")
                     val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
-                    handler.post {
-                        returnToPhysicalDisplay(physicalDisplayId)
-                    }
+                    handler.post { returnToPhysicalDisplay(physicalDisplayId) }
                 }
-                
-                // ENFORCE_ZORDER: Forces overlay views to top of z-order
-                "com.example.coverscreentester.ENFORCE_ZORDER" -> {
+                matches("ENFORCE_ZORDER") -> {
                     Log.d(TAG, "Received ENFORCE_ZORDER command")
                     handler.post { enforceZOrder() }
                 }
-                
-                // TOGGLE_VIRTUAL_MIRROR: Toggle virtual mirror mode on/off
-                "com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR" -> {
+                matches("TOGGLE_VIRTUAL_MIRROR") -> {
                     Log.d(TAG, "Received TOGGLE_VIRTUAL_MIRROR command")
                     handler.post { toggleVirtualMirrorMode() }
                 }
-                
-                // GET_STATUS: Responds with current state (for debugging/coordination)
-                "com.example.coverscreentester.GET_STATUS" -> {
-                    Log.d(TAG, "Received GET_STATUS command - Display:$currentDisplayId Target:$inputTargetDisplayId Mirror:${prefs.prefVirtualMirrorMode}")
+                matches("GET_STATUS") -> {
+                    Log.d(TAG, "Received GET_STATUS command")
                     showToast("D:$currentDisplayId T:$inputTargetDisplayId M:${if(prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
                 }
-                // =================================================================================
-                // END BLOCK: INTER-APP COMMANDS
-                // =================================================================================
-                
-                // ACTION: Voice Input Triggered
-                "VOICE_TYPE_TRIGGERED" -> {
-                    isVoiceActive = true
-                    
-                    // UPDATE UI: Turn Mic Green
-                    keyboardOverlay?.setVoiceActive(true)
-                    
-                    // Force overlay to be NOT focusable (Termux Focus Fix)
-                    setOverlayFocusable(false)
-
-                    // Click the input field (Focus Wakeup)
-                    handler.postDelayed({ attemptRefocusInput() }, 300)
-                }
-                
-                Intent.ACTION_SCREEN_ON -> triggerAggressiveBlocking()
             }
         }
     }
@@ -1032,8 +1006,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =================================================================================
 
                     loadPrefs()
-                    // [Fixed] Export receiver to allow ADB and Button broadcasts to work on Android 14+
                     val filter = IntentFilter().apply { 
+                        // Internal short commands
+                        addAction("SWITCH_DISPLAY")
                         addAction("CYCLE_INPUT_TARGET")
                         addAction("RESET_CURSOR")
                         addAction("TOGGLE_DEBUG")
@@ -1042,16 +1017,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         addAction("SET_TRACKPAD_VISIBILITY")
                         addAction("SET_PREVIEW_MODE") 
                         addAction("OPEN_MENU")
-                        addAction("VOICE_TYPE_TRIGGERED") // <--- Add this
+                        addAction("VOICE_TYPE_TRIGGERED")
                         addAction(Intent.ACTION_SCREEN_ON)
-                        addAction("com.example.coverscreentester.SOFT_RESTART")
-                        addAction("com.example.coverscreentester.MOVE_TO_VIRTUAL")
-                        addAction("com.example.coverscreentester.RETURN_TO_PHYSICAL")
-                        addAction("com.example.coverscreentester.ENFORCE_ZORDER")
-                        addAction("com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR")
-                        addAction("com.example.coverscreentester.GET_STATUS")
-                        addAction("com.example.coverscreentester.STOP_SERVICE") // Added for stop functionality
-                        addAction("com.example.coverscreentester.RESTART_SERVICE") // Added for restart functionality
+
+                        // External commands (Old and New Prefixes)
+                        val actions = listOf(
+                            "SOFT_RESTART", "MOVE_TO_VIRTUAL", "RETURN_TO_PHYSICAL",
+                            "ENFORCE_ZORDER", "TOGGLE_VIRTUAL_MIRROR", "GET_STATUS"
+                        )
+                        val prefixes = listOf(
+                            "com.katsuyamaki.DroidOSTrackpadKeyboard.",
+                            "com.example.coverscreentester."
+                        )
+                        for (prefix in prefixes) {
+                            for (act in actions) {
+                                addAction("$prefix$act")
+                            }
+                        }
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         // For Android 13 (TIRAMISU) and above, receivers must explicitly specify exported state
@@ -1098,97 +1080,63 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 }
             }
 
-            when (intent?.action) {
-                "SWITCH_DISPLAY" -> switchDisplay()
-                "RESET_POSITION" -> {
-                    val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                    if (target == "KEYBOARD") {
-                        keyboardOverlay?.resetPosition()
-                    } else {
-                        resetTrackpadPosition()
+            val action = intent?.action
+            fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
+
+            // Handle commands robustly
+            if (action != null) {
+                when {
+                    // Standard Actions
+                    action == "SWITCH_DISPLAY" -> switchDisplay()
+                    action == "RESET_POSITION" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
                     }
-                }
-                "ROTATE" -> {
-                    val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                    if (target == "KEYBOARD") {
-                        keyboardOverlay?.cycleRotation()
-                    } else {
-                        performRotation()
+                    action == "ROTATE" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
                     }
-                }
-                "SAVE_LAYOUT" -> saveLayout()
-                "LOAD_LAYOUT" -> loadLayout()
-                "DELETE_PROFILE" -> deleteCurrentProfile()
-                "MANUAL_ADJUST" -> handleManualAdjust(intent)
-                "RELOAD_PREFS" -> {
-                    loadPrefs()
-                    updateBorderColor(currentBorderColor)
-                    updateLayoutSizes()
-                    updateScrollPosition()
-                    updateCursorSize()
-                    keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
-                    if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
-                }
-                "PREVIEW_UPDATE" -> handlePreview(intent)
-                "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                "RESET_CURSOR" -> resetCursorCenter()
-                "TOGGLE_DEBUG" -> toggleDebugMode()
-                "FORCE_KEYBOARD" -> toggleCustomKeyboard()
-                "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                "OPEN_MENU" -> menuManager?.show()
-                
-                // =================================================================================
-                // INTER-APP COMMANDS (forwarded from InterAppCommandReceiver)
-                // SUMMARY: Handles commands from DroidOS Launcher and ADB.
-                //          These enable soft restart, z-order fixes, and virtual display control.
-                // =================================================================================
-                
-                "com.example.coverscreentester.SOFT_RESTART" -> {
-                    Log.d(TAG, "onStartCommand: SOFT_RESTART")
-                    val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
-                    handler.post {
-                        removeOldViews()
-                        handler.postDelayed({
-                            setupUI(targetDisplayId)
-                            enforceZOrder()
-                            showToast("Trackpad Soft Restarted")
-                        }, 200)
+                    action == "SAVE_LAYOUT" -> saveLayout()
+                    action == "LOAD_LAYOUT" -> loadLayout()
+                    action == "DELETE_PROFILE" -> deleteCurrentProfile()
+                    action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
+                    action == "RELOAD_PREFS" -> {
+                        loadPrefs()
+                        updateBorderColor(currentBorderColor)
+                        updateLayoutSizes()
+                        updateScrollPosition()
+                        updateCursorSize()
+                        keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
+                        if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
                     }
-                }
-                
-                "com.example.coverscreentester.MOVE_TO_VIRTUAL" -> {
-                    Log.d(TAG, "onStartCommand: MOVE_TO_VIRTUAL")
-                    val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
-                    handler.post {
-                        moveToVirtualDisplayAndEnableMirror(virtualDisplayId)
+                    action == "PREVIEW_UPDATE" -> handlePreview(intent)
+                    action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
+                    action == "RESET_CURSOR" -> resetCursorCenter()
+                    action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                    action == "OPEN_MENU" -> menuManager?.show()
+
+                    // ADB / Launcher Commands (Suffix Matching)
+                    matches("SOFT_RESTART") -> {
+                        Log.d(TAG, "onStartCommand: SOFT_RESTART")
+                        val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
+                        handler.post {
+                            removeOldViews()
+                            handler.postDelayed({ setupUI(targetDisplayId); enforceZOrder() }, 200)
+                        }
                     }
-                }
-                
-                "com.example.coverscreentester.RETURN_TO_PHYSICAL" -> {
-                    Log.d(TAG, "onStartCommand: RETURN_TO_PHYSICAL")
-                    val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
-                    handler.post {
-                        returnToPhysicalDisplay(physicalDisplayId)
+                    matches("MOVE_TO_VIRTUAL") -> {
+                        val vid = intent.getIntExtra("DISPLAY_ID", 2)
+                        handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
                     }
+                    matches("RETURN_TO_PHYSICAL") -> {
+                        val pid = intent.getIntExtra("DISPLAY_ID", 0)
+                        handler.post { returnToPhysicalDisplay(pid) }
+                    }
+                    matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
+                    matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
+                    matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
                 }
-                
-                "com.example.coverscreentester.ENFORCE_ZORDER" -> {
-                    Log.d(TAG, "onStartCommand: ENFORCE_ZORDER")
-                    handler.post { enforceZOrder() }
-                }
-                
-                "com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR" -> {
-                    Log.d(TAG, "onStartCommand: TOGGLE_VIRTUAL_MIRROR")
-                    handler.post { toggleVirtualMirrorMode() }
-                }
-                
-                "com.example.coverscreentester.GET_STATUS" -> {
-                    Log.d(TAG, "onStartCommand: GET_STATUS - Display:$currentDisplayId Target:$inputTargetDisplayId Mirror:${prefs.prefVirtualMirrorMode}")
-                    showToast("D:$currentDisplayId T:$inputTargetDisplayId M:${if(prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
-                }
-                // =================================================================================
-                // END BLOCK: INTER-APP COMMANDS
-                // =================================================================================
             }
             if (intent?.hasExtra("DISPLAY_ID") == true) {
                 val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
