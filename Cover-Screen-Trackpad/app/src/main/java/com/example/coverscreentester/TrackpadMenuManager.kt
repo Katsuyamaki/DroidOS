@@ -420,17 +420,17 @@ class TrackpadMenuManager(
 
 // =================================================================================
             // MIRROR KEYBOARD DPAD CONTROLS  
-            // SUMMARY: Send raw intuitive directions to adjustMirrorKeyboard
-            //          UP = -step (move up / shrink)
-            //          DOWN = +step (move down / grow)
-            //          The service handles gravity conversion
+            // MOVE MODE: UP = move up, DOWN = move down (intuitive)
+            // RESIZE MODE: UP = grow taller, DOWN = shrink shorter (like dragging bottom edge)
             // =================================================================================
             when(command) {
                 "UP" -> {
+                    // Both modes: -step (move up / shrink)
                     android.util.Log.d("MirrorDpad", "UP pressed, isResize=$isMirrorResizeMode, sending deltaY=-$step")
                     service.adjustMirrorKeyboard(isMirrorResizeMode, 0, -step)
                 }
                 "DOWN" -> {
+                    // Both modes: +step (move down / grow)
                     android.util.Log.d("MirrorDpad", "DOWN pressed, isResize=$isMirrorResizeMode, sending deltaY=+$step")
                     service.adjustMirrorKeyboard(isMirrorResizeMode, 0, step)
                 }
@@ -444,9 +444,6 @@ class TrackpadMenuManager(
                 }
                 "CENTER" -> service.resetMirrorKeyboardPosition()
             }
-            // =================================================================================
-            // END BLOCK: MIRROR KEYBOARD DPAD CONTROLS
-            // =================================================================================
             // =================================================================================
             // END BLOCK: MIRROR KEYBOARD DPAD CONTROLS
             // =================================================================================

@@ -1811,7 +1811,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         else { 
             if (trackpadLayout == null) return
             if (isResize) { trackpadParams.width = max(200, trackpadParams.width + dx); trackpadParams.height = max(200, trackpadParams.height + dy) } 
-            else { trackpadParams.x += dx; trackpadParams.y += dy }
+            { trackpadParams.x += dx; trackpadParams.y += dy }
             try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveLayout() 
         } 
     }
@@ -2703,37 +2703,80 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // Show mirror during adjustment
         showMirrorTemporarily()
         
-        if (isResize) {
+if (isResize) {
             // =================================================================================
-            // RESIZE MODE - adjust width/height
+            // RESIZE MODE - adjust width/height AND scale the keyboard keys
+            // SUMMARY: Changes container size and scales the inner KeyboardView to match.
+            //          Also updates sync dimensions so touch coordinates map correctly.
             // =================================================================================
+            
+            // Get current dimensions from params
             var currentWidth = mirrorKeyboardParams?.width ?: 600
             var currentHeight = mirrorKeyboardParams?.height ?: 350
             
-            // Handle WRAP_CONTENT (-2) - get measured size
+            // Handle WRAP_CONTENT (-2) - must get actual measured size from view
             if (currentWidth == WindowManager.LayoutParams.WRAP_CONTENT || currentWidth <= 0) {
-                currentWidth = mirrorKeyboardContainer?.width ?: 600
-                if (currentWidth <= 0) currentWidth = 600
+                currentWidth = mirrorKeyboardContainer?.width ?: mirrorKeyboardView?.width ?: 600
+                if (currentWidth <= 0) {
+                    val display = displayManager?.getDisplay(inputTargetDisplayId)
+                    if (display != null) {
+                        val metrics = android.util.DisplayMetrics()
+                        display.getRealMetrics(metrics)
+                        currentWidth = (metrics.widthPixels * 0.9f).toInt()
+                    } else {
+                        currentWidth = 600
+                    }
+                }
+                mirrorKeyboardParams?.width = currentWidth
             }
+            
             if (currentHeight == WindowManager.LayoutParams.WRAP_CONTENT || currentHeight <= 0) {
-                currentHeight = mirrorKeyboardContainer?.height ?: 350
-                if (currentHeight <= 0) currentHeight = 350
+                currentHeight = mirrorKeyboardContainer?.height ?: mirrorKeyboardView?.height ?: 350
+                if (currentHeight <= 0) {
+                    currentHeight = 350
+                }
+                mirrorKeyboardParams?.height = currentHeight
             }
             
             // Apply deltas: positive = grow, negative = shrink
             val newWidth = (currentWidth + deltaX).coerceIn(250, 1500)
-            val newHeight = (currentHeight + deltaY).coerceIn(150, 600)
+            val newHeight = (currentHeight + deltaY).coerceIn(150, 1200)
             
-            showToast("Resize: ${currentWidth}x${currentHeight} -> ${newWidth}x${newHeight}")
+            android.util.Log.d("MirrorResize", "Resize: ${currentWidth}x${currentHeight} -> ${newWidth}x${newHeight}")
             
+            // Update container window params
             mirrorKeyboardParams?.width = newWidth
             mirrorKeyboardParams?.height = newHeight
+            
+            // Calculate new scale based on height ratio
+            // Use physical keyboard as reference - mirror should scale proportionally
+            val physicalHeight = keyboardOverlay?.getViewHeight()?.toFloat() ?: 350f
+            val physicalScale = keyboardOverlay?.getScale() ?: 1.0f
+            
+            // Calculate what scale the mirror needs to fit in newHeight
+            // Scale is proportional to height ratio
+            val heightRatio = newHeight.toFloat() / physicalHeight
+            val newScale = (physicalScale * heightRatio).coerceIn(0.5f, 2.0f)
+            
+            android.util.Log.d("MirrorResize", "Scale: physH=$physicalHeight, physScale=$physicalScale, ratio=$heightRatio, newScale=$newScale")
+            
+            // Apply scale to mirror keyboard - this resizes the actual keys
+            mirrorKeyboardView?.setScale(newScale)
+            
+            // Update inner view layout params to match container
+            mirrorKeyboardView?.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT  // Let it size naturally with new scale
+            )
+            
+            // Save to prefs
+            prefs.prefMirrorWidth = newWidth
+            prefs.prefMirrorHeight = newHeight
             
             getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
                 .putInt("mirror_width", newWidth)
                 .putInt("mirror_height", newHeight)
                 .apply()
-            
         } else {
             // =================================================================================
             // MOVE MODE - adjust x/y position
@@ -2994,11 +3037,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             physicalKbHeight = keyboardOverlay?.getKeyboardView()?.height?.toFloat() ?: 400f
 
             Log.d(TAG, "Mirror KB init: ${mirrorKbWidth}x${mirrorKbHeight}, Physical KB: ${physicalKbWidth}x${physicalKbHeight}")
-
-            // Window params - use WRAP_CONTENT for height
+// Window params - use saved height or WRAP_CONTENT
+            val savedHeight = prefs.prefMirrorHeight
+            val mirrorHeight = if (savedHeight != -1 && savedHeight > 0) savedHeight else WindowManager.LayoutParams.WRAP_CONTENT
+            
             mirrorKeyboardParams = WindowManager.LayoutParams(
                 mirrorWidth,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                mirrorHeight,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
