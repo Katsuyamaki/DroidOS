@@ -1953,8 +1953,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
     
 
+
     fun saveLayout() {
-        // 1. FETCH LIVE VALUES
+        // 1. FETCH LIVE VALUES FROM PHYSICAL KEYBOARD
         val currentKbX = keyboardOverlay?.getViewX() ?: savedKbX
         val currentKbY = keyboardOverlay?.getViewY() ?: savedKbY
         val currentKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
@@ -1968,7 +1969,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         // 2. SAVE TO SHARED PREFS (Using Mode-Specific Key)
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-        val key = getProfileKey() // Now returns ..._STD or ..._MIRROR
+        val key = getProfileKey() // Returns ..._STD or ..._MIRROR
         
         // Save Trackpad Window
         p.putInt("X_$key", trackpadParams.x)
@@ -1976,20 +1977,38 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         p.putInt("W_$key", trackpadParams.width)
         p.putInt("H_$key", trackpadParams.height)
 
-        // Save Settings String
+        // Save Settings String (Standard Settings)
         val settingsStr = StringBuilder()
         settingsStr.append("${prefs.cursorSpeed};${prefs.scrollSpeed};${if(prefs.prefTapScroll) 1 else 0};${if(prefs.prefReverseScroll) 1 else 0};${prefs.prefAlpha};${prefs.prefBgAlpha};${prefs.prefKeyboardAlpha};${prefs.prefHandleSize};${prefs.prefHandleTouchSize};${prefs.prefScrollTouchSize};${prefs.prefScrollVisualSize};${prefs.prefCursorSize};${prefs.prefKeyScale};${if(prefs.prefAutomationEnabled) 1 else 0};${if(prefs.prefAnchored) 1 else 0};${prefs.prefBubbleSize};${prefs.prefBubbleAlpha};${prefs.prefBubbleIconIndex};${prefs.prefBubbleX};${prefs.prefBubbleY};${prefs.hardkeyVolUpTap};${prefs.hardkeyVolUpDouble};${prefs.hardkeyVolUpHold};${prefs.hardkeyVolDownTap};${prefs.hardkeyVolDownDouble};${prefs.hardkeyVolDownHold};${prefs.hardkeyPowerDouble};")
         
         // New Settings (Vibrate, Position)
         settingsStr.append("${if(prefs.prefVibrate) 1 else 0};${if(prefs.prefVPosLeft) 1 else 0};${if(prefs.prefHPosTop) 1 else 0};")
 
-        // Keyboard Bounds (Indices 30-33)
+        // Physical Keyboard Bounds
         settingsStr.append("$currentKbX;$currentKbY;$currentKbW;$currentKbH")
 
         p.putString("SETTINGS_$key", settingsStr.toString())
+
+        // [FIX] SAVE MIRROR KEYBOARD PARAMS (If in Mirror Mode)
+        if (prefs.prefVirtualMirrorMode) {
+            // Get live values from window params if available, otherwise use prefs
+            val mX = mirrorKeyboardParams?.x ?: prefs.prefMirrorX
+            val mY = mirrorKeyboardParams?.y ?: prefs.prefMirrorY
+            val mW = mirrorKeyboardParams?.width ?: prefs.prefMirrorWidth
+            val mH = mirrorKeyboardParams?.height ?: prefs.prefMirrorHeight
+            val mAlpha = prefs.prefMirrorAlpha
+
+            p.putInt("MIRROR_X_$key", mX)
+            p.putInt("MIRROR_Y_$key", mY)
+            p.putInt("MIRROR_W_$key", mW)
+            p.putInt("MIRROR_H_$key", mH)
+            p.putInt("MIRROR_ALPHA_$key", mAlpha)
+        }
+
         p.apply()
         showToast("Layout Saved (${if(prefs.prefVirtualMirrorMode) "Mirror" else "Std"})")
     }
+
 
     private fun savePrefs() { 
         val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
@@ -2491,10 +2510,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
 
 
-
-
-
-
     fun loadLayout() {
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         val key = getProfileKey()
@@ -2540,7 +2555,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     prefs.prefHPosTop = parts[29] == "1"
                 }
 
-                // Load Keyboard Bounds
+                // Load Physical Keyboard Bounds
                 var kbIndex = 30
                 if (parts.size < 34 && parts.size >= 31) kbIndex = 27 
 
@@ -2563,9 +2578,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
         }
 
+        // [FIX] LOAD MIRROR KEYBOARD PARAMS (If in Mirror Mode)
+        if (prefs.prefVirtualMirrorMode) {
+            if (p.contains("MIRROR_X_$key")) {
+                prefs.prefMirrorX = p.getInt("MIRROR_X_$key", -1)
+                prefs.prefMirrorY = p.getInt("MIRROR_Y_$key", 0)
+                prefs.prefMirrorWidth = p.getInt("MIRROR_W_$key", -1)
+                prefs.prefMirrorHeight = p.getInt("MIRROR_H_$key", -1)
+                prefs.prefMirrorAlpha = p.getInt("MIRROR_ALPHA_$key", 200)
+                
+                // Update live window if it exists
+                applyMirrorKeyboardSettings()
+            }
+        }
+
         // [FIX] GHOSTING PREVENTION
-        // If the profile didn't exist or didn't contain keyboard data (e.g. fresh Std profile),
-        // we MUST reset the keyboard to defaults to prevent it from getting stuck in VM mode.
         if (!keyboardUpdated) {
             keyboardOverlay?.resetPosition()
             showToast("Defaults Loaded")
@@ -2573,11 +2600,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             showToast("Profile Loaded: ${if(prefs.prefVirtualMirrorMode) "Mirror" else "Std"}")
         }
     }
-
-
-
-
-
 
 
 

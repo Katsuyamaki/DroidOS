@@ -57,6 +57,8 @@ class KeyboardOverlay(
 
     private val TAG = "KeyboardOverlay"
 
+    // [FIX] Track the physical device ID to ignore injected events (Anti-Loop)
+    private var activeFingerDeviceId = -1
     // =================================================================================
     // VIRTUAL MIRROR ORIENTATION MODE VARIABLES
     // SUMMARY: State for orientation mode when virtual mirror is active.
