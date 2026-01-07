@@ -52,33 +52,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // === RECEIVER & ACTIONS - START ===
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.SOFT_RESTART" -> {
-                    Log.d("OverlayService", "Received SOFT_RESTART")
-                    performSoftRestart()
-                }
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.ENFORCE_ZORDER" -> {
-                    Log.d("OverlayService", "Received ENFORCE_ZORDER")
+            val action = intent?.action ?: return
+            Log.d("OverlayService", "CommandReceiver: $action")
+
+            // Universal Matcher for Old (example) and New (katsuyamaki) package names
+            fun matches(suffix: String): Boolean {
+                return action.endsWith(suffix)
+            }
+
+            if (matches("STOP_SERVICE") || matches("EXIT")) {
+                Log.d("OverlayService", "Stopping Service via Broadcast")
+                forceExit()
+                return
+            }
+
+            if (matches("SOFT_RESTART")) {
+                Log.d("OverlayService", "Received SOFT_RESTART")
+                performSoftRestart()
+            } else if (matches("ENFORCE_ZORDER")) {
+                Log.d("OverlayService", "Received ENFORCE_ZORDER")
+                enforceZOrder()
+            } else if (matches("MOVE_TO_DISPLAY")) {
+                val targetId = intent.getIntExtra("displayId", 0)
+                Log.d("OverlayService", "Moving to Display: $targetId")
+                handler.post {
+                    removeOldViews()
+                    setupUI(targetId)
                     enforceZOrder()
                 }
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY" -> {
-                    val targetId = intent.getIntExtra("displayId", 0)
-                    Log.d("OverlayService", "Moving to Display: $targetId")
-                    handler.post {
-                        removeOldViews()
-                        setupUI(targetId)
-                        enforceZOrder()
-                    }
-                }
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.TOGGLE_MIRROR" -> {
-                    Log.d("OverlayService", "Toggling Mirror Mode")
-                    handler.post { toggleVirtualMirrorMode() }
-                }
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.OPEN_DRAWER" -> {
-                    Log.d("OverlayService", "Opening Drawer")
-                    handler.post { toggleDrawer() }
-                }
-            }        }
+            } else if (matches("TOGGLE_MIRROR")) {
+                Log.d("OverlayService", "Toggling Mirror Mode")
+                handler.post { toggleVirtualMirrorMode() }
+            } else if (matches("OPEN_DRAWER")) {
+                Log.d("OverlayService", "Opening Drawer")
+                handler.post { toggleDrawer() }
+            }
+        }
     }
 
     private fun performSoftRestart() {
@@ -248,7 +257,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefScrollTouchSize = 80 
         var prefScrollVisualSize = 4
         var prefCursorSize = 50 
-        var prefKeyScale = 100 
+        var prefKeyScale = 69 // Default to 69% to match Reset Position (0.55 ratio)
         var prefUseAltScreenOff = true
         var prefAutomationEnabled = true
         var prefBubbleX = 50
@@ -260,12 +269,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefPersistentService = false 
         var prefBlockSoftKeyboard = false
         
-        var hardkeyVolUpTap = "left_click"
+        // Defaults set to "none" (System Default)
+        var hardkeyVolUpTap = "none"
         var hardkeyVolUpDouble = "none"
-        var hardkeyVolUpHold = "left_click"
-        var hardkeyVolDownTap = "right_click"
-        var hardkeyVolDownDouble = "display_toggle"
-        var hardkeyVolDownHold = "alt_position"
+        var hardkeyVolUpHold = "none"
+        var hardkeyVolDownTap = "none"
+        var hardkeyVolDownDouble = "none"
+        var hardkeyVolDownHold = "none"
         var hardkeyPowerDouble = "none"
         var doubleTapMs = 300
         var holdDurationMs = 400
@@ -990,12 +1000,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         super.onCreate()
 
         val commandFilter = IntentFilter().apply {
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.SOFT_RESTART")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.ENFORCE_ZORDER")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.TOGGLE_MIRROR")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.OPEN_DRAWER")
+            // Register BOTH new and old namespaces to fix broken ADB scripts
+            val actions = listOf(
+                "SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", 
+                "TOGGLE_MIRROR", "OPEN_DRAWER", "STOP_SERVICE", "EXIT"
+            )
+            val prefixes = listOf(
+                "com.katsuyamaki.DroidOSTrackpadKeyboard.",
+                "com.example.coverscreentester."
+            )
+            
+            for (prefix in prefixes) {
+                for (act in actions) {
+                    addAction("$prefix$act")
+                }
+            }
         }
+        // Export receiver so ADB and other apps can send these commands
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(commandReceiver, commandFilter, Context.RECEIVER_EXPORTED)
         } else {
@@ -1010,30 +1031,37 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE PowerManager Init
         // =================================================================================
 
-        loadPrefs()
-        val filter = IntentFilter().apply { 
-            addAction("CYCLE_INPUT_TARGET")
-            addAction("RESET_CURSOR")
-            addAction("TOGGLE_DEBUG")
-            addAction("FORCE_KEYBOARD")
-            addAction("TOGGLE_CUSTOM_KEYBOARD")
-            addAction("SET_TRACKPAD_VISIBILITY")
-            addAction("SET_PREVIEW_MODE") 
-            addAction("OPEN_MENU")
-            addAction("VOICE_TYPE_TRIGGERED") // <--- Add this
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction("com.example.coverscreentester.SOFT_RESTART")
-            addAction("com.example.coverscreentester.MOVE_TO_VIRTUAL")
-            addAction("com.example.coverscreentester.RETURN_TO_PHYSICAL")
-            addAction("com.example.coverscreentester.ENFORCE_ZORDER")
-            addAction("com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR")
-            addAction("com.example.coverscreentester.GET_STATUS")
-        }
-        ContextCompat.registerReceiver(this, switchReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        
-        if (Build.VERSION.SDK_INT >= 24) {
-            try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}
-        }
+                    loadPrefs()
+                    // [Fixed] Export receiver to allow ADB and Button broadcasts to work on Android 14+
+                    val filter = IntentFilter().apply { 
+                        addAction("CYCLE_INPUT_TARGET")
+                        addAction("RESET_CURSOR")
+                        addAction("TOGGLE_DEBUG")
+                        addAction("FORCE_KEYBOARD")
+                        addAction("TOGGLE_CUSTOM_KEYBOARD")
+                        addAction("SET_TRACKPAD_VISIBILITY")
+                        addAction("SET_PREVIEW_MODE") 
+                        addAction("OPEN_MENU")
+                        addAction("VOICE_TYPE_TRIGGERED") // <--- Add this
+                        addAction(Intent.ACTION_SCREEN_ON)
+                        addAction("com.example.coverscreentester.SOFT_RESTART")
+                        addAction("com.example.coverscreentester.MOVE_TO_VIRTUAL")
+                        addAction("com.example.coverscreentester.RETURN_TO_PHYSICAL")
+                        addAction("com.example.coverscreentester.ENFORCE_ZORDER")
+                        addAction("com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR")
+                        addAction("com.example.coverscreentester.GET_STATUS")
+                        addAction("com.example.coverscreentester.STOP_SERVICE") // Added for stop functionality
+                        addAction("com.example.coverscreentester.RESTART_SERVICE") // Added for restart functionality
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        // For Android 13 (TIRAMISU) and above, receivers must explicitly specify exported state
+                        ContextCompat.registerReceiver(this, switchReceiver, filter, Context.RECEIVER_EXPORTED)
+                    } else {
+                        ContextCompat.registerReceiver(this, switchReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+                    }
+                    
+                    if (Build.VERSION.SDK_INT >= 24) {
+                        try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}        }
     }
 
 
@@ -1752,31 +1780,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     fun forceExit() {
+        Log.i(TAG, "forceExit called. Killing process.")
         try {
-            // Schedule an Auto-Restart using AlarmManager
-            // This ensures the app comes back immediately after we kill it to fix Z-order
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                
-                val pendingIntent = android.app.PendingIntent.getActivity(
-                    this, 
-                    1999, 
-                    intent, 
-                    android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                
-                val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-                // Fire the restart intent in 1000ms (1 second)
-                alarmManager.setExact(
-                    android.app.AlarmManager.RTC_WAKEUP, 
-                    System.currentTimeMillis() + 1000, 
-                    pendingIntent
-                )
-            }
-            
+            // Clean up views first
+            removeOldViews()
             stopSelf()
+            
+            // Force kill to ensure a clean restart state
             android.os.Process.killProcess(android.os.Process.myPid())
+            System.exit(0)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -1910,25 +1922,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         prefs.prefHandleTouchSize = p.getInt("handle_touch_size", 80)
         prefs.prefScrollTouchSize = p.getInt("scroll_touch_size", 80)
         prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 4)
-        prefs.prefCursorSize = p.getInt("cursor_size", 50)
-        prefs.prefKeyScale = p.getInt("keyboard_key_scale", 135) // CHANGED: Default 135
-        prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
-        prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", false) // CHANGED: Default false
-        prefs.prefBubbleX = p.getInt("bubble_x", 50)
-        prefs.prefBubbleY = p.getInt("bubble_y", 300)
-        prefs.prefBubbleSize = p.getInt("bubble_size", 100)
-        prefs.prefBubbleIconIndex = p.getInt("bubble_icon_index", 0)
-        prefs.prefBubbleAlpha = p.getInt("bubble_alpha", 255)
-        
-        prefs.prefPersistentService = p.getBoolean("persistent_service", false)
-        prefs.prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
-        
-        prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "left_click") ?: "left_click"
-        prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "left_click") ?: "left_click" // CHANGED: left_click
-        prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "left_click") ?: "left_click"
-        prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "toggle_keyboard") ?: "toggle_keyboard" // CHANGED: toggle_keyboard
-        prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "open_menu") ?: "open_menu" // CHANGED: open_menu
-        prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "action_back") ?: "action_back" // CHANGED: action_back
+                prefs.prefCursorSize = p.getInt("cursor_size", 50)
+                prefs.prefKeyScale = p.getInt("keyboard_key_scale", 69) // Default 69 to match resetPosition
+                prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
+                prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", false) 
+                prefs.prefBubbleX = p.getInt("bubble_x", 50)
+                prefs.prefBubbleY = p.getInt("bubble_y", 300)
+                prefs.prefBubbleSize = p.getInt("bubble_size", 100)
+                prefs.prefBubbleIconIndex = p.getInt("bubble_icon_index", 0)
+                prefs.prefBubbleAlpha = p.getInt("bubble_alpha", 255)
+                prefs.prefPersistentService = p.getBoolean("persistent_service", false)
+                prefs.prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
+                // Hardkey Defaults: Set to "none"
+                prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "none") ?: "none"
+                prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "none") ?: "none"
+                prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "none") ?: "none"
+                prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "none") ?: "none"
+                prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "none") ?: "none"
+                prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "none") ?: "none"
         prefs.hardkeyPowerDouble = p.getString("hardkey_power_double", "none") ?: "none"
         
         prefs.doubleTapMs = p.getInt("double_tap_ms", 300)
