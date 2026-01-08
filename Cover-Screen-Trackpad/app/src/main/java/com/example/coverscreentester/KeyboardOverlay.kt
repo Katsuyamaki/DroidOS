@@ -131,19 +131,45 @@ class KeyboardOverlay(
 
 
 
+
     fun setScreenDimensions(width: Int, height: Int, displayId: Int) {
-        // We no longer update inputHandler here
+        // 1. Update Class-Level Screen Dimensions
+        this.screenWidth = width
+        this.screenHeight = height
+        this.currentDisplayId = displayId
+
+        // 2. Apply Dynamic Resize Logic (Same as Reset)
+        // This ensures that when entering split-screen or rotating, the keyboard
+        // recalculates its perfect size (90% width, 300dp height) instead of stretching.
+        val newWidth = (width * 0.90f).toInt().coerceIn(300, 1200)
+        
+        // Calculate Height: 300dp * Scale * Density
+        val density = context.resources.displayMetrics.density
+        val scale = if (internalScale > 0f) internalScale else 0.69f
+        val baseHeightDp = 300f
+        val newHeight = (baseHeightDp * scale * density).toInt()
+
+        // 3. Update Window Params
+        keyboardWidth = newWidth
+        keyboardHeight = newHeight
         
         keyboardParams?.let {
-            it.width = width
-            it.height = height
+            it.width = newWidth
+            it.height = newHeight
+            
+            // Optional: Re-center keyboard on screen change
+            it.x = (width - newWidth) / 2
+            it.y = height / 2
+
             try {
                 windowManager.updateViewLayout(keyboardContainer, it)
+                syncMirrorRatio(newWidth, newHeight)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
+
 
 
 
@@ -1000,14 +1026,40 @@ class KeyboardOverlay(
         orientTrailParams.setMargins(6, 28, 6, 6)
         keyboardContainer?.addView(orientationTrailView, orientTrailParams)
 
+
         addDragHandle(); addResizeHandle(); addCloseButton(); addTargetLabel()
 
-        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", (screenWidth - keyboardWidth) / 2)
-        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", screenHeight - 350 - 10)
+        // [FIX] Calculate Dynamic Defaults for "First Load"
+        // This prevents the keyboard from loading with wrong aspect ratios (like WRAP_CONTENT)
+        // if no preferences exist yet.
+        
+        // 1. Calculate Default Width (90% Screen)
+        val defaultWidth = (screenWidth * 0.90f).toInt().coerceIn(300, 1200)
+        
+        // 2. Calculate Default Height (300dp * Scale)
+        // If no scale is saved, we default to 0.69f (The "Reset" Scale)
+        val density = context.resources.displayMetrics.density
+        val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f
+        val baseHeightDp = 300f
+        val defaultHeight = (baseHeightDp * savedScale * density).toInt()
+        
+        val defaultX = (screenWidth - defaultWidth) / 2
+        val defaultY = (screenHeight / 2)
+
+        // 3. Load from Prefs (using our calculated defaults as fallback)
+        val savedW = prefs.getInt("keyboard_width_d$currentDisplayId", defaultWidth)
+        val savedH = prefs.getInt("keyboard_height_d$currentDisplayId", defaultHeight)
+        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", defaultX)
+        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", defaultY)
+
+        // 4. Set Fields
+        keyboardWidth = savedW
+        keyboardHeight = savedH
 
         keyboardParams = WindowManager.LayoutParams(
             keyboardWidth,
             keyboardHeight,
+
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
