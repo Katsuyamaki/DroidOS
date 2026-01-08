@@ -120,28 +120,50 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
         if (!uiInitialized) return
         
         val isAccessibilityReady = isAccessibilityEnabled()
-        val isOverlayReady = Settings.canDrawOverlays(this)
-        val shizukuReady = isShizukuReady()
+        val isShizukuReady = isShizukuReady()
         
-        // Update accessibility button color
+        // Standard Colors
+        val colorGreen = android.graphics.Color.parseColor("#4CAF50")
+        val colorRed = android.graphics.Color.parseColor("#FF5555")
+        
+        // 1. Restricted Settings Button
+        // Note: There is no direct API to check Restricted status. 
+        // We use isAccessibilityReady as a proxy: if Accessibility is ON, Restricted Settings must be ALLOWED.
         if (isAccessibilityReady) {
-            btnOpenAccessibility.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF4CAF50.toInt()) // Green
+            btnFixRestricted.backgroundTintList = android.content.res.ColorStateList.valueOf(colorGreen)
+            btnFixRestricted.text = "1. Restricted Settings ✓"
+        } else {
+            btnFixRestricted.backgroundTintList = android.content.res.ColorStateList.valueOf(colorRed)
+            btnFixRestricted.text = "1. Allow Restricted Settings"
+        }
+
+        // 2. Accessibility Button
+        // Turns Green independently if Accessibility is enabled
+        if (isAccessibilityReady) {
+            btnOpenAccessibility.backgroundTintList = android.content.res.ColorStateList.valueOf(colorGreen)
             btnOpenAccessibility.text = "2. Accessibility ✓"
         } else {
-            btnOpenAccessibility.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF3DDC84.toInt())
+            btnOpenAccessibility.backgroundTintList = android.content.res.ColorStateList.valueOf(colorRed)
             btnOpenAccessibility.text = "2. Enable Accessibility"
         }
         
-        // Update start button based on all permissions
-        if (isAccessibilityReady && isOverlayReady && shizukuReady) {
-            btnStartCheck.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF4CAF50.toInt()) // Green
-            btnStartCheck.text = "LAUNCH TRACKPAD"
-        } else if (!shizukuReady) {
-            btnStartCheck.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFFF9800.toInt()) // Orange
-            btnStartCheck.text = "3. GRANT SHIZUKU"
+        // 3. Shizuku Button
+        // Turns Green independently if Shizuku is granted (even if Accessibility is off)
+        if (isShizukuReady) {
+            btnStartCheck.backgroundTintList = android.content.res.ColorStateList.valueOf(colorGreen)
+            btnStartCheck.text = "3. Shizuku Granted ✓"
         } else {
-            btnStartCheck.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2196F3.toInt()) // Blue
-            btnStartCheck.text = "3. CHECK PERMISSIONS & START"
+            btnStartCheck.backgroundTintList = android.content.res.ColorStateList.valueOf(colorRed)
+            btnStartCheck.text = "3. Grant Shizuku"
+        }
+
+        // 4. Launch App Button
+        // Only turns Green when ALL critical permissions are ready
+        btnSwitchDisplay.text = "Launch App"
+        if (isAccessibilityReady && isShizukuReady) {
+            btnSwitchDisplay.backgroundTintList = android.content.res.ColorStateList.valueOf(colorGreen)
+        } else {
+            btnSwitchDisplay.backgroundTintList = android.content.res.ColorStateList.valueOf(colorRed)
         }
     }
     // =================================================================================
@@ -186,17 +208,15 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     //          Does NOT show toasts - used for silent checking.
     // =================================================================================
     private fun checkCriticalPermissions(): Boolean {
-        // 1. Overlay
-        if (!Settings.canDrawOverlays(this)) {
-            return false
-        }
-
-        // 2. Accessibility
+        // [Fixed] Removed Overlay Permission check. 
+        // Since we use TYPE_ACCESSIBILITY_OVERLAY, the separate 'Appear on Top' permission is not strictly required.
+        
+        // 1. Accessibility
         if (!isAccessibilityEnabled()) {
             return false
         }
 
-        // 3. Shizuku
+        // 2. Shizuku
         if (!isShizukuReady()) {
             return false
         }
@@ -213,9 +233,6 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     // =================================================================================
     private fun showMissingPermissionsToast() {
         when {
-            !Settings.canDrawOverlays(this) -> {
-                Toast.makeText(this, "Missing: Overlay Permission (tap 'Allow Restricted Settings')", Toast.LENGTH_LONG).show()
-            }
             !isAccessibilityEnabled() -> {
                 Toast.makeText(this, "Missing: Accessibility Service", Toast.LENGTH_SHORT).show()
             }
@@ -281,7 +298,7 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             intent.data = Uri.parse("package:$packageName")
             startActivity(intent)
-            Toast.makeText(this, "Tap 'Allow restricted settings' at the bottom", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Tap 3 dot hamburger menu for 'Allow Restricted Settings' at top right corner. If not visible, enable at next step and return here.", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Could not open App Info", Toast.LENGTH_SHORT).show()
         }
