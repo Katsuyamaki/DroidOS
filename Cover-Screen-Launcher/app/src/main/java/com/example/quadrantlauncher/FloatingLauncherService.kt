@@ -369,32 +369,35 @@ class FloatingLauncherService : AccessibilityService() {
     }
 
 
-
-
+    // === FUNCTION: restartTrackpad - START ===
+    // [FIX] Uses Settings.Secure to read permissions (avoids build error) and Shell to write them
     private fun restartTrackpad() {
         safeToast("Restarting Trackpad...")
         Thread {
             try {
+                // 1. SAVE TARGET DISPLAY TO GLOBAL SETTINGS
+                val targetId = currentDisplayId
+                Log.d(TAG, "Saving Target Display ID: $targetId")
+                shellService?.runCommand("settings put global droidos_target_display $targetId")
+                
+                // 2. HARD KILL
                 val pkgName = "com.katsuyamaki.DroidOSTrackpadKeyboard"
                 val legacyPkg = "com.example.coverscreentester"
                 val serviceComponent = "$pkgName/com.example.coverscreentester.OverlayService"
                 
-                // 1. HARD KILL (Fixes Z-Order)
                 shellService?.runCommand("am force-stop $pkgName")
                 shellService?.runCommand("am force-stop $legacyPkg")
                 
-                // 2. Wait for system cleanup
+                // 3. Wait for system cleanup
                 Thread.sleep(1500)
 
-                // 3. RESTORE ACCESSIBILITY PERMISSION
-                val currentList = android.provider.Settings.Secure.getString(
-                    contentResolver, 
-                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                ) ?: ""
+                // 4. RESTORE ACCESSIBILITY PERMISSION
+                // [FIX] Use Android API to read settings instead of shell command (Fixes .trim() build error)
+                val currentList = (android.provider.Settings.Secure.getString(contentResolver, "enabled_accessibility_services") ?: "").trim()
                 
                 if (!currentList.contains("OverlayService")) {
                     Log.d(TAG, "Restoring Accessibility Permissions...")
-                    val newList = if (currentList.isEmpty()) {
+                    val newList = if (currentList.isEmpty() || currentList == "null") {
                         serviceComponent
                     } else {
                         "$currentList:$serviceComponent"
@@ -403,16 +406,11 @@ class FloatingLauncherService : AccessibilityService() {
                     shellService?.runCommand("settings put secure accessibility_enabled 1")
                 }
 
-
-                // 4. FORCE LAUNCH (Shell Logic)
-                // [FIX] Pass '--ei displayId $currentDisplayId' so app starts on the CORRECT screen
-                val startCmd = "am start -n $pkgName/com.example.coverscreentester.MainActivity --ez force_start true --ei displayId $currentDisplayId"
-                shellService?.runCommand(startCmd)
-                
-                // Fallback: Try legacy package launch if the first one fails
-                val legacyStartCmd = "am start -n $legacyPkg/com.example.coverscreentester.MainActivity --ez force_start true --ei displayId $currentDisplayId"
-                shellService?.runCommand(legacyStartCmd)
-
+                // 5. FORCE LAUNCH (Backup Trigger)
+                Thread.sleep(1000) 
+                Log.d(TAG, "Shell Launching Service...")
+                shellService?.runCommand("am start-foreground-service -n $pkgName/com.example.coverscreentester.OverlayService --ez force_start true")
+                shellService?.runCommand("am start-foreground-service -n $legacyPkg/com.example.coverscreentester.OverlayService --ez force_start true")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Shell Restart Failed", e)
@@ -423,6 +421,11 @@ class FloatingLauncherService : AccessibilityService() {
             }
         }.start()
     }
+    // === FUNCTION: restartTrackpad - END ===
+
+
+
+
 
 
 

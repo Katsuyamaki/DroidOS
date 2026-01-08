@@ -49,6 +49,9 @@ import com.example.coverscreentester.BuildConfig
 
 class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
+    private var isAccessibilityReady = false
+    private var pendingDisplayId = -1
+
     // === RECEIVER & ACTIONS - START ===
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -1053,18 +1056,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
-    // AccessibilityService entry point - called when user enables service in Settings
+
+    // This is the Accessibility Service entry point
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "Accessibility Service Connected")
+        isAccessibilityReady = true
 
-        // === NEW CODE START: Initialize Dictionary ===
-        PredictionEngine.instance.loadDictionary(this)
-        // === NEW CODE END ===
+        // [FIX] Read Target Display from Global Settings
+        // This solves the race condition where onServiceConnected runs before onStartCommand.
+        val globalTarget = try {
+            android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", -1)
+        } catch (e: Exception) {
+            -1
+        }
 
-        // Initialize WindowManager
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        // Determine Final Target
+        // Priority: 1. Explicit Intent (pending) 2. Global Setting 3. Current Default
+        val finalTarget = when {
+            pendingDisplayId != -1 -> pendingDisplayId
+            globalTarget != -1 -> globalTarget
+            else -> currentDisplayId
+        }
+
+        Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
+        
+        setupUI(finalTarget)
+        
+        // Clear pending states
+        pendingDisplayId = -1
+        
+        // Reset the global setting to avoid sticking to this display forever (Optional, but good practice)
+        // We do this via shell later or just leave it as "Last Known Position"
     }
+
+
    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try { createNotification() } catch(e: Exception){ e.printStackTrace() }
         
@@ -1085,109 +1112,105 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         try {
             checkAndBindShizuku()
-        
 
             // [FIX] Combined Startup Logic
             if (intent != null) {
-                // 1. Capture explicit ID (Default to -1 so we know if it was actually sent)
-                val explicitId = intent.getIntExtra("displayId", -1)
-                val isRecall = intent.getBooleanExtra("isRecall", false)
+                val dId = intent.getIntExtra("displayId", -1)
                 
-                Log.d(TAG, "onStartCommand: explicit=$explicitId, current=$currentDisplayId, recall=$isRecall")
-
-                // 2. Priority Logic:
-                // - IF explicit ID is sent and different/valid -> Use it
-                // - IF Recall requested -> Refresh
-                // - IF UI is missing (bubbleView == null) -> Init
-                if ((explicitId != -1 && explicitId != currentDisplayId) || 
-                    (explicitId != -1 && bubbleView == null) ||
-                    isRecall || 
-                    bubbleView == null) {
-                    
-                    // Use the explicit ID if valid, otherwise fallback to current
-                    val finalTarget = if (explicitId != -1) explicitId else currentDisplayId
-                    
-                    setupUI(finalTarget)
+                if (dId != -1) {
+                    if (isAccessibilityReady) {
+                        // Safe to launch immediately
+                        Log.d(TAG, "onStartCommand: Ready -> Setup UI Display $dId")
+                        setupUI(dId)
+                    } else {
+                        // Too early! Queue it for onServiceConnected
+                        Log.d(TAG, "onStartCommand: Not Ready -> Queueing Display $dId")
+                        pendingDisplayId = dId
+                    }
                     return START_STICKY
                 }
             }
 
-        
-                    val action = intent?.action
-                    fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
-        
-                    // Handle commands robustly
-                    if (action != null) {
-                        when {
-                            // Standard Actions
-                            action == "SWITCH_DISPLAY" -> switchDisplay()
-                            action == "RESET_POSITION" -> {
-                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                                if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
-                            }
-                            action == "ROTATE" -> {
-                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                                if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
-                            }
-                            action == "SAVE_LAYOUT" -> saveLayout()
-                            action == "LOAD_LAYOUT" -> loadLayout()
-                            action == "DELETE_PROFILE" -> deleteCurrentProfile()
-                            action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
-                            action == "RELOAD_PREFS" -> {
-                                loadPrefs()
-                                updateBorderColor(currentBorderColor)
-                                updateLayoutSizes()
-                                updateScrollPosition()
-                                updateCursorSize()
-                                keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
-                                if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
-                            }
-                            action == "PREVIEW_UPDATE" -> handlePreview(intent)
-                            action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                            action == "RESET_CURSOR" -> resetCursorCenter()
-                            action == "TOGGLE_DEBUG" -> toggleDebugMode()
-                            action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                            action == "OPEN_MENU" -> menuManager?.show()
-        
-                            // ADB / Launcher Commands (Suffix Matching)
-                                                matches("SOFT_RESTART") -> {
-                                                    Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
-                                                    // Delegate to unified function to handle debouncing and proper Z-order timing
-                                                    performSoftRestart()
-                                                }                            matches("MOVE_TO_VIRTUAL") -> {
-                                val vid = intent.getIntExtra("DISPLAY_ID", 2)
-                                handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
-                            }
-                            matches("RETURN_TO_PHYSICAL") -> {
-                                val pid = intent.getIntExtra("DISPLAY_ID", 0)
-                                handler.post { returnToPhysicalDisplay(pid) }
-                            }
-                            matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
-                            matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
-                            matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
-                        }
+            // --- Original Logic for other intents/conditions ---
+            // If no explicit displayId was passed, or if the AccessibilityService is not yet ready
+            // for the initial setup, we fall back to the existing logic.
+            val action = intent?.action
+            fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
+            
+            // Handle commands robustly (keeping original intent handling)
+            if (action != null) {
+                when {
+                    // Standard Actions
+                    action == "SWITCH_DISPLAY" -> switchDisplay()
+                    action == "RESET_POSITION" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
                     }
-                    if (intent?.hasExtra("DISPLAY_ID") == true) {
-                        val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
-                        val force = intent.getBooleanExtra("FORCE_MOVE", false)
-                        if (targetId >= 0 && (targetId != currentDisplayId || force)) {
-                            forceMoveToDisplay(targetId)
-                        }
-                    } else if (windowManager == null) {
-                        setupUI(Display.DEFAULT_DISPLAY)
+                    action == "ROTATE" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
                     }
+                    action == "SAVE_LAYOUT" -> saveLayout()
+                    action == "LOAD_LAYOUT" -> loadLayout()
+                    action == "DELETE_PROFILE" -> deleteCurrentProfile()
+                    action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
+                    action == "RELOAD_PREFS" -> {
+                        loadPrefs()
+                        updateBorderColor(currentBorderColor)
+                        updateLayoutSizes()
+                        updateScrollPosition()
+                        updateCursorSize()
+                        keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
+                        if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
+                    }
+                    action == "PREVIEW_UPDATE" -> handlePreview(intent)
+                    action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
+                    action == "RESET_CURSOR" -> resetCursorCenter()
+                    action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                    action == "OPEN_MENU" -> menuManager?.show()
                     
-                    // [CRITICAL] Ensure UI is created if missing
-                    if (windowManager == null || bubbleView == null) {
-                        setupUI(Display.DEFAULT_DISPLAY)
+                    // ADB / Launcher Commands (Suffix Matching)
+                    matches("SOFT_RESTART") -> {
+                        Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
+                        performSoftRestart()
                     }
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "CRASH during onStartCommand", e)
-                    // Retry setup safely
-                    try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
+                    matches("MOVE_TO_VIRTUAL") -> {
+                        val vid = intent.getIntExtra("DISPLAY_ID", 2)
+                        handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
+                    }
+                    matches("RETURN_TO_PHYSICAL") -> {
+                        val pid = intent.getIntExtra("DISPLAY_ID", 0)
+                        handler.post { returnToPhysicalDisplay(pid) }
+                    }
+                    matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
+                    matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
+                    matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
                 }
-                return START_STICKY    }
+            }
+
+            if (intent?.hasExtra("DISPLAY_ID") == true) {
+                val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
+                val force = intent.getBooleanExtra("FORCE_MOVE", false)
+                if (targetId >= 0 && (targetId != currentDisplayId || force)) {
+                    forceMoveToDisplay(targetId)
+                }
+            } else if (windowManager == null) {
+                setupUI(Display.DEFAULT_DISPLAY)
+            }
+            
+            // [CRITICAL] Ensure UI is created if missing
+            if (windowManager == null || bubbleView == null) {
+                setupUI(Display.DEFAULT_DISPLAY)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "CRASH during onStartCommand", e)
+            // Retry setup safely
+            try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
+        }
+        return START_STICKY
+    }
 
     override fun onInterrupt() {}
 
