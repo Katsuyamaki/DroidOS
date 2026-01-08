@@ -34,9 +34,14 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Check permissions FIRST before deciding what to do
-        if (checkCriticalPermissions()) {
-            // All permissions granted - skip UI and launch/recall service
+        // [FIX] Check for Force Start flag from Launcher (Hard Restart)
+        // If this flag is present, we assume the Launcher has already handled 
+        // permissions/shizuku and we should just start the service immediately.
+        val isForceStart = intent.getBooleanExtra("force_start", false)
+        
+        // Check permissions OR Force Start flag
+        if (isForceStart || checkCriticalPermissions()) {
+            // All permissions granted (or forced) - skip UI and launch/recall service
             launchOverlayServiceAndFinish()
             return
         }
@@ -253,14 +258,26 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     // SUMMARY: Checks if our accessibility service is enabled in system settings.
     // =================================================================================
     private fun isAccessibilityEnabled(): Boolean {
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        for (service in enabledServices) {
-            if (service.resolveInfo.serviceInfo.packageName == packageName) {
-                return true
+        // [FIX] Read Settings.Secure directly. 
+        // AccessibilityManager only lists *running* services. After a force-stop, 
+        // the service is not running yet, so AM returns false. 
+        // But the *Permission* is still granted in Settings, so we check that source of truth.
+        return try {
+            val expectedServiceName = "$packageName/.OverlayService"
+            val enabledServices = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
+            
+            // Check if our service string exists in the setting
+            val colonSplit = enabledServices.split(":")
+            colonSplit.any { component ->
+                component.equals(expectedServiceName, ignoreCase = true) || 
+                component.contains("$packageName/")
             }
+        } catch (e: Exception) {
+            false
         }
-        return false
     }
     // =================================================================================
     // END FUNCTION: isAccessibilityEnabled

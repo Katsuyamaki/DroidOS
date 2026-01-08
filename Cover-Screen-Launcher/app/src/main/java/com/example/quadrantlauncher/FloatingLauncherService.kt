@@ -405,10 +405,23 @@ class FloatingLauncherService : AccessibilityService() {
                     shellService?.runCommand("settings put secure accessibility_enabled 1")
                 }
                 
-                // 3. Launch
+
+                // 3. Launch with "Force Start" flag
                 uiHandler.post {
-                    launchTrackpad()
+                    // We manually construct the launch intent to add the extra
+                    val launchIntent = packageManager.getLaunchIntentForPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+                        ?: packageManager.getLaunchIntentForPackage("com.example.coverscreentester")
+                        
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        launchIntent.putExtra("force_start", true) // Signal to skip permissions page
+                        startActivity(launchIntent)
+                        safeToast("Launching Trackpad...")
+                    } else {
+                        launchTrackpad() // Fallback
+                    }
                 }
+
             } catch (e: Exception) {
                 Log.e(TAG, "Restart Sequence Failed", e)
                 uiHandler.post { launchTrackpad() }
