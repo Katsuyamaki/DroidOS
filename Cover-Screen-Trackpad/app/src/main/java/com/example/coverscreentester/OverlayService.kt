@@ -2189,9 +2189,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             keyboardOverlay?.updateSize(uiScreenWidth, defaultH)
         }
 
-        // [FIX] Apply Saved Scale immediately after creation
-        // loadLayout() runs before this init, so we must manually apply the pref here
-        keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
+        // [REMOVED] Do not force scale here. 
+        // KeyboardOverlay loads the fresh "keyboard_key_scale" from disk automatically.
+        // Forcing 'prefs.prefKeyScale' here causes bugs because 'prefs' might be stale.
     }
 
 
@@ -2205,8 +2205,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             false 
         } else { 
             keyboardOverlay?.show()
-            // [FIX] Enforce scale when showing to prevent resets
-            keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
+            // [REMOVED] Stale scale enforcement. 
+            // The show() method already loads the correct saved scale from disk.
             true 
         }
         

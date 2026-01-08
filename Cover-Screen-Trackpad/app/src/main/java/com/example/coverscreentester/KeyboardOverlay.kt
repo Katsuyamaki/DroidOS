@@ -470,7 +470,8 @@ class KeyboardOverlay(
             createKeyboardWindow()
 
             // [NEW] Initialize internal scale from prefs once on show
-            val savedScale = prefs.getInt("keyboard_key_scale", 100) / 100f
+            // Default to 69 (0.69f) if missing, to match resetPosition
+            val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f
             internalScale = savedScale
             dragStartScale = savedScale // Init for safety
 
@@ -794,12 +795,15 @@ class KeyboardOverlay(
         if (!isVisible || keyboardParams == null) return
         
         // Calculate target dimensions based on current params
-        // Handle WRAP_CONTENT cases if necessary
         val currentW = if (keyboardParams!!.width > 0) keyboardParams!!.width else keyboardContainer?.width ?: 300
         val currentH = if (keyboardParams!!.height > 0) keyboardParams!!.height else keyboardContainer?.height ?: 200
 
         // Pass to the new centralized function that handles Scaling + Sync
         applyWindowResize(currentW + dw, currentH + dh)
+        
+        // [FIX] Save state so it persists
+        saveKeyboardSize()
+        saveKeyboardScale()
     }
 
 
@@ -862,6 +866,8 @@ class KeyboardOverlay(
 
         if (changed) {
             applyWindowResize(w, h)
+            saveKeyboardSize()  // [FIX] Save size immediately
+            saveKeyboardScale() // [FIX] Save scale immediately
             return true
         }
         return false
@@ -1002,7 +1008,13 @@ class KeyboardOverlay(
         keyboardView?.setKeyboardListener(this)
         val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         keyboardView?.setVibrationEnabled(prefs.getBoolean("vibrate", true))
-        val scale = prefs.getInt("keyboard_key_scale", 100) / 100f; keyboardView?.setScale(scale)
+        
+        // [FIX] Load saved scale and update Internal State immediately
+        // Use 69 as default to match resetPosition logic (prevent 1.0 mismatch)
+        val scale = prefs.getInt("keyboard_key_scale", 69) / 100f
+        internalScale = scale 
+        keyboardView?.setScale(scale)
+        
         keyboardView?.alpha = currentAlpha / 255f
 
         val kbParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -1072,6 +1084,11 @@ class KeyboardOverlay(
 
         windowManager.addView(keyboardContainer, keyboardParams)
         updateAlpha(currentAlpha)
+        
+        // [FIX] Initialize Resize Anchors so D-pad/Scaling works immediately
+        // This prevents the "Background resizes but Keys don't" bug on fresh load.
+        dragStartHeight = keyboardHeight
+        dragStartScale = internalScale
     }
 
 
@@ -1174,6 +1191,7 @@ class KeyboardOverlay(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isResizing = false
                 saveKeyboardSize()
+                saveKeyboardScale() // [FIX] Persist scale so aspect ratio survives hide/unhide
             }
         }
         return true
@@ -1181,6 +1199,10 @@ class KeyboardOverlay(
     // [END RESIZE FIX]
 
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
+    private fun saveKeyboardScale() { 
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .edit().putInt("keyboard_key_scale", (internalScale * 100).toInt()).apply() 
+    }
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
 
