@@ -1948,7 +1948,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =================================================================================
         // VIRTUAL MIRROR MODE LOAD
         // =================================================================================
-        prefs.prefVirtualMirrorMode = p.getBoolean("virtual_mirror_mode", false)
+        // [Fixed] Always FORCE OFF on app restart/reload. Do not load saved state.
+        prefs.prefVirtualMirrorMode = false 
         prefs.prefMirrorOrientDelayMs = p.getLong("mirror_orient_delay_ms", 1000L)
 
         // Load Mirror Keyboard Prefs
