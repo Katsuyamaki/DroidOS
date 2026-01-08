@@ -822,7 +822,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     setOverlayFocusable(false)
                     handler.postDelayed({ attemptRefocusInput() }, 300)
                 }
-                action == Intent.ACTION_SCREEN_ON -> triggerAggressiveBlocking()
+                action == Intent.ACTION_SCREEN_ON -> {
+                    // [FIX] Only trigger blocking if explicitly enabled in prefs.
+                    // Previously, this ran unconditionally, causing the keyboard to vanish/block
+                    // on the Beam Pro every time the screen turned on.
+                    if (prefs.prefBlockSoftKeyboard) {
+                        triggerAggressiveBlocking()
+                    }
+                }
 
                 // Universal ADB/External Commands (Suffix Match)
                 matches("SOFT_RESTART") -> {
