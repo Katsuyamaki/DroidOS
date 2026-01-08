@@ -86,15 +86,45 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         }
     }
 
+    // Debounce token for restarts
+    private var lastRestartTime = 0L
+
     private fun performSoftRestart() {
-        // HARD RESTART: Kill the process to force a full WindowManager reset.
-        // This is the only way to fix persistent Z-order issues against the Launcher.
+        val now = System.currentTimeMillis()
+        if (now - lastRestartTime < 1000) {
+            Log.d(TAG, "Restart ignored (Debounced)")
+            return 
+        }
+        lastRestartTime = now
+
+        // [FIX] DEEP UI RESET (Non-Destructive)
+        // 1. Tear down immediately
         handler.post {
-            Toast.makeText(this, "Restarting Trackpad...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Refreshing UI...", Toast.LENGTH_SHORT).show()
+            removeOldViews()
+            windowManager = null // Force fresh context next time
+            
+            // 2. Rebuild after delay (gives Launcher time to settle)
             handler.postDelayed({
-                // This will kill the process. The system should restart it (START_STICKY).
-                forceExit()
-            }, 300)
+                try {
+                    checkAndBindShizuku()
+                    setupUI(currentDisplayId)
+                    
+                    // 3. Initial Z-Order Enforce
+                    enforceZOrder()
+                    
+                    // 4. [FIX] SECONDARY ENFORCEMENT
+                    // Run again after 800ms to ensure we jump over any late-loading Launcher windows
+                    handler.postDelayed({ 
+                        enforceZOrder() 
+                        Toast.makeText(this, "Trackpad Refreshed", Toast.LENGTH_SHORT).show()
+                    }, 800)
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "Soft Restart Failed", e)
+                    setupUI(Display.DEFAULT_DISPLAY)
+                }
+            }, 500)
         }
     }
 
@@ -103,9 +133,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         try {
             if (windowManager != null) {
                 // LAYER 1: TRACKPAD (Lowest)
-                // We update layout but do NOT remove/add, keeping it at the bottom of the stack
-                if (trackpadLayout != null) {
-                    try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception) {}
+                // [FIX] Explicitly Remove/Add to force window to TOP of System Stack
+                // Simply updating layout keeps it at the same Z-index relative to other apps (like Launcher).
+                if (trackpadLayout != null && trackpadLayout?.isAttachedToWindow == true) {
+                    try {
+                        windowManager?.removeView(trackpadLayout)
+                        windowManager?.addView(trackpadLayout, trackpadParams)
+                    } catch(e: Exception) {
+                        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(z: Exception) {}
+                    }
                 }
 
                 // LAYER 2: KEYBOARD
@@ -1057,96 +1093,102 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try { createNotification() } catch(e: Exception){ e.printStackTrace() }
-
-        // Re-check Shizuku binding on every start command to ensure connection is alive
-        checkAndBindShizuku()
-
-        try {
-            // Handle display recall from MainActivity
-            if (intent != null) {
-                val targetDisplayId = intent.getIntExtra("displayId", currentDisplayId)
-                val isRecall = intent.getBooleanExtra("isRecall", false)
-
-                android.util.Log.d("OverlayService", "onStartCommand: target=$targetDisplayId, current=$currentDisplayId, recall=$isRecall")
-
-                // Only setup UI if display changed OR if user explicitly tapped the icon (Recall)
-                if (targetDisplayId != currentDisplayId || isRecall || bubbleView == null) {
-                    setupUI(targetDisplayId)
-                    return START_STICKY
-                }
-            }
-
-            val action = intent?.action
-            fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
-
-            // Handle commands robustly
-            if (action != null) {
-                when {
-                    // Standard Actions
-                    action == "SWITCH_DISPLAY" -> switchDisplay()
-                    action == "RESET_POSITION" -> {
-                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
-                    }
-                    action == "ROTATE" -> {
-                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                        if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
-                    }
-                    action == "SAVE_LAYOUT" -> saveLayout()
-                    action == "LOAD_LAYOUT" -> loadLayout()
-                    action == "DELETE_PROFILE" -> deleteCurrentProfile()
-                    action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
-                    action == "RELOAD_PREFS" -> {
-                        loadPrefs()
-                        updateBorderColor(currentBorderColor)
-                        updateLayoutSizes()
-                        updateScrollPosition()
-                        updateCursorSize()
-                        keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
-                        if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
-                    }
-                    action == "PREVIEW_UPDATE" -> handlePreview(intent)
-                    action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                    action == "RESET_CURSOR" -> resetCursorCenter()
-                    action == "TOGGLE_DEBUG" -> toggleDebugMode()
-                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                    action == "OPEN_MENU" -> menuManager?.show()
-
-                    // ADB / Launcher Commands (Suffix Matching)
-                    matches("SOFT_RESTART") -> {
-                        Log.d(TAG, "onStartCommand: SOFT_RESTART")
-                        val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
-                        handler.post {
-                            removeOldViews()
-                            handler.postDelayed({ setupUI(targetDisplayId); enforceZOrder() }, 200)
+                try { createNotification() } catch(e: Exception){ e.printStackTrace() }
+        
+                // [FIX] Wrap startup in Try-Catch to prevent "Flash and Crash"
+                try {
+                    // Re-check Shizuku binding on every start command to ensure connection is alive
+                    checkAndBindShizuku()
+        
+                    // Handle display recall from MainActivity
+                    if (intent != null) {
+                        val targetDisplayId = intent.getIntExtra("displayId", currentDisplayId)
+                        val isRecall = intent.getBooleanExtra("isRecall", false)
+        
+                        android.util.Log.d("OverlayService", "onStartCommand: target=$targetDisplayId, current=$currentDisplayId, recall=$isRecall")
+        
+                        // Only setup UI if display changed OR if user explicitly tapped the icon (Recall)
+                        if (targetDisplayId != currentDisplayId || isRecall || bubbleView == null) {
+                            setupUI(targetDisplayId)
+                            return START_STICKY
                         }
                     }
-                    matches("MOVE_TO_VIRTUAL") -> {
-                        val vid = intent.getIntExtra("DISPLAY_ID", 2)
-                        handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
+        
+                    val action = intent?.action
+                    fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
+        
+                    // Handle commands robustly
+                    if (action != null) {
+                        when {
+                            // Standard Actions
+                            action == "SWITCH_DISPLAY" -> switchDisplay()
+                            action == "RESET_POSITION" -> {
+                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                                if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
+                            }
+                            action == "ROTATE" -> {
+                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                                if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
+                            }
+                            action == "SAVE_LAYOUT" -> saveLayout()
+                            action == "LOAD_LAYOUT" -> loadLayout()
+                            action == "DELETE_PROFILE" -> deleteCurrentProfile()
+                            action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
+                            action == "RELOAD_PREFS" -> {
+                                loadPrefs()
+                                updateBorderColor(currentBorderColor)
+                                updateLayoutSizes()
+                                updateScrollPosition()
+                                updateCursorSize()
+                                keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
+                                if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
+                            }
+                            action == "PREVIEW_UPDATE" -> handlePreview(intent)
+                            action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
+                            action == "RESET_CURSOR" -> resetCursorCenter()
+                            action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                            action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                            action == "OPEN_MENU" -> menuManager?.show()
+        
+                            // ADB / Launcher Commands (Suffix Matching)
+                                                matches("SOFT_RESTART") -> {
+                                                    Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
+                                                    // Delegate to unified function to handle debouncing and proper Z-order timing
+                                                    performSoftRestart()
+                                                }                            matches("MOVE_TO_VIRTUAL") -> {
+                                val vid = intent.getIntExtra("DISPLAY_ID", 2)
+                                handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
+                            }
+                            matches("RETURN_TO_PHYSICAL") -> {
+                                val pid = intent.getIntExtra("DISPLAY_ID", 0)
+                                handler.post { returnToPhysicalDisplay(pid) }
+                            }
+                            matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
+                            matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
+                            matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
+                        }
                     }
-                    matches("RETURN_TO_PHYSICAL") -> {
-                        val pid = intent.getIntExtra("DISPLAY_ID", 0)
-                        handler.post { returnToPhysicalDisplay(pid) }
+                    if (intent?.hasExtra("DISPLAY_ID") == true) {
+                        val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
+                        val force = intent.getBooleanExtra("FORCE_MOVE", false)
+                        if (targetId >= 0 && (targetId != currentDisplayId || force)) {
+                            forceMoveToDisplay(targetId)
+                        }
+                    } else if (windowManager == null) {
+                        setupUI(Display.DEFAULT_DISPLAY)
                     }
-                    matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
-                    matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
-                    matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
+                    
+                    // [CRITICAL] Ensure UI is created if missing
+                    if (windowManager == null || bubbleView == null) {
+                        setupUI(Display.DEFAULT_DISPLAY)
+                    }
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "CRASH during onStartCommand", e)
+                    // Retry setup safely
+                    try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
                 }
-            }
-            if (intent?.hasExtra("DISPLAY_ID") == true) {
-                val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
-                val force = intent.getBooleanExtra("FORCE_MOVE", false)
-                if (targetId >= 0 && (targetId != currentDisplayId || force)) {
-                    forceMoveToDisplay(targetId)
-                }
-            } else if (windowManager == null) {
-                setupUI(Display.DEFAULT_DISPLAY)
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-        return START_STICKY
-    }
+                return START_STICKY    }
 
     override fun onInterrupt() {}
 
