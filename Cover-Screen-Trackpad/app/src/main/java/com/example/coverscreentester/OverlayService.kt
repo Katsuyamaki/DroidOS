@@ -2734,6 +2734,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     // =================================================================================
 
 
+
+    // =================================================================================
+    // FUNCTION: loadLayout
+    // SUMMARY: Loads a display-specific profile containing trackpad window position/size,
+    //          keyboard settings (scale, alpha, position), and visual preferences.
+    //          The profile key is based on screen resolution + mirror mode state.
+    //          CRITICAL: After loading profile scale, syncs it to global SharedPreferences
+    //          so KeyboardOverlay.show() picks up the correct value.
+    // =================================================================================
     fun loadLayout() {
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         val key = getProfileKey()
@@ -2763,6 +2772,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 prefs.prefScrollVisualSize = parts[10].toInt(); prefs.prefCursorSize = parts[11].toInt()
                 prefs.prefKeyScale = parts[12].toInt()
                 prefs.prefAutomationEnabled = parts[13] == "1"; prefs.prefAnchored = parts[14] == "1"
+                
+                // =================================================================================
+                // FIX: SYNC PROFILE SCALE TO GLOBAL SHAREDPREFS
+                // SUMMARY: KeyboardOverlay.show() reads "keyboard_key_scale" from SharedPrefs directly.
+                //          We must update this global key whenever we load a profile, otherwise
+                //          the keyboard will use the scale from the previous display/profile.
+                // =================================================================================
+                p.edit().putInt("keyboard_key_scale", prefs.prefKeyScale).apply()
+                // =================================================================================
+                // END BLOCK: SYNC PROFILE SCALE TO GLOBAL SHAREDPREFS
+                // =================================================================================
                 
                 if (parts.size >= 27) {
                     prefs.prefBubbleSize = parts[15].toInt(); prefs.prefBubbleAlpha = parts[16].toInt()
@@ -2824,6 +2844,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             showToast("Profile Loaded: ${if(prefs.prefVirtualMirrorMode) "Mirror" else "Std"}")
         }
     }
+    // =================================================================================
+    // END BLOCK: loadLayout
+    // =================================================================================
+
 
 
 
