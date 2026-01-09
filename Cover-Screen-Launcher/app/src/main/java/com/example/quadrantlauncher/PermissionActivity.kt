@@ -158,22 +158,12 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
         }
     }
 
-    // =================================================================================
-    // FUNCTION: updateItem
-    // SUMMARY: Updates the visual state of a permission item. Buttons remain CLICKABLE
-    //          even when permission is granted, allowing users to navigate back to
-    //          settings pages at any time (e.g., to enable Restricted Settings after
-    //          seeing the dialog in Accessibility settings).
-    // =================================================================================
     private fun updateItem(container: LinearLayout, icon: ImageView, granted: Boolean) {
         if (granted) {
             icon.setImageResource(android.R.drawable.checkbox_on_background)
             icon.setColorFilter(Color.GREEN)
-            // [FIX] Keep button clickable so users can navigate back to settings
-            // This is necessary because users may need to return to App Info to
-            // enable "Restricted Settings" after attempting to enable Accessibility
-            container.isClickable = true
-            container.alpha = 0.8f  // Slightly dimmed to show it's "done" but still tappable
+            container.isClickable = false
+            container.alpha = 0.6f
         } else {
             icon.setImageResource(android.R.drawable.checkbox_off_background)
             icon.setColorFilter(Color.RED)
@@ -181,9 +171,6 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
             container.alpha = 1.0f
         }
     }
-    // =================================================================================
-    // END FUNCTION: updateItem
-    // =================================================================================
 
     private fun hasAllPermissions(): Boolean {
         val hasOverlay = Settings.canDrawOverlays(this)

@@ -1058,9 +1058,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
     // This is the Accessibility Service entry point
-
-
-
 // =================================================================================
     // FUNCTION: onServiceConnected
     // SUMMARY: AccessibilityService entry point - called when user enables service.
