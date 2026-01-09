@@ -21,10 +21,12 @@ import rikka.shizuku.Shizuku
 class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener {
 
     private lateinit var btnGrantOverlay: LinearLayout
+    private lateinit var btnGrantRestricted: LinearLayout  // NEW: App Info button
     private lateinit var btnGrantShizuku: LinearLayout
     private lateinit var btnGrantAccessibility: LinearLayout
     
     private lateinit var iconOverlay: ImageView
+    private lateinit var iconRestricted: ImageView  // NEW: Restricted settings icon
     private lateinit var iconShizuku: ImageView
     private lateinit var iconAccessibility: ImageView
     
@@ -36,10 +38,12 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
 
         // Bind Views
         btnGrantOverlay = findViewById(R.id.btn_perm_overlay)
+        btnGrantRestricted = findViewById(R.id.btn_perm_restricted)  // NEW
         btnGrantShizuku = findViewById(R.id.btn_perm_shizuku)
         btnGrantAccessibility = findViewById(R.id.btn_perm_accessibility)
         
         iconOverlay = findViewById(R.id.icon_status_overlay)
+        iconRestricted = findViewById(R.id.icon_status_restricted)  // NEW
         iconShizuku = findViewById(R.id.icon_status_shizuku)
         iconAccessibility = findViewById(R.id.icon_status_accessibility)
         
@@ -50,6 +54,31 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             startActivityForResult(intent, 101)
         }
+
+        // =======================================================================
+        // BUTTON: App Info / Restricted Settings
+        // SUMMARY: Opens the App Info page where the user can tap the 3-dot
+        //          hamburger menu (top right) and select "Allow Restricted Settings".
+        //          This is required on Android 13+ for sideloaded APKs to enable
+        //          accessibility services.
+        // =======================================================================
+        btnGrantRestricted.setOnClickListener {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+                Toast.makeText(
+                    this,
+                    "Tap ⋮ menu (top right) → 'Allow Restricted Settings'",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Could not open App Info", Toast.LENGTH_SHORT).show()
+            }
+        }
+        // =======================================================================
+        // END BUTTON: App Info / Restricted Settings
+        // =======================================================================
 
         // --- 2. SHIZUKU PERMISSION ---
         btnGrantShizuku.setOnClickListener {
@@ -129,12 +158,22 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
         }
     }
 
+    // =================================================================================
+    // FUNCTION: updateItem
+    // SUMMARY: Updates the visual state of a permission item. Buttons remain CLICKABLE
+    //          even when permission is granted, allowing users to navigate back to
+    //          settings pages at any time (e.g., to enable Restricted Settings after
+    //          seeing the dialog in Accessibility settings).
+    // =================================================================================
     private fun updateItem(container: LinearLayout, icon: ImageView, granted: Boolean) {
         if (granted) {
             icon.setImageResource(android.R.drawable.checkbox_on_background)
             icon.setColorFilter(Color.GREEN)
-            container.isClickable = false
-            container.alpha = 0.6f
+            // [FIX] Keep button clickable so users can navigate back to settings
+            // This is necessary because users may need to return to App Info to
+            // enable "Restricted Settings" after attempting to enable Accessibility
+            container.isClickable = true
+            container.alpha = 0.8f  // Slightly dimmed to show it's "done" but still tappable
         } else {
             icon.setImageResource(android.R.drawable.checkbox_off_background)
             icon.setColorFilter(Color.RED)
@@ -142,6 +181,9 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
             container.alpha = 1.0f
         }
     }
+    // =================================================================================
+    // END FUNCTION: updateItem
+    // =================================================================================
 
     private fun hasAllPermissions(): Boolean {
         val hasOverlay = Settings.canDrawOverlays(this)

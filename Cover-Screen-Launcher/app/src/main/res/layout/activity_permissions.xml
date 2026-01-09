@@ -61,6 +61,53 @@
             android:src="@android:drawable/checkbox_off_background"/>
     </LinearLayout>
 
+    <!-- =========================================================================== -->
+    <!-- BUTTON: App Info / Restricted Settings                                      -->
+    <!-- SUMMARY: Opens the App Info page where users can tap the 3-dot menu to      -->
+    <!--          find "Allow Restricted Settings". This is needed on Android 13+   -->
+    <!--          for sideloaded apps to enable accessibility services.              -->
+    <!-- =========================================================================== -->
+    <LinearLayout
+        android:id="@+id/btn_perm_restricted"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_item_press"
+        android:padding="16dp"
+        android:layout_marginBottom="12dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true">
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Allow Restricted Settings"
+                android:textColor="#FF9800"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tap → 3-dot menu → Allow Restricted"
+                android:textColor="#888888"
+                android:textSize="12sp"/>
+        </LinearLayout>
+        <ImageView
+            android:id="@+id/icon_status_restricted"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@android:drawable/ic_menu_info_details"
+            android:tint="#FF9800"/>
+    </LinearLayout>
+    <!-- =========================================================================== -->
+    <!-- END BUTTON: App Info / Restricted Settings                                  -->
+    <!-- =========================================================================== -->
+
     <LinearLayout
         android:id="@+id/btn_perm_shizuku"
         android:layout_width="match_parent"
