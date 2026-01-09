@@ -54,11 +54,6 @@ import kotlin.math.min
 
 class FloatingLauncherService : AccessibilityService() {
 
-    // [NEW] Debug Mode State
-    private var isDebugMode = false
-    private var debugClickCount = 0
-    private var lastDebugClickTime = 0L
-
     private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
     private var virtualImageReader: ImageReader? = null // Keeps surface alive
     private val ACTION_TOGGLE_VIRTUAL = "com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL_DISPLAY"
@@ -634,9 +629,6 @@ class FloatingLauncherService : AccessibilityService() {
     // Visual debug function to show package/activity when apps are opened/modified/identified
     // This displays in the bright green text area above the app queue in the launcher drawer
     private fun debugShowAppIdentification(action: String, pkg: String, className: String?) {
-        // [FIX] Only run if Debug Mode is enabled
-        if (!isDebugMode) return
-
         val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
         val suffix = if (pkg.contains(":")) pkg.substringAfter(":") else null
         
@@ -785,10 +777,6 @@ class FloatingLauncherService : AccessibilityService() {
             debugStatusView?.setTextColor(Color.GREEN)
             debugStatusView?.textSize = 10f
             debugStatusView?.gravity = Gravity.CENTER
-            
-            // [FIX] Hide Debug View by Default
-            debugStatusView?.visibility = View.GONE
-            
             container.addView(debugStatusView, 0)
         }
 
@@ -802,34 +790,7 @@ class FloatingLauncherService : AccessibilityService() {
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_DPI) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist)?.setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_BLACKLIST) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_PROFILES) }
-        
-        // [FIX] SETTINGS ICON - DEBUG TRIGGER (5 Clicks)
-        drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings).setOnClickListener { 
-            dismissKeyboardAndRestore()
-            
-            // Check for 5 clicks
-            val now = System.currentTimeMillis()
-            if (now - lastDebugClickTime < 500) {
-                debugClickCount++
-            } else {
-                debugClickCount = 1
-            }
-            lastDebugClickTime = now
-
-            if (debugClickCount >= 5) {
-                isDebugMode = !isDebugMode
-                debugClickCount = 0
-                val status = if (isDebugMode) "ON" else "OFF"
-                
-                uiHandler.post {
-                    Toast.makeText(context, "Debug Mode: $status", Toast.LENGTH_SHORT).show()
-                    debugStatusView?.visibility = if (isDebugMode) View.VISIBLE else View.GONE
-                    if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS)
-                }
-            }
-
-            switchMode(MODE_SETTINGS) 
-        }
+        drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_SETTINGS) }
         // === MODE ICON CLICK LISTENERS - END ===
         executeBtn.setOnClickListener { executeLaunch(selectedLayoutType, closeDrawer = true) }
         searchBar.addTextChangedListener(object : TextWatcher { override fun afterTextChanged(s: Editable?) { filterList(s.toString()) }; override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}; override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {} })
@@ -1573,7 +1534,6 @@ class FloatingLauncherService : AccessibilityService() {
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
     private fun loadProfile(name: String) { val data = AppPreferences.getProfileData(this, name) ?: return; try { val parts = data.split("|"); selectedLayoutType = parts[0].toInt(); selectedResolutionIndex = parts[1].toInt(); currentDpiSetting = parts[2].toInt(); val pkgList = parts[3].split(","); selectedAppsQueue.clear(); for (pkg in pkgList) { if (pkg.isNotEmpty()) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)) } else { val app = allAppsList.find { it.packageName == pkg }; if (app != null) selectedAppsQueue.add(app) } } }; AppPreferences.saveLastLayout(this, selectedLayoutType); AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); activeProfileName = name; updateSelectedAppsDock(); safeToast("Loaded: $name"); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } }
     
-
     // === EXECUTE LAUNCH - START ===
     // Main execution function that launches and tiles all selected apps
     private fun executeLaunch(layoutType: Int, closeDrawer: Boolean) {
@@ -1631,7 +1591,7 @@ class FloatingLauncherService : AccessibilityService() {
                 
                 Log.d(TAG, "executeLaunch: Screen dimensions ${w}x${h}")
                 
-                // Build tile rectangles (Same logic as before)
+                // Build tile rectangles
                 val rects = mutableListOf<Rect>()
                 when (layoutType) { 
                     LAYOUT_FULL -> rects.add(Rect(0, 0, w, h))
@@ -1678,6 +1638,8 @@ class FloatingLauncherService : AccessibilityService() {
                     }
                 }
                 
+                Log.d(TAG, "executeLaunch: ${rects.size} tiles for ${selectedAppsQueue.size} apps")
+                
                 if (selectedAppsQueue.isEmpty()) {
                     uiHandler.post { safeToast("No apps in queue") }
                     return@Thread
@@ -1690,18 +1652,24 @@ class FloatingLauncherService : AccessibilityService() {
                         try { 
                             val basePkg = app.getBasePackage()
                             val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                            Log.d(TAG, "Minimize: ${app.label} taskId=$tid")
                             if (tid != -1) shellService?.moveTaskToBack(tid) 
-                        } catch (e: Exception) {} 
+                        } catch (e: Exception) { 
+                            Log.e(TAG, "Failed to minimize ${app.packageName}", e) 
+                        } 
                     } 
                 }
                 
+                // Get active apps
                 val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                Log.d(TAG, "executeLaunch: ${activeApps.size} active apps")
                 
                 // Kill apps if enabled
                 if (killAppOnExecute) { 
                     for (app in activeApps) { 
                         if (app.packageName != PACKAGE_BLANK) { 
                             val basePkg = app.getBasePackage()
+                            Log.d(TAG, "Killing: $basePkg")
                             shellService?.forceStop(basePkg)
                         } 
                     }
@@ -1710,67 +1678,107 @@ class FloatingLauncherService : AccessibilityService() {
                     Thread.sleep(100) 
                 }
                 
-// === LAUNCH AND TILE APPS (Robust Background Loop) ===
-                // [FIX] We use Thread.sleep inside this background thread instead of uiHandler.postDelayed.
-                // This ensures the sequence continues executing even if the UI thread is throttled/closed.
+// === LAUNCH AND TILE APPS - START ===
+                // Launches each active app with staggered timing and repositions to tile bounds
+                // Special handling for Gemini: captures task ID immediately after launch before trampoline
+                // Trampoline apps redirect to different activities, making the original task disappear
+                // from am stack list. By capturing immediately, we cache the correct task ID.
                 for (i in 0 until minOf(activeApps.size, rects.size)) {
                     val app = activeApps[i]
                     val bounds = rects[i]
 
-                    if (app.packageName == PACKAGE_BLANK) continue
+                    if (app.packageName == PACKAGE_BLANK) {
+                        Log.d(TAG, "Tile[$i]: Skipping blank")
+                        continue
+                    }
 
                     val basePkg = app.getBasePackage()
                     val cls = app.className
 
-                    // UI Update must be posted
+                    Log.d(TAG, "=== TILE[$i]: ${app.label} -> $bounds ===")
+
                     uiHandler.post {
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
 
-                    // 1. Launch App
-                    launchViaShell(basePkg, cls, bounds)
-                    
+                    // Stagger app launches by 800ms
+                    val baseDelay = i * 800L
+
+                    // Check if this is a Gemini app that needs immediate task capture
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
 
-                    // 2. Gemini Special Case Handling (Parallel)
-                    if (isGeminiApp) {
-                        Thread {
-                             try {
-                                 for (attempt in 1..5) {
-                                     Thread.sleep(200)
-                                     val taskId = shellService?.getTaskId(basePkg, cls) ?: -1
-                                     if (taskId > 0) break
-                                 }
-                             } catch (e: Exception) {}
-                        }.start()
+                    // Launch the app
+                    uiHandler.postDelayed({
+                        launchViaShell(basePkg, cls, bounds)
+                        
+                        // === GEMINI IMMEDIATE TASK CAPTURE - START ===
+                        // For Gemini: capture task ID immediately after launch (before trampoline)
+                        // The BardEntryPointActivity only exists briefly in am stack list
+                        // We need to capture it within ~500-1000ms before it redirects
+                        if (isGeminiApp) {
+                            Thread {
+                                try {
+                                    // Try to capture the task ID quickly, before trampoline completes
+                                    // Retry up to 5 times with 200ms intervals
+                                    for (attempt in 1..5) {
+                                        Thread.sleep(200)
+                                        val taskId = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        Log.d(TAG, "Gemini immediate capture attempt $attempt: taskId=$taskId")
+                                        
+                                        // If we got a valid task ID that's not a trampoline target,
+                                        // the cache should be populated now by getTaskId
+                                        if (taskId > 0) {
+                                            Log.d(TAG, "Gemini task captured early: taskId=$taskId")
+                                            break
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Gemini immediate capture failed", e)
+                                }
+                            }.start()
+                        }
+                        // === GEMINI IMMEDIATE TASK CAPTURE - END ===
+                    }, baseDelay)
+
+                    // Reposition after app has time to start
+                    // Normal apps: 3 seconds, Gemini: 5 seconds (to allow for trampoline)
+                    val repositionDelay = if (isGeminiApp) {
+                        5000L  // 5 seconds for Gemini
+                    } else {
+                        3000L  // 3 seconds for normal apps
                     }
 
-                    // 3. Schedule Repositioning (Independent Thread per App)
-                    // We spawn a dedicated thread for each app's repositioning.
-                    // This thread survives independent of the main loop.
-                    Thread {
-                        val delay1 = if (isGeminiApp) 5000L else 3000L
-                        val delay2 = if (isGeminiApp) 7000L else 5000L
-                        
-                        try {
-                            Thread.sleep(delay1)
-                            Log.d(TAG, "Tile[$i]: Repositioning ${app.label}")
-                            shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                            
-                            Thread.sleep(delay2 - delay1) // Wait remaining time
-                            Log.d(TAG, "Tile[$i]: Second reposition ${app.label}")
-                            shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Tile[$i]: Reposition failed", e)
-                        }
-                    }.start()
-                    
-                    // 4. Stagger next launch
-                    // Blocking sleep ensures we don't flood the system
-                    Thread.sleep(800)
+                    uiHandler.postDelayed({
+                        Thread {
+                            try {
+                                Log.d(TAG, "Tile[$i]: Repositioning ${app.label}")
+                                shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Tile[$i]: Reposition failed", e)
+                            }
+                        }.start()
+                    }, baseDelay + repositionDelay)
+
+                    // Second attempt for reliability (7 seconds for Gemini, 5 for others)
+                    val secondAttemptDelay = if (isGeminiApp) {
+                        7000L
+                    } else {
+                        5000L
+                    }
+
+                    uiHandler.postDelayed({
+                        Thread {
+                            try {
+                                Log.d(TAG, "Tile[$i]: Second reposition ${app.label}")
+                                shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Tile[$i]: Second reposition failed", e)
+                            }
+                        }.start()
+                    }, baseDelay + secondAttemptDelay)
                 }
                 // === LAUNCH AND TILE APPS - END ===                
-                
+                // Clear queue after execution if closing drawer
                 if (closeDrawer) { 
                     uiHandler.post { 
                         selectedAppsQueue.clear()
@@ -1778,9 +1786,9 @@ class FloatingLauncherService : AccessibilityService() {
                     } 
                 }
                 
-                uiHandler.post {
-                     safeToast("Tiling Sequence Started")
-                }
+                uiHandler.postDelayed({
+                    safeToast("Tiling complete")
+                }, (activeApps.size * 300 + 5500L))
                 
             } catch (e: Exception) { 
                 Log.e(TAG, "Execute Failed", e)
@@ -1790,7 +1798,6 @@ class FloatingLauncherService : AccessibilityService() {
         
         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") 
     }
-
     // === EXECUTE LAUNCH - END ===
     
     private fun calculateGCD(a: Int, b: Int): Int { return if (b == 0) a else calculateGCD(b, a % b) }

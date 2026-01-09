@@ -1061,10 +1061,25 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 
+// =================================================================================
+    // FUNCTION: onServiceConnected
+    // SUMMARY: AccessibilityService entry point - called when user enables service.
+    //          Initializes managers, loads dictionary, registers receivers, and builds UI.
+    // =================================================================================
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "Accessibility Service Connected")
         isAccessibilityReady = true
+
+        // =================================================================================
+        // CRITICAL: Initialize PredictionEngine Dictionary
+        // SUMMARY: Load the dictionary at service start. Without this, swipe typing fails
+        //          because decodeSwipe() has no words to match against.
+        // =================================================================================
+        PredictionEngine.instance.loadDictionary(this)
+        // =================================================================================
+        // END BLOCK: Initialize PredictionEngine Dictionary
+        // =================================================================================
 
         // Initialize Managers
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager

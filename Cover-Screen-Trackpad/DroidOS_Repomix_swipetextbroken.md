@@ -121,6 +121,15 @@ app/
   .gitignore
   build.gradle.kts
   proguard-rules.pro
+Cover-Screen-Trackpad/
+  app/
+    src/
+      main/
+        java/
+          com/
+            example/
+              coverscreentester/
+                OverlayService.kt
 gradle/
   wrapper/
     gradle-wrapper.properties
@@ -4545,8 +4554,18 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     // Track if we've already initialized the UI
     private var uiInitialized = false
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // DEBUG LOG
+        val dId = intent.getIntExtra("displayId", -999)
+        val force = intent.getBooleanExtra("force_start", false)
+        val isRestart = intent.getBooleanExtra("IS_RESTART", false)
+        android.util.Log.w("MainActivity", ">>> ON CREATE | Display: $dId | Force: $force | IsRestart: $isRestart <<<")
+        
+        if (dId != -999) {
+            Toast.makeText(this, "Activity Woke: D$dId", Toast.LENGTH_SHORT).show()
+        }
         
         // [FIX] Check for Force Start flag from Launcher (Hard Restart)
         // If this flag is present, we assume the Launcher has already handled 
@@ -4694,29 +4713,46 @@ class MainActivity : AppCompatActivity(), Shizuku.OnRequestPermissionResultListe
     // SUMMARY: Launches the OverlayService on the current display and finishes
     //          the activity. This is called when all permissions are granted.
     // =================================================================================
+
+
+
     private fun launchOverlayServiceAndFinish() {
-        // Robust display ID detection
-        val displayId = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            this.display?.displayId ?: 0
-        } else {
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.displayId
-        }
-
-        android.util.Log.d("DroidOS_Trackpad", "MainActivity: Triggering recall to Display $displayId")
-
-        val intent = Intent(this, OverlayService::class.java)
-        intent.putExtra("displayId", displayId)
-        intent.putExtra("isRecall", true)
+        // 1. Create the Service Intent (Rename to 'serviceIntent' to avoid shadowing bug)
+        val serviceIntent = Intent(this, OverlayService::class.java)
         
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        // 2. Read from the Activity Intent (Use 'getIntent()' explicitly)
+        val originIntent = getIntent()
+
+        // [FIX] Forward the Display ID
+        // We check 'originIntent' (from Launcher) and put into 'serviceIntent' (for Service)
+        if (originIntent.hasExtra("displayId")) {
+            val targetId = originIntent.getIntExtra("displayId", 0)
+            serviceIntent.putExtra("displayId", targetId)
+        }
+        
+        // Forward force_start flag
+        if (originIntent.hasExtra("force_start")) {
+             serviceIntent.putExtra("force_start", true)
         }
 
-        finish()
+        // 3. Start Service
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        // 4. Minimize to keep process alive
+        moveTaskToBack(true)
+        
+        // 5. Finish after delay
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            finish()
+        }, 1500)
     }
+
+
+
     // =================================================================================
     // END FUNCTION: launchOverlayServiceAndFinish
     // =================================================================================
@@ -5138,6 +5174,9 @@ import java.util.ArrayList
 import com.example.coverscreentester.BuildConfig
 
 class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
+
+    private var isAccessibilityReady = false
+    private var pendingDisplayId = -1
 
     // === RECEIVER & ACTIONS - START ===
     private val commandReceiver = object : BroadcastReceiver() {
@@ -6143,115 +6182,186 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
-    // AccessibilityService entry point - called when user enables service in Settings
+
+    // This is the Accessibility Service entry point
+
+
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "Accessibility Service Connected")
+        isAccessibilityReady = true
 
-        // === NEW CODE START: Initialize Dictionary ===
-        PredictionEngine.instance.loadDictionary(this)
-        // === NEW CODE END ===
-
-        // Initialize WindowManager
+        // Initialize Managers
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        
+        // [FIX] Correct variable names for OverlayService:
+        // Use 'this' (because OverlayService implements DisplayListener)
+        // Use 'handler' (not uiHandler)
+        displayManager?.registerDisplayListener(this, handler)
+
+        // Register receivers
+        val filter = IntentFilter().apply {
+            addAction("com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER")
+            addAction("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON")
+            addAction("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
+
+        // [FIX] Removed incompatible Shizuku listeners that belong to Launcher
+        
+        // [FIX] USE RETRY LOGIC HERE
+        checkAndBindShizuku()
+
+        // Load preferences
+        loadPrefs() 
+        
+        // [FIX] READ TARGET DISPLAY (Fixes "Wrong Display" on Race Condition)
+        val globalTarget = try {
+            android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", -1)
+        } catch (e: Exception) { -1 }
+
+        val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
+        
+        Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
+        
+        // Build UI
+        setupUI(finalTarget)
+        
+        // [FIX] Ensure bubble icon status is updated
+        updateBubbleStatus()
+
+        // Clear pending states
+        pendingDisplayId = -1
+
+        showToast("Trackpad Ready")
     }
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-                try { createNotification() } catch(e: Exception){ e.printStackTrace() }
+
+
+
+
+   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        try { createNotification() } catch(e: Exception){ e.printStackTrace() }
         
-                // [FIX] Wrap startup in Try-Catch to prevent "Flash and Crash"
-                try {
-                    // Re-check Shizuku binding on every start command to ensure connection is alive
-                    checkAndBindShizuku()
-        
-                    // Handle display recall from MainActivity
-                    if (intent != null) {
-                        val targetDisplayId = intent.getIntExtra("displayId", currentDisplayId)
-                        val isRecall = intent.getBooleanExtra("isRecall", false)
-        
-                        android.util.Log.d("OverlayService", "onStartCommand: target=$targetDisplayId, current=$currentDisplayId, recall=$isRecall")
-        
-                        // Only setup UI if display changed OR if user explicitly tapped the icon (Recall)
-                        if (targetDisplayId != currentDisplayId || isRecall || bubbleView == null) {
-                            setupUI(targetDisplayId)
-                            return START_STICKY
-                        }
+        // === DEBUG LOGGING START ===
+        if (intent != null) {
+            val dId = intent.getIntExtra("displayId", -999)
+            val action = intent.action
+            val force = intent.getBooleanExtra("force_start", false)
+            Log.w(TAG, ">>> SERVICE STARTED | Action: $action | DisplayID: $dId | Force: $force <<<")
+            
+            if (dId != -999) {
+                handler.post { Toast.makeText(this, "Service Started on D:$dId", Toast.LENGTH_SHORT).show() }
+            }
+        } else {
+            Log.e(TAG, ">>> SERVICE STARTED | INTENT IS NULL <<<")
+        }
+        // === DEBUG LOGGING END ===
+
+        try {
+            checkAndBindShizuku()
+
+            // [FIX] Combined Startup Logic
+            if (intent != null) {
+                val dId = intent.getIntExtra("displayId", -1)
+                
+                if (dId != -1) {
+                    if (isAccessibilityReady) {
+                        // Safe to launch immediately
+                        Log.d(TAG, "onStartCommand: Ready -> Setup UI Display $dId")
+                        setupUI(dId)
+                    } else {
+                        // Too early! Queue it for onServiceConnected
+                        Log.d(TAG, "onStartCommand: Not Ready -> Queueing Display $dId")
+                        pendingDisplayId = dId
                     }
-        
-                    val action = intent?.action
-                    fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
-        
-                    // Handle commands robustly
-                    if (action != null) {
-                        when {
-                            // Standard Actions
-                            action == "SWITCH_DISPLAY" -> switchDisplay()
-                            action == "RESET_POSITION" -> {
-                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                                if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
-                            }
-                            action == "ROTATE" -> {
-                                val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                                if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
-                            }
-                            action == "SAVE_LAYOUT" -> saveLayout()
-                            action == "LOAD_LAYOUT" -> loadLayout()
-                            action == "DELETE_PROFILE" -> deleteCurrentProfile()
-                            action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
-                            action == "RELOAD_PREFS" -> {
-                                loadPrefs()
-                                updateBorderColor(currentBorderColor)
-                                updateLayoutSizes()
-                                updateScrollPosition()
-                                updateCursorSize()
-                                keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
-                                if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
-                            }
-                            action == "PREVIEW_UPDATE" -> handlePreview(intent)
-                            action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                            action == "RESET_CURSOR" -> resetCursorCenter()
-                            action == "TOGGLE_DEBUG" -> toggleDebugMode()
-                            action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                            action == "OPEN_MENU" -> menuManager?.show()
-        
-                            // ADB / Launcher Commands (Suffix Matching)
-                                                matches("SOFT_RESTART") -> {
-                                                    Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
-                                                    // Delegate to unified function to handle debouncing and proper Z-order timing
-                                                    performSoftRestart()
-                                                }                            matches("MOVE_TO_VIRTUAL") -> {
-                                val vid = intent.getIntExtra("DISPLAY_ID", 2)
-                                handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
-                            }
-                            matches("RETURN_TO_PHYSICAL") -> {
-                                val pid = intent.getIntExtra("DISPLAY_ID", 0)
-                                handler.post { returnToPhysicalDisplay(pid) }
-                            }
-                            matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
-                            matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
-                            matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
-                        }
-                    }
-                    if (intent?.hasExtra("DISPLAY_ID") == true) {
-                        val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
-                        val force = intent.getBooleanExtra("FORCE_MOVE", false)
-                        if (targetId >= 0 && (targetId != currentDisplayId || force)) {
-                            forceMoveToDisplay(targetId)
-                        }
-                    } else if (windowManager == null) {
-                        setupUI(Display.DEFAULT_DISPLAY)
-                    }
-                    
-                    // [CRITICAL] Ensure UI is created if missing
-                    if (windowManager == null || bubbleView == null) {
-                        setupUI(Display.DEFAULT_DISPLAY)
-                    }
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "CRASH during onStartCommand", e)
-                    // Retry setup safely
-                    try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
+                    return START_STICKY
                 }
-                return START_STICKY    }
+            }
+
+            // --- Original Logic for other intents/conditions ---
+            // If no explicit displayId was passed, or if the AccessibilityService is not yet ready
+            // for the initial setup, we fall back to the existing logic.
+            val action = intent?.action
+            fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
+            
+            // Handle commands robustly (keeping original intent handling)
+            if (action != null) {
+                when {
+                    // Standard Actions
+                    action == "SWITCH_DISPLAY" -> switchDisplay()
+                    action == "RESET_POSITION" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
+                    }
+                    action == "ROTATE" -> {
+                        val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
+                        if (target == "KEYBOARD") keyboardOverlay?.cycleRotation() else performRotation()
+                    }
+                    action == "SAVE_LAYOUT" -> saveLayout()
+                    action == "LOAD_LAYOUT" -> loadLayout()
+                    action == "DELETE_PROFILE" -> deleteCurrentProfile()
+                    action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
+                    action == "RELOAD_PREFS" -> {
+                        loadPrefs()
+                        updateBorderColor(currentBorderColor)
+                        updateLayoutSizes()
+                        updateScrollPosition()
+                        updateCursorSize()
+                        keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
+                        if (isCustomKeyboardVisible) { toggleCustomKeyboard(); toggleCustomKeyboard() }
+                    }
+                    action == "PREVIEW_UPDATE" -> handlePreview(intent)
+                    action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
+                    action == "RESET_CURSOR" -> resetCursorCenter()
+                    action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                    action == "OPEN_MENU" -> menuManager?.show()
+                    
+                    // ADB / Launcher Commands (Suffix Matching)
+                    matches("SOFT_RESTART") -> {
+                        Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
+                        performSoftRestart()
+                    }
+                    matches("MOVE_TO_VIRTUAL") -> {
+                        val vid = intent.getIntExtra("DISPLAY_ID", 2)
+                        handler.post { moveToVirtualDisplayAndEnableMirror(vid) }
+                    }
+                    matches("RETURN_TO_PHYSICAL") -> {
+                        val pid = intent.getIntExtra("DISPLAY_ID", 0)
+                        handler.post { returnToPhysicalDisplay(pid) }
+                    }
+                    matches("ENFORCE_ZORDER") -> handler.post { enforceZOrder() }
+                    matches("TOGGLE_VIRTUAL_MIRROR") -> handler.post { toggleVirtualMirrorMode() }
+                    matches("GET_STATUS") -> showToast("Status: D=$currentDisplayId M=${prefs.prefVirtualMirrorMode}")
+                }
+            }
+
+            if (intent?.hasExtra("DISPLAY_ID") == true) {
+                val targetId = intent.getIntExtra("DISPLAY_ID", Display.DEFAULT_DISPLAY)
+                val force = intent.getBooleanExtra("FORCE_MOVE", false)
+                if (targetId >= 0 && (targetId != currentDisplayId || force)) {
+                    forceMoveToDisplay(targetId)
+                }
+            } else if (windowManager == null) {
+                setupUI(Display.DEFAULT_DISPLAY)
+            }
+            
+            // [CRITICAL] Ensure UI is created if missing
+            if (windowManager == null || bubbleView == null) {
+                setupUI(Display.DEFAULT_DISPLAY)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "CRASH during onStartCommand", e)
+            // Retry setup safely
+            try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
+        }
+        return START_STICKY
+    }
 
     override fun onInterrupt() {}
 
@@ -6642,7 +6752,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     fun toggleKeyboardMode() { vibrate(); if (!isKeyboardMode) { isKeyboardMode = true; savedWindowX = trackpadParams.x; savedWindowY = trackpadParams.y; trackpadParams.x = uiScreenWidth - trackpadParams.width; trackpadParams.y = 0; windowManager?.updateViewLayout(trackpadLayout, trackpadParams); updateBorderColor(0xFFFF0000.toInt()) } else { isKeyboardMode = false; trackpadParams.x = savedWindowX; trackpadParams.y = savedWindowY; windowManager?.updateViewLayout(trackpadLayout, trackpadParams); updateBorderColor(currentBorderColor) } }
     
-    private fun toggleDebugMode() { isDebugMode = !isDebugMode; if (isDebugMode) { showToast("Debug ON"); updateBorderColor(0xFFFFFF00.toInt()); debugTextView?.visibility = View.VISIBLE } else { showToast("Debug OFF"); if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt()); debugTextView?.visibility = View.GONE } }
+    // [FIX] Public so MenuManager can call it
+    fun toggleDebugMode() { 
+        isDebugMode = !isDebugMode 
+        if (isDebugMode) { 
+            showToast("Debug ON")
+            updateBorderColor(0xFFFFFF00.toInt())
+            debugTextView?.visibility = View.VISIBLE 
+        } else { 
+            showToast("Debug OFF")
+            if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt())
+            debugTextView?.visibility = View.GONE 
+        } 
+    }
 
     fun updateBubbleStatus() { val dot = bubbleView?.findViewById<ImageView>(R.id.status_dot); if (shellService != null) dot?.visibility = View.GONE else dot?.visibility = View.VISIBLE }
 
@@ -6824,48 +6946,70 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
+
+
+
+
+
+
     private fun scheduleRestart() {
         try {
-            Log.i(TAG, "Scheduling Safety Restart (1s)...")
-
-            // [FIX] Launch the MAIN ACTIVITY instead of the Service directly.
-            // This bypasses Android's "Background Start" restrictions which cause the 
-            // "App stops but doesn't restart" bug.
-            val restartIntent = packageManager.getLaunchIntentForPackage(packageName)
-            if (restartIntent != null) {
-                restartIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                // Add a flag so MainActivity knows to minimize itself or start silent if possible
-                restartIntent.putExtra("IS_RESTART", true)
-                
-                val flags = if (Build.VERSION.SDK_INT >= 23) 
-                    android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_CANCEL_CURRENT
-                else 
-                    android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_CANCEL_CURRENT
-
-                // Use getActivity (Guaranteed to work)
-                val pendingIntent = android.app.PendingIntent.getActivity(applicationContext, 1, restartIntent, flags)
-                
-                val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-                val triggerTime = System.currentTimeMillis() + 1000
-
-                if (Build.VERSION.SDK_INT >= 31) {
-                    try {
-                        alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-                    } catch (e: SecurityException) {
-                        alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-                    }
-                } else {
-                     if (Build.VERSION.SDK_INT >= 23) {
-                         alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-                     } else {
-                         alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+            // Keep the Smart Display Logic (it's safe to keep)
+            var restartDisplayId = currentDisplayId
+            try {
+                val d0 = displayManager?.getDisplay(0)
+                if (d0 != null && d0.state == Display.STATE_OFF) {
+                     val d1 = displayManager?.getDisplay(1)
+                     if (d1 != null && d1.state == Display.STATE_ON) {
+                         restartDisplayId = 1
                      }
                 }
+            } catch(e: Exception) {}
+
+            Log.i(TAG, ">>> SCHEDULING RESTART (SERVICE) | Display: $restartDisplayId <<<")
+            
+            // [FIX] Target the SERVICE directly, not the Activity.
+            // This bypasses the "Background Activity Start" restriction that was blocking the restart.
+            val restartIntent = Intent(applicationContext, OverlayService::class.java)
+            restartIntent.putExtra("displayId", restartDisplayId)
+            restartIntent.putExtra("force_start", true)
+            restartIntent.putExtra("IS_RESTART", true)
+            
+            val flags = if (Build.VERSION.SDK_INT >= 23) 
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            else 
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+
+            // [FIX] Use getForegroundService (or getService) instead of getActivity
+            val pendingIntent = if (Build.VERSION.SDK_INT >= 26) {
+                android.app.PendingIntent.getForegroundService(applicationContext, 1, restartIntent, flags)
+            } else {
+                android.app.PendingIntent.getService(applicationContext, 1, restartIntent, flags)
+            }
+            
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val triggerTime = System.currentTimeMillis() + 800
+
+            try {
+                if (Build.VERSION.SDK_INT >= 23) {
+                     alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                } else {
+                     alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                }
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Exact Alarm permission missing, using standard alarm")
+                alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to schedule restart", e)
         }
     }
+
+
+
+
+
+
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
@@ -7195,19 +7339,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) { e.printStackTrace() } }
 
     // Helper to retry binding if connection is dead/null
+
+
+
+
     private fun checkAndBindShizuku() {
-        // If we think we are bound, but the binder is dead, reset flag
+        // 1. If already bound and alive, do nothing
+        if (shellService != null && shellService!!.asBinder().isBinderAlive) {
+            return
+        }
+
+        // 2. If dead but not null, clear it
         if (shellService != null && !shellService!!.asBinder().isBinderAlive) {
             isBound = false
             shellService = null
         }
 
-        // If actually connected, do nothing
-        if (shellService != null) return
-
-        // Otherwise, try to bind
-        bindShizuku()
+        Log.d(TAG, "Binding Shizuku: Attempt 1 (Immediate)")
+        // Use existing safe bind method
+        bindShizuku() 
+        
+        // 3. Retry after 2.5 seconds (The Critical Fix)
+        // We use 'handler' here (not uiHandler)
+        handler.postDelayed({
+            if (shellService == null) {
+                Log.w(TAG, "Binding Shizuku: Attempt 2 (Delayed 2.5s)")
+                bindShizuku()
+            }
+        }, 2500)
     }
+
+
+
+
 
     private fun createNotification() { 
         try {
@@ -11658,6 +11822,10 @@ class TrackpadMenuManager(
     private val TAB_HELP = 10
     
     private var currentTab = TAB_MAIN
+    
+    // [NEW] Debug Trigger Vars
+    private var helpClickCount = 0
+    private var lastHelpClickTime = 0L
 
     fun show() {
         if (isVisible) return
@@ -11736,6 +11904,23 @@ class TrackpadMenuManager(
 
         for ((id, index) in tabs) {
             drawerView?.findViewById<ImageView>(id)?.setOnClickListener { 
+                // [FIX] INSTRUCTIONS TAB - DEBUG TRIGGER (5 Clicks)
+                if (id == R.id.tab_help) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastHelpClickTime < 500) {
+                        helpClickCount++
+                    } else {
+                        helpClickCount = 1
+                    }
+                    lastHelpClickTime = now
+
+                    if (helpClickCount >= 5) {
+                        // Toggle debug mode in the main Service
+                        service.toggleDebugMode()
+                        helpClickCount = 0
+                    }
+                }
+                
                 loadTab(index) 
             }
         }
