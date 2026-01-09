@@ -2177,6 +2177,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     // Helper to retry binding if connection is dead/null
 
+
     private fun checkAndBindShizuku() {
         // If dead, clear it
         if (shellService != null && !shellService!!.asBinder().isBinderAlive) {
@@ -2187,18 +2188,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // If alive, we are good
         if (shellService != null) return
 
-        // Try to bind
+        // 1. Immediate Attempt
         bindShizuku()
         
-        // [FIX] Double-check delay for Red Dot issue
-        // If binding failed immediately, try again in 1 second
+        // 2. [FIX] Increased Safety Delay (1s -> 2.5s)
+        // Shizuku sometimes rejects binding immediately after a process kill/restart.
+        // Waiting 2.5 seconds ensures the system is stable before we retry.
         handler.postDelayed({
             if (shellService == null) {
-                Log.d(TAG, "Retrying Shizuku Bind...")
+                Log.d(TAG, "Retrying Shizuku Bind (Safety Check)...")
                 bindShizuku()
             }
-        }, 1000)
+        }, 2500)
     }
+
 
 
     private fun createNotification() { 

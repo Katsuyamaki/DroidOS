@@ -371,49 +371,78 @@ class FloatingLauncherService : AccessibilityService() {
 
     // === FUNCTION: restartTrackpad - START ===
     // [FIX] Uses Settings.Secure to read permissions (avoids build error) and Shell to write them
+
+
+
+
     private fun restartTrackpad() {
         safeToast("Restarting Trackpad...")
         Thread {
             try {
-                // 1. SAVE TARGET DISPLAY TO GLOBAL SETTINGS
+                // 1. Save Target Display
                 val targetId = currentDisplayId
                 Log.d(TAG, "Saving Target Display ID: $targetId")
                 shellService?.runCommand("settings put global droidos_target_display $targetId")
                 
-                // 2. HARD KILL
                 val pkgName = "com.katsuyamaki.DroidOSTrackpadKeyboard"
                 val legacyPkg = "com.example.coverscreentester"
                 val serviceComponent = "$pkgName/com.example.coverscreentester.OverlayService"
                 
+                // 2. DISABLE SERVICE (Reset Crash Backoff)
+                val currentList = android.provider.Settings.Secure.getString(
+                    contentResolver, 
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: ""
+                
+                if (currentList.contains("OverlayService")) {
+                    val newList = currentList.replace(":$serviceComponent", "")
+                                           .replace("$serviceComponent:", "")
+                                           .replace(serviceComponent, "")
+                    shellService?.runCommand("settings put secure enabled_accessibility_services $newList")
+                    Log.d(TAG, "Service Disabled")
+                }
+
+                // 3. FORCE STOP
                 shellService?.runCommand("am force-stop $pkgName")
                 shellService?.runCommand("am force-stop $legacyPkg")
                 
-                // 3. Wait for system cleanup
-                Thread.sleep(1500)
+                // [FIX] INCREASED WAIT: 500ms -> 2000ms
+                // Give the system 2 full seconds to clean up the dead process.
+                Thread.sleep(2000)
 
-                // 4. RESTORE ACCESSIBILITY PERMISSION
-                // [FIX] Use Android API to read settings instead of shell command (Fixes .trim() build error)
-                val currentList = (android.provider.Settings.Secure.getString(contentResolver, "enabled_accessibility_services") ?: "").trim()
-                
-                if (!currentList.contains("OverlayService")) {
-                    Log.d(TAG, "Restoring Accessibility Permissions...")
-                    val newList = if (currentList.isEmpty() || currentList == "null") {
-                        serviceComponent
-                    } else {
-                        "$currentList:$serviceComponent"
-                    }
-                    shellService?.runCommand("settings put secure enabled_accessibility_services $newList")
-                    shellService?.runCommand("settings put secure accessibility_enabled 1")
+                // 4. RE-ENABLE SERVICE
+                val cleanList = android.provider.Settings.Secure.getString(
+                    contentResolver, 
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: ""
+
+                val enableList = if (cleanList.isEmpty() || cleanList == "null") {
+                    serviceComponent
+                } else {
+                    "$cleanList:$serviceComponent"
                 }
+                
+                Log.d(TAG, "Enabling Service...")
+                shellService?.runCommand("settings put secure enabled_accessibility_services $enableList")
+                shellService?.runCommand("settings put secure accessibility_enabled 1")
 
-                // 5. FORCE LAUNCH (Backup Trigger)
-                Thread.sleep(1000) 
-                Log.d(TAG, "Shell Launching Service...")
-                shellService?.runCommand("am start-foreground-service -n $pkgName/com.example.coverscreentester.OverlayService --ez force_start true")
-                shellService?.runCommand("am start-foreground-service -n $legacyPkg/com.example.coverscreentester.OverlayService --ez force_start true")
+                // [FIX] WAKE UP DELAY: 500ms -> 1500ms
+                // Wait another 1.5s before sending the Wake-Up command
+                Thread.sleep(1500) 
+                
+                val serviceCmd = "am start-foreground-service -n $serviceComponent --ez force_start true"
+                shellService?.runCommand(serviceCmd)
+                
+                val legacyCmd = "am start-foreground-service -n $legacyPkg/com.example.coverscreentester.OverlayService --ez force_start true"
+                shellService?.runCommand(legacyCmd)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Shell Restart Failed", e)
+                
+                // [FIX] ADD FALLBACK DELAY
+                // If the shell failed, we still want to wait before blindly launching the app
+                Thread.sleep(2000)
+                
                 uiHandler.post { 
                     safeToast("Restart Failed: ${e.message}")
                     launchTrackpad() 
@@ -421,6 +450,12 @@ class FloatingLauncherService : AccessibilityService() {
             }
         }.start()
     }
+
+
+
+
+
+
     // === FUNCTION: restartTrackpad - END ===
 
 
