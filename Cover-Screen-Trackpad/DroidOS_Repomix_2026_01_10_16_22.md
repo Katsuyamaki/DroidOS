@@ -127,7 +127,6 @@ gradle/
   libs.versions.toml
 .gitignore
 build.gradle.kts
-crash_log.txt
 gradle.properties
 gradlew
 gradlew.bat
@@ -5768,8 +5767,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 
+    // =================================================================================
+    // SYNCHRONIZATION: Prevent multiple keyboard restoration threads
+    // =================================================================================
+    @Volatile private var isKeyboardRestoreInProgress = false
+    // =================================================================================
+    // END BLOCK: Keyboard restoration synchronization flag
+    // =================================================================================
+    
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
         if (shellService == null) return
+        
+        // GUARD: Prevent concurrent restoration attempts
+        if (!enabled && isKeyboardRestoreInProgress) {
+            android.util.Log.w(TAG, "setSoftKeyboardBlocking: Already restoring, skipping duplicate call")
+            return
+        }
 
         Thread {
             try {
@@ -5793,67 +5806,165 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     handler.post { showToast("Keyboard Blocked") }
                     
                 } else {
-                    // --- UNBLOCKING ---
-                    shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1")
-
-                    // 1. Get Saved Preference (Target)
-                    val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                    var targetIme = prefs.getString("user_preferred_ime", null)
-
-                    // 2. Validate Target
-                    val enabledImes = shellService?.runCommand("ime list -s") ?: ""
-                    if (!targetIme.isNullOrEmpty() && !enabledImes.contains(targetIme)) {
-                        targetIme = null
-                    }
-
-                    // 3. Fallback Logic
-                    if (targetIme.isNullOrEmpty()) {
-                         targetIme = enabledImes.lines().find { 
-                            it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
-                        } ?: enabledImes.lines().find { 
+                    // =================================================================================
+                    // UNBLOCKING / KEYBOARD RESTORATION - SAMSUNG ONEUI WORKAROUND
+                    // =================================================================================
+                    // PROBLEM: Samsung OneUI aggressively forces HoneyBoard (Samsung Keyboard) back
+                    //          within ~300ms of ANY ime set command during phone unfold.
+                    //          Our commands succeed ("Gboard selected") but Samsung immediately
+                    //          overwrites the setting.
+                    //
+                    // SOLUTION: Temporarily DISABLE Samsung Keyboard, set Gboard, then re-enable.
+                    //           Samsung can't force a disabled keyboard as the default.
+                    // =================================================================================
+                    
+                    // Set synchronization flag
+                    isKeyboardRestoreInProgress = true
+                    
+                    android.util.Log.w(TAG, "┌──────────────────────────────────────────────────────────┐")
+                    android.util.Log.w(TAG, "│ KEYBOARD RESTORATION - SAMSUNG WORKAROUND               │")
+                    android.util.Log.w(TAG, "└──────────────────────────────────────────────────────────┘")
+                    
+                    try {
+                        // STEP 1: Get current state
+                        val initialIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                        android.util.Log.w(TAG, "├─ Initial IME: $initialIme")
+                        
+                        // STEP 2: Get saved preference
+                        val sharedPrefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                        var targetIme = sharedPrefs.getString("user_preferred_ime", null)
+                        android.util.Log.w(TAG, "├─ Saved preference: ${targetIme ?: "NULL"}")
+                        
+                        // STEP 3: Get enabled IMEs and find Gboard
+                        val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                        val gboardId = enabledImes.lines().find { 
                             it.contains("com.google.android.inputmethod.latin") 
+                        }?.trim()
+                        val samsungId = enabledImes.lines().find { 
+                            it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
+                        }?.trim()
+                        
+                        android.util.Log.w(TAG, "├─ Gboard ID: ${gboardId ?: "NOT FOUND"}")
+                        android.util.Log.w(TAG, "├─ Samsung ID: ${samsungId ?: "NOT FOUND"}")
+                        
+                        // Prefer Gboard, fallback to saved, then to any non-Samsung
+                        if (targetIme.isNullOrEmpty() || targetIme.contains("honeyboard") || targetIme.contains("com.sec")) {
+                            targetIme = gboardId
                         }
-                    }
-
-                    if (!targetIme.isNullOrEmpty()) {
-                        android.util.Log.i(TAG, "Restoring to: $targetIme")
                         
-                        // [FIX] AGGRESSIVE RESTORE LOOP
-                        // 1. NEVER disable the Null Keyboard (this triggers System Panic -> Samsung Default).
-                        // 2. Use 'settings put' AND 'ime set' to force the database directly.
+                        if (targetIme.isNullOrEmpty()) {
+                            android.util.Log.e(TAG, "├─ ERROR: No target keyboard found!")
+                            handler.post { showToast("No keyboard to restore") }
+                            isKeyboardRestoreInProgress = false
+                            return@Thread
+                        }
                         
-                        for (i in 1..8) {
-                            val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                        android.util.Log.w(TAG, "├─ Target IME: $targetIme")
+                        
+                        // STEP 4: THE SAMSUNG WORKAROUND
+                        // Temporarily disable Samsung Keyboard so it CAN'T be forced back
+                        if (!samsungId.isNullOrEmpty() && initialIme.contains("honeyboard")) {
+                            android.util.Log.w(TAG, "├─ WORKAROUND: Temporarily disabling Samsung Keyboard...")
                             
-                            if (current != targetIme) {
-                                android.util.Log.i(TAG, "Attempt $i: System is '$current'. Forcing '$targetIme'...")
+                            // 4a. Disable Samsung Keyboard
+                            val disableResult = shellService?.runCommand("ime disable $samsungId")
+                            android.util.Log.w(TAG, "│  ├─ Disable result: ${disableResult ?: "null"}")
+                            
+                            // 4b. Small delay for system to process
+                            Thread.sleep(100)
+                            
+                            // 4c. Now set Gboard (Samsung can't override because it's disabled)
+                            shellService?.runCommand("ime enable $targetIme")
+                            shellService?.runCommand("settings put secure default_input_method $targetIme")
+                            val setResult = shellService?.runCommand("ime set $targetIme")
+                            android.util.Log.w(TAG, "│  ├─ Set Gboard result: ${setResult ?: "null"}")
+                            
+                            // 4d. Wait for it to stick
+                            Thread.sleep(500)
+                            
+                            // 4e. Verify
+                            val afterSet = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                            android.util.Log.w(TAG, "│  ├─ After set: $afterSet")
+                            
+                            // 4f. Re-enable Samsung (user might want to use it later)
+                            android.util.Log.w(TAG, "│  └─ Re-enabling Samsung Keyboard...")
+                            shellService?.runCommand("ime enable $samsungId")
+                            
+                            // 4g. Final verification after re-enable
+                            Thread.sleep(300)
+                            val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                            android.util.Log.w(TAG, "├─ FINAL IME: $finalIme")
+                            
+                            val success = finalIme == targetIme || finalIme.contains("google.android.inputmethod.latin")
+                            android.util.Log.w(TAG, "├─ SUCCESS: $success")
+                            
+                            if (success) {
+                                handler.post { showToast("Keyboard Restored") }
+                            } else {
+                                // NUCLEAR OPTION: Keep Samsung disabled longer
+                                android.util.Log.w(TAG, "├─ First attempt failed, trying nuclear option...")
                                 
-                                // FORCE ENABLE
-                                shellService?.runCommand("ime enable $targetIme")
+                                // Disable Samsung again
+                                shellService?.runCommand("ime disable $samsungId")
+                                Thread.sleep(200)
                                 
-                                // FORCE SET (Database Direct + IME Manager)
+                                // Force set again
                                 shellService?.runCommand("settings put secure default_input_method $targetIme")
                                 shellService?.runCommand("ime set $targetIme")
                                 
-                            } else {
-                                android.util.Log.i(TAG, "Attempt $i: Success. Target is active.")
-                                // Continue monitoring for a few loops to ensure it doesn't revert
-                                if (i > 4) break 
+                                // Keep Samsung disabled for 3 seconds (past Samsung's protection window)
+                                Thread.sleep(3000)
+                                
+                                // Check again
+                                val nuclearCheck = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                                android.util.Log.w(TAG, "├─ After nuclear: $nuclearCheck")
+                                
+                                // Re-enable Samsung
+                                shellService?.runCommand("ime enable $samsungId")
+                                
+                                // Final check
+                                Thread.sleep(500)
+                                val nuclearFinal = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                                android.util.Log.w(TAG, "├─ Nuclear final: $nuclearFinal")
+                                
+                                if (nuclearFinal.contains("google.android.inputmethod.latin")) {
+                                    handler.post { showToast("Keyboard Restored (retry)") }
+                                } else {
+                                    android.util.Log.e(TAG, "├─ NUCLEAR FAILED")
+                                    handler.post { showToast("Keyboard restore failed") }
+                                }
                             }
                             
-                            Thread.sleep(500)
+                        } else {
+                            // Samsung not active, use simple approach
+                            android.util.Log.w(TAG, "├─ Simple restore (Samsung not active)...")
+                            shellService?.runCommand("ime enable $targetIme")
+                            shellService?.runCommand("settings put secure default_input_method $targetIme")
+                            shellService?.runCommand("ime set $targetIme")
+                            
+                            Thread.sleep(300)
+                            val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                            android.util.Log.w(TAG, "├─ FINAL IME: $finalIme")
+                            
+                            val success = finalIme == targetIme
+                            if (success) {
+                                handler.post { showToast("Keyboard Restored") }
+                            } else {
+                                handler.post { showToast("Keyboard restore failed") }
+                            }
                         }
                         
-                        handler.post { showToast("Restored Keyboard") }
-                    } else {
-                        handler.post { 
-                            showToast("Select Default Keyboard")
-                            try {
-                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                                imm.showInputMethodPicker()
-                            } catch(e: Exception){}
-                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e(TAG, "├─ EXCEPTION: ${e.message}", e)
+                        handler.post { showToast("Restore error: ${e.message}") }
                     }
+                    
+                    // Clear synchronization flag
+                    isKeyboardRestoreInProgress = false
+                    android.util.Log.w(TAG, "└─ KEYBOARD RESTORATION COMPLETE")
+                    // =================================================================================
+                    // END BLOCK: KEYBOARD RESTORATION - SAMSUNG WORKAROUND
+                    // =================================================================================
                 }
             } catch (e: Exception) {
                 handler.post { showToast("Error: ${e.message}") }
@@ -5903,6 +6014,33 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 if (!current.contains("NullInputMethodService")) {
                     android.util.Log.i(TAG, "Cover Screen Detected: Enforcing Null Keyboard...")
                     handler.post { setSoftKeyboardBlocking(true) }
+                }
+            } catch(e: Exception) {}
+        }.start()
+    }
+
+    // [NEW] GBOARD GUARDIAN
+    // When DroidOS blocking is OFF, we make sure Samsung doesn't force its own keyboard.
+    private fun ensureCoverKeyboardEnforced() {
+        // Throttle: Check max once every 2 seconds to save battery
+        if (System.currentTimeMillis() - lastCoverCheck < 2000) return
+        lastCoverCheck = System.currentTimeMillis()
+
+        Thread {
+            try {
+                // 1. Get User's Preferred Keyboard (e.g., Gboard)
+                val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                val targetIme = prefs.getString("user_preferred_ime", null) ?: return@Thread
+
+                // 2. Check what is currently active
+                val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                
+                // 3. If System reverted to Samsung (or anything that isn't our target), Force it back
+                if (current != targetIme && !current.contains("NullInputMethodService")) {
+                    android.util.Log.i(TAG, "Samsung Restriction Detected! Forcing $targetIme...")
+                    
+                    // Trigger the same forceful restore logic we used for the main screen
+                    handler.post { setSoftKeyboardBlocking(false) }
                 }
             } catch(e: Exception) {}
         }.start()
@@ -5979,7 +6117,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
             if (prefs.prefBlockSoftKeyboard && !isVoiceActive) {
-                 // 1. Ensure IME is switched to Null Keyboard
+                 // CASE A: Blocking Enabled -> Force Null Keyboard
                  ensureKeyboardBlocked()
 
                  val currentTime = System.currentTimeMillis()
@@ -5998,6 +6136,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                          } catch(e: Exception) {}
                      }
                  }
+            } else {
+                 // CASE B: Blocking Disabled -> Force Gboard (Defeat Samsung Restriction)
+                 // If the user turned off blocking, they expect their preferred keyboard.
+                 ensureCoverKeyboardEnforced()
             }
         }
     }
@@ -6484,35 +6626,83 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 
-        // [FIX] Robust Observer: Watch for Default Keyboard Changes
+        // =================================================================================
+        // CONTENT OBSERVER: Watch for Default Keyboard Changes
+        // SUMMARY: Captures user's preferred keyboard when they EXPLICITLY change it.
+        //          FIXED: We now check if we're on the Main Screen (Display 0) before
+        //          saving. Samsung often force-sets its keyboard during unfold, and we
+        //          don't want to save that as the user's preference.
+        //          
+        //          Additionally, we skip saving Samsung keyboard if the previous keyboard
+        //          was our NullInputMethodService - this indicates an automatic restore,
+        //          not a user choice.
+        // =================================================================================
         contentResolver.registerContentObserver(
             android.provider.Settings.Secure.getUriFor("default_input_method"),
             false,
             object : android.database.ContentObserver(handler) {
+                private var lastObservedIme: String = ""
+                
                 override fun onChange(selfChange: Boolean) {
                     val current = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                     
-                    // Only save if it is a REAL keyboard (not our blocker)
-                    if (current.isNotEmpty() && !current.contains("NullInputMethodService")) {
+                    android.util.Log.d(TAG, "IME Observer: '$lastObservedIme' -> '$current' (display=$currentDisplayId)")
+                    
+                    // Skip if empty or our blocker
+                    if (current.isEmpty() || current.contains("NullInputMethodService")) {
+                        lastObservedIme = current
+                        return
+                    }
+                    
+                    // GUARD 1: Don't save if we just came FROM NullInputMethodService
+                    // This means system is auto-restoring, not user choosing
+                    val wasFromNull = lastObservedIme.contains("NullInputMethodService")
+                    
+                    // GUARD 2: Don't save Samsung if it's an automatic fallback
+                    // Samsung gets set when: 1) phone unfolds, 2) other IME crashes
+                    val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
+                    
+                    // GUARD 3: Only save if we're on the Main Screen AND user had a chance to pick
+                    // If currentDisplayId is 1 (cover), any IME change is from our blocking, not user
+                    val isOnMainScreen = currentDisplayId == 0
+                    
+                    // Decision logic
+                    val shouldSave = when {
+                        wasFromNull && isSamsung -> {
+                            android.util.Log.w(TAG, "IME Observer: SKIPPING Samsung save (automatic fallback from Null)")
+                            false
+                        }
+                        !isOnMainScreen -> {
+                            android.util.Log.d(TAG, "IME Observer: SKIPPING save (not on main screen)")
+                            false
+                        }
+                        else -> true
+                    }
+                    
+                    if (shouldSave) {
                         getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
                             .edit()
                             .putString("user_preferred_ime", current)
                             .apply()
                             
-                        android.util.Log.i(TAG, "User Preference CAPTURED: $current")
+                        android.util.Log.i(TAG, "IME Observer: SAVED preference: $current")
                         
-                        // 1. Show Toast Feedback
-                        val name = if (current.contains("google")) "Gboard" else if (current.contains("sec")) "Samsung" else "Keyboard"
+                        val name = when {
+                            current.contains("google.android.inputmethod.latin") -> "Gboard"
+                            current.contains("honeyboard") || current.contains("com.sec") -> "Samsung"
+                            else -> "Keyboard"
+                        }
                         handler.post { showToast("Saved: $name") }
-
-
-                        // 2. [FIXED] Refresh Menu Immediately using correct variable name
                         handler.post { menuManager?.refresh() }
-
                     }
+                    
+                    lastObservedIme = current
                 }
             }
         )
+        // =================================================================================
+        // END BLOCK: CONTENT OBSERVER for Default Keyboard Changes
+        // =================================================================================
                     loadPrefs()
                     val filter = IntentFilter().apply { 
                         // Internal short commands
@@ -6612,6 +6802,34 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
         
         Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
+        
+        // =================================================================================
+        // ONE-TIME FIX: Clear stale Samsung preference if Gboard is available
+        // SUMMARY: Previous bug caused Samsung to be saved as preferred IME.
+        //          This checks on startup and fixes if Gboard is available.
+        // =================================================================================
+        try {
+            val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            val savedIme = prefs.getString("user_preferred_ime", null)
+            if (savedIme != null && (savedIme.contains("honeyboard") || savedIme.contains("com.sec"))) {
+                // Check if Gboard is enabled
+                Thread {
+                    try {
+                        val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                        val gboard = enabledImes.lines().find { 
+                            it.contains("com.google.android.inputmethod.latin") 
+                        }
+                        if (gboard != null) {
+                            android.util.Log.w(TAG, "STARTUP FIX: Replacing stale Samsung preference with Gboard")
+                            prefs.edit().putString("user_preferred_ime", gboard.trim()).apply()
+                        }
+                    } catch (e: Exception) {}
+                }.start()
+            }
+        } catch (e: Exception) {}
+        // =================================================================================
+        // END BLOCK: ONE-TIME FIX for stale Samsung preference
+        // =================================================================================
         
         // Build UI
         setupUI(finalTarget)
@@ -6900,11 +7118,68 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             enforceZOrder()
             showToast("Trackpad active on Display $displayId")
 
-            // [FIX] Only block keyboard if we are NOT on the Main Display (0).
-            // Blocking on Main Screen causes conflicts when trying to restore Gboard.
-            if (prefs.prefBlockSoftKeyboard && displayId != 0) {
-                triggerAggressiveBlocking()
+            // =================================================================================
+            // KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
+            // SUMMARY: When moving to Main Screen (0), actively restore the user's preferred
+            //          keyboard. When moving to Cover Screen (1+), apply blocking if enabled.
+            //          This fixes the issue where Samsung Keyboard was forced on unfold.
+            // =================================================================================
+            android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
+            android.util.Log.w(TAG, "║ KEYBOARD LOGIC START - setupUI($displayId)              ║")
+            android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
+            
+            // Log current state BEFORE any changes
+            val preCurrentIme = try {
+                android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: "null"
+            } catch (e: Exception) { "error: ${e.message}" }
+            val preShowMode = if (Build.VERSION.SDK_INT >= 24) {
+                try { softKeyboardController.showMode.toString() } catch (e: Exception) { "error" }
+            } else { "N/A (API < 24)" }
+            
+            android.util.Log.w(TAG, "├─ PRE-STATE:")
+            android.util.Log.w(TAG, "│  ├─ displayId: $displayId")
+            android.util.Log.w(TAG, "│  ├─ currentDisplayId: $currentDisplayId")
+            android.util.Log.w(TAG, "│  ├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
+            android.util.Log.w(TAG, "│  ├─ current IME: $preCurrentIme")
+            android.util.Log.w(TAG, "│  └─ showMode: $preShowMode")
+            
+            if (displayId == 0) {
+                android.util.Log.w(TAG, "├─ ACTION: MAIN SCREEN DETECTED - Attempting keyboard restoration")
+                
+                // 1. Reset Accessibility show mode to AUTO (allow system keyboards)
+                if (Build.VERSION.SDK_INT >= 24) {
+                    try {
+                        val oldMode = softKeyboardController.showMode
+                        softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                        val newMode = softKeyboardController.showMode
+                        android.util.Log.w(TAG, "│  ├─ showMode changed: $oldMode -> $newMode")
+                    } catch (e: Exception) {
+                        android.util.Log.e(TAG, "│  ├─ showMode change FAILED: ${e.message}")
+                    }
+                }
+                
+                // 2. If blocking was enabled, restore the user's preferred keyboard
+                if (prefs.prefBlockSoftKeyboard) {
+                    android.util.Log.w(TAG, "│  ├─ Blocking was enabled, calling setSoftKeyboardBlocking(false)")
+                    setSoftKeyboardBlocking(false)
+                } else {
+                    android.util.Log.w(TAG, "│  └─ Blocking NOT enabled, skipping restoration")
+                }
+            } else {
+                android.util.Log.w(TAG, "├─ ACTION: COVER SCREEN - Checking if blocking needed")
+                // COVER SCREEN: Apply blocking if preference is enabled
+                if (prefs.prefBlockSoftKeyboard) {
+                    android.util.Log.w(TAG, "│  └─ Blocking enabled, calling triggerAggressiveBlocking()")
+                    triggerAggressiveBlocking()
+                } else {
+                    android.util.Log.w(TAG, "│  └─ Blocking NOT enabled, skipping")
+                }
             }
+            
+            android.util.Log.w(TAG, "└─ KEYBOARD LOGIC END")
+            // =================================================================================
+            // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
+            // =================================================================================
 
             android.util.Log.d("OverlayService", "setupUI completed successfully on Display $displayId")
 
@@ -9258,18 +9533,54 @@ if (isResize) {
             val isDebounced = (System.currentTimeMillis() - lastManualSwitchTime > 5000)
             
             if (display != null && isDebounced) {
+                // =================================================================================
                 // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main (0)
+                // =================================================================================
                 if (display.state == Display.STATE_ON && currentDisplayId != 0) {
+                    android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
+                    android.util.Log.w(TAG, "║ PHONE OPENED DETECTED - onDisplayChanged                 ║")
+                    android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
+                    android.util.Log.w(TAG, "├─ display.state: ${display.state} (STATE_ON=${Display.STATE_ON})")
+                    android.util.Log.w(TAG, "├─ currentDisplayId: $currentDisplayId")
+                    android.util.Log.w(TAG, "├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
+                    android.util.Log.w(TAG, "├─ Scheduling UI switch in 500ms...")
+                    
                     handler.postDelayed({
                         try {
-                            if (System.currentTimeMillis() - lastManualSwitchTime > 5000) {
+                            val timeSinceManual = System.currentTimeMillis() - lastManualSwitchTime
+                            android.util.Log.w(TAG, "├─ DELAYED HANDLER EXECUTING")
+                            android.util.Log.w(TAG, "│  ├─ timeSinceManualSwitch: ${timeSinceManual}ms")
+                            android.util.Log.w(TAG, "│  └─ Will execute: ${timeSinceManual > 5000}")
+                            
+                            if (timeSinceManual > 5000) {
+                                // STEP 1: Pre-restore keyboard BEFORE UI rebuild
+                                if (prefs.prefBlockSoftKeyboard) {
+                                    android.util.Log.w(TAG, "├─ PRE-RESTORE: Setting showMode to AUTO")
+                                    if (Build.VERSION.SDK_INT >= 24) {
+                                        try {
+                                            val oldMode = softKeyboardController.showMode
+                                            softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                                            android.util.Log.w(TAG, "│  └─ showMode: $oldMode -> ${softKeyboardController.showMode}")
+                                        } catch (e: Exception) {
+                                            android.util.Log.e(TAG, "│  └─ showMode change FAILED: ${e.message}")
+                                        }
+                                    }
+                                }
+                                
+                                // STEP 2: Rebuild UI on main screen
+                                android.util.Log.w(TAG, "├─ Calling setupUI(0)...")
                                 setupUI(0)
                                 resetBubblePosition()
-                                // showToast("Phone Opened: Moved to Main Screen") // Removed debug toast
+                                android.util.Log.w(TAG, "└─ Phone opened handling complete")
                             }
-                        } catch(e: Exception) {}
+                        } catch(e: Exception) {
+                            android.util.Log.e(TAG, "└─ EXCEPTION: ${e.message}", e)
+                        }
                     }, 500)
                 }
+                // =================================================================================
+                // END BLOCK: CASE A - Phone Opened
+                // =================================================================================
 
                 // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                 else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
@@ -15943,490 +16254,6 @@ plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
 }
-```
-
-## File: crash_log.txt
-```
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: Process: com.example.com.katsuyamaki.coverscreenlauncher, PID: 14842
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.com.katsuyamaki.coverscreenlauncher/com.example.quadrantlauncher.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at com.example.quadrantlauncher.MainActivity.onCreate(MainActivity.kt:35)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 13:41:08.240 14842 14842 E AndroidRuntime: 	... 13 more
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: Process: com.example.coverscreentester, PID: 4765
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 13:41:09.350  4765  4765 E AndroidRuntime: 	... 13 more
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: Process: com.example.coverscreentester, PID: 4377
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:13:43.939  4377  4377 E AndroidRuntime: 	... 13 more
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: Process: com.example.coverscreentester, PID: 5743
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:13:47.230  5743  5743 E AndroidRuntime: 	... 13 more
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: Process: com.example.coverscreentester, PID: 5808
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:13:49.449  5808  5808 E AndroidRuntime: 	... 13 more
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: Process: com.example.coverscreentester, PID: 6400
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:13:57.441  6400  6400 E AndroidRuntime: 	... 13 more
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: Process: com.example.coverscreentester, PID: 11723
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:17:57.229 11723 11723 E AndroidRuntime: 	... 13 more
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: Process: com.example.coverscreentester, PID: 12994
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:17:58.875 12994 12994 E AndroidRuntime: 	... 13 more
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: Process: com.example.coverscreentester, PID: 13308
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:18:02.621 13308 13308 E AndroidRuntime: 	... 13 more
-11-28 19:18:03.631  1434  2290 E WindowManager: win=Window{417f265 u0 com.example.com.katsuyamaki.coverscreenlauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-11-28 19:18:03.657  1434  2362 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:18:07.439  1434  2290 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:18:11.597  1434  3124 E WindowManager: win=Window{d318130 u0 com.example.com.katsuyamaki.coverscreenlauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-11-28 19:18:11.663  1434  3124 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: Process: com.example.coverscreentester, PID: 13867
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:18:16.286 13867 13867 E AndroidRuntime: 	... 13 more
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: Process: com.example.coverscreentester, PID: 15003
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:18:27.082 15003 15003 E AndroidRuntime: 	... 13 more
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: Process: com.example.coverscreentester, PID: 15121
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:18:28.888 15121 15121 E AndroidRuntime: 	... 13 more
-11-28 19:24:01.160  1434  2282 E WindowManager: win=Window{d318130 u0 com.example.com.katsuyamaki.coverscreenlauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-11-28 19:24:01.267  1434  1641 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:24:14.076  1434  2282 E WindowManager: win=Window{d318130 u0 com.example.com.katsuyamaki.coverscreenlauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-11-28 19:24:14.194  1434  4777 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:25:39.560  1434  2297 E WindowManager: win=Window{d318130 u0 com.example.com.katsuyamaki.coverscreenlauncher} destroySurfaces: appStopped=true cleanupOnResume=false win.mWindowRemovalAllowed=false win.mRemoveOnExit=false win.mViewVisibility=8 caller=com.android.server.wm.WindowManagerService.tryStartExitingAnimation:134 com.android.server.wm.WindowManagerService.relayoutWindow:1147 com.android.server.wm.Session.relayout:27 android.view.IWindowSession$Stub.onTransact:829 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1457 android.os.Binder.execTransact:1401 
-11-28 19:25:39.640  1434  4027 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:25:44.231  1434  2079 E NotificationService: Suppressing toast from package com.example.com.katsuyamaki.coverscreenlauncher by user request.
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: Process: com.example.coverscreentester, PID: 22260
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:25:54.114 22260 22260 E AndroidRuntime: 	... 13 more
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: Process: com.example.coverscreentester, PID: 22395
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:25:55.580 22395 22395 E AndroidRuntime: 	... 13 more
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: Process: com.example.coverscreentester, PID: 22446
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:25:57.096 22446 22446 E AndroidRuntime: 	... 13 more
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: Process: com.example.coverscreentester, PID: 22521
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:25:59.532 22521 22521 E AndroidRuntime: 	... 13 more
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: Process: com.example.coverscreentester, PID: 27492
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:30:45.965 27492 27492 E AndroidRuntime: 	... 13 more
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: FATAL EXCEPTION: main
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: Process: com.example.coverscreentester, PID: 27747
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.example.coverscreentester/com.example.coverscreentester.MainActivity}: java.lang.IllegalStateException: binder haven't been received
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4640)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:4871)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:222)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeNonLifecycleItem(TransactionExecutor.java:133)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeTransactionItems(TransactionExecutor.java:103)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:80)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:3103)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:110)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:9939)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:632)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:975)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: Caused by: java.lang.IllegalStateException: binder haven't been received
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at rikka.shizuku.Shizuku.requireService(Shizuku.java:430)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at rikka.shizuku.Shizuku.checkSelfPermission(Shizuku.java:868)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at com.example.coverscreentester.MainActivity.onCreate(MainActivity.kt:76)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9519)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:9488)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1524)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:4622)
-11-28 19:31:35.891 27747 27747 E AndroidRuntime: 	... 13 more
 ```
 
 ## File: gradle.properties
