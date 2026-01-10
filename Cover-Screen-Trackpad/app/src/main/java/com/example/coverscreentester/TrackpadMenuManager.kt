@@ -76,6 +76,15 @@ class TrackpadMenuManager(
         } catch (e: Exception) { }
     }
 
+
+    // [FIXED] Refresh the current tab to update UI text (e.g. "Restore Target: Gboard")
+    fun refresh() {
+        if (drawerView != null) {
+            // Reload the currently open tab to refresh item text
+            loadTab(currentTab)
+        }
+    }
+
     fun toggle() {
         if (isVisible) hide() else show()
     }
@@ -552,6 +561,30 @@ class TrackpadMenuManager(
         
         list.add(TrackpadMenuAdapter.MenuItem("KEYBOARD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
         
+
+        // [NEW] Set Restore Keyboard Preference (With Visual Feedback)
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val savedIme = prefs.getString("user_preferred_ime", null)
+        
+        // Determine display name
+        val imeName = when {
+            savedIme == null -> "None (Tap to Select)"
+            savedIme.contains("google") -> "Gboard"
+            savedIme.contains("sec") || savedIme.contains("honeyboard") -> "Samsung Keyboard"
+            savedIme.contains("swiftkey") -> "SwiftKey"
+            else -> "Custom Keyboard"
+        }
+
+        list.add(TrackpadMenuAdapter.MenuItem("Restore Target: $imeName", android.R.drawable.ic_menu_save, TrackpadMenuAdapter.Type.ACTION) {
+            try {
+                // Open System Picker so OverlayService can capture the user's choice
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.showInputMethodPicker()
+                android.widget.Toast.makeText(context, "Select the keyboard DroidOS should restore to.", android.widget.Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        })
         // NEW: Launch Proxy Activity for Picker
         list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Null KB to block default)", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
             service.forceSystemKeyboardVisible()

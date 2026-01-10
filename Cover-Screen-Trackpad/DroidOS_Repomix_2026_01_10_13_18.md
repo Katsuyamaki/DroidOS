@@ -1722,13 +1722,30 @@ class KeyboardOverlay(
         // END BLOCK: SPACEBAR MOUSE CURSOR MOVE CALLBACK BINDING
         // =================================================================================
 
+
         keyboardView?.cursorClickAction = { isRight ->
             onCursorClick?.invoke(isRight)
+            // Fix: Reset swipe state on click to prevent accidental full-word delete
+            lastCommittedSwipeWord = null
+            resetComposition()
         }
 
-        keyboardView?.touchDownAction = { onTouchDown?.invoke() }
+        keyboardView?.touchDownAction = { 
+            onTouchDown?.invoke()
+            // Fix: Reset swipe state on drag start
+            lastCommittedSwipeWord = null
+            resetComposition()
+        }
+        
         keyboardView?.touchUpAction = { onTouchUp?.invoke() }
-        keyboardView?.touchTapAction = { onTouchTap?.invoke() }
+        
+        keyboardView?.touchTapAction = { 
+            onTouchTap?.invoke()
+            // Fix: Reset swipe state on tap
+            lastCommittedSwipeWord = null
+            resetComposition() 
+        }
+
 
         keyboardView?.mirrorTouchCallback = { x, y, action ->
             val cb = onMirrorTouch
@@ -2078,17 +2095,18 @@ class KeyboardOverlay(
         // =================================================================================
         if (key == KeyboardView.SpecialKey.BACKSPACE) {
             // CHECK: Was the last input a swiped word?
+
             if (lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.isNotEmpty()) {
                 // Delete the entire swiped word (including trailing space)
                 val deleteCount = lastCommittedSwipeWord!!.length
                 android.util.Log.d("DroidOS_Swipe", "BACKSPACE: Deleting swiped word '${lastCommittedSwipeWord}' ($deleteCount chars)")
 
-                for (i in 0 until deleteCount) {
-                    injectKey(KeyEvent.KEYCODE_DEL, 0)
-                }
+                // [FIX] Use Bulk Delete for reliability (especially with KB Blocker)
+                (context as? OverlayService)?.injectBulkDelete(deleteCount)
 
                 // Clear the swipe history so next backspace is normal
                 lastCommittedSwipeWord = null
+
                 
                 // Also clear composition state
                 currentComposingWord.clear()
@@ -2480,11 +2498,26 @@ val singleSuggestion = listOf(KeyboardView.Candidate(
     // =================================================================================
     // END BLOCK: updateSuggestions with styling flags
     // =================================================================================
+
+    // =================================================================================
+    // FUNCTION: resetSwipeHistory
+    // SUMMARY: Public access to reset swipe state. Called by OverlayService when
+    //          external cursor movement (e.g. touching the app) is detected.
+    // =================================================================================
+    fun resetSwipeHistory() {
+        if (lastCommittedSwipeWord != null) {
+            android.util.Log.d("DroidOS_Swipe", "External cursor move detected -> Reset swipe history")
+        }
+        lastCommittedSwipeWord = null
+        resetComposition()
+    }
+
     private fun resetComposition() {
         currentComposingWord.clear()
         originalCaseWord.clear()
         updateSuggestionsWithSync(emptyList())
     }
+
 
     private fun injectKey(keyCode: Int, metaState: Int) {
         (context as? OverlayService)?.injectKeyFromKeyboard(keyCode, metaState)
@@ -5300,21 +5333,6 @@ class NullInputMethodService : InputMethodService() {
                     }
                 }
 
-                // COMMAND 2: TYPE KEY (Native Input)
-                "com.example.coverscreentester.INJECT_KEY" -> {
-                    val keyCode = intent.getIntExtra("keyCode", 0)
-                    val metaState = intent.getIntExtra("metaState", 0)
-
-                    if (keyCode != 0 && currentInputConnection != null) {
-                        val now = System.currentTimeMillis()
-                        currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState)
-                        )
-                        currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState)
-                        )
-                    }
-                }
 
                 // COMMAND 3: INJECT TEXT (Swipe/Prediction Support)
                 "com.example.coverscreentester.INJECT_TEXT" -> {
@@ -5325,17 +5343,30 @@ class NullInputMethodService : InputMethodService() {
                         currentInputConnection.commitText(text, 1)
                     }
                 }
+
+                // COMMAND 4: BULK DELETE (Robust Swipe Undo)
+                "com.example.coverscreentester.INJECT_DELETE" -> {
+                    val length = intent.getIntExtra("length", 0)
+                    if (length > 0 && currentInputConnection != null) {
+                        // deleteSurroundingText(beforeLength, afterLength)
+                        currentInputConnection.deleteSurroundingText(length, 0)
+                    }
+                }
+
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+
         val filter = IntentFilter().apply {
             addAction("com.example.coverscreentester.RESTORE_IME")
             addAction("com.example.coverscreentester.INJECT_KEY")
             addAction("com.example.coverscreentester.INJECT_TEXT")
+            addAction("com.example.coverscreentester.INJECT_DELETE")
         }
+
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -5419,8 +5450,12 @@ import com.example.coverscreentester.BuildConfig
 
 class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
+
     private var isAccessibilityReady = false
     private var pendingDisplayId = -1
+    // Track last time we injected text to distinguish our events from user touches
+    private var lastInjectionTime = 0L
+
 
     // === RECEIVER & ACTIONS - START ===
     private val commandReceiver = object : BroadcastReceiver() {
@@ -5730,6 +5765,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 // =================================================================================
 
 
+
+
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
         if (shellService == null) {
             showToast("Shizuku required for Keyboard Blocking")
@@ -5738,83 +5775,43 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         Thread {
             try {
-                // 1. Find correct ID dynamically
+                // 1. Find correct ID dynamically for OUR Null Keyboard
                 val listOutput = shellService?.runCommand("ime list -a -s") ?: ""
                 val myImeId = listOutput.lines().firstOrNull { 
                     it.contains(packageName) && it.contains("NullInputMethodService") 
                 }?.trim()
 
                 if (myImeId.isNullOrEmpty()) {
-                    handler.post { showToast("Error: Null Keyboard not found. Please re-install.") }
+                    handler.post { showToast("Error: Null Keyboard not found.") }
                     return@Thread
                 }
 
                 if (enabled) {
-                    // --- BLOCKING (Switch to Null) ---
+                    // --- BLOCKING (Switch to Null Keyboard) ---
                     
-                    // Save current (if not us)
-                    val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                    if (current.isNotEmpty() && !current.contains("NullInputMethodService")) {
-                        previousImeId = current
-                    }
-
-                    // Attempt Shell Switch
+                    // 1. Enable our Null Keyboard
                     shellService?.runCommand("ime enable $myImeId")
-                    shellService?.runCommand("ime set $myImeId")
-                    shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
-
-                    // Verify & Fallback
-                    Thread.sleep(500)
-                    val newDefault = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
                     
-                    if (newDefault.contains("NullInputMethodService")) {
-                        handler.post { showToast("Blocked: Null Keyboard Active") }
-                    } else {
-                        // FALLBACK: Open Picker
-                        handler.post { 
-                            showToast("Select 'DroidOS Null Keyboard'")
-                            try {
-                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                                imm.showInputMethodPicker()
-                            } catch(e: Exception){}
-                        }
-                    }
+                    // 2. Set it as active
+                    shellService?.runCommand("ime set $myImeId")
+                    
+                    // 3. Ensure OS doesn't try to show popups
+                    shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
+                    
+                    handler.post { showToast("Keyboard Blocked") }
                     
                 } else {
-                    // --- UNBLOCKING (Restore Gboard) ---
+                    // --- UNBLOCKING (Force System Fallback) ---
                     
+                    // 1. Reset settings
                     shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1")
                     
-                    // Determine Target
-                    var targetIme = previousImeId
-                    if (targetIme.isNullOrEmpty()) {
-                        val list = shellService?.runCommand("ime list -s") ?: ""
-                        targetIme = list.lines().firstOrNull { it.contains("com.google.android.inputmethod.latin") } 
-                            ?: list.lines().firstOrNull { it.contains("com.sec.android.inputmethod") }
-                            ?: list.lines().firstOrNull { it.contains("honeyboard") }
-                    }
-
-                    if (!targetIme.isNullOrEmpty()) {
-                        // Try Broadcast first (Clean Handoff)
-                        val intent = Intent("com.example.coverscreentester.RESTORE_IME")
-                        intent.setPackage(packageName)
-                        intent.putExtra("target_ime", targetIme)
-                        sendBroadcast(intent)
-                        
-                        // Blast Shell too just in case
-                        shellService?.runCommand("ime enable $targetIme")
-                        shellService?.runCommand("ime set $targetIme")
-                        
-                        handler.post { showToast("Restored: $targetIme") }
-                    } else {
-                        handler.post { 
-                            showToast("Select your normal keyboard")
-                            try {
-                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                                imm.showInputMethodPicker()
-                            } catch(e: Exception){}
-                        }
-                    }
+                    // 2. DISABLE our Null Keyboard
+                    // This forces Android to immediately switch back to the User's System Default
+                    // (Samsung, Gboard, etc.) because the active one (Null) is no longer valid.
+                    shellService?.runCommand("ime disable $myImeId")
+                    
+                    handler.post { showToast("Keyboard Restored") }
                 }
             } catch (e: Exception) {
                 handler.post { showToast("Error: ${e.message}") }
@@ -5823,43 +5820,84 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
 
-// FUNCTION: onAccessibilityEvent
-// SUMMARY: Monitors system events.
-// CHANGES: Added logic to FORCE UNBLOCK the keyboard when an event is detected on
-//          the Main Screen (Display 0), provided the Trackpad is not currently running there.
-// =================================================================================
+
+
+    // =================================================================================
+    // KEYBOARD RESTORATION HELPERS
+    // =================================================================================
+    private var lastMainCheck = 0L
+    private var lastCoverCheck = 0L
+
+    private fun ensureSystemKeyboardRestored() {
+        // Throttle: Check max once every 2 seconds
+        if (System.currentTimeMillis() - lastMainCheck < 2000) return
+        lastMainCheck = System.currentTimeMillis()
+
+        Thread {
+            try {
+                // Check if Null Keyboard is currently active
+                val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
+                if (current.contains(packageName) && current.contains("NullInputMethodService")) {
+                    android.util.Log.i(TAG, "Main Screen Detected: Restoring System Keyboard...")
+                    handler.post { setSoftKeyboardBlocking(false) }
+                }
+            } catch(e: Exception) {}
+        }.start()
+    }
+
+    private fun ensureKeyboardBlocked() {
+        // Throttle: Check max once every 2 seconds
+        if (System.currentTimeMillis() - lastCoverCheck < 2000) return
+        lastCoverCheck = System.currentTimeMillis()
+
+        Thread {
+            try {
+                // Check if Null Keyboard is NOT active
+                val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
+                if (!current.contains("NullInputMethodService")) {
+                    android.util.Log.i(TAG, "Cover Screen Detected: Enforcing Null Keyboard...")
+                    handler.post { setSoftKeyboardBlocking(true) }
+                }
+            } catch(e: Exception) {}
+        }.start()
+    }
+
+    // =================================================================================
+    // FUNCTION: onAccessibilityEvent
+    // SUMMARY: Monitors system events to manage Keyboard Blocking and Mode Switching.
+    // UPDATED: Now explicitly UNBLOCKS the keyboard when Main Screen (0) is active.
+    // =================================================================================
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        // [FIX 1] Keyboard Restoration Logic
-        // If we detect activity on the Main Screen (Display 0), and our Trackpad is
-        // NOT currently set to the Main Screen, we must ensure the keyboard is UNBLOCKED.
-        if (Build.VERSION.SDK_INT >= 30) {
-            val isMainScreenEvent = (event.displayId == Display.DEFAULT_DISPLAY)
-            // 'currentDisplayId' tracks where our Trackpad UI is currently placed
-            val isTrackpadOnMain = (currentDisplayId == Display.DEFAULT_DISPLAY)
-
-            if (isMainScreenEvent && !isTrackpadOnMain) {
-                // We are on Main Screen, but Trackpad is on Cover (or elsewhere).
-                // Ensure we don't accidentally leave the keyboard blocked.
-                if (Build.VERSION.SDK_INT >= 24) {
-                    try {
-                        if (softKeyboardController.showMode == AccessibilityService.SHOW_MODE_HIDDEN) {
-                            softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
-                        }
-                    } catch (e: Exception) {
-                        // Ignore controller errors
+        // [FIX] MAIN SCREEN GUARD
+        // If interaction is on the Main Display (0), we must ensure the keyboard works.
+        // This overrides any blocking preferences intended for the Cover Screen.
+        // Use windowId != -1 to ensure it's a real UI event.
+        if (event.displayId == Display.DEFAULT_DISPLAY && event.windowId != -1) {
+            
+            // 1. Unlock Accessibility Soft Keyboard Mode (if it was hidden)
+            if (Build.VERSION.SDK_INT >= 24) {
+                try {
+                    if (softKeyboardController.showMode == AccessibilityService.SHOW_MODE_HIDDEN) {
+                        softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
                     }
-                }
-                // Stop processing to prevent Lag Loop on Main Screen
-                return
+                } catch (e: Exception) {}
             }
 
-            // [FIX 2] Standard Multi-Display Filter
-            // Ignore events from displays we aren't managing
-            if (event.displayId != currentDisplayId) {
-                return
+            // 2. Restore System IME (if blocking preference is on, we temporarily disable it for Main Screen)
+            if (prefs.prefBlockSoftKeyboard) {
+                ensureSystemKeyboardRestored()
             }
+            
+            // CRITICAL: Stop processing. Do NOT run blocking logic for Main Screen events.
+            return
+        }
+
+        // [FIX 2] Standard Multi-Display Filter
+        // Ignore events from displays we aren't managing (unless it was Main Screen handled above)
+        if (event.displayId != currentDisplayId) {
+            return
         }
 
         val eventPkg = event.packageName?.toString() ?: ""
@@ -5877,16 +5915,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
             return
         }
+        
+        // [FIX] External Cursor Movement Detection
+        // If selection changes or user clicks text in the target app, reset swipe history.
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED || 
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            
+            val timeSinceInjection = System.currentTimeMillis() - lastInjectionTime
+            if (timeSinceInjection > 500) {
+                keyboardOverlay?.resetSwipeHistory()
+            }
+        }
 
-        // [FIX 5] Throttle & Execute Blocking
+        // [FIX 5] Throttle & Execute Blocking (Only on Cover Screen)
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
             if (prefs.prefBlockSoftKeyboard && !isVoiceActive) {
-                 val currentTime = System.currentTimeMillis()
+                 // 1. Ensure IME is switched to Null Keyboard
+                 ensureKeyboardBlocked()
 
-                 // Throttle: Only run max once every 500ms
+                 val currentTime = System.currentTimeMillis()
+                 // 2. Throttle Aggressive Hidden Mode
                  if (currentTime - lastBlockTime > 500) {
                      lastBlockTime = currentTime
 
@@ -5899,11 +5950,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                                  softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
                              }
                          } catch(e: Exception) {}
-                         }
+                     }
                  }
             }
         }
     }
+
 // =================================================================================
 // END FUNCTION: onAccessibilityEvent
 // =================================================================================
@@ -9196,11 +9248,15 @@ if (isResize) {
     private fun updateTargetMetrics(displayId: Int) { val display = displayManager?.getDisplay(displayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); targetScreenWidth = metrics.widthPixels; targetScreenHeight = metrics.heightPixels }
     
 
+
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
+        // Update timestamp so we ignore the resulting AccessibilityEvent
+        lastInjectionTime = System.currentTimeMillis()
+
         // NEW: dismiss Voice if active
         checkAndDismissVoice()
-
         // Submit to the sequential queue instead of spinning a random thread
+
         inputExecutor.execute {
             try {
                 // 1. CHECK ACTUAL SYSTEM STATE
@@ -9227,9 +9283,47 @@ if (isResize) {
         }
     }
 
-    fun injectText(text: String) {
+
+    fun injectBulkDelete(length: Int) {
+        if (length <= 0) return
+        
+        // Update timestamp
+        lastInjectionTime = System.currentTimeMillis()
+
         inputExecutor.execute {
             try {
+                // 1. CHECK ACTUAL SYSTEM STATE
+                val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
+                val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
+
+                if (isNullKeyboardActive) {
+                    // STRATEGY A: NATIVE (Clean & Fast)
+                    val intent = Intent("com.example.coverscreentester.INJECT_DELETE")
+                    intent.setPackage(packageName)
+                    intent.putExtra("length", length)
+                    sendBroadcast(intent)
+                } else {
+                    // STRATEGY B: SHELL INJECTION (Fallback Loop)
+                    // Shell is slower, but robust enough if we aren't using the Broadcast method
+                    for (i in 0 until length) {
+                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, inputTargetDisplayId, 1)
+                        Thread.sleep(5) // Tiny delay for stability
+                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, inputTargetDisplayId, 1)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Bulk delete failed", e)
+            }
+        }
+    }
+
+    fun injectText(text: String) {
+        // Update timestamp so we ignore the resulting AccessibilityEvent
+        lastInjectionTime = System.currentTimeMillis()
+
+        inputExecutor.execute {
+            try {
+
                 // 1. CHECK ACTUAL SYSTEM STATE
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                 val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")

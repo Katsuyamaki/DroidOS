@@ -365,84 +365,58 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
-        if (shellService == null) {
-            showToast("Shizuku required for Keyboard Blocking")
-            return
-        }
+        if (shellService == null) return
 
         Thread {
             try {
-                // 1. Find correct ID dynamically
-                val listOutput = shellService?.runCommand("ime list -a -s") ?: ""
-                val myImeId = listOutput.lines().firstOrNull { 
+                // 1. Find correct ID for OUR Null Keyboard
+                val allImes = shellService?.runCommand("ime list -a -s") ?: ""
+                val myImeId = allImes.lines().firstOrNull { 
                     it.contains(packageName) && it.contains("NullInputMethodService") 
                 }?.trim()
 
                 if (myImeId.isNullOrEmpty()) {
-                    handler.post { showToast("Error: Null Keyboard not found. Please re-install.") }
+                    handler.post { showToast("Error: Null Keyboard not found.") }
                     return@Thread
                 }
 
                 if (enabled) {
-                    // --- BLOCKING (Switch to Null) ---
-                    
-                    // Save current (if not us)
-                    val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                    if (current.isNotEmpty() && !current.contains("NullInputMethodService")) {
-                        previousImeId = current
-                    }
-
-                    // Attempt Shell Switch
+                    // --- BLOCKING ---
                     shellService?.runCommand("ime enable $myImeId")
                     shellService?.runCommand("ime set $myImeId")
                     shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
-
-                    // Verify & Fallback
-                    Thread.sleep(500)
-                    val newDefault = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                    
-                    if (newDefault.contains("NullInputMethodService")) {
-                        handler.post { showToast("Blocked: Null Keyboard Active") }
-                    } else {
-                        // FALLBACK: Open Picker
-                        handler.post { 
-                            showToast("Select 'DroidOS Null Keyboard'")
-                            try {
-                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                                imm.showInputMethodPicker()
-                            } catch(e: Exception){}
-                        }
-                    }
-                    
+                    handler.post { showToast("Keyboard Blocked") }
                 } else {
-                    // --- UNBLOCKING (Restore Gboard) ---
-                    
+                    // --- UNBLOCKING ---
                     shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1")
-                    
-                    // Determine Target
-                    var targetIme = previousImeId
+
+                    // 1. Get Saved Preference
+                    val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                    var targetIme = prefs.getString("user_preferred_ime", null)
+
+                    // 2. Validate: Is it still installed?
+                    val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                    if (!targetIme.isNullOrEmpty() && !enabledImes.contains(targetIme)) {
+                        targetIme = null
+                    }
+
+                    // 3. Fallback: Try to find Samsung or Gboard if preference missing
                     if (targetIme.isNullOrEmpty()) {
-                        val list = shellService?.runCommand("ime list -s") ?: ""
-                        targetIme = list.lines().firstOrNull { it.contains("com.google.android.inputmethod.latin") } 
-                            ?: list.lines().firstOrNull { it.contains("com.sec.android.inputmethod") }
-                            ?: list.lines().firstOrNull { it.contains("honeyboard") }
+                        targetIme = enabledImes.lines().find { 
+                            it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
+                        } ?: enabledImes.lines().find { 
+                            it.contains("com.google.android.inputmethod.latin") 
+                        }
                     }
 
                     if (!targetIme.isNullOrEmpty()) {
-                        // Try Broadcast first (Clean Handoff)
-                        val intent = Intent("com.example.coverscreentester.RESTORE_IME")
-                        intent.setPackage(packageName)
-                        intent.putExtra("target_ime", targetIme)
-                        sendBroadcast(intent)
-                        
-                        // Blast Shell too just in case
-                        shellService?.runCommand("ime enable $targetIme")
+                        android.util.Log.i(TAG, "Restoring to: $targetIme")
                         shellService?.runCommand("ime set $targetIme")
-                        
-                        handler.post { showToast("Restored: $targetIme") }
+                        shellService?.runCommand("ime disable $myImeId")
+                        handler.post { showToast("Restored Keyboard") }
                     } else {
                         handler.post { 
-                            showToast("Select your normal keyboard")
+                            showToast("Select Default Keyboard")
                             try {
                                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                                 imm.showInputMethodPicker()
@@ -455,6 +429,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             }
         }.start()
     }
+
+
+
 
 
     // =================================================================================
@@ -1071,6 +1048,37 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE PowerManager Init
         // =================================================================================
 
+
+
+        // [FIX] Robust Observer: Watch for Default Keyboard Changes
+        contentResolver.registerContentObserver(
+            android.provider.Settings.Secure.getUriFor("default_input_method"),
+            false,
+            object : android.database.ContentObserver(handler) {
+                override fun onChange(selfChange: Boolean) {
+                    val current = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
+                    
+                    // Only save if it is a REAL keyboard (not our blocker)
+                    if (current.isNotEmpty() && !current.contains("NullInputMethodService")) {
+                        getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("user_preferred_ime", current)
+                            .apply()
+                            
+                        android.util.Log.i(TAG, "User Preference CAPTURED: $current")
+                        
+                        // 1. Show Toast Feedback
+                        val name = if (current.contains("google")) "Gboard" else if (current.contains("sec")) "Samsung" else "Keyboard"
+                        handler.post { showToast("Saved: $name") }
+
+
+                        // 2. [FIXED] Refresh Menu Immediately using correct variable name
+                        handler.post { menuManager?.refresh() }
+
+                    }
+                }
+            }
+        )
                     loadPrefs()
                     val filter = IntentFilter().apply { 
                         // Internal short commands
