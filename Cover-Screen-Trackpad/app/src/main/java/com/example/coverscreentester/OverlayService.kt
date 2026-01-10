@@ -280,6 +280,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         var prefBubbleAlpha = 255       
         var prefPersistentService = false 
         var prefBlockSoftKeyboard = false
+        var prefAlwaysPreferGboard = true  // NEW: Fight Samsung's keyboard takeover
         
         // Defaults set to "none" (System Default)
         var hardkeyVolUpTap = "none"
@@ -601,6 +602,107 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             } catch(e: Exception) {}
         }.start()
     }
+
+    // =================================================================================
+    // FUNCTION: fightSamsungKeyboardTakeover
+    // SUMMARY: Called after phone unfolds to fight Samsung's forced keyboard switch.
+    //          Uses the nuclear option: disable Samsung, set Gboard, wait, re-enable.
+    //          This runs REGARDLESS of prefBlockSoftKeyboard setting because Samsung's
+    //          keyboard takeover is a separate issue from our cover screen blocking.
+    // =================================================================================
+    private fun fightSamsungKeyboardTakeover() {
+        if (shellService == null) return
+        if (currentDisplayId != 0) return  // Only fight on main screen
+        
+        Thread {
+            try {
+                // 1. Check current keyboard
+                val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                
+                // 2. Only fight if Samsung is active
+                if (!current.contains("honeyboard") && !current.contains("com.sec.android.inputmethod")) {
+                    android.util.Log.d(TAG, "SamsungFighter: Not Samsung ($current), skipping")
+                    return@Thread
+                }
+                
+                android.util.Log.w(TAG, "┌─ SAMSUNG FIGHTER ACTIVATED ─┐")
+                android.util.Log.w(TAG, "├─ Current: $current")
+                
+                // 3. Get user's preferred keyboard (or Gboard as default)
+                val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                var targetIme = prefs.getString("user_preferred_ime", null)
+                
+                // If saved preference is Samsung or empty, find Gboard
+                if (targetIme.isNullOrEmpty() || targetIme.contains("honeyboard") || targetIme.contains("com.sec")) {
+                    val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                    targetIme = enabledImes.lines().find { 
+                        it.contains("com.google.android.inputmethod.latin") 
+                    }?.trim()
+                }
+                
+                if (targetIme.isNullOrEmpty()) {
+                    android.util.Log.w(TAG, "├─ No Gboard found, cannot fight")
+                    android.util.Log.w(TAG, "└─ SAMSUNG FIGHTER ABORTED")
+                    return@Thread
+                }
+                
+                android.util.Log.w(TAG, "├─ Target: $targetIme")
+                
+                // 4. Get Samsung's ID
+                val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                val samsungId = enabledImes.lines().find { 
+                    it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
+                }?.trim()
+                
+                if (samsungId.isNullOrEmpty()) {
+                    android.util.Log.w(TAG, "├─ Samsung ID not found")
+                    android.util.Log.w(TAG, "└─ SAMSUNG FIGHTER ABORTED")
+                    return@Thread
+                }
+                
+                // 5. THE NUCLEAR OPTION
+                android.util.Log.w(TAG, "├─ Disabling Samsung...")
+                shellService?.runCommand("ime disable $samsungId")
+                Thread.sleep(200)
+                
+                android.util.Log.w(TAG, "├─ Setting Gboard...")
+                shellService?.runCommand("ime enable $targetIme")
+                shellService?.runCommand("settings put secure default_input_method $targetIme")
+                shellService?.runCommand("ime set $targetIme")
+                
+                // 6. Wait for it to stick (Samsung's protection window)
+                Thread.sleep(1500)
+                
+                // 7. Verify before re-enabling
+                val afterSet = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                android.util.Log.w(TAG, "├─ After set: $afterSet")
+                
+                // 8. Re-enable Samsung
+                android.util.Log.w(TAG, "├─ Re-enabling Samsung...")
+                shellService?.runCommand("ime enable $samsungId")
+                
+                // 9. Wait and verify
+                Thread.sleep(500)
+                val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                val success = finalIme.contains("google.android.inputmethod.latin")
+                
+                android.util.Log.w(TAG, "├─ Final: $finalIme")
+                android.util.Log.w(TAG, "├─ Success: $success")
+                android.util.Log.w(TAG, "└─ SAMSUNG FIGHTER COMPLETE")
+                
+                if (success) {
+                    // Save this as the preferred keyboard
+                    prefs.edit().putString("user_preferred_ime", targetIme).apply()
+                }
+                
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "SamsungFighter error: ${e.message}")
+            }
+        }.start()
+    }
+    // =================================================================================
+    // END BLOCK: fightSamsungKeyboardTakeover
+    // =================================================================================
 
     private fun ensureKeyboardBlocked() {
         // Throttle: Check max once every 2 seconds
@@ -1295,6 +1397,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         handler.post { showToast("Saved: $name") }
                         handler.post { menuManager?.refresh() }
                     }
+                    
+                    // =================================================================================
+                    // SAMSUNG FIGHTER TRIGGER
+                    // If Samsung just took over and we're on Main Screen, fight back!
+                    // =================================================================================
+                    if (isSamsung && isOnMainScreen && !wasFromNull) {
+                        android.util.Log.w(TAG, "IME Observer: Samsung detected on Main Screen, scheduling fight...")
+                        handler.postDelayed({
+                            fightSamsungKeyboardTakeover()
+                        }, 1000)
+                    }
+                    // =================================================================================
+                    // END BLOCK: SAMSUNG FIGHTER TRIGGER
+                    // =================================================================================
                     
                     lastObservedIme = current
                 }
@@ -4135,6 +4251,8 @@ if (isResize) {
             if (display != null && isDebounced) {
                 // =================================================================================
                 // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main (0)
+                // SUMMARY: When user unfolds the phone, switch UI to main screen.
+                //          ALSO: Fight Samsung's keyboard takeover with delayed restoration.
                 // =================================================================================
                 if (display.state == Display.STATE_ON && currentDisplayId != 0) {
                     android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
@@ -4153,21 +4271,15 @@ if (isResize) {
                             android.util.Log.w(TAG, "│  └─ Will execute: ${timeSinceManual > 5000}")
                             
                             if (timeSinceManual > 5000) {
-                                // STEP 1: Pre-restore keyboard BEFORE UI rebuild
+                                // Pre-restore showMode
                                 if (prefs.prefBlockSoftKeyboard) {
-                                    android.util.Log.w(TAG, "├─ PRE-RESTORE: Setting showMode to AUTO")
                                     if (Build.VERSION.SDK_INT >= 24) {
                                         try {
-                                            val oldMode = softKeyboardController.showMode
                                             softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
-                                            android.util.Log.w(TAG, "│  └─ showMode: $oldMode -> ${softKeyboardController.showMode}")
-                                        } catch (e: Exception) {
-                                            android.util.Log.e(TAG, "│  └─ showMode change FAILED: ${e.message}")
-                                        }
+                                        } catch (e: Exception) {}
                                     }
                                 }
                                 
-                                // STEP 2: Rebuild UI on main screen
                                 android.util.Log.w(TAG, "├─ Calling setupUI(0)...")
                                 setupUI(0)
                                 resetBubblePosition()
@@ -4177,6 +4289,27 @@ if (isResize) {
                             android.util.Log.e(TAG, "└─ EXCEPTION: ${e.message}", e)
                         }
                     }, 500)
+                    
+                    // =================================================================================
+                    // SAMSUNG KEYBOARD FIGHTER
+                    // SUMMARY: Samsung forces HoneyBoard during unfold. This delayed task waits for
+                    //          Samsung's protection window to pass, then forcefully restores Gboard.
+                    //          Runs REGARDLESS of prefBlockSoftKeyboard setting.
+                    // =================================================================================
+                    handler.postDelayed({
+                        fightSamsungKeyboardTakeover()
+                    }, 2000)  // Wait 2 seconds for Samsung's protection to expire
+                    
+                    handler.postDelayed({
+                        fightSamsungKeyboardTakeover()
+                    }, 4000)  // Try again at 4 seconds
+                    
+                    handler.postDelayed({
+                        fightSamsungKeyboardTakeover()
+                    }, 6000)  // Final attempt at 6 seconds
+                    // =================================================================================
+                    // END BLOCK: SAMSUNG KEYBOARD FIGHTER
+                    // =================================================================================
                 }
                 // =================================================================================
                 // END BLOCK: CASE A - Phone Opened
