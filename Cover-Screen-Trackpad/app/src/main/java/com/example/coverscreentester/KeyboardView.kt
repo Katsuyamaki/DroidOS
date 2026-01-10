@@ -977,7 +977,15 @@ private fun buildKeyboard() {
         // END BLOCK: VIRTUAL MIRROR MODE - BLOCK SWIPE TYPING
         // =================================================================================
 
+
+        // [FIX] Block Swipe Logic when Trackpad Mode is active
+        // This prevents the blue trail and swipe decoder from running while using the mouse
+        if (isTrackpadTouchMode) {
+            return super.dispatchTouchEvent(event)
+        }
+
         // --- 1. PREVENT SWIPE TRAIL ON SPACEBAR ---
+
         // If the touch starts on the SPACE key, we skip the swipe detection logic entirely.
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
             val touchedView = findKeyView(event.x, event.y)
@@ -1255,13 +1263,19 @@ private fun buildKeyboard() {
         // END BLOCK: ORIENTATION MODE CHECK
         // =================================================================================
 
-        // Note: touchedView and keyTag already computed above
+
+
 
         // --- SPACEBAR TRACKPAD HANDLING ---
-        if ((keyTag == "SPACE" && action == MotionEvent.ACTION_DOWN) || spacebarPointerId == pointerId) {
+        // [MODIFIED] Check for Spacebar OR Active Trackpad Mode (Full Keyboard)
+        // If mode is active (Green), ALL keyboard touches become mouse inputs.
+        val isTrackpadStart = (keyTag == "SPACE" && action == MotionEvent.ACTION_DOWN)
+        val isTrackpadContinue = (isTrackpadTouchMode && action == MotionEvent.ACTION_DOWN)
+
+        if (isTrackpadStart || isTrackpadContinue || spacebarPointerId == pointerId) {
             when (action) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                    if (keyTag == "SPACE") {
+                    if (isTrackpadStart || isTrackpadContinue) {
                         spacebarPointerId = pointerId
                         lastSpaceX = x
                         lastSpaceY = y
@@ -1271,13 +1285,17 @@ private fun buildKeyboard() {
                         hasMovedWhileDown = false
 
                         // If in Touch Mode, start the "Hold to Drag" timer
+                        // This allows hold-to-drag behavior from ANY key when active
                         if (isTrackpadTouchMode) {
                             handler.postDelayed(holdToDragRunnable, 300) // Wait 300ms to detect Hold
                             android.util.Log.d("SpaceTrackpad", "Touch Mode: Started hold-to-drag timer")
                         }
 
-                        // Visual feedback only
-                        if (touchedView != null) setKeyVisual(touchedView, true, "SPACE")
+                        // Visual feedback: Always keep SPACE green, even if touching other keys
+                        val spaceView = findViewWithTag<View>("SPACE")
+                        if (spaceView != null) setKeyVisual(spaceView, true, "SPACE")
+                        
+                        // Return true to BLOCK normal key processing
                         return true
                     }
                 }
@@ -1318,7 +1336,7 @@ private fun buildKeyboard() {
                         // If we are in Touch Mode, startTrackpadTimer() will ensure it stays Green.
                         val stayingInMode = isTrackpadTouchMode || isSpaceTrackpadActive
                         
-                        val spaceView = if (touchedView?.tag == "SPACE") touchedView else findViewWithTag("SPACE")
+                        val spaceView = findViewWithTag<View>("SPACE")
                         if (spaceView != null && !stayingInMode) {
                             setKeyVisual(spaceView, false, "SPACE")
                         }
@@ -1330,6 +1348,7 @@ private fun buildKeyboard() {
                             } else if (!hasMovedWhileDown) {
                                 touchTapAction?.invoke()
                             }
+                            // Reset timer on lift (keeps mode alive for 1s after touch ends)
                             startTrackpadTimer()
                         } else {
                             if (!isSpaceTrackpadActive) {
@@ -1372,6 +1391,9 @@ private fun buildKeyboard() {
 
             }
         }
+
+
+
 
         // --- STANDARD KEYBOARD HANDLING (Fixes Stuck Highlights) ---
         // We track the active key and update it as the finger slides.
