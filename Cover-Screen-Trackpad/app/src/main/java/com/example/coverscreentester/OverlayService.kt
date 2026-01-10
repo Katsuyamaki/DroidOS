@@ -367,8 +367,22 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 
+    // =================================================================================
+    // SYNCHRONIZATION: Prevent multiple keyboard restoration threads
+    // =================================================================================
+    @Volatile private var isKeyboardRestoreInProgress = false
+    // =================================================================================
+    // END BLOCK: Keyboard restoration synchronization flag
+    // =================================================================================
+    
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
         if (shellService == null) return
+        
+        // GUARD: Prevent concurrent restoration attempts
+        if (!enabled && isKeyboardRestoreInProgress) {
+            android.util.Log.w(TAG, "setSoftKeyboardBlocking: Already restoring, skipping duplicate call")
+            return
+        }
 
         Thread {
             try {
@@ -394,8 +408,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                 } else {
                     // =================================================================================
                     // UNBLOCKING / KEYBOARD RESTORATION (WITH DIAGNOSTICS)
-                    // SUMMARY: Restores the user's preferred keyboard when switching to Main Screen.
                     // =================================================================================
+                    
+                    // Set synchronization flag
+                    isKeyboardRestoreInProgress = true
+                    
                     android.util.Log.w(TAG, "┌──────────────────────────────────────────────────────────┐")
                     android.util.Log.w(TAG, "│ KEYBOARD RESTORATION STARTED                             │")
                     android.util.Log.w(TAG, "└──────────────────────────────────────────────────────────┘")
@@ -428,10 +445,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     var targetIme = sharedPrefs.getString("user_preferred_ime", null)
                     android.util.Log.w(TAG, "├─ SAVED PREFERENCE:")
                     android.util.Log.w(TAG, "│  └─ user_preferred_ime: ${targetIme ?: "NULL/NOT SET"}")
+                    
+                    // STEP 3.5: Check if saved preference is Samsung (likely stale from fallback)
+                    // If saved is Samsung but Gboard is available, prefer Gboard
+                    val savedIsSamsung = targetIme?.contains("honeyboard") == true || 
+                                         targetIme?.contains("com.sec.android.inputmethod") == true
 
                     // STEP 4: Get list of ALL IMEs and ENABLED IMEs
                     val allImes = shellService?.runCommand("ime list -a -s") ?: ""
                     val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                    
+                    // STEP 4.5: If saved is Samsung, check if Gboard is available as better option
+                    if (savedIsSamsung) {
+                        val gboardAvailable = enabledImes.lines().any { 
+                            it.contains("com.google.android.inputmethod.latin") 
+                        }
+                        if (gboardAvailable) {
+                            android.util.Log.w(TAG, "├─ OVERRIDE: Saved is Samsung but Gboard available")
+                            android.util.Log.w(TAG, "│  └─ Preferring Gboard over Samsung")
+                            targetIme = enabledImes.lines().find { 
+                                it.contains("com.google.android.inputmethod.latin") 
+                            }
+                        }
+                    }
                     android.util.Log.w(TAG, "├─ ALL IMEs:")
                     allImes.lines().filter { it.isNotBlank() }.forEach { ime ->
                         android.util.Log.w(TAG, "│  │ $ime")
@@ -539,6 +575,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     }
                     
                     android.util.Log.w(TAG, "└─ KEYBOARD RESTORATION COMPLETE")
+                    
+                    // Clear synchronization flag
+                    isKeyboardRestoreInProgress = false
                     // =================================================================================
                     // END BLOCK: UNBLOCKING / KEYBOARD RESTORATION
                     // =================================================================================
@@ -1172,35 +1211,83 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
 
 
-        // [FIX] Robust Observer: Watch for Default Keyboard Changes
+        // =================================================================================
+        // CONTENT OBSERVER: Watch for Default Keyboard Changes
+        // SUMMARY: Captures user's preferred keyboard when they EXPLICITLY change it.
+        //          FIXED: We now check if we're on the Main Screen (Display 0) before
+        //          saving. Samsung often force-sets its keyboard during unfold, and we
+        //          don't want to save that as the user's preference.
+        //          
+        //          Additionally, we skip saving Samsung keyboard if the previous keyboard
+        //          was our NullInputMethodService - this indicates an automatic restore,
+        //          not a user choice.
+        // =================================================================================
         contentResolver.registerContentObserver(
             android.provider.Settings.Secure.getUriFor("default_input_method"),
             false,
             object : android.database.ContentObserver(handler) {
+                private var lastObservedIme: String = ""
+                
                 override fun onChange(selfChange: Boolean) {
                     val current = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                     
-                    // Only save if it is a REAL keyboard (not our blocker)
-                    if (current.isNotEmpty() && !current.contains("NullInputMethodService")) {
+                    android.util.Log.d(TAG, "IME Observer: '$lastObservedIme' -> '$current' (display=$currentDisplayId)")
+                    
+                    // Skip if empty or our blocker
+                    if (current.isEmpty() || current.contains("NullInputMethodService")) {
+                        lastObservedIme = current
+                        return
+                    }
+                    
+                    // GUARD 1: Don't save if we just came FROM NullInputMethodService
+                    // This means system is auto-restoring, not user choosing
+                    val wasFromNull = lastObservedIme.contains("NullInputMethodService")
+                    
+                    // GUARD 2: Don't save Samsung if it's an automatic fallback
+                    // Samsung gets set when: 1) phone unfolds, 2) other IME crashes
+                    val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
+                    
+                    // GUARD 3: Only save if we're on the Main Screen AND user had a chance to pick
+                    // If currentDisplayId is 1 (cover), any IME change is from our blocking, not user
+                    val isOnMainScreen = currentDisplayId == 0
+                    
+                    // Decision logic
+                    val shouldSave = when {
+                        wasFromNull && isSamsung -> {
+                            android.util.Log.w(TAG, "IME Observer: SKIPPING Samsung save (automatic fallback from Null)")
+                            false
+                        }
+                        !isOnMainScreen -> {
+                            android.util.Log.d(TAG, "IME Observer: SKIPPING save (not on main screen)")
+                            false
+                        }
+                        else -> true
+                    }
+                    
+                    if (shouldSave) {
                         getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
                             .edit()
                             .putString("user_preferred_ime", current)
                             .apply()
                             
-                        android.util.Log.i(TAG, "User Preference CAPTURED: $current")
+                        android.util.Log.i(TAG, "IME Observer: SAVED preference: $current")
                         
-                        // 1. Show Toast Feedback
-                        val name = if (current.contains("google")) "Gboard" else if (current.contains("sec")) "Samsung" else "Keyboard"
+                        val name = when {
+                            current.contains("google.android.inputmethod.latin") -> "Gboard"
+                            current.contains("honeyboard") || current.contains("com.sec") -> "Samsung"
+                            else -> "Keyboard"
+                        }
                         handler.post { showToast("Saved: $name") }
-
-
-                        // 2. [FIXED] Refresh Menu Immediately using correct variable name
                         handler.post { menuManager?.refresh() }
-
                     }
+                    
+                    lastObservedIme = current
                 }
             }
         )
+        // =================================================================================
+        // END BLOCK: CONTENT OBSERVER for Default Keyboard Changes
+        // =================================================================================
                     loadPrefs()
                     val filter = IntentFilter().apply { 
                         // Internal short commands
@@ -1300,6 +1387,34 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
         
         Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
+        
+        // =================================================================================
+        // ONE-TIME FIX: Clear stale Samsung preference if Gboard is available
+        // SUMMARY: Previous bug caused Samsung to be saved as preferred IME.
+        //          This checks on startup and fixes if Gboard is available.
+        // =================================================================================
+        try {
+            val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            val savedIme = prefs.getString("user_preferred_ime", null)
+            if (savedIme != null && (savedIme.contains("honeyboard") || savedIme.contains("com.sec"))) {
+                // Check if Gboard is enabled
+                Thread {
+                    try {
+                        val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                        val gboard = enabledImes.lines().find { 
+                            it.contains("com.google.android.inputmethod.latin") 
+                        }
+                        if (gboard != null) {
+                            android.util.Log.w(TAG, "STARTUP FIX: Replacing stale Samsung preference with Gboard")
+                            prefs.edit().putString("user_preferred_ime", gboard.trim()).apply()
+                        }
+                    } catch (e: Exception) {}
+                }.start()
+            }
+        } catch (e: Exception) {}
+        // =================================================================================
+        // END BLOCK: ONE-TIME FIX for stale Samsung preference
+        // =================================================================================
         
         // Build UI
         setupUI(finalTarget)
