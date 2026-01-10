@@ -30,21 +30,6 @@ class NullInputMethodService : InputMethodService() {
                     }
                 }
 
-                // COMMAND 2: TYPE KEY (Native Input)
-                "com.example.coverscreentester.INJECT_KEY" -> {
-                    val keyCode = intent.getIntExtra("keyCode", 0)
-                    val metaState = intent.getIntExtra("metaState", 0)
-
-                    if (keyCode != 0 && currentInputConnection != null) {
-                        val now = System.currentTimeMillis()
-                        currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState)
-                        )
-                        currentInputConnection.sendKeyEvent(
-                            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState)
-                        )
-                    }
-                }
 
                 // COMMAND 3: INJECT TEXT (Swipe/Prediction Support)
                 "com.example.coverscreentester.INJECT_TEXT" -> {
@@ -55,17 +40,30 @@ class NullInputMethodService : InputMethodService() {
                         currentInputConnection.commitText(text, 1)
                     }
                 }
+
+                // COMMAND 4: BULK DELETE (Robust Swipe Undo)
+                "com.example.coverscreentester.INJECT_DELETE" -> {
+                    val length = intent.getIntExtra("length", 0)
+                    if (length > 0 && currentInputConnection != null) {
+                        // deleteSurroundingText(beforeLength, afterLength)
+                        currentInputConnection.deleteSurroundingText(length, 0)
+                    }
+                }
+
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+
         val filter = IntentFilter().apply {
             addAction("com.example.coverscreentester.RESTORE_IME")
             addAction("com.example.coverscreentester.INJECT_KEY")
             addAction("com.example.coverscreentester.INJECT_TEXT")
+            addAction("com.example.coverscreentester.INJECT_DELETE")
         }
+
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {

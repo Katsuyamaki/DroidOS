@@ -1382,17 +1382,18 @@ class KeyboardOverlay(
         // =================================================================================
         if (key == KeyboardView.SpecialKey.BACKSPACE) {
             // CHECK: Was the last input a swiped word?
+
             if (lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.isNotEmpty()) {
                 // Delete the entire swiped word (including trailing space)
                 val deleteCount = lastCommittedSwipeWord!!.length
                 android.util.Log.d("DroidOS_Swipe", "BACKSPACE: Deleting swiped word '${lastCommittedSwipeWord}' ($deleteCount chars)")
 
-                for (i in 0 until deleteCount) {
-                    injectKey(KeyEvent.KEYCODE_DEL, 0)
-                }
+                // [FIX] Use Bulk Delete for reliability (especially with KB Blocker)
+                (context as? OverlayService)?.injectBulkDelete(deleteCount)
 
                 // Clear the swipe history so next backspace is normal
                 lastCommittedSwipeWord = null
+
                 
                 // Also clear composition state
                 currentComposingWord.clear()
