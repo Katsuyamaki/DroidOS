@@ -393,81 +393,120 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     
                 } else {
                     // =================================================================================
-                    // UNBLOCKING / KEYBOARD RESTORATION
+                    // UNBLOCKING / KEYBOARD RESTORATION (WITH DIAGNOSTICS)
                     // SUMMARY: Restores the user's preferred keyboard when switching to Main Screen.
-                    //          FIX: Added initial delay and pre-flight checks to prevent Samsung's
-                    //          aggressive fallback from overriding our restore command.
-                    //          
-                    //          Key insights:
-                    //          1. Samsung's IME manager resets to Samsung Keyboard if it detects
-                    //             the previous IME was disabled/crashed.
-                    //          2. We NEVER disable NullInputMethodService to avoid triggering this.
-                    //          3. We use both 'settings put' AND 'ime set' for redundancy.
-                    //          4. We wait for Android to stabilize before attempting restoration.
                     // =================================================================================
+                    android.util.Log.w(TAG, "┌──────────────────────────────────────────────────────────┐")
+                    android.util.Log.w(TAG, "│ KEYBOARD RESTORATION STARTED                             │")
+                    android.util.Log.w(TAG, "└──────────────────────────────────────────────────────────┘")
                     
-                    // STEP 0: Initial stabilization delay
-                    // Give Android time to process the display change and stop any pending IME operations.
+                    // DIAGNOSTIC: Log thread info
+                    android.util.Log.w(TAG, "├─ Thread: ${Thread.currentThread().name}")
+                    android.util.Log.w(TAG, "├─ shellService null? ${shellService == null}")
+                    
+                    // STEP 0: Log initial state
+                    val initialIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: "FAILED"
+                    val initialShowIme = shellService?.runCommand("settings get secure show_ime_with_hard_keyboard")?.trim() ?: "FAILED"
+                    android.util.Log.w(TAG, "├─ INITIAL STATE:")
+                    android.util.Log.w(TAG, "│  ├─ default_input_method: $initialIme")
+                    android.util.Log.w(TAG, "│  └─ show_ime_with_hard_keyboard: $initialShowIme")
+                    
+                    // STEP 1: Initial stabilization delay
+                    android.util.Log.w(TAG, "├─ Waiting 300ms for system stabilization...")
                     Thread.sleep(300)
                     
-                    shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1")
-
-                    // STEP 1: Get Saved Preference (Target)
-                    val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                    var targetIme = prefs.getString("user_preferred_ime", null)
+                    val afterDelayIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: "FAILED"
+                    android.util.Log.w(TAG, "├─ After delay IME: $afterDelayIme")
                     
-                    android.util.Log.i(TAG, "Keyboard Restore: Saved preference is '$targetIme'")
+                    // STEP 2: Set show_ime_with_hard_keyboard
+                    android.util.Log.w(TAG, "├─ Setting show_ime_with_hard_keyboard=1...")
+                    val showImeResult = shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1")
+                    android.util.Log.w(TAG, "│  └─ Result: ${showImeResult ?: "null/empty"}")
 
-                    // STEP 2: Validate Target exists in enabled IME list
+                    // STEP 3: Get Saved Preference (Target)
+                    val sharedPrefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                    var targetIme = sharedPrefs.getString("user_preferred_ime", null)
+                    android.util.Log.w(TAG, "├─ SAVED PREFERENCE:")
+                    android.util.Log.w(TAG, "│  └─ user_preferred_ime: ${targetIme ?: "NULL/NOT SET"}")
+
+                    // STEP 4: Get list of ALL IMEs and ENABLED IMEs
+                    val allImes = shellService?.runCommand("ime list -a -s") ?: ""
                     val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                    android.util.Log.w(TAG, "├─ ALL IMEs:")
+                    allImes.lines().filter { it.isNotBlank() }.forEach { ime ->
+                        android.util.Log.w(TAG, "│  │ $ime")
+                    }
+                    android.util.Log.w(TAG, "├─ ENABLED IMEs:")
+                    enabledImes.lines().filter { it.isNotBlank() }.forEach { ime ->
+                        val marker = if (ime == targetIme) " ← TARGET" else ""
+                        android.util.Log.w(TAG, "│  │ $ime$marker")
+                    }
+                    
+                    // STEP 5: Validate Target exists in enabled list
                     if (!targetIme.isNullOrEmpty() && !enabledImes.contains(targetIme)) {
-                        android.util.Log.w(TAG, "Saved IME '$targetIme' not in enabled list. Resetting.")
+                        android.util.Log.w(TAG, "├─ WARNING: Saved IME not in enabled list!")
+                        android.util.Log.w(TAG, "│  └─ Resetting targetIme to null")
                         targetIme = null
                     }
 
-                    // STEP 3: Fallback Logic - prefer Gboard over Samsung
+                    // STEP 6: Fallback Logic
                     if (targetIme.isNullOrEmpty()) {
-                        // Priority: Gboard first, then Samsung as fallback
-                        targetIme = enabledImes.lines().find { 
+                        android.util.Log.w(TAG, "├─ FALLBACK: No saved IME, searching for default...")
+                        
+                        // Priority: Gboard first, then Samsung
+                        val gboard = enabledImes.lines().find { 
                             it.contains("com.google.android.inputmethod.latin") 
-                        } ?: enabledImes.lines().find { 
+                        }
+                        val samsung = enabledImes.lines().find { 
                             it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
                         }
-                        android.util.Log.i(TAG, "Using fallback IME: '$targetIme'")
+                        
+                        android.util.Log.w(TAG, "│  ├─ Gboard found: ${gboard ?: "NO"}")
+                        android.util.Log.w(TAG, "│  └─ Samsung found: ${samsung ?: "NO"}")
+                        
+                        targetIme = gboard ?: samsung
+                        android.util.Log.w(TAG, "├─ FALLBACK RESULT: ${targetIme ?: "NONE FOUND"}")
                     }
 
                     if (!targetIme.isNullOrEmpty()) {
-                        android.util.Log.i(TAG, "Restoring keyboard to: $targetIme")
-                        
-                        // AGGRESSIVE RESTORE LOOP
-                        // Key points:
-                        // 1. NEVER disable NullInputMethodService (triggers Samsung panic reset)
-                        // 2. Use BOTH 'settings put' AND 'ime set' for redundancy
-                        // 3. Pre-enable the target IME to ensure it's available
-                        // 4. Monitor for success and early-exit
+                        android.util.Log.w(TAG, "├─ RESTORATION TARGET: $targetIme")
+                        android.util.Log.w(TAG, "├─ Starting restoration loop...")
                         
                         // Pre-enable to ensure IME is ready
-                        shellService?.runCommand("ime enable $targetIme")
+                        android.util.Log.w(TAG, "│  ├─ Pre-enabling target IME...")
+                        val enableResult = shellService?.runCommand("ime enable $targetIme")
+                        android.util.Log.w(TAG, "│  │  └─ Enable result: ${enableResult ?: "null/empty"}")
                         Thread.sleep(100)
                         
                         for (i in 1..10) {
                             val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                            val isMatch = current == targetIme
                             
-                            if (current != targetIme) {
-                                android.util.Log.i(TAG, "Restore attempt $i: System='$current', Target='$targetIme'")
+                            android.util.Log.w(TAG, "│  ├─ ATTEMPT $i:")
+                            android.util.Log.w(TAG, "│  │  ├─ Current: $current")
+                            android.util.Log.w(TAG, "│  │  ├─ Target:  $targetIme")
+                            android.util.Log.w(TAG, "│  │  └─ Match: $isMatch")
+                            
+                            if (!isMatch) {
+                                android.util.Log.w(TAG, "│  │  ├─ Executing: settings put secure default_input_method")
+                                val putResult = shellService?.runCommand("settings put secure default_input_method $targetIme")
+                                android.util.Log.w(TAG, "│  │  │  └─ Result: ${putResult ?: "null/empty"}")
                                 
-                                // Force set via multiple methods for reliability
-                                shellService?.runCommand("settings put secure default_input_method $targetIme")
-                                shellService?.runCommand("ime set $targetIme")
+                                android.util.Log.w(TAG, "│  │  ├─ Executing: ime set")
+                                val setResult = shellService?.runCommand("ime set $targetIme")
+                                android.util.Log.w(TAG, "│  │  │  └─ Result: ${setResult ?: "null/empty"}")
                                 
-                                // Shorter delay between attempts for faster recovery
                                 Thread.sleep(300)
+                                
+                                // Check if it worked
+                                val afterSet = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                                android.util.Log.w(TAG, "│  │  └─ After commands: $afterSet")
                             } else {
-                                android.util.Log.i(TAG, "Restore attempt $i: SUCCESS! Target IME is active.")
-                                // Verify stability - continue monitoring for 2 more cycles
                                 if (i > 3) {
-                                    android.util.Log.i(TAG, "Keyboard restoration confirmed stable.")
+                                    android.util.Log.w(TAG, "│  │  └─ STABLE - Breaking loop")
                                     break
+                                } else {
+                                    android.util.Log.w(TAG, "│  │  └─ Matched but monitoring stability...")
                                 }
                                 Thread.sleep(300)
                             }
@@ -475,14 +514,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                         
                         // Final verification
                         val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                        if (finalIme == targetIme) {
+                        val success = finalIme == targetIme
+                        
+                        android.util.Log.w(TAG, "├─ FINAL RESULT:")
+                        android.util.Log.w(TAG, "│  ├─ Final IME: $finalIme")
+                        android.util.Log.w(TAG, "│  ├─ Target:    $targetIme")
+                        android.util.Log.w(TAG, "│  └─ SUCCESS:   $success")
+                        
+                        if (success) {
                             handler.post { showToast("Keyboard Restored") }
                         } else {
-                            android.util.Log.e(TAG, "Keyboard restoration FAILED. Final state: $finalIme")
+                            android.util.Log.e(TAG, "│  └─ *** RESTORATION FAILED ***")
                             handler.post { showToast("Keyboard restore failed") }
                         }
                     } else {
-                        android.util.Log.w(TAG, "No target IME found. Showing picker.")
+                        android.util.Log.w(TAG, "├─ ERROR: No target IME found!")
                         handler.post { 
                             showToast("Select Default Keyboard")
                             try {
@@ -491,6 +537,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                             } catch(e: Exception){}
                         }
                     }
+                    
+                    android.util.Log.w(TAG, "└─ KEYBOARD RESTORATION COMPLETE")
                     // =================================================================================
                     // END BLOCK: UNBLOCKING / KEYBOARD RESTORATION
                     // =================================================================================
@@ -1546,26 +1594,59 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             //          keyboard. When moving to Cover Screen (1+), apply blocking if enabled.
             //          This fixes the issue where Samsung Keyboard was forced on unfold.
             // =================================================================================
+            android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
+            android.util.Log.w(TAG, "║ KEYBOARD LOGIC START - setupUI($displayId)              ║")
+            android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
+            
+            // Log current state BEFORE any changes
+            val preCurrentIme = try {
+                android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: "null"
+            } catch (e: Exception) { "error: ${e.message}" }
+            val preShowMode = if (Build.VERSION.SDK_INT >= 24) {
+                try { softKeyboardController.showMode.toString() } catch (e: Exception) { "error" }
+            } else { "N/A (API < 24)" }
+            
+            android.util.Log.w(TAG, "├─ PRE-STATE:")
+            android.util.Log.w(TAG, "│  ├─ displayId: $displayId")
+            android.util.Log.w(TAG, "│  ├─ currentDisplayId: $currentDisplayId")
+            android.util.Log.w(TAG, "│  ├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
+            android.util.Log.w(TAG, "│  ├─ current IME: $preCurrentIme")
+            android.util.Log.w(TAG, "│  └─ showMode: $preShowMode")
+            
             if (displayId == 0) {
-                // MAIN SCREEN: Actively restore keyboard
+                android.util.Log.w(TAG, "├─ ACTION: MAIN SCREEN DETECTED - Attempting keyboard restoration")
+                
                 // 1. Reset Accessibility show mode to AUTO (allow system keyboards)
                 if (Build.VERSION.SDK_INT >= 24) {
                     try {
+                        val oldMode = softKeyboardController.showMode
                         softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
-                    } catch (e: Exception) {}
+                        val newMode = softKeyboardController.showMode
+                        android.util.Log.w(TAG, "│  ├─ showMode changed: $oldMode -> $newMode")
+                    } catch (e: Exception) {
+                        android.util.Log.e(TAG, "│  ├─ showMode change FAILED: ${e.message}")
+                    }
                 }
                 
                 // 2. If blocking was enabled, restore the user's preferred keyboard
                 if (prefs.prefBlockSoftKeyboard) {
-                    android.util.Log.i(TAG, "Main Screen: Triggering keyboard restoration")
+                    android.util.Log.w(TAG, "│  ├─ Blocking was enabled, calling setSoftKeyboardBlocking(false)")
                     setSoftKeyboardBlocking(false)
+                } else {
+                    android.util.Log.w(TAG, "│  └─ Blocking NOT enabled, skipping restoration")
                 }
             } else {
+                android.util.Log.w(TAG, "├─ ACTION: COVER SCREEN - Checking if blocking needed")
                 // COVER SCREEN: Apply blocking if preference is enabled
                 if (prefs.prefBlockSoftKeyboard) {
+                    android.util.Log.w(TAG, "│  └─ Blocking enabled, calling triggerAggressiveBlocking()")
                     triggerAggressiveBlocking()
+                } else {
+                    android.util.Log.w(TAG, "│  └─ Blocking NOT enabled, skipping")
                 }
             }
+            
+            android.util.Log.w(TAG, "└─ KEYBOARD LOGIC END")
             // =================================================================================
             // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // =================================================================================
@@ -3924,30 +4005,47 @@ if (isResize) {
             if (display != null && isDebounced) {
                 // =================================================================================
                 // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main (0)
-                // SUMMARY: When user unfolds the phone, switch UI to main screen and restore
-                //          the user's preferred keyboard. The keyboard restoration is done BEFORE
-                //          setupUI to give Android time to process the IME change.
                 // =================================================================================
                 if (display.state == Display.STATE_ON && currentDisplayId != 0) {
+                    android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
+                    android.util.Log.w(TAG, "║ PHONE OPENED DETECTED - onDisplayChanged                 ║")
+                    android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
+                    android.util.Log.w(TAG, "├─ display.state: ${display.state} (STATE_ON=${Display.STATE_ON})")
+                    android.util.Log.w(TAG, "├─ currentDisplayId: $currentDisplayId")
+                    android.util.Log.w(TAG, "├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
+                    android.util.Log.w(TAG, "├─ Scheduling UI switch in 500ms...")
+                    
                     handler.postDelayed({
                         try {
-                            if (System.currentTimeMillis() - lastManualSwitchTime > 5000) {
+                            val timeSinceManual = System.currentTimeMillis() - lastManualSwitchTime
+                            android.util.Log.w(TAG, "├─ DELAYED HANDLER EXECUTING")
+                            android.util.Log.w(TAG, "│  ├─ timeSinceManualSwitch: ${timeSinceManual}ms")
+                            android.util.Log.w(TAG, "│  └─ Will execute: ${timeSinceManual > 5000}")
+                            
+                            if (timeSinceManual > 5000) {
                                 // STEP 1: Pre-restore keyboard BEFORE UI rebuild
-                                // This gives Android time to process the IME change before
-                                // any text fields get focus on the main screen.
                                 if (prefs.prefBlockSoftKeyboard) {
+                                    android.util.Log.w(TAG, "├─ PRE-RESTORE: Setting showMode to AUTO")
                                     if (Build.VERSION.SDK_INT >= 24) {
                                         try {
+                                            val oldMode = softKeyboardController.showMode
                                             softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
-                                        } catch (e: Exception) {}
+                                            android.util.Log.w(TAG, "│  └─ showMode: $oldMode -> ${softKeyboardController.showMode}")
+                                        } catch (e: Exception) {
+                                            android.util.Log.e(TAG, "│  └─ showMode change FAILED: ${e.message}")
+                                        }
                                     }
                                 }
                                 
                                 // STEP 2: Rebuild UI on main screen
+                                android.util.Log.w(TAG, "├─ Calling setupUI(0)...")
                                 setupUI(0)
                                 resetBubblePosition()
+                                android.util.Log.w(TAG, "└─ Phone opened handling complete")
                             }
-                        } catch(e: Exception) {}
+                        } catch(e: Exception) {
+                            android.util.Log.e(TAG, "└─ EXCEPTION: ${e.message}", e)
+                        }
                     }, 500)
                 }
                 // =================================================================================
