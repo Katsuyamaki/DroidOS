@@ -4413,31 +4413,72 @@ if (isResize) {
     
 
 
+    // =================================================================================
+    // FUNCTION: injectKeyFromKeyboard
+    // SUMMARY: Injects key events from the overlay keyboard. Routes keys appropriately:
+    //          - System/Navigation keys (BACK, FORWARD, VOLUME, etc.) -> ALWAYS shell injection
+    //          - Text input keys -> InputConnection if Null KB active, else shell injection
+    //
+    //          This separation is necessary because InputConnection.sendKeyEvent() only
+    //          delivers events to the focused text editor, not to system navigation.
+    //          BACK, FORWARD, HOME, VOLUME keys must bypass InputConnection entirely.
+    // =================================================================================
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
         // Update timestamp so we ignore the resulting AccessibilityEvent
         lastInjectionTime = System.currentTimeMillis()
 
         // NEW: dismiss Voice if active
         checkAndDismissVoice()
-        // Submit to the sequential queue instead of spinning a random thread
 
+        // Define keys that MUST use shell injection (system-level, not text input)
+        // These keys don't go through InputConnection because they're navigation/system keys
+        val systemKeys = setOf(
+            KeyEvent.KEYCODE_BACK,           // Android back navigation
+            KeyEvent.KEYCODE_FORWARD,        // Android forward navigation  
+            KeyEvent.KEYCODE_HOME,           // Home button
+            KeyEvent.KEYCODE_APP_SWITCH,     // Recent apps
+            KeyEvent.KEYCODE_VOLUME_UP,      // Volume control
+            KeyEvent.KEYCODE_VOLUME_DOWN,    // Volume control
+            KeyEvent.KEYCODE_VOLUME_MUTE,    // Volume mute
+            KeyEvent.KEYCODE_POWER,          // Power button
+            KeyEvent.KEYCODE_SLEEP,          // Sleep
+            KeyEvent.KEYCODE_WAKEUP,         // Wake
+            KeyEvent.KEYCODE_MEDIA_PLAY,     // Media controls
+            KeyEvent.KEYCODE_MEDIA_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_STOP,
+            KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            KeyEvent.KEYCODE_BRIGHTNESS_UP,  // Brightness
+            KeyEvent.KEYCODE_BRIGHTNESS_DOWN
+        )
+
+        // Submit to the sequential queue instead of spinning a random thread
         inputExecutor.execute {
             try {
-                // 1. CHECK ACTUAL SYSTEM STATE
+                // SYSTEM KEYS: Always use shell injection (bypasses InputConnection)
+                if (keyCode in systemKeys) {
+                    Log.d(TAG, "System key detected ($keyCode), using shell injection")
+                    shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
+                    Thread.sleep(10)
+                    shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
+                    return@execute
+                }
+
+                // TEXT INPUT KEYS: Route based on active IME
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                 val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
 
                 if (isNullKeyboardActive) {
-                    // STRATEGY A: NATIVE (Cleanest)
+                    // STRATEGY A: NATIVE via InputConnection (for text input keys only)
                     val intent = Intent("com.example.coverscreentester.INJECT_KEY")
                     intent.setPackage(packageName)
                     intent.putExtra("keyCode", keyCode)
                     intent.putExtra("metaState", metaState)
                     sendBroadcast(intent)
                 } else {
-                    // STRATEGY B: SHELL INJECTION (Fallback)
+                    // STRATEGY B: SHELL INJECTION (Fallback for non-Null keyboards)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
-                    // Small delay only needed for shell to ensure UP registers after DOWN
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
                 }
@@ -4446,6 +4487,12 @@ if (isResize) {
             }
         }
     }
+    // =================================================================================
+    // END BLOCK: injectKeyFromKeyboard
+    // System keys are now always routed through shell injection to ensure they work
+    // regardless of which IME is active. Text input keys still use the appropriate
+    // method based on the active IME (InputConnection for Null KB, shell for others).
+    // =================================================================================
 
 
     fun injectBulkDelete(length: Int) {
