@@ -677,6 +677,7 @@ class FloatingLauncherService : AccessibilityService() {
     }
     
 
+
     private fun loadDisplaySettings(displayId: Int) { 
         selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId)
         
@@ -698,7 +699,86 @@ class FloatingLauncherService : AccessibilityService() {
         } else {
             currentDpiSetting = savedDpi
         }
+
+        // [NEW] Check for High Refresh Rate (120Hz) on AR Glasses
+        checkAndForceHighRefreshRate(displayId)
     }
+
+    // =================================================================================
+    // REFRESH RATE MANAGER
+    // SUMMARY: Scans supported modes for the current display. If 120Hz (or higher) is found,
+    //          it attempts to force it via Window Attributes (for this app) and Shell (System-wide).
+    // =================================================================================
+
+    // =================================================================================
+    // REFRESH RATE MANAGER (VERBOSE)
+    // SUMMARY: Scans supported modes. ALWAYS toasts the max rate found.
+    //          Forces mode if >60Hz.
+    // =================================================================================
+    private fun checkAndForceHighRefreshRate(displayId: Int) {
+        // Skip internal phone display (0)
+        if (displayId == 0) return 
+
+        try {
+            val display = displayManager?.getDisplay(displayId) ?: return
+            val supportedModes = display.supportedModes
+            
+            var maxRate = 60f
+            var bestModeId = -1
+            
+            // 1. Scan for the highest refresh rate
+            for (mode in supportedModes) {
+                if (mode.refreshRate > maxRate) {
+                    maxRate = mode.refreshRate
+                    bestModeId = mode.modeId
+                }
+            }
+            
+            // 2. Report Findings (Debug)
+            val report = "Display $displayId Max: ${maxRate}Hz"
+            Log.i(TAG, report)
+            // Only toast if meaningful (don't toast internal screen stats blindly)
+            uiHandler.post { 
+                try { Toast.makeText(applicationContext, report, Toast.LENGTH_SHORT).show() } catch(e: Exception){} 
+            }
+
+            // 3. Force if High Refresh Rate (>60Hz) is available
+            if (maxRate > 60f) {
+                Log.i(TAG, "Attempting to force ${maxRate}Hz (Mode ID: $bestModeId)")
+
+                // Method A: Window Attributes
+                uiHandler.post {
+                    try {
+                        if (bubbleView != null && bubbleView?.isAttachedToWindow == true) {
+                            bubbleParams.preferredDisplayModeId = bestModeId
+                            val wm = attachedWindowManager ?: windowManager
+                            wm.updateViewLayout(bubbleView, bubbleParams)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to set Window Attribute", e)
+                    }
+                }
+                
+                // Method B: Shell Force (System-wide)
+                val mode = supportedModes.find { it.modeId == bestModeId }
+                if (mode != null && shellService != null) {
+                    val cmd = "cmd display set-user-preferred-display-mode $displayId ${mode.physicalWidth} ${mode.physicalHeight} ${mode.refreshRate}"
+                    Thread {
+                        try {
+                            shellService?.runCommand(cmd)
+                        } catch(e: Exception) {}
+                    }.start()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in checkAndForceHighRefreshRate", e)
+        }
+    }
+
+    // =================================================================================
+    // END BLOCK: REFRESH RATE MANAGER
+    // =================================================================================
+
 
 
     override fun onDestroy() {
