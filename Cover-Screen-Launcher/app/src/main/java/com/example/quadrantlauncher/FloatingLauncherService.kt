@@ -104,6 +104,7 @@ class FloatingLauncherService : AccessibilityService() {
         const val MODE_BLACKLIST = 5   // Blacklist management tab
         const val MODE_PROFILES = 6    // Profiles tab
         const val MODE_SETTINGS = 7    // Settings tab
+        const val MODE_REFRESH = 8     // [NEW] Refresh Rate Tab
         // === MODE CONSTANTS - END ===
         
         const val LAYOUT_FULL = 1
@@ -711,12 +712,10 @@ class FloatingLauncherService : AccessibilityService() {
     // =================================================================================
 
     // =================================================================================
-    // REFRESH RATE MANAGER (VERBOSE)
-    // SUMMARY: Scans supported modes. ALWAYS toasts the max rate found.
-    //          Forces mode if >60Hz.
+    // REFRESH RATE MANAGER
+    // SUMMARY: Scans for >60Hz modes and forces them silently.
     // =================================================================================
     private fun checkAndForceHighRefreshRate(displayId: Int) {
-        // Skip internal phone display (0)
         if (displayId == 0) return 
 
         try {
@@ -726,27 +725,16 @@ class FloatingLauncherService : AccessibilityService() {
             var maxRate = 60f
             var bestModeId = -1
             
-            // 1. Scan for the highest refresh rate
             for (mode in supportedModes) {
                 if (mode.refreshRate > maxRate) {
                     maxRate = mode.refreshRate
                     bestModeId = mode.modeId
                 }
             }
-            
-            // 2. Report Findings (Debug)
-            val report = "Display $displayId Max: ${maxRate}Hz"
-            Log.i(TAG, report)
-            // Only toast if meaningful (don't toast internal screen stats blindly)
-            uiHandler.post { 
-                try { Toast.makeText(applicationContext, report, Toast.LENGTH_SHORT).show() } catch(e: Exception){} 
-            }
 
-            // 3. Force if High Refresh Rate (>60Hz) is available
             if (maxRate > 60f) {
-                Log.i(TAG, "Attempting to force ${maxRate}Hz (Mode ID: $bestModeId)")
+                Log.i(TAG, "Force $maxRate Hz (Mode $bestModeId) on Display $displayId")
 
-                // Method A: Window Attributes
                 uiHandler.post {
                     try {
                         if (bubbleView != null && bubbleView?.isAttachedToWindow == true) {
@@ -754,24 +742,17 @@ class FloatingLauncherService : AccessibilityService() {
                             val wm = attachedWindowManager ?: windowManager
                             wm.updateViewLayout(bubbleView, bubbleParams)
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to set Window Attribute", e)
-                    }
+                    } catch (e: Exception) {}
                 }
                 
-                // Method B: Shell Force (System-wide)
                 val mode = supportedModes.find { it.modeId == bestModeId }
                 if (mode != null && shellService != null) {
                     val cmd = "cmd display set-user-preferred-display-mode $displayId ${mode.physicalWidth} ${mode.physicalHeight} ${mode.refreshRate}"
-                    Thread {
-                        try {
-                            shellService?.runCommand(cmd)
-                        } catch(e: Exception) {}
-                    }.start()
+                    Thread { try { shellService?.runCommand(cmd) } catch(e: Exception) {} }.start()
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in checkAndForceHighRefreshRate", e)
+            Log.e(TAG, "Refresh Rate Error", e)
         }
     }
 
@@ -984,6 +965,7 @@ class FloatingLauncherService : AccessibilityService() {
         drawerView!!.findViewById<ImageView>(R.id.icon_search_mode).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_SEARCH) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_window).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_LAYOUTS) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_resolution).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_RESOLUTION) }
+        drawerView!!.findViewById<ImageView>(R.id.icon_mode_refresh)?.setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_REFRESH) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_DPI) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist)?.setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_BLACKLIST) }
         drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_PROFILES) }
@@ -1752,6 +1734,59 @@ class FloatingLauncherService : AccessibilityService() {
 
     private fun selectLayout(opt: LayoutOption) { dismissKeyboardAndRestore(); selectedLayoutType = opt.type; activeCustomRects = opt.customRects; if (opt.type == LAYOUT_CUSTOM_DYNAMIC) { activeCustomLayoutName = opt.name; AppPreferences.saveLastCustomLayoutName(this, opt.name) } else { activeCustomLayoutName = null; AppPreferences.saveLastCustomLayoutName(this, null) }; AppPreferences.saveLastLayout(this, opt.type); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() }
     private fun saveCurrentAsCustom() { Thread { try { val rawLayouts = shellService!!.getWindowLayouts(currentDisplayId); if (rawLayouts.isEmpty()) { safeToast("Found 0 active app windows"); return@Thread }; val rectStrings = mutableListOf<String>(); for (line in rawLayouts) { val parts = line.split("|"); if (parts.size == 2) { rectStrings.add(parts[1]) } }; if (rectStrings.isEmpty()) { safeToast("Found 0 valid frames"); return@Thread }; val count = rectStrings.size; var baseName = "$count Apps - Custom"; val existingNames = AppPreferences.getCustomLayoutNames(this); var counter = 1; var finalName = "$baseName $counter"; while (existingNames.contains(finalName)) { counter++; finalName = "$baseName $counter" }; AppPreferences.saveCustomLayout(this, finalName, rectStrings.joinToString("|")); safeToast("Saved: $finalName"); uiHandler.post { switchMode(MODE_LAYOUTS) } } catch (e: Exception) { Log.e(TAG, "Failed to save custom layout", e); safeToast("Error saving: ${e.message}") } }.start() }
+    private fun applyRefreshRate(targetRate: Float) {
+        safeToast("Applying ${targetRate.toInt()}Hz...")
+        Thread {
+            try {
+                val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+                val display = dm.getDisplay(currentDisplayId)
+                val modes = display?.supportedModes ?: emptyArray()
+                
+                var bestModeId = -1
+                var bestDiff = Float.MAX_VALUE
+                
+                for (mode in modes) {
+                    val diff = Math.abs(mode.refreshRate - targetRate)
+                    if (diff < bestDiff) {
+                        bestDiff = diff
+                        bestModeId = mode.modeId
+                    }
+                }
+                
+                if (bestModeId != -1) {
+                    // 1. Force via Window Attributes
+                    uiHandler.post {
+                        try {
+                            if (bubbleView != null) {
+                                bubbleParams.preferredDisplayModeId = bestModeId
+                                val wm = attachedWindowManager ?: windowManager
+                                wm.updateViewLayout(bubbleView, bubbleParams)
+                            }
+                        } catch(e: Exception) {}
+                    }
+                    
+                    // 2. Force via Shell
+                    val mode = modes.find { it.modeId == bestModeId }
+                    if (mode != null && shellService != null) {
+                        val cmd = "cmd display set-user-preferred-display-mode $currentDisplayId ${mode.physicalWidth} ${mode.physicalHeight} ${mode.refreshRate}"
+                        shellService?.runCommand(cmd)
+                        shellService?.runCommand("settings put system peak_refresh_rate $targetRate")
+                        shellService?.runCommand("settings put system min_refresh_rate $targetRate")
+                    }
+                }
+                
+                // 3. Update UI
+                Thread.sleep(600)
+                uiHandler.post { 
+                    switchMode(MODE_REFRESH)
+                    safeToast("Refreshed: ${targetRate.toInt()}Hz")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set refresh rate", e)
+            }
+        }.start()
+    }
+
     private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
     private fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
@@ -1988,8 +2023,10 @@ class FloatingLauncherService : AccessibilityService() {
     // Handles UI updates for search bar, icons, and list content
     private fun switchMode(mode: Int) {
         currentMode = mode
-        val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val searchIcon = drawerView!!.findViewById<ImageView>(R.id.icon_search_mode); val iconWin = drawerView!!.findViewById<ImageView>(R.id.icon_mode_window); val iconRes = drawerView!!.findViewById<ImageView>(R.id.icon_mode_resolution); val iconDpi = drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi); val iconBlacklist = drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist); val iconProf = drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles); val iconSet = drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
-        searchIcon.setColorFilter(if(mode==MODE_SEARCH) Color.WHITE else Color.GRAY); iconWin.setColorFilter(if(mode==MODE_LAYOUTS) Color.WHITE else Color.GRAY); iconRes.setColorFilter(if(mode==MODE_RESOLUTION) Color.WHITE else Color.GRAY); iconDpi.setColorFilter(if(mode==MODE_DPI) Color.WHITE else Color.GRAY); iconBlacklist?.setColorFilter(if(mode==MODE_BLACKLIST) Color.WHITE else Color.GRAY); iconProf.setColorFilter(if(mode==MODE_PROFILES) Color.WHITE else Color.GRAY); iconSet.setColorFilter(if(mode==MODE_SETTINGS) Color.WHITE else Color.GRAY)
+        val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val searchIcon = drawerView!!.findViewById<ImageView>(R.id.icon_search_mode); val iconWin = drawerView!!.findViewById<ImageView>(R.id.icon_mode_window);        val iconRes = drawerView!!.findViewById<ImageView>(R.id.icon_mode_resolution);
+        val iconRefresh = drawerView!!.findViewById<ImageView>(R.id.icon_mode_refresh); val iconDpi = drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi); val iconBlacklist = drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist); val iconProf = drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles); val iconSet = drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
+        searchIcon.setColorFilter(if(mode==MODE_SEARCH) Color.WHITE else Color.GRAY); iconWin.setColorFilter(if(mode==MODE_LAYOUTS) Color.WHITE else Color.GRAY);        iconRes.setColorFilter(if(mode==MODE_RESOLUTION) Color.WHITE else Color.GRAY);
+        iconRefresh?.setColorFilter(if(mode==MODE_REFRESH) Color.WHITE else Color.GRAY); iconDpi.setColorFilter(if(mode==MODE_DPI) Color.WHITE else Color.GRAY); iconBlacklist?.setColorFilter(if(mode==MODE_BLACKLIST) Color.WHITE else Color.GRAY); iconProf.setColorFilter(if(mode==MODE_PROFILES) Color.WHITE else Color.GRAY); iconSet.setColorFilter(if(mode==MODE_SETTINGS) Color.WHITE else Color.GRAY)
         executeBtn.visibility = if (isInstantMode) View.GONE else View.VISIBLE; displayList.clear(); val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); dock.visibility = if (mode == MODE_SEARCH && selectedAppsQueue.isNotEmpty()) View.VISIBLE else View.GONE
 
         when (mode) {
@@ -2000,6 +2037,25 @@ class FloatingLauncherService : AccessibilityService() {
             }
             MODE_RESOLUTION -> {
                 searchBar.hint = "Select Resolution"; displayList.add(CustomResInputOption); val savedResNames = AppPreferences.getCustomResolutionNames(this).sorted(); for (name in savedResNames) { val value = AppPreferences.getCustomResolutionValue(this, name) ?: continue; displayList.add(ResolutionOption(name, "wm size  -d $currentDisplayId", 100 + savedResNames.indexOf(name))) }; displayList.add(ResolutionOption("Default (Reset)", "wm size reset -d $currentDisplayId", 0)); displayList.add(ResolutionOption("1:1 Square (1422x1500)", "wm size 1422x1500 -d $currentDisplayId", 1)); displayList.add(ResolutionOption("16:9 Landscape (1920x1080)", "wm size 1920x1080 -d $currentDisplayId", 2)); displayList.add(ResolutionOption("32:9 Ultrawide (3840x1080)", "wm size 3840x1080 -d $currentDisplayId", 3))
+            }
+            MODE_REFRESH -> {
+                searchBar.hint = "Refresh Rate"
+                // 1. Get Current Rate
+                val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+                val display = dm.getDisplay(currentDisplayId)
+                val currentRate = display?.refreshRate ?: 60f
+                val roundedRate = String.format("%.1f", currentRate)
+                
+                // 2. Add Header
+                displayList.add(RefreshHeaderOption("Current: ${roundedRate}Hz"))
+                
+                // 3. Add Options
+                val rates = listOf(30f, 60f, 90f, 120f)
+                for (rate in rates) {
+                    val label = "${rate.toInt()}Hz"
+                    val isSelected = (Math.abs(currentRate - rate) < 1.0)
+                    displayList.add(RefreshItemOption(label, rate, isSelected))
+                }
             }
             MODE_DPI -> { searchBar.hint = "Adjust Density (DPI)"; displayList.add(ActionOption("Reset Density (Default)") { selectDpi(-1) }); var savedDpi = currentDpiSetting; if (savedDpi <= 0) { savedDpi = displayContext?.resources?.configuration?.densityDpi ?: 160 }; displayList.add(DpiOption(savedDpi)) }
             MODE_BLACKLIST -> { searchBar.hint = "Blacklisted Apps"; loadBlacklistedApps(); executeBtn.visibility = View.GONE }
@@ -2072,6 +2128,8 @@ class FloatingLauncherService : AccessibilityService() {
     // === SWITCH MODE - END ===
 
     object CustomResInputOption
+    data class RefreshHeaderOption(val text: String)
+    data class RefreshItemOption(val label: String, val targetRate: Float, val isSelected: Boolean)
     data class LayoutOption(val name: String, val type: Int, val isCustomSaved: Boolean = false, val customRects: List<Rect>? = null)
     data class ResolutionOption(val name: String, val command: String, val index: Int)
     data class DpiOption(val currentDpi: Int)
@@ -2154,9 +2212,14 @@ class FloatingLauncherService : AccessibilityService() {
         inner class ProfileRichHolder(v: View) : RecyclerView.ViewHolder(v) { val name: EditText = v.findViewById(R.id.profile_name_text); val details: TextView = v.findViewById(R.id.profile_details_text); val iconsContainer: LinearLayout = v.findViewById(R.id.profile_icons_container); val btnSave: ImageView = v.findViewById(R.id.btn_save_profile_rich) }
         inner class IconSettingHolder(v: View) : RecyclerView.ViewHolder(v) { val preview: ImageView = v.findViewById(R.id.icon_setting_preview) }
         inner class CustomResInputHolder(v: View) : RecyclerView.ViewHolder(v) { val inputW: EditText = v.findViewById(R.id.input_res_w); val inputH: EditText = v.findViewById(R.id.input_res_h); val btnSave: ImageView = v.findViewById(R.id.btn_save_res) }
+        // Reuse item_layout_option logic for simplicity
+        inner class HeaderHolder(v: View) : RecyclerView.ViewHolder(v) { val nameInput: EditText = v.findViewById(R.id.layout_name); val btnSave: View = v.findViewById(R.id.btn_save_profile); val btnExtinguish: View = v.findViewById(R.id.btn_extinguish_item) }
+        inner class ActionHolder(v: View) : RecyclerView.ViewHolder(v) { val nameInput: EditText = v.findViewById(R.id.layout_name); val btnSave: View = v.findViewById(R.id.btn_save_profile); val btnExtinguish: View = v.findViewById(R.id.btn_extinguish_item) }
 
-        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8; is CustomResInputOption -> 9; else -> 0 } }
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false)); 9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false)); else -> AppHolder(View(parent.context)) } }
+        override fun getItemViewType(position: Int): Int { return when (displayList[position]) { is MainActivity.AppInfo -> 0; is LayoutOption -> 1; is ResolutionOption -> 1; is DpiOption -> 2; is ProfileOption -> 4; is FontSizeOption -> 3; is IconOption -> 5; is ToggleOption -> 1; is ActionOption -> 6; is HeightOption -> 7; is WidthOption -> 8;         is CustomResInputOption -> 9; is RefreshHeaderOption -> 10; is RefreshItemOption -> 11; else -> 0 } }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder { return when (viewType) { 0 -> AppHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_app_rofi, parent, false)); 1 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 2 -> DpiHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_dpi_custom, parent, false)); 3 -> FontSizeHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_font_size, parent, false)); 4 -> ProfileRichHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_profile_rich, parent, false)); 5 -> IconSettingHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_icon_setting, parent, false)); 6 -> LayoutHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); 7 -> HeightHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_height_setting, parent, false)); 8 -> WidthHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_width_setting, parent, false));             9 -> CustomResInputHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_custom_resolution, parent, false));
+            10 -> HeaderHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false));
+            11 -> ActionHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_layout_option, parent, false)); else -> AppHolder(View(parent.context)) } }
         private fun startRename(editText: EditText) { editText.isEnabled = true; editText.isFocusable = true; editText.isFocusableInTouchMode = true; editText.requestFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT) }
         private fun endRename(editText: EditText) { editText.isFocusable = false; editText.isFocusableInTouchMode = false; editText.isEnabled = false; val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(editText.windowToken, 0) }
 
@@ -2199,6 +2262,36 @@ class FloatingLauncherService : AccessibilityService() {
                 else if (item is IconOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { pickIcon() } }
                 else if (item is ToggleOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if (item.isEnabled) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); notifyItemChanged(position) } } 
                 else if (item is ActionOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.action() } }
+            }
+            else if (holder is HeaderHolder && item is RefreshHeaderOption) {
+                holder.nameInput.setText(item.text)
+                holder.nameInput.isEnabled = false
+                holder.nameInput.setTextColor(Color.GREEN)
+                holder.nameInput.textSize = 24f
+                holder.nameInput.gravity = Gravity.CENTER
+                holder.itemView.setBackgroundResource(0)
+                holder.btnSave.visibility = View.GONE
+                holder.btnExtinguish.visibility = View.GONE
+            }
+            else if (holder is ActionHolder && item is RefreshItemOption) {
+                holder.nameInput.setText(item.label)
+                holder.nameInput.isEnabled = false
+                holder.nameInput.setTextColor(Color.WHITE)
+                holder.btnSave.visibility = View.GONE
+                holder.btnExtinguish.visibility = View.GONE
+                
+                if (item.isSelected) {
+                    holder.itemView.setBackgroundResource(R.drawable.bg_item_active)
+                    holder.nameInput.setTypeface(null, android.graphics.Typeface.BOLD)
+                } else {
+                    holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
+                    holder.nameInput.setTypeface(null, android.graphics.Typeface.NORMAL)
+                }
+                
+                holder.itemView.setOnClickListener {
+                    dismissKeyboardAndRestore()
+                    applyRefreshRate(item.targetRate)
+                }
             }
             else if (holder is CustomResInputHolder) {
                 holder.btnSave.setOnClickListener { val wStr = holder.inputW.text.toString().trim(); val hStr = holder.inputH.text.toString().trim(); if (wStr.isNotEmpty() && hStr.isNotEmpty()) { val w = wStr.toIntOrNull(); val h = hStr.toIntOrNull(); if (w != null && h != null && w > 0 && h > 0) { val gcdVal = calculateGCD(w, h); val wRatio = w / gcdVal; val hRatio = h / gcdVal; val resString = "${w}x${h}"; val name = "$wRatio:$hRatio Custom ($resString)"; AppPreferences.saveCustomResolution(holder.itemView.context, name, resString); safeToast("Added $name"); dismissKeyboardAndRestore(); switchMode(MODE_RESOLUTION) } else { safeToast("Invalid numbers") } } else { safeToast("Input W and H") } }

@@ -82,6 +82,16 @@
                 android:tooltipText="Resolution"/>
 
             <ImageView
+                android:id="@+id/icon_mode_refresh"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_popup_sync"
+                android:tint="#AAAAAA"
+                android:background="@drawable/bg_item_press"
+                android:tooltipText="Refresh Rate"/>
+
+            <ImageView
                 android:id="@+id/icon_mode_dpi"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
