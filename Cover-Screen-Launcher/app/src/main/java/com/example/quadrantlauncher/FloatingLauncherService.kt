@@ -2267,7 +2267,7 @@ class FloatingLauncherService : AccessibilityService() {
                 holder.nameInput.setText(item.text)
                 holder.nameInput.isEnabled = false
                 holder.nameInput.setTextColor(Color.GREEN)
-                holder.nameInput.textSize = 24f
+                holder.nameInput.textSize = 16f
                 holder.nameInput.gravity = Gravity.CENTER
                 holder.itemView.setBackgroundResource(0)
                 holder.btnSave.visibility = View.GONE

@@ -108,7 +108,7 @@
                 android:layout_width="32dp"
                 android:layout_height="32dp"
                 android:padding="6dp"
-                android:src="@drawable/ic_block"
+                android:src="@android:drawable/ic_menu_close_clear_cancel" 
                 android:tint="#AAAAAA"
                 android:background="@drawable/bg_item_press"
                 android:tooltipText="Blacklist"/>
