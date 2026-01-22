@@ -171,33 +171,7 @@ class KeyboardOverlay(
     // END BLOCK: onSuggestionsChanged
     // =================================================================================
 
-    // =================================================================================
-    // FUNCTION: handlePassthroughTouch
-    // SUMMARY: Manually dispatches a touch event to the keyboard window.
-    // =================================================================================
-    fun handlePassthroughTouch(event: MotionEvent): Boolean {
-        val container = keyboardContainer ?: return false
-        if (!isVisible || !container.isAttachedToWindow) return false
 
-        val loc = IntArray(2)
-        container.getLocationOnScreen(loc)
-        val x = loc[0]
-        val y = loc[1]
-        val w = container.width
-        val h = container.height
-
-        val rawX = event.rawX
-        val rawY = event.rawY
-
-        if (rawX >= x && rawX < x + w && rawY >= y && rawY < y + h) {
-            val offsetEvent = MotionEvent.obtain(event)
-            offsetEvent.offsetLocation(-x.toFloat(), -y.toFloat())
-            val handled = container.dispatchTouchEvent(offsetEvent)
-            offsetEvent.recycle()
-            return handled
-        }
-        return false
-    }
 
 
     fun setScreenDimensions(width: Int, height: Int, displayId: Int) {

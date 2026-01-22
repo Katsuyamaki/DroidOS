@@ -760,10 +760,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 val modeCmd = "am task set-windowing-mode $taskId 5"
                 Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
                 Thread.sleep(100)
-                
-                // [FIX] Use NEGATIVE coordinates to ensure off-screen on all displays
-                // Positive huge numbers can sometimes clamp to the bottom-right edge visible area
-                val resizeCmd = "am task resize $taskId -10000 -10000 -9900 -9900"
+                val resizeCmd = "am task resize $taskId 99999 99999 100000 100000"
                 Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
             }
 

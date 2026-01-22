@@ -203,19 +203,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
                     }
                 }
                 
-                // [FIX] RE-CAPTURE POINTER
-                // If BT Mouse Capture is active, we MUST re-assert focus and capture
-                // because removing/adding other views might have stolen it.
-                if (isBtMouseCaptureActive && btMouseCaptureLayout?.isAttachedToWindow == true) {
-                    btMouseCaptureLayout?.post {
-                        Log.d(BT_TAG, "enforceZOrder: Re-requesting Focus & Capture")
-                        btMouseCaptureLayout?.requestFocus()
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            btMouseCaptureLayout?.requestPointerCapture()
-                        }
-                    }
-                }
-                
                 Log.d("OverlayService", "Z-Order Enforced: Trackpad -> Keyboard -> Cursor")
             }
         } catch (e: Exception) {
@@ -949,7 +936,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     private var btMouseCaptureLayout: FrameLayout? = null
     private var btMouseCaptureParams: WindowManager.LayoutParams? = null
     private var isBtMouseCaptureActive = false
-    private var isBtMouseButtonDown = false // NEW: Tracks if left button is held
     private var lastBtMouseX = 0f
     private var lastBtMouseY = 0f
     private var isBtMouseDragging = false
@@ -4081,41 +4067,28 @@ if (isResize) {
         lastBtMouseX = 0f
         lastBtMouseY = 0f
         isBtMouseDragging = false
-        isBtMouseButtonDown = false // NEW: Ensure clean button state
 
         btMouseCaptureLayout = object : FrameLayout(this@OverlayService) {
-
-            // FIX: Hide system cursor when hovering over this overlay
-            // Using a 1x1 transparent bitmap because TYPE_NULL is ignored by some OEMs (Samsung)
-            override fun onResolvePointerIcon(event: MotionEvent?, pointerIndex: Int): android.view.PointerIcon? {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    try {
-                        val bmp = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
-                        return android.view.PointerIcon.create(bmp, 0f, 0f)
-                    } catch (e: Exception) {
-                        return android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
-                    }
-                }
-                return super.onResolvePointerIcon(event, pointerIndex)
-            }
 
             override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
                 val isMouseSource = event.isFromSource(InputDevice.SOURCE_MOUSE) ||
                                     event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)
 
+                Log.v(BT_TAG, "dispatchGenericMotionEvent: action=${event.actionMasked}, isMouse=$isMouseSource, x=${event.x}, y=${event.y}")
+
                 if (!isMouseSource) {
+                    Log.v(BT_TAG, "├─ Not mouse source, passing to super")
                     return super.dispatchGenericMotionEvent(event)
                 }
 
-                // If Pointer Capture is active, this method won't be called for moves,
-                // but we might still get other events or initial hovers.
-                
                 when (event.actionMasked) {
                     MotionEvent.ACTION_HOVER_MOVE -> {
-                        // Standard Hover (Fallback if capture fails)
+                        Log.d(BT_TAG, "ACTION_HOVER_MOVE: x=${event.x}, y=${event.y}")
+
                         if (lastBtMouseX == 0f && lastBtMouseY == 0f) {
                             lastBtMouseX = event.x
                             lastBtMouseY = event.y
+                            Log.d(BT_TAG, "├─ First event, recording position")
                             return true
                         }
 
@@ -4124,8 +4097,13 @@ if (isResize) {
                         lastBtMouseX = event.x
                         lastBtMouseY = event.y
 
+                        Log.d(BT_TAG, "├─ Raw delta: dx=$rawDx, dy=$rawDy")
+
                         val (scaledDx, scaledDy) = scaleBtMouseMovement(rawDx, rawDy)
+                        Log.d(BT_TAG, "├─ Scaled delta: dx=$scaledDx, dy=$scaledDy")
+
                         handleExternalMouseMove(scaledDx, scaledDy, false)
+                        Log.d(BT_TAG, "├─ Forwarded to handleExternalMouseMove (hover)")
                         return true
                     }
 
@@ -4154,37 +4132,20 @@ if (isResize) {
 
             override fun dispatchTouchEvent(event: MotionEvent): Boolean {
                 val toolType = event.getToolType(0)
-                
-                // FIX: Strict Mouse Detection. 
-                // If toolType is FINGER, treat it as a touch regardless of Source.
-                // This prevents the "BT Cursor over Trackpad" issue where the system 
-                // might flag the touch as having mouse source affinity.
                 val isMouse = toolType == MotionEvent.TOOL_TYPE_MOUSE || 
-                              (event.isFromSource(InputDevice.SOURCE_MOUSE) && toolType != MotionEvent.TOOL_TYPE_FINGER)
+                              event.isFromSource(InputDevice.SOURCE_MOUSE)
                 
                 Log.v(BT_TAG, "dispatchTouchEvent: action=${event.actionMasked}, toolType=$toolType, isMouse=$isMouse, deviceId=${event.deviceId}")
                 
                 // =======================================================================
                 // FINGER TOUCH PASSTHROUGH
-                // If this is a finger touch, manually dispatch it to the windows underneath
-                // in Z-Order (Menu -> Bubble -> Keyboard -> Trackpad).
-                // This bypasses the WindowManager's inability to pass touches through
-                // a touchable overlay window.
+                // If this is a finger touch (not mouse), we want it to pass through
+                // to the views underneath (keyboard, trackpad, etc.)
+                // Return FALSE to indicate we didn't handle it, allowing it to propagate
                 // =======================================================================
                 if (!isMouse) {
-                    // 1. Menu (Top Priority)
-                    if (menuManager?.handlePassthroughTouch(event) == true) return true
-                    
-                    // 2. Bubble
-                    if (dispatchToView(bubbleView, event)) return true
-                    
-                    // 3. Keyboard
-                    if (keyboardOverlay?.handlePassthroughTouch(event) == true) return true
-                    
-                    // 4. Trackpad (Base Layer)
-                    if (dispatchToView(trackpadLayout, event)) return true
-                    
-                    // If nothing handled it, return false (passes to system/wallpaper)
+                    Log.d(BT_TAG, "├─ FINGER TOUCH - passing through (not consuming)")
+                    // Return false = "I didn't handle this, let it go to views below"
                     return false
                 }
                 // =======================================================================
@@ -4194,29 +4155,14 @@ if (isResize) {
                 // Mouse events - we handle and consume these
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        // FIX: Check if Pointer Capture is active - if so, skip to prevent double-injection
-                        val hasCapturedPointer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            btMouseCaptureLayout?.hasPointerCapture() ?: false
-                        } else false
-                        
-                        Log.d(BT_TAG, "MOUSE ACTION_DOWN: x=${event.x}, y=${event.y}")
-                        Log.d(BT_TAG, "├─ hasCapturedPointer=$hasCapturedPointer, isBtMouseButtonDown=$isBtMouseButtonDown")
-                        
-                        if (hasCapturedPointer) {
-                            // Pointer Capture is active - clicks handled by CapturedPointerListener
-                            Log.d(BT_TAG, "├─ SKIP: Pointer Capture active (handled by CapturedPointerListener)")
-                        } else {
-                            // Fallback path when Pointer Capture is not active
-                            Log.d(BT_TAG, "├─ FALLBACK: No Pointer Capture, using dispatchTouchEvent path")
-                            lastBtMouseX = event.x
-                            lastBtMouseY = event.y
-                            isBtMouseDragging = false
-                            if (!isBtMouseButtonDown) {
-                                isBtMouseButtonDown = true
-                                handleExternalTouchDown()
-                                Log.d(BT_TAG, "├─ Called handleExternalTouchDown()")
-                            }
-                        }
+                        Log.d(BT_TAG, "MOUSE ACTION_DOWN: x=${event.x}, y=${event.y}, rawX=${event.rawX}, rawY=${event.rawY}")
+                        Log.d(BT_TAG, "├─ Cursor position: cursorX=$cursorX, cursorY=$cursorY")
+                        Log.d(BT_TAG, "├─ Target display: $inputTargetDisplayId")
+                        lastBtMouseX = event.x
+                        lastBtMouseY = event.y
+                        isBtMouseDragging = false
+                        handleExternalTouchDown()
+                        Log.d(BT_TAG, "├─ Called handleExternalTouchDown()")
                     }
                     
                     MotionEvent.ACTION_MOVE -> {
@@ -4238,27 +4184,12 @@ if (isResize) {
                     }
                     
                     MotionEvent.ACTION_UP -> {
-                        // FIX: Check if Pointer Capture is active - if so, skip to prevent double-injection
-                        val hasCapturedPointer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            btMouseCaptureLayout?.hasPointerCapture() ?: false
-                        } else false
-                        
                         Log.d(BT_TAG, "MOUSE ACTION_UP: wasDragging=$isBtMouseDragging")
-                        Log.d(BT_TAG, "├─ hasCapturedPointer=$hasCapturedPointer, isBtMouseButtonDown=$isBtMouseButtonDown")
-                        
-                        if (hasCapturedPointer) {
-                            // Pointer Capture is active - clicks handled by CapturedPointerListener
-                            Log.d(BT_TAG, "├─ SKIP: Pointer Capture active (handled by CapturedPointerListener)")
-                        } else {
-                            // Fallback path when Pointer Capture is not active
-                            Log.d(BT_TAG, "├─ FALLBACK: No Pointer Capture, using dispatchTouchEvent path")
-                            if (isBtMouseButtonDown) {
-                                isBtMouseButtonDown = false
-                                handleExternalTouchUp()
-                                Log.d(BT_TAG, "├─ Called handleExternalTouchUp()")
-                            }
+                        handleExternalTouchUp()
+                        if (!isBtMouseDragging) {
+                            Log.d(BT_TAG, "├─ Was click, calling performClick()")
+                            performClick(false)
                         }
-                        
                         isBtMouseDragging = false
                     }
                 }
@@ -4273,7 +4204,10 @@ if (isResize) {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            // REMOVED FLAG_NOT_FOCUSABLE: We need focus for Pointer Capture
+            // FLAG_NOT_TOUCH_MODAL: Allow touches outside to go to other windows
+            // FLAG_WATCH_OUTSIDE_TOUCH: Get notified of outside touches (for debugging)
+            // NO FLAG_NOT_TOUCHABLE: We need to receive touch events to filter them
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -4295,103 +4229,10 @@ if (isResize) {
         Log.d(BT_TAG, "├─ uiScreenWidth=$uiScreenWidth, uiScreenHeight=$uiScreenHeight")
 
         Log.d(BT_TAG, "├─ Created LayoutParams (MATCH_PARENT x MATCH_PARENT)")
-        
-        // Setup Pointer Capture
-        btMouseCaptureLayout?.isFocusable = true
-        btMouseCaptureLayout?.isFocusableInTouchMode = true
-        
-        // [FIX] Auto-Capture on Focus Regain
-        // If the OS gives focus back to this view (e.g. after closing a menu),
-        // automatically grab pointer capture again.
-        btMouseCaptureLayout?.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus && isBtMouseCaptureActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                 Log.d(BT_TAG, "Focus regained -> Requesting Pointer Capture")
-                 btMouseCaptureLayout?.requestPointerCapture()
-            }
-        }
-        
-        // =================================================================================
-        // CAPTURED POINTER LISTENER (BT Mouse with Pointer Capture)
-        // SUMMARY: Handles mouse input when Pointer Capture is active.
-        //          FIX: Only respond to ACTION_BUTTON_PRESS/RELEASE, ignore ACTION_DOWN/UP
-        //          to prevent double-injection of touch events.
-        //          
-        //          When Pointer Capture is active:
-        //          - ACTION_MOVE: Contains relative delta in x/y
-        //          - ACTION_BUTTON_PRESS: Button pressed (use actionButton to identify which)
-        //          - ACTION_BUTTON_RELEASE: Button released
-        //          - ACTION_DOWN/UP: Also fired but we ignore to prevent double-clicks
-        // =================================================================================
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            btMouseCaptureLayout?.setOnCapturedPointerListener { view, event ->
-                val action = event.actionMasked
-                
-                // 1. RELATIVE MOVEMENT
-                if (action == MotionEvent.ACTION_MOVE) {
-                    val rawDx = event.x
-                    val rawDy = event.y
-                    
-                    if (rawDx != 0f || rawDy != 0f) {
-                        val (scaledDx, scaledDy) = scaleBtMouseMovement(rawDx, rawDy)
-                        handleExternalMouseMove(scaledDx, scaledDy, isBtMouseButtonDown)
-                    }
-                }
-                // 2. BUTTON PRESS (Primary action for clicks)
-                // FIX: ONLY handle ACTION_BUTTON_PRESS, not ACTION_DOWN
-                // ACTION_DOWN is also sent but would cause double-injection
-                else if (action == MotionEvent.ACTION_BUTTON_PRESS) {
-                    val button = event.actionButton
-                    val isRight = (button == MotionEvent.BUTTON_SECONDARY)
-                    val isLeft = (button == MotionEvent.BUTTON_PRIMARY)
-                    
-                    Log.d(BT_TAG, "CAPTURED: BUTTON_PRESS button=$button isLeft=$isLeft isRight=$isRight")
-                    
-                    if (isLeft && !isBtMouseButtonDown) {
-                        isBtMouseButtonDown = true
-                        handleExternalTouchDown()
-                    }
-                    // Right click is handled on release
-                }
-                // 3. BUTTON RELEASE
-                // FIX: ONLY handle ACTION_BUTTON_RELEASE, not ACTION_UP
-                else if (action == MotionEvent.ACTION_BUTTON_RELEASE) {
-                    val button = event.actionButton
-                    val isRight = (button == MotionEvent.BUTTON_SECONDARY)
-                    val isLeft = (button == MotionEvent.BUTTON_PRIMARY)
-                    
-                    Log.d(BT_TAG, "CAPTURED: BUTTON_RELEASE button=$button isLeft=$isLeft isRight=$isRight")
-                    
-                    if (isRight) {
-                        // Right Click - perform tap (down+up quickly)
-                        performClick(true)
-                    } else if (isLeft && isBtMouseButtonDown) {
-                        isBtMouseButtonDown = false
-                        handleExternalTouchUp()
-                    }
-                }
-                // 4. IGNORE ACTION_DOWN/ACTION_UP in captured mode
-                // These are duplicate events that would cause double-injection
-                else if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
-                    Log.v(BT_TAG, "CAPTURED: Ignoring duplicate $action (handled via BUTTON_PRESS/RELEASE)")
-                }
-                
-                return@setOnCapturedPointerListener true
-            }
-        }
-        // =================================================================================
-        // END BLOCK: CAPTURED POINTER LISTENER
-        // =================================================================================
+        Log.d(BT_TAG, "├─ Flags: NOT_FOCUSABLE | LAYOUT_IN_SCREEN | LAYOUT_NO_LIMITS")
 
         try {
             windowManager?.addView(btMouseCaptureLayout, btMouseCaptureParams)
-            
-            // Request Focus and Capture immediately
-            btMouseCaptureLayout?.post {
-                btMouseCaptureLayout?.requestFocus()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    btMouseCaptureLayout?.requestPointerCapture()
-                }
-            }
             isBtMouseCaptureActive = true
             Log.d(BT_TAG, "├─ ★ SUCCESS: BT Mouse Capture Overlay ADDED ★")
             
@@ -4440,7 +4281,6 @@ if (isResize) {
         isBtMouseCaptureActive = false
         lastBtMouseX = 0f
         lastBtMouseY = 0f
-        isBtMouseButtonDown = false // NEW: Reset button state
         
         // Restore the system cursor
         showSystemCursor()
@@ -4450,61 +4290,6 @@ if (isResize) {
     }
     // =================================================================================
     // END BLOCK: BT MOUSE CAPTURE OVERLAY - REMOVE
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: verifyBtMouseCaptureState
-    // SUMMARY: Verifies that BT mouse capture state matches reality.
-    //          Fixes desync issues where isBtMouseCaptureActive doesn't match
-    //          whether the overlay is actually attached and functional.
-    // @param expectedActive - What we think the state should be
-    // @return true if state is correct, false if it was corrected
-    // =================================================================================
-    private fun verifyBtMouseCaptureState(expectedActive: Boolean): Boolean {
-        val isActuallyAttached = btMouseCaptureLayout?.isAttachedToWindow ?: false
-        
-        Log.d(BT_TAG, "verifyBtMouseCaptureState: expected=$expectedActive, " +
-                      "flagActive=$isBtMouseCaptureActive, attached=$isActuallyAttached")
-        
-        // Case 1: Flag says active but view not attached - fix by removing
-        if (isBtMouseCaptureActive && !isActuallyAttached) {
-            Log.w(BT_TAG, "DESYNC: Flag active but view not attached - correcting to OFF")
-            isBtMouseCaptureActive = false
-            btMouseCaptureLayout = null
-            isBtMouseButtonDown = false
-            showSystemCursor()
-            return false
-        }
-        
-        // Case 2: Flag says inactive but view is attached - fix by removing
-        if (!isBtMouseCaptureActive && isActuallyAttached) {
-            Log.w(BT_TAG, "DESYNC: Flag inactive but view attached - removing orphan view")
-            try {
-                windowManager?.removeView(btMouseCaptureLayout)
-            } catch (e: Exception) {}
-            btMouseCaptureLayout = null
-            isBtMouseButtonDown = false
-            return false
-        }
-        
-        // Case 3: State matches expectation
-        if (isBtMouseCaptureActive == expectedActive) {
-            return true
-        }
-        
-        // Case 4: Need to change state
-        if (expectedActive && !isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "State correction: Creating BT Mouse Capture")
-            createBtMouseCaptureOverlay()
-        } else if (!expectedActive && isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "State correction: Removing BT Mouse Capture")
-            removeBtMouseCaptureOverlay()
-        }
-        
-        return false
-    }
-    // =================================================================================
-    // END BLOCK: verifyBtMouseCaptureState
     // =================================================================================
 
     // =================================================================================
@@ -4518,13 +4303,8 @@ if (isResize) {
         val scaleX = targetScreenWidth.toFloat() / uiScreenWidth.toFloat()
         val scaleY = targetScreenHeight.toFloat() / uiScreenHeight.toFloat()
 
-        // [FIX] UNIFORM SCALING
-        // Use the LARGER scale factor for both axes. This prevents slow vertical movement
-        // on tall/narrow physical screens when mapping to wide virtual screens.
-        val uniformScale = kotlin.math.max(scaleX, scaleY)
-
-        val scaledDx = rawDx * uniformScale * prefs.cursorSpeed
-        val scaledDy = rawDy * uniformScale * prefs.cursorSpeed
+        val scaledDx = rawDx * scaleX * prefs.cursorSpeed
+        val scaledDy = rawDy * scaleY * prefs.cursorSpeed
 
         Log.v(BT_TAG, "scaleBtMouseMovement: physical=${uiScreenWidth}x${uiScreenHeight}, " +
                       "virtual=${targetScreenWidth}x${targetScreenHeight}, " +
@@ -5098,27 +4878,14 @@ if (isResize) {
 
                 showToast("Mirror Mode ON")
 
-                                // Create BT Mouse Capture overlay to intercept mouse on physical screen
-                // FIX: Use verification function to ensure clean state
-                verifyBtMouseCaptureState(true)
+                // Create BT Mouse Capture overlay to intercept mouse on physical screen
+                createBtMouseCaptureOverlay()
 
-                
-
-                                // [FIX] Smart Launcher Move: Target Virtual Display directly
-
-                                // Instead of cycling blind, we tell Launcher exactly where to go.
-
-                                val intentMove = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
-
-                                intentMove.setPackage("com.katsuyamaki.DroidOSLauncher")
-
-                                intentMove.putExtra("displayId", inputTargetDisplayId) // Target the virtual display
-
-                                sendBroadcast(intentMove)
-
-                            } else {
-
-                                prefs.prefVirtualMirrorMode = false
+                val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+                intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+                sendBroadcast(intentCycle)
+            } else {
+                prefs.prefVirtualMirrorMode = false
                 showToast("No virtual display found.")
             }
 
@@ -5132,8 +4899,7 @@ if (isResize) {
 
             removeMirrorKeyboard()
             // Remove BT Mouse Capture overlay
-            // FIX: Use verification function to ensure clean state
-            verifyBtMouseCaptureState(false)
+            removeBtMouseCaptureOverlay()
             inputTargetDisplayId = currentDisplayId
             targetScreenWidth = uiScreenWidth
             targetScreenHeight = uiScreenHeight
@@ -5149,15 +4915,9 @@ if (isResize) {
 
             showToast("Mirror Mode OFF")
             
-            // [FIX] Smart Launcher Move: Return to Active Physical Display
-            // Check if Display 1 (Cover) is active, otherwise default to 0 (Main)
-            val d1 = displayManager?.getDisplay(1)
-            val targetPhysicalId = if (d1 != null && d1.state == Display.STATE_ON) 1 else 0
-            
-            val intentMove = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
-            intentMove.setPackage("com.katsuyamaki.DroidOSLauncher")
-            intentMove.putExtra("displayId", targetPhysicalId)
-            sendBroadcast(intentMove)
+            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            sendBroadcast(intentCycle)
         }
         
         savePrefs()
@@ -5444,34 +5204,6 @@ if (isResize) {
                 Log.e(TAG, "Bulk delete failed", e)
             }
         }
-    }
-
-    // =================================================================================
-    // HELPER: dispatchToView
-    // SUMMARY: Checks if a touch event is within a view's bounds and dispatches it.
-    //          Used for manual passthrough from the BT Capture Overlay.
-    // =================================================================================
-    private fun dispatchToView(view: View?, event: MotionEvent): Boolean {
-        if (view == null || view.visibility != View.VISIBLE || !view.isAttachedToWindow) return false
-        
-        val loc = IntArray(2)
-        view.getLocationOnScreen(loc)
-        val x = loc[0]
-        val y = loc[1]
-        val w = view.width
-        val h = view.height
-        
-        val rawX = event.rawX
-        val rawY = event.rawY
-        
-        if (rawX >= x && rawX < x + w && rawY >= y && rawY < y + h) {
-            val offsetEvent = MotionEvent.obtain(event)
-            offsetEvent.offsetLocation(-x.toFloat(), -y.toFloat())
-            val handled = view.dispatchTouchEvent(offsetEvent)
-            offsetEvent.recycle()
-            return handled
-        }
-        return false
     }
 
     fun injectText(text: String) {

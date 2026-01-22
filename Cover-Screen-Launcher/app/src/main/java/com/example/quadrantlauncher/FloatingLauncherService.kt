@@ -74,11 +74,6 @@ class FloatingLauncherService : AccessibilityService() {
                     Log.d(TAG, "Launcher moving to Display: $targetId")
                     uiHandler.post {
                         currentDisplayId = targetId
-                        
-                        // [FIX] Update Preference so state persists and syncs with targetDisplayIndex
-                        targetDisplayIndex = targetId
-                        AppPreferences.setTargetDisplayIndex(this@FloatingLauncherService, targetId)
-
                         // Re-initialize window on new display
                         if (windowManager != null && bubbleView != null) {
                             try { windowManager.removeView(bubbleView) } catch(e: Exception) {}
@@ -146,29 +141,10 @@ class FloatingLauncherService : AccessibilityService() {
     private var lastValidPackageName: String? = null
     private var secondLastValidPackageName: String? = null
 
-    // =================================================================================
-    // MINIMIZED TASK DISPLAY TRACKING
-    // SUMMARY: Maps package name to display ID where the task was minimized from.
-    //          Used to restore tasks to the correct display without visual flash.
-    // =================================================================================
-    private val minimizedTaskDisplayMap = mutableMapOf<String, Int>()
-    // =================================================================================
-    // END BLOCK: MINIMIZED TASK DISPLAY TRACKING
-    // =================================================================================
-
-    // =================================================================================
-    // VISUAL QUEUE STATE VARIABLES
-    // SUMMARY: Tracks visual queue overlay and its associated WindowManager.
-    //          visualQueueWindowManager stores the WM used to add the view so we can
-    //          properly remove it even if displayContext changes.
-    // =================================================================================
+    // === KEYBIND SYSTEM ===
     private var visualQueueView: View? = null
     private var visualQueueParams: WindowManager.LayoutParams? = null
     private var isVisualQueueVisible = false
-    private var visualQueueWindowManager: WindowManager? = null
-    // =================================================================================
-    // END BLOCK: VISUAL QUEUE STATE VARIABLES
-    // =================================================================================
 
     // Command State Machine
     private var pendingCommandId: String? = null
@@ -404,10 +380,6 @@ private var isSoftKeyboardSupport = false
     private var shellService: IShellService? = null
     private var isBound = false
     lateinit var uiHandler: Handler // Declare uiHandler here
-    
-    // [FIX] Single Thread Executor for Serialized Operations
-    private val launcherExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-
     override fun onCreate() {
         super.onCreate()
         
@@ -542,35 +514,15 @@ private var isSoftKeyboardSupport = false
             val pos = v.adapterPosition
             if (pos != RecyclerView.NO_POSITION) { 
                 val app = selectedAppsQueue[pos]
-                
-                // [FIX] Focus Shift Logic for Swipe-to-Kill
-                var focusPkg: String? = null
-                val isFocused = (app.packageName == activePackageName) || 
-                                (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-                
-                if (isFocused) {
-                     // Find next active app (excluding the one we are about to remove)
-                     val next = selectedAppsQueue.firstOrNull { it != app && !it.isMinimized && it.packageName != PACKAGE_BLANK }
-                     focusPkg = next?.packageName
-                     if (focusPkg == null) {
-                         activePackageName = null
-                     } else {
-                         activePackageName = focusPkg
-                     }
-                }
-
                 if (app.packageName != PACKAGE_BLANK) { 
                     removeFromFocusHistory(app.packageName) // Clean up history
                     Thread { try { shellService?.forceStop(app.packageName) } catch(e: Exception) {} }.start()
                     safeToast("Killed ${app.label}") 
                 }
-                
                 selectedAppsQueue.removeAt(pos)
                 if (reorderSelectionIndex != -1) endReorderMode(false)
-                
-                // Pass focusPkg to immediate layout apply
                 updateAllUIs()
-                if (isInstantMode) applyLayoutImmediate(focusPkg)
+                if (isInstantMode) applyLayoutImmediate() 
             } 
         }
         override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) { super.clearView(recyclerView, viewHolder); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this@FloatingLauncherService, pkgs); if (isInstantMode) applyLayoutImmediate() }
@@ -1394,7 +1346,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     override fun onDestroy() {
         super.onDestroy()
-        launcherExecutor.shutdownNow() // Stop background tasks
         try { unregisterReceiver(launcherReceiver) } catch(e: Exception) {}
         isScreenOffState = false
         wakeUp()
@@ -1492,70 +1443,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         windowManager = displayContext!!.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     }
     private fun refreshDisplayId() { val id = displayContext?.display?.displayId ?: Display.DEFAULT_DISPLAY; currentDisplayId = id }
-
-    // =================================================================================
-    // FUNCTION: verifyAndSyncDisplayTarget
-    // SUMMARY: Verifies that currentDisplayId matches where our overlays are actually
-    //          attached. If desync detected, logs warning and optionally resyncs.
-    //          Called before launching apps to detect wrong-display tiling issues.
-    //          Returns the verified display ID.
-    // =================================================================================
-    private fun verifyAndSyncDisplayTarget(autoResync: Boolean = false): Int {
-        // 1. Check where bubble is actually attached
-        val actualBubbleDisplay = try {
-            if (bubbleView?.isAttachedToWindow == true) {
-                bubbleView?.display?.displayId ?: -1
-            } else -1
-        } catch (e: Exception) { -1 }
-        
-        // 2. Check where drawer is attached (if open)
-        val actualDrawerDisplay = try {
-            if (isExpanded && drawerView?.isAttachedToWindow == true) {
-                drawerView?.display?.displayId ?: -1
-            } else -1
-        } catch (e: Exception) { -1 }
-        
-        // 3. Check displayContext's display
-        val contextDisplay = displayContext?.display?.displayId ?: -1
-        
-        // 4. Determine "truth" - prefer drawer if open, else bubble
-        val truthDisplay = when {
-            actualDrawerDisplay != -1 -> actualDrawerDisplay
-            actualBubbleDisplay != -1 -> actualBubbleDisplay
-            else -> currentDisplayId // Fallback to what we think
-        }
-        
-        // 5. Log diagnostic info
-        val isDesynced = (truthDisplay != -1 && truthDisplay != currentDisplayId) ||
-                        (contextDisplay != -1 && contextDisplay != currentDisplayId)
-        
-        if (isDesynced) {
-            Log.w(TAG, "┌─── DISPLAY DESYNC DETECTED ───")
-            Log.w(TAG, "│ currentDisplayId (target): $currentDisplayId")
-            Log.w(TAG, "│ displayContext.display:    $contextDisplay")
-            Log.w(TAG, "│ bubbleView.display:        $actualBubbleDisplay")
-            Log.w(TAG, "│ drawerView.display:        $actualDrawerDisplay")
-            Log.w(TAG, "│ TRUTH (overlay location):  $truthDisplay")
-            Log.w(TAG, "└───────────────────────────────")
-            
-            // 6. Resync if requested
-            if (autoResync && truthDisplay != -1) {
-                Log.w(TAG, "DISPLAY RESYNC: Correcting $currentDisplayId -> $truthDisplay")
-                currentDisplayId = truthDisplay
-                targetDisplayIndex = truthDisplay
-                setupDisplayContext(currentDisplayId)
-                AppPreferences.setTargetDisplayIndex(this, targetDisplayIndex)
-            }
-        } else {
-            Log.d(TAG, "Display sync OK: $currentDisplayId (bubble=$actualBubbleDisplay, drawer=$actualDrawerDisplay)")
-        }
-        
-        // [FIX] Always return the TRUE display, even if autoResync was false
-        return if (truthDisplay != -1) truthDisplay else currentDisplayId
-    }
-    // =================================================================================
-    // END BLOCK: verifyAndSyncDisplayTarget
-    // =================================================================================
     private fun startForegroundService() { val channelId = if (android.os.Build.VERSION.SDK_INT >= 26) { val channel = android.app.NotificationChannel(CHANNEL_ID, "Floating Launcher", android.app.NotificationManager.IMPORTANCE_LOW); getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel); CHANNEL_ID } else ""; val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build(); if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification) }
     private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { Log.e(TAG, "Bind Shizuku Failed", e) } }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
@@ -1798,40 +1685,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // === VISUAL QUEUE (HUD) ===
 
-    // =================================================================================
-    // FUNCTION: setupVisualQueue
-    // SUMMARY: Creates the visual queue HUD overlay on the CURRENT display.
-    //          FIX: Creates fresh context for the verified current display to prevent
-    //          HUD appearing on wrong screen during cover+virtual display usage.
-    //          Stores the WindowManager used so removal works correctly.
-    // =================================================================================
     private fun setupVisualQueue() {
-        // FIX: Verify display targeting first
-        verifyAndSyncDisplayTarget(autoResync = false)
-        
-        // Get display manager and target display
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        val targetDisplay = dm.getDisplay(currentDisplayId)
-        
-        // FIX: Create fresh context for the CURRENT target display
-        // This ensures HUD appears on the correct screen even if displayContext is stale
-        val ctx = if (targetDisplay != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val baseContext = createDisplayContext(targetDisplay)
-                baseContext.createWindowContext(2032, null)
-            } catch (e: Exception) {
-                Log.w(TAG, "setupVisualQueue: Failed to create window context, using displayContext")
-                displayContext ?: this
-            }
-        } else {
-            displayContext ?: this
-        }
-        
-        val themeContext = ContextThemeWrapper(ctx, R.style.Theme_QuadrantLauncher)
+        val themeContext = ContextThemeWrapper(displayContext ?: this, R.style.Theme_QuadrantLauncher)
         visualQueueView = LayoutInflater.from(themeContext).inflate(R.layout.layout_visual_queue, null)
 
-        // FIX: Get WindowManager for the FRESH context and store it for removal
-        visualQueueWindowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // CRITICAL: Ensure we use the WindowManager for the CURRENT display context
+        val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
 
         // Use Type 2032 (Accessibility) or Phone, consistent with other views
         val targetType = if (Build.VERSION.SDK_INT >= 26) 2032 else WindowManager.LayoutParams.TYPE_PHONE
@@ -1847,12 +1706,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         )
         
         // MARGIN ADJUSTMENT: Center in the effective safe area
-        val metrics = DisplayMetrics()
-        targetDisplay?.getRealMetrics(metrics) ?: windowManager.defaultDisplay.getRealMetrics(metrics)
-        val h = metrics.heightPixels
+        val display = (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay 
+                      ?: windowManager.defaultDisplay
+        val h = display.height
         
         val topPx = (h * topMarginPercent / 100f).toInt()
         val bottomPx = (h * bottomMarginPercent / 100f).toInt()
+        
+        // Standard CENTER is at h/2.
+        // Effective Center is at (topPx + (h - topPx - bottomPx)/2) = topPx + h/2 - topPx/2 - bottomPx/2
+        // = h/2 + (topPx - bottomPx)/2
+        // Offset from standard center = (topPx - bottomPx) / 2
         
         val yShift = (topPx - bottomPx) / 2
         
@@ -1865,12 +1729,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // DUMMY INPUT to keep Gboard alive
         val dummyInput = visualQueueView?.findViewById<EditText>(R.id.vq_dummy_input)
         dummyInput?.showSoftInputOnFocus = true
-        
-        Log.d(TAG, "setupVisualQueue: Created for display $currentDisplayId (context=${ctx.display?.displayId})")
     }
-    // =================================================================================
-    // END BLOCK: setupVisualQueue
-    // =================================================================================
 
     private fun showVisualQueue(prompt: String, highlightSlot0Based: Int = -1) {
         if (visualQueueView == null) setupVisualQueue()
@@ -1939,26 +1798,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         sendBroadcast(layerIntent)
     }
 
-    // =================================================================================
-    // FUNCTION: hideVisualQueue
-    // SUMMARY: Removes the visual queue HUD. FIX: Uses the WindowManager that was
-    //          used to add the view (visualQueueWindowManager) to ensure removal
-    //          works even if displayContext has changed.
-    // =================================================================================
     private fun hideVisualQueue() {
         if (isVisualQueueVisible && visualQueueView != null) {
             try {
-                // FIX: Use the WindowManager that was used to add the view
-                val targetWM = visualQueueWindowManager 
-                              ?: displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager 
-                              ?: windowManager
+                val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
                 targetWM.removeView(visualQueueView)
                 isVisualQueueVisible = false
-                visualQueueWindowManager = null // Clear the stored reference
-                Log.d(TAG, "hideVisualQueue: Removed successfully")
-            } catch (e: Exception) {
-                Log.e(TAG, "hideVisualQueue: Failed to remove", e)
-            }
+            } catch (e: Exception) {}
         }
         uiHandler.removeCallbacks(commandTimeoutRunnable)
 
@@ -2465,11 +2311,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Uses proper package name extraction for force-stop and launch operations
     private fun addToSelection(app: MainActivity.AppInfo) {
         dismissKeyboardAndRestore()
-        
-        // [FIX] Verify Display Sync before adding/launching
-        // This prevents launching on the wrong display if the system changed IDs behind our back
-        verifyAndSyncDisplayTarget(autoResync = true)
-
         val et = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar)
         
         // Handle blank spacer
@@ -2522,12 +2363,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 launchViaApi(app.packageName, app.className, null)
                 launchViaShell(app.packageName, app.className, null)
                 
-                // Pass THIS app as the explicit focus target to ensure it lands on top
-                val targetPkg = app.packageName
-                
-                // Delayed layout application
-                uiHandler.postDelayed({ applyLayoutImmediate(targetPkg) }, 200)
-                uiHandler.postDelayed({ applyLayoutImmediate(targetPkg) }, 800) 
+                // Delayed layout application to allow app to start
+                uiHandler.postDelayed({ applyLayoutImmediate() }, 200)
+                uiHandler.postDelayed({ applyLayoutImmediate() }, 800) 
             } 
         }
     }
@@ -2584,6 +2422,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === LAUNCH VIA API - END ===
 
 
+    // === LAUNCH VIA SHELL - START ===
     // Launches app via shell with freeform windowing mode
     private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
         try {
@@ -2598,42 +2437,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
 
             // Build launch command with freeform mode (--windowingMode 5)
-            // [FIX] Termux Safety: Use NEW_TASK (0x10000000) instead of CLEAR_TASK (0x10008000)
-            // CLEAR_TASK kills the terminal session. NEW_TASK safely moves it.
-            val flags = if (basePkg == "com.termux") "-f 0x10000000" else "-f 0x10008000"
-            
-            // =================================================================================
-            // DISPLAY TARGETING DIAGNOSTIC
-            // Logs display state to help identify desync issues
-            // =================================================================================
-            val actualBubbleDisplay = try {
-                if (bubbleView?.isAttachedToWindow == true) bubbleView?.display?.displayId ?: -1 else -1
-            } catch (e: Exception) { -1 }
-            
-            val contextDisplay = displayContext?.display?.displayId ?: -1
-            
-            // Check for desync
-            val hasDesync = (actualBubbleDisplay != -1 && actualBubbleDisplay != currentDisplayId) ||
-                           (contextDisplay != -1 && contextDisplay != currentDisplayId)
-            
-            if (hasDesync) {
-                Log.w(TAG, "┌─── LAUNCH DISPLAY DESYNC ───")
-                Log.w(TAG, "│ Target (currentDisplayId): $currentDisplayId")
-                Log.w(TAG, "│ Bubble actual display:     $actualBubbleDisplay")
-                Log.w(TAG, "│ Context display:           $contextDisplay")
-                Log.w(TAG, "│ Package: $basePkg")
-                Log.w(TAG, "└─────────────────────────────")
-            } else {
-                Log.d(TAG, "launchViaShell: Display=$currentDisplayId Pkg=$basePkg (sync OK)")
-            }
-            // =================================================================================
-            // END DISPLAY TARGETING DIAGNOSTIC
-            // =================================================================================
-            
             val cmd = if (component != null) {
-                "am start -n $component $flags --display $currentDisplayId --windowingMode 5 --user 0"
+                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
             } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $flags --display $currentDisplayId --windowingMode 5 --user 0"
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
             }
 
             Log.d(TAG, "launchViaShell: $cmd")
@@ -2651,9 +2458,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             Log.e(TAG, "launchViaShell FAILED: $pkg", e)
         }
     }
-    // =================================================================================
-    // END BLOCK: launchViaShell
-    // =================================================================================
+    // === LAUNCH VIA SHELL - END ===
 
     
     private fun toggleVirtualDisplay() {
@@ -3142,7 +2947,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
     private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
-    private fun pickIcon() { toggleDrawer(); try { val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
+    private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
     private fun loadProfile(name: String) { val data = AppPreferences.getProfileData(this, name) ?: return; try { val parts = data.split("|"); selectedLayoutType = parts[0].toInt(); selectedResolutionIndex = parts[1].toInt(); currentDpiSetting = parts[2].toInt(); val pkgList = parts[3].split(","); selectedAppsQueue.clear(); for (pkg in pkgList) { if (pkg.isNotEmpty()) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)) } else { val app = allAppsList.find { it.packageName == pkg }; if (app != null) selectedAppsQueue.add(app) } } }; AppPreferences.saveLastLayout(this, selectedLayoutType); AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); activeProfileName = name; updateSelectedAppsDock(); safeToast("Loaded: $name"); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } }
     
@@ -3157,39 +2962,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             pendingLaunchRunnable = null
         }
 
-        // [FIX] Removed manual locking (isExecuting). Executor handles queueing.
+        // If already executing, queue this request
+        if (isExecuting) {
+            Log.d(TAG, "executeLaunch: Already running. Queueing next run.")
+            pendingExecutionNeeded = true
+            if (focusPackage != null) pendingFocusPackage = focusPackage
+            return
+        }
 
-                        if (closeDrawer) toggleDrawer()
-                        // [RESTORED] refreshDisplayId() is critical for display targeting
-                        // It syncs currentDisplayId with where the bubble actually is
-                        refreshDisplayId()
-                        
-                        // Save queue
-                        val identifiers = selectedAppsQueue.map { it.getIdentifier() }
-                        AppPreferences.saveLastQueue(this, identifiers)
-                        
-                        // [FIX] Submit to Executor instead of new Thread
-                        launcherExecutor.execute {
-                            try {
-                                // =================================================================================
-                                // DISPLAY SYNC VERIFICATION
-                                // Verify and log display targeting before launching to catch desync issues.
-                                // This runs on the executor thread, so we post the sync check to UI thread.
-                                // =================================================================================
-                                var syncedDisplayId = currentDisplayId
-                                val syncLatch = java.util.concurrent.CountDownLatch(1)
-                                uiHandler.post {
-                                    // [FIX] Force Auto-Resync so launch commands use the correct ID
-                                    syncedDisplayId = verifyAndSyncDisplayTarget(autoResync = true)
-                                    syncLatch.countDown()
-                                }
-                                syncLatch.await(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                Log.d(TAG, "executeLaunch: Verified target display=$syncedDisplayId")
-                                // =================================================================================
-                                // END DISPLAY SYNC VERIFICATION
-                                // =================================================================================
-                                
-                                // Apply resolution
+        isExecuting = true
+        pendingExecutionNeeded = false // Reset pending flag for THIS run
+
+        if (closeDrawer) toggleDrawer()
+        refreshDisplayId()
+
+        // Save queue
+        val identifiers = selectedAppsQueue.map { it.getIdentifier() }
+        AppPreferences.saveLastQueue(this, identifiers)
+        
+        Thread { 
+            try { 
+                // Apply resolution
                 val resCmd = getResolutionCommand(selectedResolutionIndex)
                 shellService?.runCommand(resCmd)
                 
@@ -3210,7 +3003,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 
                 if (selectedAppsQueue.isEmpty()) {
                     uiHandler.post { safeToast("No apps in queue") }
-                    return@execute
+                    return@Thread
                 }
                 
                 // Handle minimized apps
@@ -3241,17 +3034,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }
                 
 // === LAUNCH AND TILE APPS (Robust Background Loop) ===
-                // PRE-CHECK: Get list of apps already on this display to avoid redundant "am start" calls
-                val appsOnDisplay = try {
-                    shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
-                } catch (e: Exception) { emptyList() }
-
+                // [FIX] We use Thread.sleep inside this background thread instead of uiHandler.postDelayed.
+                // This ensures the sequence continues executing even if the UI thread is throttled/closed.
                 for (i in 0 until minOf(activeApps.size, rects.size)) {
                     val app = activeApps[i]
-                    
-                    // [FIX] Live Check: If app was minimized mid-execution, skip tiling it
-                    if (app.isMinimized) continue
-                    
                     val bounds = rects[i]
 
                     if (app.packageName == PACKAGE_BLANK) continue
@@ -3264,59 +3050,58 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
 
-                    // [FIX] SMART LAUNCH LOGIC
-                    // Only "Launch" (Bring to Front) if:
-                    // 1. It is the designated Focus Target
-                    // 2. OR it is NOT currently visible on this display (needs moving/starting)
-                    
-                    val isFocusTarget = (basePkg == focusPackage) || 
-                                      (basePkg == "com.google.android.apps.bard" && focusPackage == "com.google.android.googlequicksearchbox")
-                    
-                    // Check if app is on the CURRENT target display
-                    val isOnTargetDisplay = appsOnDisplay.contains(basePkg) ||
-                                    (basePkg == "com.google.android.apps.bard" && appsOnDisplay.contains("com.google.android.googlequicksearchbox"))
-
-                    // [FIX] TERMUX RENDERER PROTECTION
-                    // 1. Termux: If already visible, SKIP launch completely. Re-launching causes renderer freeze/cursor loss.
-                    // 2. Others: Force launch to ensure correct Z-order and display affinity.
-                    val isTermux = (basePkg == "com.termux")
-                    val shouldLaunch = if (isTermux && isOnTargetDisplay) false else true
-                    
-                    if (shouldLaunch) {
-                        launchViaShell(basePkg, cls, bounds)
+                    // 1. Launch App (SYNCHRONOUSLY)
+                    val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                    val cmd = if (component != null) {
+                        "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
                     } else {
-                        Log.d(TAG, "Tile[$i]: Skipping launch for active Termux (Anti-Freeze)")
+                        "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                    }
+
+                    try {
+                        Log.d(TAG, "Tile[$i]: Executing Launch: $cmd")
+                        shellService?.runCommand(cmd)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tile[$i]: Launch failed", e)
                     }
 
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
 
                     // 2. WAIT AND RESIZE (Sequential/Blocking)
+                    // We block the loop here until THIS window is ready and resized.
+                    // This ensures App 1 is fully positioned before we even touch App 2.
                     try {
-                        // If we didn't launch, we assume task exists. If we did, we poll.
+                        // SMART POLLING:
+                        // Active Window (Swap): Returns almost instantly.
+                        // Cold Boot: Waits up to 3s.
                         var tid = -1
-                        
-                        if (shouldLaunch) {
-                            // Poll for task ID if we just launched it
-                            val maxWait = if (isGeminiApp) 8000L else 3000L
-                            val startPoll = System.currentTimeMillis()
-                            while (System.currentTimeMillis() - startPoll < maxWait) {
-                                tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                if (tid != -1) break
-                                Thread.sleep(50)
-                            }
-                        } else {
-                            // Just get the ID quickly (it should be there)
+                        val maxWait = if (isGeminiApp) 8000L else 3000L
+                        val startPoll = System.currentTimeMillis()
+
+                        // Fast poll (50ms) for snappiness
+                        while (System.currentTimeMillis() - startPoll < maxWait) {
                             tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                            if (tid != -1) break
+                            Thread.sleep(50)
                         }
 
+                        // If we found it instantly (already running), delay is minimal (50ms).
+                        // If it took time, we wait a tiny bit for the window surface to be ready.
+                        val wasInstant = (System.currentTimeMillis() - startPoll < 150)
+                        if (!wasInstant) Thread.sleep(200)
+
                         // PASS 1: Set Mode & Resize
-                        if (tid != -1) {
-                             Log.d(TAG, "Tile[$i]: Repositioning ${app.label} (TID: $tid) Launch=$shouldLaunch")
-                             // If we didn't launch, we MUST ensure windowing mode is correct just in case
-                             if (!shouldLaunch) {
-                                 shellService?.runCommand("am task set-windowing-mode $tid 5")
-                             }
-                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                        Log.d(TAG, "Tile[$i]: Repositioning ${app.label} (TID: $tid)")
+                        shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+
+                        // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
+                        // If we are just swapping active windows, Pass 1 is usually enough.
+                        // We do a quick check-up resize.
+                        if (!wasInstant) Thread.sleep(200)
+
+                        val finalTid = shellService?.getTaskId(basePkg, cls) ?: -1
+                        if (finalTid != -1) {
+                            shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
                         }
 
                     } catch (e: Exception) {
@@ -3324,20 +3109,28 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     }
 
                     // 3. Buffer before next app
-                    if (shouldLaunch) {
-                        Thread.sleep(150)
-                    } else {
-                        // Faster buffer if just resizing background windows
-                        Thread.sleep(50) 
-                    }
+                    // Increased to 150ms to ensure WindowManager state settles before next 'am start'
+                    Thread.sleep(150)
                 }
                 // === LAUNCH AND TILE APPS - END ===
 
-                // === REFOCUS LOGIC REMOVED ===
-                // The refocus logic was causing display targeting issues on cover screen.
-                // Extra launchViaShell calls during tiling confused Android's display affinity.
-                // Focus is now managed by performMinimize/performRestore updating activePackageName.
-                // === END REFOCUS LOGIC REMOVED ===
+                // === REFOCUS LOGIC ===
+                // After swapping/moving windows, re-launch the active app to bring it back to focus
+                if (focusPackage != null) {
+                    val focusIndex = activeApps.indexOfFirst {
+                        it.packageName == focusPackage ||
+                        (it.packageName == "com.google.android.apps.bard" && focusPackage == "com.google.android.googlequicksearchbox")
+                    }
+
+                    if (focusIndex != -1 && focusIndex < rects.size) {
+                        val app = activeApps[focusIndex]
+                        val bounds = rects[focusIndex]
+                        Thread.sleep(200)
+                        Log.d(TAG, "Refocusing Active Window: ${app.label}")
+                        launchViaShell(app.getBasePackage(), app.className, bounds)
+                    }
+                }
+                // === REFOCUS LOGIC - END ===
 
                 if (closeDrawer) { 
                     uiHandler.post { 
@@ -3353,8 +3146,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             } catch (e: Exception) {
                 Log.e(TAG, "Execute Failed", e)
                 uiHandler.post { safeToast("Execute Failed: ${e.message}") }
+            } finally {
+                isExecuting = false
+
+                // If a request came in while we were running, trigger it now
+                if (pendingExecutionNeeded) {
+                    Log.d(TAG, "executeLaunch: Triggering pending execution")
+                    val nextFocus = pendingFocusPackage
+                    pendingFocusPackage = null
+                    uiHandler.post {
+                        executeLaunch(selectedLayoutType, false, nextFocus)
+                    }
+                }
             }
-        } // End Executor Block
+        }.start()
 
         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
     }
@@ -3630,24 +3435,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         } 
                     } else { 
                         if (app.packageName != PACKAGE_BLANK) { 
-                            // [FIX] Use Unified Helpers for Drawer Interaction
-                            if (app.isMinimized) {
-                                performRestore(app)
-                            } else {
-                                // If tapping an ACTIVE app in the dock, we probably want to FOCUS it, not minimize it.
-                                // But current logic is Toggle Minimize. 
-                                // Let's keep toggle behavior: 
-                                // If it IS focused, Minimize. 
-                                // If it IS NOT focused, Focus it.
-                                
-                                val isFocused = (app.packageName == activePackageName)
-                                if (isFocused) {
-                                    performMinimize(app)
-                                } else {
-                                    // Just Focus
-                                    refreshQueueAndLayout("Focused ${app.label}", app.packageName)
-                                }
-                            }
+                            app.isMinimized = !app.isMinimized
+                            notifyItemChanged(position)
+                            if (isInstantMode) applyLayoutImmediate() 
                         } 
                     } 
                 } catch(e: Exception) {
@@ -3667,153 +3457,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // === SELECTED APPS ADAPTER BIND - END ===
         override fun getItemCount() = selectedAppsQueue.size
     }
-
-    // =================================================================================
-    // UNIFIED STATE HELPERS
-    // SUMMARY: Centralized logic for Minimizing/Restoring/Killing apps to ensure
-    //          consistency between ADB commands and UI interactions (Drawer clicks).
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: performMinimize
-    // SUMMARY: Minimizes an app by moving its task to the background.
-    //          FIX: Now tracks which display the task was on so restore can
-    //          pre-position the task before bringing it forward (prevents flash).
-    // =================================================================================
-    private fun performMinimize(app: MainActivity.AppInfo) {
-        // 1. Check if this is the currently focused app
-        val isFocused = (app.packageName == activePackageName) || 
-                        (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-        
-        var focusPkg: String? = null
-        
-        if (isFocused) {
-             // 2. Find next active app to shift focus to
-             val next = selectedAppsQueue.firstOrNull { it != app && !it.isMinimized && it.packageName != PACKAGE_BLANK }
-             focusPkg = next?.packageName
-             
-             // 3. If no target found, explicitly clear focus state
-             if (focusPkg == null) {
-                 removeFromFocusHistory(app.packageName)
-                 activePackageName = null
-             } else {
-                 // [FIX] Speculatively update active focus immediately
-                 activePackageName = focusPkg
-             }
-        }
-
-        // 4. Update State
-        app.isMinimized = true
-
-        // 5. Execute System Minimize (Serialized)
-        val basePkg = app.getBasePackage()
-        val cls = app.className
-        
-        // [FIX] Track which display this task is being minimized FROM
-        // This allows restore to pre-position the task correctly
-        minimizedTaskDisplayMap[basePkg] = currentDisplayId
-        Log.d(TAG, "performMinimize: Tracking $basePkg minimized from display $currentDisplayId")
-        
-        launcherExecutor.execute {
-            try {
-                val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                if (tid != -1) {
-                    shellService?.moveTaskToBack(tid)
-                    
-                    // [FIX] Keep task in freeform mode so it doesn't reset windowing mode
-                    shellService?.runCommand("am task set-windowing-mode $tid 5")
-                }
-            } catch(e: Exception){
-                Log.e(TAG, "performMinimize failed", e)
-            }
-        }
-
-        // 6. Refresh UI and Trigger Focus Shift
-        refreshQueueAndLayout("Minimized ${app.label}", focusPkg)
-    }
-    // =================================================================================
-    // END BLOCK: performMinimize
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: performRestore
-    // SUMMARY: Restores a minimized app by bringing its task to the foreground.
-    //          FIX: Pre-positions the task on the target display BEFORE bringing
-    //          it forward. This prevents the visual "flash" where the window
-    //          briefly appears on the physical display before moving to virtual.
-    // =================================================================================
-    private fun performRestore(app: MainActivity.AppInfo) {
-        val index = selectedAppsQueue.indexOf(app)
-        if (index == -1) return
-
-        // 1. Update State
-        app.isMinimized = false
-
-        // 2. Execute System Restore (Serialized)
-        val basePkg = app.getBasePackage()
-        val cls = app.className
-        
-        // Get the display this task was minimized from (fallback to current)
-        minimizedTaskDisplayMap.remove(basePkg)
-        
-        launcherExecutor.execute {
-             try {
-                 // [FIX] SYNC DISPLAY FIRST
-                 // Ensure we are targeting the correct display before restoring
-                 val syncLatch = java.util.concurrent.CountDownLatch(1)
-                 uiHandler.post {
-                     verifyAndSyncDisplayTarget(autoResync = true)
-                     syncLatch.countDown()
-                 }
-                 try { syncLatch.await(200, java.util.concurrent.TimeUnit.MILLISECONDS) } catch(e:Exception){}
-
-                 val rects = getLayoutRects()
-                 val bounds = if (index < rects.size) rects[index] else null
-                 
-                 // [FIX] REMOVED PRE-POSITIONING
-                 // We must not resize the task until we are sure it is on the correct display.
-                 // Resizing a task that is currently on Display 1 (Cover) with Display 17 (Virtual)
-                 // coordinates causes visual glitches. We rely on the launch command below to move it first.
-                 
-                 // =================================================================================
-                 // FIX: Add -f flags to force display targeting
-                 // SUMMARY: Without these flags, Android uses FLAG_ACTIVITY_REORDER_TO_FRONT which
-                 //          does NOT honor --display for existing tasks. The task gets brought to
-                 //          front on whatever display it's currently on (often cover screen d1).
-                 //          FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK (0x10008000) forces
-                 //          the display parameter to be respected.
-                 // =================================================================================
-                 val flags = "-f 0x10008000"
-                 val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                 val cmd = if (component != null) {
-                     "am start -n $component $flags --display $currentDisplayId --windowingMode 5 --user 0"
-                 } else {
-                     "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $flags --display $currentDisplayId --windowingMode 5 --user 0"
-                 }
-                 // =================================================================================
-                 // END FIX: Add -f flags
-                 // =================================================================================
-                 shellService?.runCommand(cmd)
-                 
-                 // Final bounds adjustment (in case launch moved it)
-                 if (bounds != null) {
-                     Thread.sleep(200)
-                     val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                     if (tid != -1) {
-                         shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                     }
-                 }
-                 
-             } catch(e: Exception) {
-                 Log.e(TAG, "Restore failed", e)
-             }
-        }
-        
-        refreshQueueAndLayout("Restored ${app.label}")
-    }
-    // =================================================================================
-    // END BLOCK: performRestore
-    // =================================================================================
 
     // =================================================================================
     // WINDOW MANAGER COMMAND PROCESSOR (v2)
@@ -3877,24 +3520,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             "KILL" -> {
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
-                    
-                    // [FIX] Focus Shift Logic
-                    var focusPkg: String? = null
-                    val isFocused = (app.packageName == activePackageName) || 
-                                    (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-                    
-                    if (isFocused) {
-                         val next = selectedAppsQueue.firstOrNull { it != app && !it.isMinimized && it.packageName != PACKAGE_BLANK }
-                         focusPkg = next?.packageName
-                         
-                         // [FIX] Update or Clear Focus immediately
-                         if (focusPkg == null) {
-                             activePackageName = null
-                         } else {
-                             activePackageName = focusPkg
-                         }
-                    }
-
                     if (app.packageName != PACKAGE_BLANK) {
                         val basePkg = app.getBasePackage()
                         removeFromFocusHistory(basePkg) // Clean up history
@@ -3905,7 +3530,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     if (reorderSelectionIndex == index) reorderSelectionIndex = -1
                     else if (reorderSelectionIndex > index) reorderSelectionIndex--
                     
-                    refreshQueueAndLayout("Closed ${app.label}", focusPkg)
+                    refreshQueueAndLayout("Closed ${app.label}")
                 }
             }
             // =====================================================================
@@ -3919,23 +3544,65 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             "MINIMIZE", "UNMINIMIZE", "TOGGLE_MINIMIZE" -> {
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
-                    
+
                     // Don't minimize blanks
                     if (app.packageName == PACKAGE_BLANK) return
-                    
+
                     val newState = when (cmd) {
                         "MINIMIZE" -> true
                         "UNMINIMIZE" -> false
                         else -> !app.isMinimized
                     }
 
-                    // [FIX] Use Unified Helpers for ADB Commands
                     if (app.isMinimized != newState) {
+                        app.isMinimized = newState
+
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+
                         if (newState) {
-                            performMinimize(app)
+                             // MINIMIZING: Move to Back
+                             Thread {
+                                 try {
+                                     val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                     if (tid != -1) shellService?.moveTaskToBack(tid)
+                                 } catch(e: Exception){}
+                             }.start()
                         } else {
-                            performRestore(app)
+                             // RESTORING: Bring to Front on Current Display
+                             // We reuse the launch logic which handles "Bring to Front" if already running.
+                             // We run this in background to avoid UI stutter.
+                             Thread {
+                                 try {
+                                     // Use launchViaShell which forces display ID and windowing mode
+                                     // We calculate the target bounds based on current layout to ensure it snaps back correctly
+                                     val rects = getLayoutRects()
+                                     val bounds = if (index < rects.size) rects[index] else null
+
+                                     // This command forces the activity to the top of the stack on current display
+                                     val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                     val cmd = if (component != null) {
+                                         "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                     } else {
+                                         "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                     }
+                                     shellService?.runCommand(cmd)
+
+                                     // If we have bounds, apply them immediately
+                                     if (bounds != null) {
+                                         Thread.sleep(300) // Wait for start
+                                         val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                         if (tid != -1) {
+                                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                                         }
+                                     }
+                                 } catch(e: Exception) {
+                                     Log.e(TAG, "Restore failed", e)
+                                 }
+                             }.start()
                         }
+
+                        refreshQueueAndLayout(if (newState) "Minimized ${app.label}" else "Restored ${app.label}")
                     }
                 }
             }
@@ -3953,25 +3620,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 
                                 // If already blank, do nothing
                                 if (targetApp.packageName == PACKAGE_BLANK) return
-
-                                // [FIX] Focus Shift Logic
-                                var focusPkg: String? = null
-                                val isFocused = (targetApp.packageName == activePackageName) || 
-                                                (targetApp.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-                                
-                                if (isFocused) {
-                                     // Find next active app
-                                     val next = selectedAppsQueue.firstOrNull { it != targetApp && !it.isMinimized && it.packageName != PACKAGE_BLANK }
-                                     focusPkg = next?.packageName
-                                     
-                                     // [FIX] Clear focus if no target, or update if shifting
-                                     if (focusPkg == null) {
-                                         removeFromFocusHistory(targetApp.packageName)
-                                         activePackageName = null
-                                     } else {
-                                         activePackageName = focusPkg
-                                     }
-                                }
                                 
                                 // 1. Force Minimize the visual window
                                 val basePkg = targetApp.getBasePackage()
@@ -3994,9 +3642,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 selectedAppsQueue.add(blankApp)
                                 
                                 // 5. Swap Target (at index) with Blank (at end)
+                                // Layout: [A, B, C] -> HIDE B -> [A, Blank, C, B(min)]
                                 Collections.swap(selectedAppsQueue, index, selectedAppsQueue.lastIndex)
                                 
-                                refreshQueueAndLayout("Hidden Slot ${index + 1}", focusPkg)
+                                refreshQueueAndLayout("Hidden Slot ${index + 1}")
                              }
                         }            "LAYOUT" -> {
                 val type = intent.getIntExtra("TYPE", -1)
@@ -4033,13 +3682,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
                     if (app.packageName != PACKAGE_BLANK) {
-                        // [FIX] Ensure app is marked as Active so it can be minimized again
-                        if (app.isMinimized) {
-                            app.isMinimized = false
-                            // Refresh UI to update icon opacity
-                            uiHandler.post { updateAllUIs() }
-                        }
-
                         // Launching it brings it to front (Focus)
                         val rects = getLayoutRects()
                         val bounds = if (index < rects.size) rects[index] else null
@@ -4057,12 +3699,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 if (target != null) {
                     val app = selectedAppsQueue.find { it.packageName == target }
                     if (app != null) {
-                        // [FIX] Ensure app is marked as Active so it can be minimized again
-                        if (app.isMinimized) {
-                            app.isMinimized = false
-                            uiHandler.post { updateAllUIs() }
-                        }
-
                         val idx = selectedAppsQueue.indexOf(app)
                         val rects = getLayoutRects()
                         val bounds = if (idx >= 0 && idx < rects.size) rects[idx] else null

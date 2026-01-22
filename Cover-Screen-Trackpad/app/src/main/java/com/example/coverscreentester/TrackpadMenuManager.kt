@@ -47,43 +47,6 @@ class TrackpadMenuManager(
     private var helpClickCount = 0
     private var lastHelpClickTime = 0L
 
-    // =================================================================================
-    // FUNCTION: handlePassthroughTouch
-    // SUMMARY: manually dispatches a touch event to the menu window if it falls within bounds.
-    //          Used by OverlayService to pass touches through the BT Mouse layer.
-    // =================================================================================
-    fun handlePassthroughTouch(event: MotionEvent): Boolean {
-        val view = drawerView ?: return false
-        if (!isVisible || !view.isAttachedToWindow) return false
-        
-        // 1. Check Bounds
-        val loc = IntArray(2)
-        view.getLocationOnScreen(loc)
-        val x = loc[0]
-        val y = loc[1]
-        val w = view.width
-        val h = view.height
-        
-        val rawX = event.rawX
-        val rawY = event.rawY
-        
-        if (rawX >= x && rawX < x + w && rawY >= y && rawY < y + h) {
-            // 2. Transform to Local Coordinates
-            // dispatchTouchEvent expects X/Y to be local to the view
-            val offsetEvent = MotionEvent.obtain(event)
-            offsetEvent.offsetLocation(-x.toFloat(), -y.toFloat())
-            
-            // 3. Dispatch
-            val handled = view.dispatchTouchEvent(offsetEvent)
-            offsetEvent.recycle()
-            return handled
-        }
-        return false
-    }
-    // =================================================================================
-    // END BLOCK: handlePassthroughTouch
-    // =================================================================================
-
     fun show() {
         if (isVisible) return
         if (drawerView == null) setupDrawer()
