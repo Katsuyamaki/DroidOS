@@ -1285,6 +1285,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         } else {
             currentDpiSetting = savedDpi
         }
+        
+        // FIX: Sync state tracking to prevent unnecessary sleep on first execution
+        lastAppliedResIndex = selectedResolutionIndex
+        lastAppliedDpi = currentDpiSetting
 
         // [REMOVED] Auto-force disabled to prevent getting stuck on 120Hz
         // checkAndForceHighRefreshRate(displayId)
@@ -3586,42 +3590,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     }
 
                                         if (app.isMinimized != newState) {
-
                                                                 app.isMinimized = newState
-
                                                                 
-
                                                                 val basePkg = app.getBasePackage()
-
                                                                 val cls = app.className
-
                                                                 
-
                                                                 if (newState) {
-
                                                                      // [FIX] Clear focus if minimizing the active app
-
                                                                      if (activePackageName == basePkg || activePackageName == app.packageName) {
-
                                                                          activePackageName = null
-
                                                                      }
-
                                                                      
-
-                                                                     // MINIMIZING: Move to Back
-
-                                                                     Thread {
-
-                                                                         try {
-
-                                                                             val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-
-                                                                             if (tid != -1) shellService?.moveTaskToBack(tid)
-
-                                                                         } catch(e: Exception){}
-
-                                                                     }.start()
+                                                                     // MINIMIZING: Handled by refreshQueueAndLayout -> executeLaunch
+                                                                     // We removed the redundant thread here to prevent race conditions and double-execution lag.
 
                                                                 } else {
                              // RESTORING: Bring to Front on Current Display
