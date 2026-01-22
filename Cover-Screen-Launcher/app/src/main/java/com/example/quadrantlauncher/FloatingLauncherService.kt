@@ -2584,12 +2584,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === LAUNCH VIA API - END ===
 
 
-    // =================================================================================
-    // FUNCTION: launchViaShell
-    // SUMMARY: Launches app via shell with freeform windowing mode on target display.
-    //          Includes diagnostic logging for display desync debugging.
-    //          FIX: Verifies display sync before launching to prevent wrong-display tiling.
-    // =================================================================================
+    // Launches app via shell with freeform windowing mode
     private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
         try {
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
@@ -2603,7 +2598,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
 
             // Build launch command with freeform mode (--windowingMode 5)
-            val flags = "-f 0x10008000"
+            // [FIX] Termux Safety: Use NEW_TASK (0x10000000) instead of CLEAR_TASK (0x10008000)
+            // CLEAR_TASK kills the terminal session. NEW_TASK safely moves it.
+            val flags = if (basePkg == "com.termux") "-f 0x10000000" else "-f 0x10008000"
             
             // =================================================================================
             // DISPLAY TARGETING DIAGNOSTIC
@@ -3279,13 +3276,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     val isOnTargetDisplay = appsOnDisplay.contains(basePkg) ||
                                     (basePkg == "com.google.android.apps.bard" && appsOnDisplay.contains("com.google.android.googlequicksearchbox"))
 
-                    // [FIX] ALWAYS FORCE LAUNCH
-                    // We must execute "am start --display X" every time to ensure the task 
-                    // is physically on the correct display before we try to resize it.
-                    // Skipping this based on "isOnTargetDisplay" is unreliable.
-                    val shouldLaunch = true
+                    // [FIX] TERMUX RENDERER PROTECTION
+                    // 1. Termux: If already visible, SKIP launch completely. Re-launching causes renderer freeze/cursor loss.
+                    // 2. Others: Force launch to ensure correct Z-order and display affinity.
+                    val isTermux = (basePkg == "com.termux")
+                    val shouldLaunch = if (isTermux && isOnTargetDisplay) false else true
                     
-                    launchViaShell(basePkg, cls, bounds)
+                    if (shouldLaunch) {
+                        launchViaShell(basePkg, cls, bounds)
+                    } else {
+                        Log.d(TAG, "Tile[$i]: Skipping launch for active Termux (Anti-Freeze)")
+                    }
 
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
 
