@@ -240,6 +240,7 @@ private var isSoftKeyboardSupport = false
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {}
         override fun onDisplayRemoved(displayId: Int) {
+            Log.w("DROIDOS_TRACE", "Display Removed: $displayId")
             // If a virtual display (ID >= 2) is removed, release wake lock
             if (displayId >= 2) {
                 setKeepScreenOn(false)
@@ -252,24 +253,22 @@ private var isSoftKeyboardSupport = false
         override fun onDisplayChanged(displayId: Int) {
             // =================================================================================
             // VIRTUAL DISPLAY PROTECTION
-            // SUMMARY: Skip auto-switch logic when targeting a virtual display (ID >= 2).
-            //          This prevents the launcher from "crashing" back to physical screens
-            //          when display states flicker during virtual display use (e.g., launching apps).
             // =================================================================================
             if (currentDisplayId >= 2) {
-                Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $currentDisplayId")
+                // Log.d("DROIDOS_TRACE", "onDisplayChanged($displayId): Ignored (Locked to Virtual $currentDisplayId)")
                 return
             }
-            // =================================================================================
-            // END BLOCK: VIRTUAL DISPLAY PROTECTION
-            // =================================================================================
 
             // Logic to detect Fold/Unfold events monitoring Display 0 (Main)
             if (displayId == 0) {
                 val display = displayManager?.getDisplay(0)
                 // Only auto-switch if user hasn't manually switched recently
-                val isDebounced = (System.currentTimeMillis() - lastManualSwitchTime > 2000)
+                val timeDelta = System.currentTimeMillis() - lastManualSwitchTime
+                val isDebounced = (timeDelta > 2000)
                 
+                val state = display?.state ?: -1
+                Log.w("DROIDOS_TRACE", "onDisplayChanged(0): State=$state, Current=$currentDisplayId, Debounced=$isDebounced (${timeDelta}ms)")
+
                 if (display != null && isDebounced) {
                     // Cancel any pending switch to prevent double-execution
                     if (switchRunnable != null) {
@@ -278,6 +277,7 @@ private var isSoftKeyboardSupport = false
 
                     // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
                     if (display.state == Display.STATE_ON && currentDisplayId != 0) {
+                        Log.w("DROIDOS_TRACE", " -> Auto-Switch Triggered: Phone OPENED (0 ON)")
                         switchRunnable = Runnable { 
                             try { performDisplayChange(0) } catch(e: Exception) {} 
                         }
@@ -285,6 +285,7 @@ private var isSoftKeyboardSupport = false
                     } 
                     // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                     else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
+                        Log.w("DROIDOS_TRACE", " -> Auto-Switch Triggered: Phone CLOSED (0 OFF)")
                         switchRunnable = Runnable {
                             try { 
                                 val d0 = displayManager?.getDisplay(0)
@@ -2458,21 +2459,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 null
             }
 
-            // Build launch command with freeform mode (--windowingMode 5) and Force New Task flag
+// Build launch command with Flags (New Task)
             val cmd = if (component != null) {
                 "am start -n $component --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
             } else {
                 "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
             }
 
-            Log.d(TAG, "launchViaShell: $cmd")
+            Log.w("DROIDOS_TRACE", "SHELL EXEC: $cmd")
 
             Thread {
                 try {
                     shellService?.runCommand(cmd)
-                    Log.d(TAG, "launchViaShell: SUCCESS")
                 } catch (e: Exception) {
-                    Log.e(TAG, "launchViaShell: FAILED", e)
+                    Log.e("DROIDOS_TRACE", "SHELL FAIL", e)
                 }
             }.start()
 
@@ -2563,6 +2563,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
     }
     private fun performDisplayChange(newId: Int) {
+        Log.w("DROIDOS_TRACE", ">>> performDisplayChange: $currentDisplayId -> $newId <<<")
         lastManualSwitchTime = System.currentTimeMillis()
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val targetDisplay = dm.getDisplay(newId) ?: return
@@ -3021,6 +3022,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         isExecuting = true
         pendingExecutionNeeded = false // Reset pending flag for THIS run
+        
+        // [TRACE] Log the ID exactly when execution starts
+        Log.w("DROIDOS_TRACE", ">>> executeLaunch START. currentDisplayId=$currentDisplayId <<<")
+        
+        // [FIX] REMOVED refreshDisplayId() to prevent context resets
+        // If this log shows 0 when it should be 2, we know the variable was reset externally (by listener)
 
         // Get currently visible apps on this display, excluding ourselves and the trackpad
         val activeApps = shellService?.getVisiblePackages(currentDisplayId)
