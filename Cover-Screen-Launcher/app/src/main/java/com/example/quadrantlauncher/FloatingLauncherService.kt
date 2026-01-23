@@ -2424,7 +2424,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 return
             }
 
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            // FORCE NEW TASK helps reparent the activity to the target display
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
 
             val options = android.app.ActivityOptions.makeBasic()
             options.setLaunchDisplayId(currentDisplayId)
@@ -3133,26 +3134,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     val basePkg = app.getBasePackage()
                     val cls = app.className
 
-                    // UI Update must be posted
+// UI Update must be posted
                     uiHandler.post {
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
 
-                    // 1. Launch App (SYNCHRONOUSLY)
-                    val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                    // [FIX] Add -f 0x10000000 (FLAG_ACTIVITY_NEW_TASK) to force task reparenting to new display
-                    val cmd = if (component != null) {
-                        "am start -n $component --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
-                    } else {
-                        "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
-                    }
-
-                    try {
-                        Log.d(TAG, "Tile[$i]: Executing Launch: $cmd")
-                        shellService?.runCommand(cmd)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Tile[$i]: Launch failed", e)
-                    }
+                    // 1. Launch App (API PREFERRED)
+                    // We use launchViaApi because ActivityOptions.setLaunchDisplayId() is more reliable
+                    // than 'am start --display' for moving existing tasks between screens.
+                    Log.w("DROIDOS_TRACE", "API LAUNCH: $basePkg/$cls on D$currentDisplayId")
+                    launchViaApi(app.packageName, app.className, null)
 
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
 
