@@ -22,6 +22,8 @@ object AppPreferences {
     private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
     private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
     private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
+    private const val KEY_AUTO_RESTART_ON_CLOSE = "KEY_AUTO_RESTART_ON_CLOSE"
+    private const val KEY_LAUNCHER_ACTIVE = "KEY_LAUNCHER_ACTIVE"
 
     // === BLACKLIST STORAGE - START ===
     // Stores blacklisted apps using "packageName:activityName" format
@@ -291,6 +293,22 @@ object AppPreferences {
 
     fun getAutoRestartTrackpad(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_AUTO_RESTART_TRACKPAD, false) // Default Off
+    }
+
+    fun setAutoRestartOnClose(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_AUTO_RESTART_ON_CLOSE, enable).apply()
+    }
+
+    fun getAutoRestartOnClose(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_AUTO_RESTART_ON_CLOSE, true) // Default true
+    }
+
+    fun setLauncherActive(context: Context, active: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_LAUNCHER_ACTIVE, active).apply()
+    }
+
+    fun getLauncherActive(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_LAUNCHER_ACTIVE, true) // Default true
     }
 
     fun setTargetDisplayIndex(context: Context, index: Int) {

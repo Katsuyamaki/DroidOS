@@ -1184,36 +1184,40 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Debug Loaded Keys
         logSavedKeybinds()
 
-        // Build UI
-        val targetDisplayId = targetDisplayIndex
-        setupDisplayContext(targetDisplayId)
-        setupBubble()
-        setupDrawer()
+        // Build UI (Only if Active)
+        if (AppPreferences.getLauncherActive(this)) {
+            val targetDisplayId = targetDisplayIndex
+            setupDisplayContext(targetDisplayId)
+            setupBubble()
+            setupDrawer()
 
-        // --- IMMEDIATE RESTORE ---
-        // Ensure Visual Queue is populated before user interaction
-        restoreQueueFromPrefs()
-        // -------------------------
+            // --- IMMEDIATE RESTORE ---
+            // Ensure Visual Queue is populated before user interaction
+            restoreQueueFromPrefs()
+            // -------------------------
 
-        selectedLayoutType = AppPreferences.getLastLayout(this)
-        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
-        if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
-            val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
-            if (data != null) {
-                val rects = mutableListOf<Rect>()
-                val rectParts = data.split("|")
-                for (rp in rectParts) {
-                    val coords = rp.split(",")
-                    if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+            selectedLayoutType = AppPreferences.getLastLayout(this)
+            activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
+            if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+                val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+                if (data != null) {
+                    val rects = mutableListOf<Rect>()
+                    val rectParts = data.split("|")
+                    for (rp in rectParts) {
+                        val coords = rp.split(",")
+                        if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+                    }
+                    activeCustomRects = rects
                 }
-                activeCustomRects = rects
             }
-        }
-        updateGlobalFontSize()
-        updateBubbleIcon()
-        loadDisplaySettings(currentDisplayId)
+            updateGlobalFontSize()
+            updateBubbleIcon()
+            loadDisplaySettings(currentDisplayId)
 
-        safeToast("Launcher Ready")
+            safeToast("Launcher Ready")
+        } else {
+            Log.d(TAG, "Launcher suspended (Headless Mode). Launch app to wake.")
+        }
     }
 
     private fun sendCustomModToTrackpad() {
@@ -1232,6 +1236,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", currentDisplayId) ?: currentDisplayId
 
         Log.d(TAG, "onStartCommand: Target Display $targetDisplayId (Current: $currentDisplayId)")
+
+        // WAKE UP: If user clicked icon, re-enable launcher
+        AppPreferences.setLauncherActive(this, true)
 
         if (bubbleView != null) {
             // If we are already running but the target display changed, move the bubble
@@ -3564,11 +3571,37 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(ToggleOption("Auto-Start Trackpad", autoRestartTrackpad) { autoRestartTrackpad = it; AppPreferences.setAutoRestartTrackpad(this, it); if (it) safeToast("Trackpad will restart on next Launcher startup") })
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
 
+                val restartOnClose = AppPreferences.getAutoRestartOnClose(this)
+                displayList.add(ToggleOption("Auto-Restart on Close", restartOnClose) { 
+                    AppPreferences.setAutoRestartOnClose(this, it)
+                    // Trigger UI refresh if needed, usually switchMode re-renders on next interaction
+                })
+
                 // NEW: Kill App Button (Added at the very bottom)
                 displayList.add(ActionOption("Close DroidOS Launcher") {
-                    safeToast("Closing Launcher...")
-                    stopSelf() // Stop the service
-                    android.os.Process.killProcess(android.os.Process.myPid()) // Force kill process
+                    if (AppPreferences.getAutoRestartOnClose(this)) {
+                        safeToast("Restarting Launcher...")
+                        stopSelf()
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    } else {
+                        safeToast("Closing Launcher...")
+                        // SUSPEND: Mark inactive and clean up UI
+                        AppPreferences.setLauncherActive(this, false)
+                        
+                        try {
+                            if (bubbleView != null) {
+                                val wm = attachedWindowManager ?: windowManager
+                                wm.removeView(bubbleView)
+                                bubbleView = null
+                            }
+                            if (isExpanded && drawerView != null) {
+                                windowManager.removeView(drawerView)
+                                isExpanded = false
+                            }
+                        } catch (e: Exception) {}
+                        
+                        stopSelf() // Stop service (It may auto-restart headless if enabled)
+                    }
                 })
             }
         }
