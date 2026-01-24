@@ -240,7 +240,6 @@ private var isSoftKeyboardSupport = false
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {}
         override fun onDisplayRemoved(displayId: Int) {
-            Log.w("DROIDOS_TRACE", "Display Removed: $displayId")
             // If a virtual display (ID >= 2) is removed, release wake lock
             if (displayId >= 2) {
                 setKeepScreenOn(false)
@@ -253,22 +252,24 @@ private var isSoftKeyboardSupport = false
         override fun onDisplayChanged(displayId: Int) {
             // =================================================================================
             // VIRTUAL DISPLAY PROTECTION
+            // SUMMARY: Skip auto-switch logic when targeting a virtual display (ID >= 2).
+            //          This prevents the launcher from "crashing" back to physical screens
+            //          when display states flicker during virtual display use (e.g., launching apps).
             // =================================================================================
             if (currentDisplayId >= 2) {
-                // Log.d("DROIDOS_TRACE", "onDisplayChanged($displayId): Ignored (Locked to Virtual $currentDisplayId)")
+                Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $currentDisplayId")
                 return
             }
+            // =================================================================================
+            // END BLOCK: VIRTUAL DISPLAY PROTECTION
+            // =================================================================================
 
             // Logic to detect Fold/Unfold events monitoring Display 0 (Main)
             if (displayId == 0) {
                 val display = displayManager?.getDisplay(0)
                 // Only auto-switch if user hasn't manually switched recently
-                val timeDelta = System.currentTimeMillis() - lastManualSwitchTime
-                val isDebounced = (timeDelta > 2000)
+                val isDebounced = (System.currentTimeMillis() - lastManualSwitchTime > 2000)
                 
-                val state = display?.state ?: -1
-                Log.w("DROIDOS_TRACE", "onDisplayChanged(0): State=$state, Current=$currentDisplayId, Debounced=$isDebounced (${timeDelta}ms)")
-
                 if (display != null && isDebounced) {
                     // Cancel any pending switch to prevent double-execution
                     if (switchRunnable != null) {
@@ -277,7 +278,6 @@ private var isSoftKeyboardSupport = false
 
                     // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
                     if (display.state == Display.STATE_ON && currentDisplayId != 0) {
-                        Log.w("DROIDOS_TRACE", " -> Auto-Switch Triggered: Phone OPENED (0 ON)")
                         switchRunnable = Runnable { 
                             try { performDisplayChange(0) } catch(e: Exception) {} 
                         }
@@ -285,7 +285,6 @@ private var isSoftKeyboardSupport = false
                     } 
                     // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                     else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
-                        Log.w("DROIDOS_TRACE", " -> Auto-Switch Triggered: Phone CLOSED (0 OFF)")
                         switchRunnable = Runnable {
                             try { 
                                 val d0 = displayManager?.getDisplay(0)
@@ -1011,6 +1010,82 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        val isWatchdogActive = (currentDisplayId >= 2 && Build.VERSION.SDK_INT >= 30)
+
+        // LOG ENTRY: Only log STATE_CHANGE events to verify service is alive
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            Log.d("DROIDOS_WATCHDOG", "Event: STATE_CHANGE | Pkg: ${event.packageName} | Disp: ${event.displayId} | Active: $isWatchdogActive")
+        }
+
+        // [DEBUG WATCHDOG] Monitor Cover Screen (Display 1)
+        if (isWatchdogActive) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                
+                try {
+                    val allWindows = this.windows
+                    
+                    // DIAGNOSTIC: Check what displays are visible to the service
+                    if (allWindows.find { it.displayId == 1 } == null) {
+                         // Only log periodically to avoid flood
+                         if (System.currentTimeMillis() % 2000 < 50) { 
+                             Log.e("DROIDOS_WATCHDOG", "Display 1 (Cover) NOT in window list! Visible IDs: ${allWindows.map { it.displayId }.distinct()}")
+                         }
+                    }
+
+                    val coverWindows = allWindows.filter { it.displayId == 1 }
+
+                    if (coverWindows != null) {
+                        for (window in coverWindows) {
+                            if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                                val node = window.root
+                                val pkg = node?.packageName?.toString()
+                                node?.recycle()
+
+                                if (pkg != null) {
+                                    // 1. LOG EVERYTHING SEEN ON COVER
+                                    Log.w("DROIDOS_WATCHDOG", "DETECTED on Cover: $pkg")
+
+                                    // 2. Filter out System/Launcher
+                                    if (pkg != packageName && 
+                                        pkg != PACKAGE_TRACKPAD && 
+                                        pkg != "com.android.systemui" && 
+                                        pkg != "com.sec.android.app.launcher" && 
+                                        !pkg.contains("inputmethod")) {
+
+                                        Log.w("DROIDOS_WATCHDOG", ">> CATCH: $pkg forbidden. Forcing move to D$currentDisplayId...")
+                                        
+                                        Thread {
+                                            try {
+                                                val tid = shellService?.getTaskId(pkg, null) ?: -1
+                                                Log.w("DROIDOS_WATCHDOG", "   -> Task ID for $pkg: $tid")
+                                                
+                                                if (tid != -1) {
+                                                    // Move
+                                                    shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
+                                                    // Force Mode
+                                                    shellService?.runCommand("am task set-windowing-mode $tid 5") 
+                                                    // Ensure Size
+                                                    shellService?.runCommand("am task resize $tid 0 0 1000 1000")
+                                                } else {
+                                                    Log.e("DROIDOS_WATCHDOG", "   -> FAIL: No Task ID found")
+                                                }
+                                            } catch(e: Exception) {
+                                                Log.e("DROIDOS_WATCHDOG", "   -> EXCEPTION", e)
+                                            }
+                                        }.start()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("DROIDOS_WATCHDOG", "Error scanning windows", e)
+                }
+            }
+        }
+
         // --- IMPROVED ACTIVE WINDOW TRACKING (Display Aware) ---
         // Prioritizes events from the current display (Virtual Display for Glasses).
         // Filters getWindows() by displayId to avoid false positives from Phone Screen.
@@ -1525,18 +1600,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun dismissKeyboardAndRestore() { val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); if (searchBar != null && searchBar.hasFocus()) { searchBar.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(searchBar.windowToken, 0) }; val dpiInput = drawerView?.findViewById<EditText>(R.id.input_dpi_value); if (dpiInput != null && dpiInput.hasFocus()) { dpiInput.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(dpiInput.windowToken, 0) }; updateDrawerHeight(false) }
 
     // [NEW] Brings the Black Wallpaper to front.
+    // This effectively minimizes whatever app is currently top, preventing the "Last App" freeze.
     private fun showWallpaper() {
-        if (currentDisplayId < 2) return
         try {
             val intent = Intent(this, MainActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             intent.putExtra("WALLPAPER_MODE", true)
-            
             val options = android.app.ActivityOptions.makeBasic()
             options.setLaunchDisplayId(currentDisplayId)
-            
-            val ctx = displayContext ?: this
-            ctx.startActivity(intent, options.toBundle())
+            startActivity(intent, options.toBundle())
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show wallpaper", e)
         }
@@ -2427,9 +2499,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 return
             }
 
-            // FORCE NEW TASK helps reparent the activity to the target display
-// FLAG_ACTIVITY_NEW_TASK is crucial for reparenting tasks to a new display
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
             val options = android.app.ActivityOptions.makeBasic()
             options.setLaunchDisplayId(currentDisplayId)
@@ -2439,9 +2509,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 Log.d(TAG, "launchViaApi: bounds=$bounds")
             }
 
-            // [FIX] Use displayContext to ensure the intent starts from the correct display stack
-            val ctx = displayContext ?: this
-            ctx.startActivity(intent, options.toBundle())
+            startActivity(intent, options.toBundle())
             Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
 
         } catch (e: Exception) {
@@ -2466,20 +2534,21 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 null
             }
 
-// Build launch command with Flags (New Task)
+            // Build launch command with freeform mode (--windowingMode 5)
             val cmd = if (component != null) {
-                "am start -n $component --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
+                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
             } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 -f 0x10000000 --user 0"
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
             }
 
-            Log.w("DROIDOS_TRACE", "SHELL EXEC: $cmd")
+            Log.d(TAG, "launchViaShell: $cmd")
 
             Thread {
                 try {
                     shellService?.runCommand(cmd)
+                    Log.d(TAG, "launchViaShell: SUCCESS")
                 } catch (e: Exception) {
-                    Log.e("DROIDOS_TRACE", "SHELL FAIL", e)
+                    Log.e(TAG, "launchViaShell: FAILED", e)
                 }
             }.start()
 
@@ -2570,7 +2639,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
     }
     private fun performDisplayChange(newId: Int) {
-        Log.w("DROIDOS_TRACE", ">>> performDisplayChange: $currentDisplayId -> $newId <<<")
         lastManualSwitchTime = System.currentTimeMillis()
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val targetDisplay = dm.getDisplay(newId) ?: return
@@ -2607,7 +2675,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         targetDisplayIndex = currentDisplayId
         AppPreferences.setTargetDisplayIndex(this, targetDisplayIndex)
         
-        // [NEW] Launch Wallpaper on Virtual Display
+        // WATCHDOG STATE LOG
+        if (currentDisplayId >= 2) {
+            Log.w("DROIDOS_WATCHDOG", ">>> WATCHDOG ENABLED (Targeting Virtual D$currentDisplayId) <<<")
+        } else {
+            Log.w("DROIDOS_WATCHDOG", ">>> WATCHDOG DISABLED (Targeting Physical D$currentDisplayId) <<<")
+        }
+        
+        // [NEW] Launch Wallpaper if on Virtual Display
         // This ensures there is always a window at the bottom of the stack to hold focus.
         if (currentDisplayId >= 2) {
             try {
@@ -3004,28 +3079,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
     private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
-    private fun pickIcon() { toggleDrawer(); try { val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
+    private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
     private fun loadProfile(name: String) { val data = AppPreferences.getProfileData(this, name) ?: return; try { val parts = data.split("|"); selectedLayoutType = parts[0].toInt(); selectedResolutionIndex = parts[1].toInt(); currentDpiSetting = parts[2].toInt(); val pkgList = parts[3].split(","); selectedAppsQueue.clear(); for (pkg in pkgList) { if (pkg.isNotEmpty()) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)) } else { val app = allAppsList.find { it.packageName == pkg }; if (app != null) selectedAppsQueue.add(app) } } }; AppPreferences.saveLastLayout(this, selectedLayoutType); AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); activeProfileName = name; updateSelectedAppsDock(); safeToast("Loaded: $name"); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } }
-
-    // [DIAGNOSTIC] Check which display currently holds the app
-    private fun logAppLocation(tag: String, pkg: String) {
-        Thread {
-            try {
-                val onVirtual = shellService?.getVisiblePackages(currentDisplayId)?.contains(pkg) == true
-                val onMain = shellService?.getVisiblePackages(0)?.contains(pkg) == true
-                val onCover = shellService?.getVisiblePackages(1)?.contains(pkg) == true
-                
-                val loc = when {
-                    onVirtual -> "VIRTUAL($currentDisplayId)"
-                    onMain -> "MAIN(0)"
-                    onCover -> "COVER(1)"
-                    else -> "HIDDEN/UNKNOWN"
-                }
-                Log.w("DROIDOS_DIAG", "$tag: $pkg is on $loc")
-            } catch(e: Exception) {}
-        }.start()
-    }
     
 
     // === EXECUTE LAUNCH - START ===
@@ -3048,12 +3104,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         isExecuting = true
         pendingExecutionNeeded = false // Reset pending flag for THIS run
-        
-        // [TRACE] Log the ID exactly when execution starts
-        Log.w("DROIDOS_TRACE", ">>> executeLaunch START. currentDisplayId=$currentDisplayId <<<")
-        
-        // [FIX] REMOVED refreshDisplayId() to prevent context resets
-        // If this log shows 0 when it should be 2, we know the variable was reset externally (by listener)
 
         // Get currently visible apps on this display, excluding ourselves and the trackpad
         val activeApps = shellService?.getVisiblePackages(currentDisplayId)
@@ -3062,8 +3112,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             ?: emptyList()
 
         if (closeDrawer) toggleDrawer()
-        // [FIX] Removed refreshDisplayId(). Rely on currentDisplayId set by performDisplayChange.
-        // This prevents apps from accidentally tiling on Display 0 when the context query flakes out.
+        refreshDisplayId()
 
         // Save queue
         val identifiers = selectedAppsQueue.map { it.getIdentifier() }
@@ -3111,43 +3160,45 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }
                 
                 // Handle minimized apps
-                                val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
-                                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
                 
-                                // If clearing screen on Virtual Display (no active apps), just show Wallpaper
-                                if (currentDisplayId >= 2 && activeApps.isEmpty() && minimizedApps.isNotEmpty()) {
-                                     showWallpaper()
-                                } else {
-                                    // Standard Minimize Loop
-                                    for (app in minimizedApps) { 
-                                        if (app.packageName != PACKAGE_BLANK) { 
-                                            Thread {
-                                                try { 
-                                                    val basePkg = app.getBasePackage()
-                                                    val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
-                                                    if (tid != -1) shellService?.moveTaskToBack(tid) 
-                                                } catch (e: Exception) {} 
-                                            }.start()
-                                        } 
-                                    }
-                                }
-                                
-                                // Kill/Prep Logic - Only wait if we actually have apps to launch
-                                if (activeApps.isNotEmpty()) {
-                                    if (killAppOnExecute) { 
-                                        for (app in activeApps) { 
-                                            if (app.packageName != PACKAGE_BLANK) { 
-                                                val basePkg = app.getBasePackage()
-                                                shellService?.forceStop(basePkg)
-                                            } 
-                                        }
-                                        Thread.sleep(400) 
-                                    } else { 
-                                        Thread.sleep(100) 
-                                    }
-                                }
-                                
-                // === LAUNCH AND TILE APPS (Robust Background Loop) ===
+                // If on Virtual Display and NO active apps (Show Desktop), just launch Wallpaper
+                if (currentDisplayId >= 2 && activeApps.isEmpty() && minimizedApps.isNotEmpty()) {
+                    showWallpaper()
+                } else {
+                    // Standard Loop
+                    for (app in minimizedApps) { 
+                        if (app.packageName != PACKAGE_BLANK) { 
+                            try { 
+                                val basePkg = app.getBasePackage()
+                                val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                                if (tid != -1) shellService?.moveTaskToBack(tid) 
+                            } catch (e: Exception) {} 
+                        } 
+                    }
+                }
+                
+                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                
+                // Kill/Prep Logic - Only wait if we actually have apps to launch
+                // [FIX] If activeApps is empty (we are just minimizing), SKIP THE SLEEP.
+                if (activeApps.isNotEmpty()) {
+                    if (killAppOnExecute) { 
+                        for (app in activeApps) { 
+                            if (app.packageName != PACKAGE_BLANK) { 
+                                val basePkg = app.getBasePackage()
+                                shellService?.forceStop(basePkg)
+                            } 
+                        }
+                        Thread.sleep(400) 
+                    } else { 
+                        Thread.sleep(100) 
+                    }
+                }
+                
+// === LAUNCH AND TILE APPS (Robust Background Loop) ===
+                // [FIX] We use Thread.sleep inside this background thread instead of uiHandler.postDelayed.
+                // This ensures the sequence continues executing even if the UI thread is throttled/closed.
                 for (i in 0 until minOf(activeApps.size, rects.size)) {
                     val app = activeApps[i]
                     val bounds = rects[i]
@@ -3157,58 +3208,71 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     val basePkg = app.getBasePackage()
                     val cls = app.className
 
-                    uiHandler.post { debugShowAppIdentification("TILE[$i]", basePkg, cls) }
+                    // UI Update must be posted
+                    uiHandler.post {
+                        debugShowAppIdentification("TILE[$i]", basePkg, cls)
+                    }
 
-                    // 1. Launch App (API PREFERRED)
-                    // This uses the correct displayContext now, which is the most reliable way to target screens.
-                    launchViaApi(app.packageName, app.className, bounds)
+                    // 1. Launch App (SYNCHRONOUSLY)
+                    val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                    val cmd = if (component != null) {
+                        "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                    } else {
+                        "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                    }
+
+                    try {
+                        Log.d(TAG, "Tile[$i]: Executing Launch: $cmd")
+                        shellService?.runCommand(cmd)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tile[$i]: Launch failed", e)
+                    }
 
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
 
                     // 2. WAIT AND RESIZE (Sequential/Blocking)
+                    // We block the loop here until THIS window is ready and resized.
+                    // This ensures App 1 is fully positioned before we even touch App 2.
                     try {
+                        // SMART POLLING:
+                        // Active Window (Swap): Returns almost instantly.
+                        // Cold Boot: Waits up to 3s.
                         var tid = -1
                         val maxWait = if (isGeminiApp) 8000L else 3000L
                         val startPoll = System.currentTimeMillis()
 
-                        // Poll for Task ID
+                        // Fast poll (50ms) for snappiness
                         while (System.currentTimeMillis() - startPoll < maxWait) {
                             tid = shellService?.getTaskId(basePkg, cls) ?: -1
                             if (tid != -1) break
                             Thread.sleep(50)
                         }
 
-                        if (tid != -1) {
-                            // DIAGNOSTIC 2: Did it land correctly?
-                            // If not, we trigger the EMERGENCY MOVE
-                            val visibleOnTarget = shellService?.getVisiblePackages(currentDisplayId)?.contains(basePkg) == true
-                            
-                            if (!visibleOnTarget) {
-                                Log.e("DROIDOS_DIAG", "MISSED TARGET: $basePkg is NOT on $currentDisplayId. Forcing Move...")
-                                shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
-                                Thread.sleep(200) // Wait for move
-                            }
+                        // If we found it instantly (already running), delay is minimal (50ms).
+                        // If it took time, we wait a tiny bit for the window surface to be ready.
+                        val wasInstant = (System.currentTimeMillis() - startPoll < 150)
+                        if (!wasInstant) Thread.sleep(200)
 
-                            // [FIX] Force Freeform Mode Explicitly via Shell
-                            shellService?.runCommand("am task set-windowing-mode $tid 5")
-                            Thread.sleep(50)
+                        // PASS 1: Set Mode & Resize
+                        Log.d(TAG, "Tile[$i]: Repositioning ${app.label} (TID: $tid)")
+                        shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
 
-                            // Apply Bounds
-                            shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
-                            
-                            // Double-tap resize for Samsung
-                            shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            
-                            // DIAGNOSTIC 3: Final check
-                            logAppLocation("POST-TILE", basePkg)
-                        } else {
-                            Log.e("DROIDOS_DIAG", "TASK ID NOT FOUND: $basePkg")
+                        // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
+                        // If we are just swapping active windows, Pass 1 is usually enough.
+                        // We do a quick check-up resize.
+                        if (!wasInstant) Thread.sleep(200)
+
+                        val finalTid = shellService?.getTaskId(basePkg, cls) ?: -1
+                        if (finalTid != -1) {
+                            shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
                         }
 
                     } catch (e: Exception) {
-                        Log.e(TAG, "Tile[$i]: Resize failed", e)
+                        Log.e(TAG, "Tile[$i]: Reposition failed", e)
                     }
 
+                    // 3. Buffer before next app
+                    // Increased to 150ms to ensure WindowManager state settles before next 'am start'
                     Thread.sleep(150)
                 }
                 // === LAUNCH AND TILE APPS - END ===
@@ -3675,30 +3739,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                                                          activePackageName = null
                                                                      }
                                                                      
-                                     // MINIMIZING: Move to Back
+    // MINIMIZING: Move to Back
                                      Thread {
                                          try {
-                                             val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                             
                                              // Virtual Display Strategy
                                              if (currentDisplayId >= 2) {
-                                                 // 1. Force Resize to 1x1 at 0,0 (Hide it immediately)
-                                                 // We do this for ALL apps on virtual display to avoid "Visible Corner" and timeouts.
-                                                 if (tid != -1) {
-                                                     shellService?.runCommand("am task set-windowing-mode $tid 5")
-                                                     shellService?.repositionTask(basePkg, cls, 0, 0, 1, 1)
-                                                 }
+                                                 // Check if this is the ONLY visible app
+                                                 val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                                 val isLastApp = visibleCount <= 1 
 
-                                                 // 2. Launch Wallpaper (Holds focus, prevents 5s hang)
-                                                 showWallpaper()
-                                                 
-                                                 // 3. System Minimize (Clean up stack later)
-                                                 if (tid != -1) {
-                                                     Thread.sleep(500) // Small delay to let wallpaper appear
-                                                     shellService?.moveTaskToBack(tid)
+                                                 if (isLastApp) {
+                                                     // LAST APP: "Launch" the wallpaper to cover it.
+                                                     // This avoids the system hanging while searching for a Home screen.
+                                                     showWallpaper()
+                                                 } else {
+                                                     // NOT LAST: Standard minimize works fine (focus transfers to app behind)
+                                                     val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                                     if (tid != -1) shellService?.moveTaskToBack(tid)
                                                  }
                                              } else {
                                                  // Standard Display (Phone/Cover)
+                                                 val tid = shellService?.getTaskId(basePkg, cls) ?: -1
                                                  if (tid != -1) shellService?.moveTaskToBack(tid)
                                              }
                                          } catch(e: Exception){}
