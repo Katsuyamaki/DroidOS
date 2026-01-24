@@ -308,6 +308,9 @@ private var isSoftKeyboardSupport = false
     private var drawerView: View? = null
     private var debugStatusView: TextView? = null
     
+    // [NEW] Persist tiling info for Watchdog recovery
+    private val packageRectCache = java.util.concurrent.ConcurrentHashMap<String, Rect>()
+    
     private lateinit var bubbleParams: WindowManager.LayoutParams
     private lateinit var drawerParams: WindowManager.LayoutParams
 
@@ -1880,52 +1883,52 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // 1. Get Task ID
                 var tid = shellService?.getTaskId(pkg, null) ?: -1
                 if (tid == -1) {
-                    Thread.sleep(200) // Wait briefly and retry
+                    Thread.sleep(200) 
                     tid = shellService?.getTaskId(pkg, null) ?: -1
                 }
 
                 if (tid != -1) {
-                    Log.w("DROIDOS_WATCHDOG", "Targeting Task $tid for $pkg. Starting Force Loop...")
+                    Log.w("DROIDOS_WATCHDOG", "Targeting Task $tid for $pkg. Starting Aggressive Loop...")
 
-                    // 2. Find intended bounds from queue
-                    var bounds: Rect? = null
-                    val appIndex = selectedAppsQueue.indexOfFirst { 
-                        it.packageName == pkg || it.getBasePackage() == pkg 
-                    }
+                    // 2. Lookup Cache first (More reliable than live queue)
+                    var bounds: Rect? = packageRectCache[pkg]
                     
-                    if (appIndex != -1) {
-                         val rects = getLayoutRects()
-                         if (appIndex < rects.size) {
-                             bounds = rects[appIndex]
-                         }
+                    // Fallback to queue if cache missing
+                    if (bounds == null) {
+                        val appIndex = selectedAppsQueue.indexOfFirst { 
+                            it.packageName == pkg || it.getBasePackage() == pkg 
+                        }
+                        if (appIndex != -1) {
+                             val rects = getLayoutRects()
+                             if (appIndex < rects.size) bounds = rects[appIndex]
+                        }
                     }
 
-                    // 3. Force Loop (3 attempts)
-                    for (i in 1..3) {
-                        // Move to Display
+                    // 3. AGGRESSIVE Loop (10 attempts, fast interval)
+                    for (i in 1..10) {
+                        // Combined command for speed (less IPC overhead)
                         shellService?.runCommand("am task move-task-to-display $tid $targetDisplayId")
-                        // Force Freeform
                         shellService?.runCommand("am task set-windowing-mode $tid 5")
                         
-                        // Apply Tiling Bounds (Restoring Slot)
                         if (bounds != null) {
-                            shellService?.repositionTask(pkg, null, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            // Send resize immediately after move
                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: Moving to D$targetDisplayId @ $bounds")
+                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId @ $bounds")
                         } else {
-                            // Default fallback
                             shellService?.runCommand("am task resize $tid 0 0 1000 1000")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: Moving to D$targetDisplayId (Default Size)")
+                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId (Default)")
                         }
 
                         // Check success
                         val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)?.contains(pkg) == true
                         if (visibleOnTarget) {
                             Log.w("DROIDOS_WATCHDOG", "SUCCESS: App moved on attempt $i")
+                            // One final resize to ensure it stuck
+                            if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
                             break
                         }
                         
-                        Thread.sleep(500) // Wait before retry
+                        Thread.sleep(200) // Fast retry (200ms)
                     }
                 } else {
                     Log.e("DROIDOS_WATCHDOG", "Could not find Task ID for $pkg")
@@ -3220,6 +3223,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     uiHandler.post {
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
+                    
+                    // [CACHE] Store intended bounds for Watchdog recovery
+                    packageRectCache[basePkg] = bounds
 
                     // 1. Launch App (SYNCHRONOUSLY)
                     val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
