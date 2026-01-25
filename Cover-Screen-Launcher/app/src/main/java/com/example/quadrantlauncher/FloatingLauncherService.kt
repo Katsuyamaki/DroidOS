@@ -1256,6 +1256,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 loadDisplaySettings(currentDisplayId)
                 isExpanded = false
                 safeToast("Recalled to Display $targetDisplayId")
+
+                // [FIX] Apply layout immediately if in Instant Mode
+                if (isInstantMode) {
+                    uiHandler.postDelayed({ applyLayoutImmediate() }, 500)
+                }
             }
         } else {
             // First time initialization
@@ -2153,6 +2158,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         setupDrawer()
         updateBubbleIcon()
         loadDisplaySettings(currentDisplayId)
+
+        // [FIX] Apply layout immediately if in Instant Mode
+        if (isInstantMode) {
+            uiHandler.postDelayed({ applyLayoutImmediate() }, 500)
+        }
     }
     
     private fun startReorderMode(index: Int) { if (!isReorderTapEnabled) return; if (index < 0 || index >= selectedAppsQueue.size) return; val prevIndex = reorderSelectionIndex; reorderSelectionIndex = index; val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter; if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex); adapter?.notifyItemChanged(reorderSelectionIndex); safeToast("Tap another app to Swap") }
@@ -2785,6 +2795,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         updateBubbleIcon()
         isExpanded = false
         safeToast("Switched to Display $currentDisplayId (${targetDisplay.name})")
+
+        // [FIX] Apply layout immediately if in Instant Mode
+        if (isInstantMode) {
+            uiHandler.postDelayed({ applyLayoutImmediate() }, 500)
+        }
     }
     private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
