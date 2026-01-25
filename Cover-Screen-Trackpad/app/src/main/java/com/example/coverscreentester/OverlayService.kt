@@ -1977,6 +1977,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     private fun removeOldViews() {
+        Log.i(BT_TAG, "removeOldViews() called - Attempting to clean up all overlays")
+        
         val viewsToRemove = listOf(trackpadLayout, bubbleView, cursorLayout)
         for (view in viewsToRemove) {
             if (view != null && view.parent != null && windowManager != null) {
@@ -3990,10 +3992,18 @@ if (isResize) {
     // END BLOCK: resetMirrorKeyboardPosition
     // =================================================================================
     fun cycleInputTarget() {
+        Log.i(BT_TAG, "cycleInputTarget() initiated. Current: $inputTargetDisplayId, Host: $currentDisplayId")
+        
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
-        if (nextId == -1) { inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() }
-        else { inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() }
+        
+        if (nextId == -1) { 
+            Log.w(BT_TAG, "Cycle -> Switching to LOCAL ($currentDisplayId). Removing BT Capture.")
+            inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
+        } else { 
+            Log.w(BT_TAG, "Cycle -> Switching to REMOTE ($nextId). Creating BT Capture.")
+            inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
+        }
     }
 
     // =================================================================================
@@ -4132,9 +4142,11 @@ if (isResize) {
     //          intercepts all Bluetooth mouse input when targeting a virtual display.
     // =================================================================================
     private fun createBtMouseCaptureOverlay() {
-        Log.d(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.d(BT_TAG, "│ createBtMouseCaptureOverlay() CALLED                    │")
-        Log.d(BT_TAG, "└─────────────────────────────────────────────────────────┘")
+        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
+        Log.w(BT_TAG, "│ CREATE REQUESTED: createBtMouseCaptureOverlay()         │")
+        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
+        // Log stack trace to see WHO requested creation
+        Log.d(BT_TAG, "├─ Trigger Source:", Exception("Creation Stack Trace"))
         Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
         Log.d(BT_TAG, "├─ windowManager null?: ${windowManager == null}")
         Log.d(BT_TAG, "├─ inputTargetDisplayId: $inputTargetDisplayId")
@@ -4155,6 +4167,15 @@ if (isResize) {
         isBtMouseDragging = false
 
         btMouseCaptureLayout = object : FrameLayout(this@OverlayService) {
+            
+            // [FIX] View-Level Cursor Hiding (Works without Shizuku on API 24+)
+            init {
+                if (Build.VERSION.SDK_INT >= 24) {
+                    try {
+                        this.pointerIcon = android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
+                    } catch(e: Exception) {}
+                }
+            }
 
             override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
                 val isMouseSource = event.isFromSource(InputDevice.SOURCE_MOUSE) ||
@@ -4351,13 +4372,17 @@ if (isResize) {
     // BT MOUSE CAPTURE OVERLAY - REMOVE
     // =================================================================================
     private fun removeBtMouseCaptureOverlay() {
-        Log.d(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.d(BT_TAG, "│ removeBtMouseCaptureOverlay() CALLED                    │")
-        Log.d(BT_TAG, "└─────────────────────────────────────────────────────────┘")
+        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
+        Log.w(BT_TAG, "│ REMOVE REQUESTED: removeBtMouseCaptureOverlay()         │")
+        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
+        
+        // CRITICAL: Log the stack trace to identify the culprit
+        Log.w(BT_TAG, ">>> REMOVAL TRIGGER TRACE <<<", Exception("Who called remove?"))
+        
         Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
 
         if (!isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Not active")
+            Log.d(BT_TAG, "├─ SKIP: Not active (Logical state was already false)")
             return
         }
 
@@ -4424,6 +4449,20 @@ if (isResize) {
     
     private fun hideSystemCursor() {
         Log.d(BT_TAG, "hideSystemCursor() called")
+        
+        // 1. Try Shizuku (System Level)
+        if (shellService != null) {
+            try {
+                shellService?.setSystemCursorVisibility(false)
+                systemCursorHidden = true
+                Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Shizuku")
+                return
+            } catch (e: Exception) {
+                Log.e(BT_TAG, "├─ Shizuku cursor hide failed", e)
+            }
+        }
+        
+        // 2. Try Local Reflection (Legacy)
         try {
             val imClass = Class.forName("android.hardware.input.InputManager")
             val getInstance = imClass.getMethod("getInstance")
@@ -4431,7 +4470,7 @@ if (isResize) {
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, false)
             systemCursorHidden = true
-            Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via InputManager.setCursorVisibility(false)")
+            Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Local Reflection")
         } catch (e: Exception) {
             Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
             // Fallback: Set pointer speed to minimum (doesn't actually hide but reduces visibility)
@@ -4452,6 +4491,17 @@ if (isResize) {
             return
         }
         
+        // 1. Try Shizuku
+        if (shellService != null) {
+            try {
+                shellService?.setSystemCursorVisibility(true)
+                systemCursorHidden = false
+                Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Shizuku")
+                return
+            } catch (e: Exception) {}
+        }
+        
+        // 2. Try Local Reflection
         try {
             val imClass = Class.forName("android.hardware.input.InputManager")
             val getInstance = imClass.getMethod("getInstance")
@@ -4459,7 +4509,7 @@ if (isResize) {
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, true)
             systemCursorHidden = false
-            Log.d(BT_TAG, "├─ ★ System cursor SHOWN via InputManager.setCursorVisibility(true)")
+            Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Local Reflection")
         } catch (e: Exception) {
             Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
             try {

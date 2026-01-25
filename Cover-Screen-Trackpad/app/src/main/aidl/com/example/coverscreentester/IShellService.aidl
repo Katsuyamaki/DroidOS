@@ -20,4 +20,5 @@ interface IShellService {
     void setScreenOff(int displayIndex, boolean turnOff);
     void setBrightness(int value);
     boolean setBrightnessViaDisplayManager(int displayId, float brightness);
+    void setSystemCursorVisibility(boolean visible);
 }

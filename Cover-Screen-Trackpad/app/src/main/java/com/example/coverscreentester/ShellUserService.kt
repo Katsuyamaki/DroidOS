@@ -264,6 +264,20 @@ class ShellUserService : IShellService.Stub() {
         return false
     }
 
+    override fun setSystemCursorVisibility(visible: Boolean) {
+        val token = Binder.clearCallingIdentity()
+        try {
+            if (this::inputManager.isInitialized) {
+                val method = inputManager.javaClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
+                method.invoke(inputManager, visible)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set cursor visibility", e)
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+
     // --- INPUT INJECTION ---
     override fun injectKey(keyCode: Int, action: Int, metaState: Int, displayId: Int, deviceId: Int) {
         if (!this::inputManager.isInitialized) return
