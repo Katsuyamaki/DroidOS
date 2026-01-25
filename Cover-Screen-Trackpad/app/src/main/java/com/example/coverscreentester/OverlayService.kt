@@ -136,7 +136,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
             
             // 2. Kill the process after a short delay
             handler.postDelayed({
-                forceExit()
+                // Always Restart for Soft Restart command (Ignore preference)
+                removeOldViews()
+                killProcessAndExit()
             }, 500)
         }
     }
@@ -2644,25 +2646,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
     }
 
     fun forceExit() {
-        Log.i(TAG, "forceExit called")
+        Log.i(TAG, "forceExit called. Persistent: ${prefs.prefPersistentService}")
         try {
             removeOldViews()
             
-            // Note: performSoftRestart calls scheduleRestart() explicitly before calling this.
-            // But if called from elsewhere (Button), we ensure it schedules if persistent.
-            // We duplicate the call here to be safe (AlarmManager overwrites existing pending intents).
             if (prefs.prefPersistentService) {
+                // KEEP ALIVE ON: Schedule restart and kill process (Auto-Restart)
                 scheduleRestart()
+                killProcessAndExit()
+            } else {
+                // KEEP ALIVE OFF: Disable service completely (Terminate)
+                // This stops the service and prevents auto-restart by the system
+                if (Build.VERSION.SDK_INT >= 24) {
+                    disableSelf()
+                } else {
+                    stopSelf()
+                }
+                // Optional: Kill process to ensure clean slate
+                handler.postDelayed({ 
+                    Process.killProcess(Process.myPid()) 
+                    System.exit(0)
+                }, 100)
             }
-
-            stopSelf()
-            // Allow small window for Alarm registration IPC
-            Thread.sleep(200) 
-            Process.killProcess(Process.myPid())
-            System.exit(0)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    // Helper for Soft Restart and Keep-Alive kills
+    private fun killProcessAndExit() {
+        stopSelf()
+        try { Thread.sleep(200) } catch(e: Exception){}
+        Process.killProcess(Process.myPid())
+        System.exit(0)
     }
     // =================================================================================
     // FUNCTION: syncMirrorWithPhysicalKeyboard
