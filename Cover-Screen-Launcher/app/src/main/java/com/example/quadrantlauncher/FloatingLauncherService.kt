@@ -206,16 +206,16 @@ private var isSoftKeyboardSupport = false
     )
 
     val AVAILABLE_COMMANDS = listOf(
-        CommandDef("SWAP", "Swap Slots", 2, "Swap app in Slot A with Slot B"),
-        CommandDef("SWAP_ACTIVE_LEFT", "Move Active Left", 0, "Move focused window to prev slot"),
-        CommandDef("SWAP_ACTIVE_RIGHT", "Move Active Right", 0, "Move focused window to next slot"),
-        CommandDef("HIDE", "Hide (Blank)", 1, "Replace slot with blank space"),
-        CommandDef("MINIMIZE", "Minimize", 1, "Minimize slot (shift others)"),
-        CommandDef("UNMINIMIZE", "Restore", 1, "Restore app in slot"),
-        CommandDef("KILL", "Kill App", 1, "Force stop app in slot"),
         CommandDef("OPEN_DRAWER", "Toggle Drawer", 0, "Show/Hide Launcher"),
         CommandDef("SET_FOCUS", "Set Focus", 1, "Focus app in slot #"),
-        CommandDef("FOCUS_LAST", "Focus Last", 0, "Switch to previous app")
+        CommandDef("FOCUS_LAST", "Focus Last", 0, "Switch to previous app"),
+        CommandDef("KILL", "Kill App", 1, "Force stop app in slot"),
+        CommandDef("SWAP_ACTIVE_LEFT", "Move Active Left", 0, "Move focused window to prev slot"),
+        CommandDef("SWAP_ACTIVE_RIGHT", "Move Active Right", 0, "Move focused window to next slot"),
+        CommandDef("MINIMIZE", "Minimize", 1, "Minimize slot (shift others)"),
+        CommandDef("UNMINIMIZE", "Restore", 1, "Restore app in slot"),
+        CommandDef("HIDE", "Hide (Blank)", 1, "Replace slot with blank space"),
+        CommandDef("SWAP", "Swap Slots", 2, "Swap app in Slot A with Slot B")
     )
 
     // Debounce for display switch to prevent flickering
