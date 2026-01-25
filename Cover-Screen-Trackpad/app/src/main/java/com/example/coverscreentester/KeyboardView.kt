@@ -567,7 +567,7 @@ private var customModKeyCode = 0
     private val row4Sym = listOf("ABC", ",", "SPACE", ".")
 
     // Row 5 (Changed TAB to META)
-    private val arrowRow = listOf("META", "CTRL", "ALT", "←", "↑", "↓", "→", "ESC")
+    private val arrowRow = listOf("META", "CTRL", "ALT", "←", "↓", "↑", "→", "ESC")
     
     // Row 6 (Replaced SCREEN with TAB, Removed SCREEN)
     // Note: SCREEN logic is removed, but we keep the key for layout balance, now acting as TAB.

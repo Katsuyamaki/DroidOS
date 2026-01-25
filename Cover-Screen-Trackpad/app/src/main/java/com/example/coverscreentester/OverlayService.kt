@@ -263,8 +263,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
     var currentDisplayId = 0
     var inputTargetDisplayId = 0
-    var isTrackpadVisible = true
-    var isCustomKeyboardVisible = false
+    var isTrackpadVisible = false // Changed: Default OFF
+    var isCustomKeyboardVisible = true // Changed: Default ON
     var isScreenOff = false
     private var isPreviewMode = false
     private var previousImeId: String? = null
@@ -2243,7 +2243,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =================================================================================
         // END BLOCK: TRACKPAD TOUCH LISTENER
         // =================================================================================
-        trackpadLayout?.visibility = View.GONE
+        trackpadLayout?.visibility = if (isTrackpadVisible) View.VISIBLE else View.GONE
         windowManager?.addView(trackpadLayout, trackpadParams)
         updateBorderColor(currentBorderColor)
     }
@@ -3190,6 +3190,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
 
         // Re-apply saved custom mod key
         keyboardOverlay?.setCustomModKey(prefs.customModKey)
+
+        // Force initial visibility based on flag
+        if (isCustomKeyboardVisible) {
+            keyboardOverlay?.show()
+        }
     }
 
 
