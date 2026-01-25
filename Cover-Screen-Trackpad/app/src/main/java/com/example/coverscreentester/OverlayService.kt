@@ -16,6 +16,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
+import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -47,7 +48,7 @@ import android.os.PowerManager
 import java.util.ArrayList
 import com.example.coverscreentester.BuildConfig
 
-class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
+class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
 
 
     private var isAccessibilityReady = false
@@ -1373,6 +1374,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener {
         // =================================================================================
 
         try { displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; displayManager?.registerDisplayListener(this, handler) } catch (e: Exception) {}
+        try { val im = getSystemService(Context.INPUT_SERVICE) as InputManager; im.registerInputDeviceListener(this, handler) } catch (e: Exception) {}
         // =================================================================================
         // VIRTUAL DISPLAY KEEP-ALIVE: Initialize PowerManager
         // =================================================================================
@@ -5221,6 +5223,7 @@ if (isResize) {
         if (Build.VERSION.SDK_INT >= 24) { try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {} }
         Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()
         try { unregisterReceiver(switchReceiver) } catch(e: Exception){};
+        try { val im = getSystemService(Context.INPUT_SERVICE) as InputManager; im.unregisterInputDeviceListener(this) } catch (e: Exception) {}
         if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection)
     }
 
@@ -5379,6 +5382,23 @@ if (isResize) {
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
             }
+        }
+    }
+
+    // =================================================================================
+    // INPUT DEVICE LISTENER
+    // SUMMARY: Detects mouse connection/disconnection. Re-applies cursor hiding
+    //          because Android resets cursor visibility when a mouse reconnects.
+    // =================================================================================
+    override fun onInputDeviceAdded(deviceId: Int) { handleInputDeviceChange() }
+    override fun onInputDeviceRemoved(deviceId: Int) { handleInputDeviceChange() }
+    override fun onInputDeviceChanged(deviceId: Int) { handleInputDeviceChange() }
+
+    private fun handleInputDeviceChange() {
+        if (isBtMouseCaptureActive) {
+            Log.d(BT_TAG, "Input device change detected - Refreshing Cursor Visibility")
+            // Re-hide cursor as connection events often reset it to visible
+            hideSystemCursor()
         }
     }
 
