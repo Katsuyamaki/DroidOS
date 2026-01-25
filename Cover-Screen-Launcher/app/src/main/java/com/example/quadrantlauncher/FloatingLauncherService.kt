@@ -1216,23 +1216,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         restoreQueueFromPrefs()
         // -------------------------
 
-        selectedLayoutType = AppPreferences.getLastLayout(this)
-        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
-        if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
-            val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
-            if (data != null) {
-                val rects = mutableListOf<Rect>()
-                val rectParts = data.split("|")
-                for (rp in rectParts) {
-                    val coords = rp.split(",")
-                    if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
-                }
-                activeCustomRects = rects
-            }
-        }
         updateGlobalFontSize()
         updateBubbleIcon()
-        loadDisplaySettings(currentDisplayId)
+        loadDisplaySettings(currentDisplayId) // Layout loading is now inside here
 
         safeToast("Launcher Ready")
     }
@@ -1277,24 +1263,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 setupDisplayContext(targetDisplayId)
                 setupBubble()
                 setupDrawer()
-                selectedLayoutType = AppPreferences.getLastLayout(this)
-                activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this)
+                
                 updateGlobalFontSize()
                 updateBubbleIcon()
-                loadDisplaySettings(currentDisplayId)
-
-                if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
-                    val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
-                    if (data != null) {
-                        val rects = mutableListOf<Rect>()
-                        val rectParts = data.split("|")
-                        for (rp in rectParts) {
-                            val coords = rp.split(",")
-                            if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
-                        }
-                        activeCustomRects = rects
-                    }
-                }
+                loadDisplaySettings(currentDisplayId) // Layout loading is now inside here
 
                 if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku()
             } catch (e: Exception) {
@@ -1311,6 +1283,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // 1. Margins (Per Display)
         topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId)
         bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId)
+        
+        // 2. Layout & Custom Rects (Per Display)
+        selectedLayoutType = AppPreferences.getLastLayout(this, displayId)
+        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this, displayId)
+        
+        if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+            val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+            if (data != null) {
+                try {
+                    val rects = mutableListOf<Rect>()
+                    val rectParts = data.split("|")
+                    for (rp in rectParts) {
+                        val coords = rp.split(",")
+                        if (coords.size == 4) rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt()))
+                    }
+                    activeCustomRects = rects
+                } catch(e: Exception) {
+                    Log.e(TAG, "Failed to load custom rects", e)
+                }
+            }
+        }
         
         selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId)
         
@@ -2999,7 +2992,24 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === FIND APP BY IDENTIFIER - END ===
 
 
-    private fun selectLayout(opt: LayoutOption) { dismissKeyboardAndRestore(); selectedLayoutType = opt.type; activeCustomRects = opt.customRects; if (opt.type == LAYOUT_CUSTOM_DYNAMIC) { activeCustomLayoutName = opt.name; AppPreferences.saveLastCustomLayoutName(this, opt.name) } else { activeCustomLayoutName = null; AppPreferences.saveLastCustomLayoutName(this, null) }; AppPreferences.saveLastLayout(this, opt.type); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() }
+    private fun selectLayout(opt: LayoutOption) { 
+        dismissKeyboardAndRestore()
+        selectedLayoutType = opt.type
+        activeCustomRects = opt.customRects
+        
+        if (opt.type == LAYOUT_CUSTOM_DYNAMIC) { 
+            activeCustomLayoutName = opt.name
+            AppPreferences.saveLastCustomLayoutName(this, opt.name, currentDisplayId)
+        } else { 
+            activeCustomLayoutName = null
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+        }
+        
+        AppPreferences.saveLastLayout(this, opt.type, currentDisplayId)
+        drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+        
+        if (isInstantMode) applyLayoutImmediate() 
+    }
     private fun saveCurrentAsCustom() { Thread { try { val rawLayouts = shellService!!.getWindowLayouts(currentDisplayId); if (rawLayouts.isEmpty()) { safeToast("Found 0 active app windows"); return@Thread }; val rectStrings = mutableListOf<String>(); for (line in rawLayouts) { val parts = line.split("|"); if (parts.size == 2) { rectStrings.add(parts[1]) } }; if (rectStrings.isEmpty()) { safeToast("Found 0 valid frames"); return@Thread }; val count = rectStrings.size; var baseName = "$count Apps - Custom"; val existingNames = AppPreferences.getCustomLayoutNames(this); var counter = 1; var finalName = "$baseName $counter"; while (existingNames.contains(finalName)) { counter++; finalName = "$baseName $counter" }; AppPreferences.saveCustomLayout(this, finalName, rectStrings.joinToString("|")); safeToast("Saved: $finalName"); uiHandler.post { switchMode(MODE_LAYOUTS) } } catch (e: Exception) { Log.e(TAG, "Failed to save custom layout", e); safeToast("Error saving: ${e.message}") } }.start() }
 
 
@@ -3156,7 +3166,48 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
-    private fun loadProfile(name: String) { val data = AppPreferences.getProfileData(this, name) ?: return; try { val parts = data.split("|"); selectedLayoutType = parts[0].toInt(); selectedResolutionIndex = parts[1].toInt(); currentDpiSetting = parts[2].toInt(); val pkgList = parts[3].split(","); selectedAppsQueue.clear(); for (pkg in pkgList) { if (pkg.isNotEmpty()) { if (pkg == PACKAGE_BLANK) { selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)) } else { val app = allAppsList.find { it.packageName == pkg }; if (app != null) selectedAppsQueue.add(app) } } }; AppPreferences.saveLastLayout(this, selectedLayoutType); AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); activeProfileName = name; updateSelectedAppsDock(); safeToast("Loaded: $name"); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode) applyLayoutImmediate() } catch (e: Exception) { Log.e(TAG, "Failed to load profile", e) } }
+    private fun loadProfile(name: String) { 
+        val data = AppPreferences.getProfileData(this, name) ?: return
+        try { 
+            val parts = data.split("|")
+            selectedLayoutType = parts[0].toInt()
+            selectedResolutionIndex = parts[1].toInt()
+            currentDpiSetting = parts[2].toInt()
+            val pkgList = parts[3].split(",")
+            selectedAppsQueue.clear()
+            for (pkg in pkgList) { 
+                if (pkg.isNotEmpty()) { 
+                    if (pkg == PACKAGE_BLANK) { 
+                        selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)) 
+                    } else { 
+                        val app = allAppsList.find { it.packageName == pkg }
+                        if (app != null) selectedAppsQueue.add(app) 
+                    } 
+                } 
+            }
+            // Save settings for CURRENT DISPLAY
+            AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
+            // Note: Profile loading doesn't inherently set a specific CUSTOM layout name unless we inferred it,
+            // so we might want to clear the custom layout name to avoid mismatches, or keep as is.
+            // For safety, let's clear custom layout name to prevent stale rects if profile used standard layout.
+            if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
+                activeCustomLayoutName = null
+                AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            }
+            
+            AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
+            AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
+            
+            activeProfileName = name
+            updateSelectedAppsDock()
+            safeToast("Loaded: $name")
+            drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+            
+            if (isInstantMode) applyLayoutImmediate() 
+        } catch (e: Exception) { 
+            Log.e(TAG, "Failed to load profile", e) 
+        } 
+    }
     
 
     // === EXECUTE LAUNCH - START ===
@@ -3982,7 +4033,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 val type = intent.getIntExtra("TYPE", -1)
                 if (type != -1) {
                     selectedLayoutType = type
-                    AppPreferences.saveLastLayout(this, type)
+                    AppPreferences.saveLastLayout(this, type, currentDisplayId)
                     refreshQueueAndLayout("Layout: ${getLayoutName(type)}")
                 }
             }
@@ -4284,7 +4335,7 @@ else -> AppHolder(View(parent.context)) } }
                     else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
                     
                     holder.itemView.setOnClickListener { selectLayout(item) }
-                    if (item.isCustomSaved) { holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveLayoutName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); if (activeCustomLayoutName == item.name) { activeCustomLayoutName = newName; AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName) }; switchMode(MODE_LAYOUTS) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveLayoutName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveLayoutName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) } 
+                    if (item.isCustomSaved) { holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveLayoutName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); if (activeCustomLayoutName == item.name) { activeCustomLayoutName = newName; AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId) }; switchMode(MODE_LAYOUTS) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveLayoutName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveLayoutName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) } 
                 }
                 else if (item is ResolutionOption) { 
                     holder.nameInput.setText(item.name); if (item.index >= 100) { holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveResName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomResolution(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); switchMode(MODE_RESOLUTION) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveResName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveResName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) }; val isSelected = (item.index == selectedResolutionIndex); if (isSelected || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { applyResolution(item) } 

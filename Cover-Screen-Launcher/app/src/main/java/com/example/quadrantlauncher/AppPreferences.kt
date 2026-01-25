@@ -84,20 +84,29 @@ object AppPreferences {
     }
     
     // --- GLOBAL LAYOUT PREFS ---
-    fun saveLastLayout(context: Context, layoutId: Int) {
-        getPrefs(context).edit().putInt(KEY_LAST_LAYOUT, layoutId).apply()
-    }
-
-    fun getLastLayout(context: Context): Int {
-        return getPrefs(context).getInt(KEY_LAST_LAYOUT, 2)
+    
+    private fun getLayoutKey(displayId: Int): String {
+        return if (displayId > 1) "KEY_LAST_LAYOUT_VIRTUAL" else "KEY_LAST_LAYOUT_D$displayId"
     }
     
-    fun saveLastCustomLayoutName(context: Context, name: String?) {
-        getPrefs(context).edit().putString(KEY_LAST_CUSTOM_LAYOUT_NAME, name).apply()
+    private fun getCustomLayoutNameKey(displayId: Int): String {
+        return if (displayId > 1) "KEY_LAST_CUSTOM_NAME_VIRTUAL" else "KEY_LAST_CUSTOM_NAME_D$displayId"
     }
 
-    fun getLastCustomLayoutName(context: Context): String? {
-        return getPrefs(context).getString(KEY_LAST_CUSTOM_LAYOUT_NAME, null)
+    fun saveLastLayout(context: Context, layoutId: Int, displayId: Int) {
+        getPrefs(context).edit().putInt(getLayoutKey(displayId), layoutId).apply()
+    }
+
+    fun getLastLayout(context: Context, displayId: Int): Int {
+        return getPrefs(context).getInt(getLayoutKey(displayId), 2)
+    }
+    
+    fun saveLastCustomLayoutName(context: Context, name: String?, displayId: Int) {
+        getPrefs(context).edit().putString(getCustomLayoutNameKey(displayId), name).apply()
+    }
+
+    fun getLastCustomLayoutName(context: Context, displayId: Int): String? {
+        return getPrefs(context).getString(getCustomLayoutNameKey(displayId), null)
     }
 
     // --- PER-DISPLAY SETTINGS ---
