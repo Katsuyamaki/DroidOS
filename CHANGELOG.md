@@ -4,7 +4,7 @@
 ### Major Features
 - **Custom Keybinding System:** Comprehensive overhaul allowing users to define and reorder hotkeys with specialized swap/hide logic.
 - **Hardware Integration:** Integration for Hard Keyboards and Mice, including a Bluetooth Mouse Mirror Mode with corrected Z-order rendering.
-- **Keyboard Navigation:** Full support for navigating the DroidOS Launcher interface using hardware keyboard inputs (Tab and directional arrows).
+- **Keyboard Navigation:** Full support for navigating the DroidOS Launcher interface using hardware keyboard inputs (Tab and directional arrows, also use your keybind cmds without modifier on launcher drawer app queue).
 - **App Focus System:** New internal logic to manage window focus more reliably when switching between apps or displays.
 - **Custom Margin Adjustment:** Added the ability to fine-tune display margins for better layout precision on different screen types.
 

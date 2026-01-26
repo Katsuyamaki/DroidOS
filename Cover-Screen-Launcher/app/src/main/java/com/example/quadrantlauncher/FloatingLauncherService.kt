@@ -337,6 +337,17 @@ private var isSoftKeyboardSupport = false
     
     // === KEYBOARD NAVIGATION STATE ===
     private var selectedListIndex = 0
+    
+    // UI Focus Areas
+    private val FOCUS_SEARCH = 0
+    private val FOCUS_QUEUE = 1
+    private val FOCUS_LIST = 2
+    private var currentFocusArea = FOCUS_SEARCH
+    
+    // Queue Navigation State
+    private var queueSelectedIndex = -1
+    private var queueCommandPending: CommandDef? = null
+    private var queueCommandSourceIndex = -1
     private val TAB_ORDER = listOf(
         MODE_SEARCH, 
         MODE_LAYOUTS, 
@@ -1690,16 +1701,26 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return@setOnKeyListener true
                 }
 
-                // [FIX] DOWN: Move focus from search bar to list
+                // [FIX] DOWN: Search -> Queue (if exists) -> List
                 if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                     dismissKeyboardAndRestore()
                     drawerView?.requestFocus()
                     
-                    // Highlight current selection (usually 0 after tab switch)
-                    if (displayList.isNotEmpty()) {
-                        if (selectedListIndex >= displayList.size) selectedListIndex = 0
-                        mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
-                        mainRecycler.scrollToPosition(selectedListIndex)
+                    if (selectedAppsQueue.isNotEmpty()) {
+                        // Go to Queue
+                        currentFocusArea = FOCUS_QUEUE
+                        queueSelectedIndex = 0
+                        selectedRecycler.adapter?.notifyDataSetChanged()
+                        debugStatusView?.visibility = View.VISIBLE
+                        debugStatusView?.text = "Queue Navigation: Use Arrows / Hotkeys"
+                    } else {
+                        // Go to List
+                        currentFocusArea = FOCUS_LIST
+                        if (displayList.isNotEmpty()) {
+                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler.scrollToPosition(selectedListIndex)
+                        }
                     }
                     return@setOnKeyListener true
                 }
@@ -1737,41 +1758,173 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         drawerView!!.isFocusableInTouchMode = true
         drawerView!!.setOnKeyListener { _, keyCode, event -> 
             if (event.action == KeyEvent.ACTION_DOWN) {
-                when (keyCode) {
-                    // Support both TAB and ALT for cycling
-                    KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
-                        cycleTab(event.isShiftPressed)
-                        return@setOnKeyListener true
+                
+                // GLOBAL: ESCAPE (Cancel/Close)
+                if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                    if (queueCommandPending != null) {
+                        // Cancel pending command
+                        queueCommandPending = null
+                        queueCommandSourceIndex = -1
+                        debugStatusView?.text = "Command Cancelled"
+                        // Refresh to clear highlighting
+                        selectedRecycler.adapter?.notifyDataSetChanged()
+                    } else {
+                        // Close Drawer
+                        toggleDrawer()
                     }
-                    KeyEvent.KEYCODE_DPAD_UP -> {
-                        if (selectedListIndex > 0) {
-                            val old = selectedListIndex
-                            selectedListIndex--
-                            mainRecycler.adapter?.notifyItemChanged(old)
-                            mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
-                            mainRecycler.scrollToPosition(selectedListIndex)
-                        }
-                        return@setOnKeyListener true
-                    }
-                    KeyEvent.KEYCODE_DPAD_DOWN -> {
-                        if (selectedListIndex < displayList.size - 1) {
-                            val old = selectedListIndex
-                            selectedListIndex++
-                            mainRecycler.adapter?.notifyItemChanged(old)
-                            mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
-                            mainRecycler.scrollToPosition(selectedListIndex)
-                        }
-                        return@setOnKeyListener true
-                    }
-                    KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_SPACE -> {
-                         // Activate selected item
-                         val holder = mainRecycler.findViewHolderForAdapterPosition(selectedListIndex)
-                         holder?.itemView?.performClick()
-                         return@setOnKeyListener true
-                    }
-                    KeyEvent.KEYCODE_BACK -> { toggleDrawer(); return@setOnKeyListener true }
-                    KeyEvent.KEYCODE_VOLUME_UP -> { if(isScreenOffState) wakeUp(); return@setOnKeyListener true }
+                    return@setOnKeyListener true
                 }
+
+                // GLOBAL: TAB (Switch Modes)
+                if (keyCode == KeyEvent.KEYCODE_TAB || keyCode == KeyEvent.KEYCODE_ALT_LEFT || keyCode == KeyEvent.KEYCODE_ALT_RIGHT) {
+                    cycleTab(event.isShiftPressed)
+                    return@setOnKeyListener true
+                }
+
+                // === QUEUE NAVIGATION MODE ===
+                if (currentFocusArea == FOCUS_QUEUE) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (queueSelectedIndex > 0) {
+                                val old = queueSelectedIndex
+                                queueSelectedIndex--
+                                selectedRecycler.adapter?.notifyItemChanged(old)
+                                selectedRecycler.adapter?.notifyItemChanged(queueSelectedIndex)
+                                selectedRecycler.scrollToPosition(queueSelectedIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (queueSelectedIndex < selectedAppsQueue.size - 1) {
+                                val old = queueSelectedIndex
+                                queueSelectedIndex++
+                                selectedRecycler.adapter?.notifyItemChanged(old)
+                                selectedRecycler.adapter?.notifyItemChanged(queueSelectedIndex)
+                                selectedRecycler.scrollToPosition(queueSelectedIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            // Exit to Search
+                            currentFocusArea = FOCUS_SEARCH
+                            queueSelectedIndex = -1 // Clear highlight
+                            selectedRecycler.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.GONE
+                            searchBar.requestFocus()
+                            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                            imm.showSoftInput(searchBar, InputMethodManager.SHOW_IMPLICIT)
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            // Exit to List
+                            currentFocusArea = FOCUS_LIST
+                            queueSelectedIndex = -1 // Clear highlight
+                            selectedRecycler.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.GONE
+                            
+                            if (displayList.isNotEmpty()) {
+                                if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                                mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
+                                mainRecycler.scrollToPosition(selectedListIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_SPACE -> {
+                            if (queueCommandPending != null) {
+                                // COMPLETE 2-STEP COMMAND
+                                val intent = Intent()
+                                    .putExtra("COMMAND", queueCommandPending!!.id)
+                                    .putExtra("INDEX_A", queueCommandSourceIndex + 1)
+                                    .putExtra("INDEX_B", queueSelectedIndex + 1)
+                                handleWindowManagerCommand(intent)
+                                
+                                queueCommandPending = null
+                                queueCommandSourceIndex = -1
+                                debugStatusView?.text = "Command Executed"
+                            } else {
+                                // DEFAULT ACTION: SET FOCUS
+                                val intent = Intent().putExtra("COMMAND", "SET_FOCUS").putExtra("INDEX", queueSelectedIndex + 1)
+                                handleWindowManagerCommand(intent)
+                            }
+                            return@setOnKeyListener true
+                        }
+                    }
+                    
+                    // COMMAND SHORTCUTS (A-Z)
+                    // Check if key matches any configured bind (ignoring modifiers)
+                    for (cmd in AVAILABLE_COMMANDS) {
+                        val bind = AppPreferences.getKeybind(this, cmd.id)
+                        if (bind.second == keyCode) { // Match KeyCode
+                            if (cmd.argCount == 2) {
+                                // 2-Step Command (e.g. Swap) -> Start Selection Mode
+                                queueCommandPending = cmd
+                                queueCommandSourceIndex = queueSelectedIndex
+                                debugStatusView?.visibility = View.VISIBLE
+                                debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
+                                selectedRecycler.adapter?.notifyDataSetChanged() // Refresh for source highlight
+                            } else {
+                                // 1-Step Command (e.g. Kill, Minimize) -> Execute Immediately
+                                val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
+                                handleWindowManagerCommand(intent)
+                            }
+                            return@setOnKeyListener true
+                        }
+                    }
+                    return@setOnKeyListener true
+                }
+
+                // === LIST NAVIGATION MODE ===
+                if (currentFocusArea == FOCUS_LIST) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            if (selectedListIndex > 0) {
+                                val old = selectedListIndex
+                                selectedListIndex--
+                                mainRecycler.adapter?.notifyItemChanged(old)
+                                mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
+                                mainRecycler.scrollToPosition(selectedListIndex)
+                            } else {
+                                // Top of list reached -> Go to Queue (if exists) or Search
+                                if (selectedAppsQueue.isNotEmpty()) {
+                                    currentFocusArea = FOCUS_QUEUE
+                                    queueSelectedIndex = 0
+                                    selectedRecycler.adapter?.notifyDataSetChanged()
+                                    debugStatusView?.visibility = View.VISIBLE
+                                    debugStatusView?.text = "Queue Navigation"
+                                    
+                                    // Clear list highlight
+                                    val oldList = selectedListIndex
+                                    // selectedListIndex = -1 // Optional: keep position memory?
+                                    mainRecycler.adapter?.notifyItemChanged(oldList)
+                                } else {
+                                    currentFocusArea = FOCUS_SEARCH
+                                    searchBar.requestFocus()
+                                }
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (selectedListIndex < displayList.size - 1) {
+                                val old = selectedListIndex
+                                selectedListIndex++
+                                mainRecycler.adapter?.notifyItemChanged(old)
+                                mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
+                                mainRecycler.scrollToPosition(selectedListIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_SPACE -> {
+                             // Activate selected item
+                             val holder = mainRecycler.findViewHolderForAdapterPosition(selectedListIndex)
+                             holder?.itemView?.performClick()
+                             return@setOnKeyListener true
+                        }
+                    }
+                }
+
+                // Global Fallbacks
+                if (keyCode == KeyEvent.KEYCODE_BACK) { toggleDrawer(); return@setOnKeyListener true }
+                if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) { if(isScreenOffState) wakeUp(); return@setOnKeyListener true }
             }
             false 
         }
@@ -3792,6 +3945,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
             val icon: ImageView = v.findViewById(R.id.selected_app_icon)
             val underline: View = v.findViewById(R.id.focus_underline)
+            val frame: View = itemView // Use root frame for border
         }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
 
@@ -3804,6 +3958,31 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
             holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE
 
+            // === KEYBOARD NAVIGATION HIGHLIGHT ===
+            // 1. Is this the currently selected slot?
+            val isNavSelected = (currentFocusArea == FOCUS_QUEUE && position == queueSelectedIndex)
+            
+            // 2. Is this the source slot for a pending command (e.g. Swap)?
+            val isCommandSource = (queueCommandPending != null && position == queueCommandSourceIndex)
+
+            if (isNavSelected) {
+                // Bright White Border for Selection
+                val bg = GradientDrawable()
+                bg.setStroke(4, Color.WHITE)
+                bg.cornerRadius = 8f
+                bg.setColor(Color.parseColor("#44FFFFFF")) // Semi-transparent fill
+                holder.frame.background = bg
+            } else if (isCommandSource) {
+                // Dashed Yellow/Green Border for Source
+                val bg = GradientDrawable()
+                bg.setStroke(4, Color.GREEN, 10f, 5f) // Dashed
+                bg.cornerRadius = 8f
+                holder.frame.background = bg
+            } else {
+                holder.frame.background = null
+            }
+            // =====================================
+
             holder.icon.clearColorFilter()
             
             if (app.packageName == PACKAGE_BLANK) { 
@@ -3812,10 +3991,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 try { 
                     // Use packageName directly - it should be the real package, not a modified identifier
                     val iconPkg = app.packageName
-                    Log.d(DEBUG_TAG, "Loading icon for position $position: ${app.label} pkg=$iconPkg")
+                    // Log.d(DEBUG_TAG, "Loading icon for position $position: ${app.label} pkg=$iconPkg") // SILENCED
                     holder.icon.setImageDrawable(packageManager.getApplicationIcon(iconPkg)) 
                 } catch (e: Exception) { 
-                    Log.e(DEBUG_TAG, "Failed to load icon for ${app.packageName}", e)
+                    // Log.e(DEBUG_TAG, "Failed to load icon for ${app.packageName}", e) // SILENCED
                     holder.icon.setImageResource(R.drawable.ic_launcher_bubble) 
                 }
                 holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f 
@@ -3843,7 +4022,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         } 
                     } 
                 } catch(e: Exception) {
-                    Log.e(DEBUG_TAG, "Click handler error", e)
+                    // Log.e(DEBUG_TAG, "Click handler error", e) // SILENCED
                 } 
             }
             
