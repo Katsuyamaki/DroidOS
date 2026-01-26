@@ -513,4 +513,14 @@ object AppPreferences {
     fun getDefaultLayoutName(context: Context, type: Int): String? {
         return getPrefs(context).getString("DEF_LAYOUT_NAME_$type", null)
     }
+
+    fun clearDefaultLayoutNames(context: Context) {
+        val editor = getPrefs(context).edit()
+        // Clear known IDs
+        val knownIds = listOf(1, 2, 3, 4, 5, 6, 7, 8, 9)
+        for (id in knownIds) {
+            editor.remove("DEF_LAYOUT_NAME_$id")
+        }
+        editor.apply()
+    }
 }

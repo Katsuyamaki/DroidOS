@@ -2438,7 +2438,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Check for user-renamed default
         if (type != LAYOUT_CUSTOM_DYNAMIC) {
             val custom = AppPreferences.getDefaultLayoutName(this, type)
-            if (custom != null) return custom
+            // [FIX] Auto-Repair: Ignore names that look like Settings toggles
+            if (custom != null && !custom.contains("Virtual Display") && !custom.contains("Switch Display")) {
+                return custom
+            }
         }
         
         return when(type) { 
@@ -3516,6 +3519,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 searchBar.hint = "Select Layout"
                 displayList.add(ActionOption("Save Current Arrangement") { saveCurrentAsCustom() })
                 
+                // [FIX] Add Reset Button to fix corrupted names
+                displayList.add(ActionOption("Reset Default Names") { 
+                    AppPreferences.clearDefaultLayoutNames(this)
+                    safeToast("Layout names reset")
+                    switchMode(MODE_LAYOUTS) // Refresh
+                })
+                
                 // Add all default layouts (Labels are fetched via getLayoutName which supports renaming)
                 val defaults = listOf(
                     LAYOUT_FULL, LAYOUT_SIDE_BY_SIDE, LAYOUT_TOP_BOTTOM,
@@ -4424,10 +4434,18 @@ else -> AppHolder(View(parent.context)) } }
                 else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
                 
                 // [FIX] Explicitly hide all buttons by default
-                // This ensures the Edit button only appears when we explicitly enable it for Layouts
                 holder.btnEdit.visibility = View.GONE
                 holder.btnSave.visibility = View.GONE
                 holder.btnExtinguish.visibility = View.GONE
+
+                // [CRITICAL FIX] CLEAR ALL LISTENERS
+                // This prevents "Ghost Saves" where listeners from a previous LayoutOption
+                // persist when the holder is reused for a Toggle/Action option.
+                holder.nameInput.onFocusChangeListener = null
+                holder.nameInput.setOnEditorActionListener(null)
+                holder.itemView.setOnLongClickListener(null)
+                holder.itemView.setOnClickListener(null)
+                holder.nameInput.setOnClickListener(null)
                 // --------------------------------
                 
                                 if (item is LayoutOption) { 

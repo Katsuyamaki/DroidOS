@@ -3388,9 +3388,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          to prevent feedback loop that causes lag/freezing.
     // =================================================================================
     fun handleExternalMouseMove(dx: Float, dy: Float, isDragging: Boolean) {
-        Log.d(BT_TAG, "handleExternalMouseMove: dx=$dx, dy=$dy, isDragging=$isDragging")
-        Log.d(BT_TAG, "├─ inputTargetDisplayId=$inputTargetDisplayId, currentDisplayId=$currentDisplayId")
-        Log.d(BT_TAG, "├─ cursorX=$cursorX, cursorY=$cursorY (before update)")
+        // Log.d(BT_TAG, "handleExternalMouseMove: dx=$dx, dy=$dy, isDragging=$isDragging")
+        // Log.d(BT_TAG, "├─ inputTargetDisplayId=$inputTargetDisplayId, currentDisplayId=$currentDisplayId")
+        // Log.d(BT_TAG, "├─ cursorX=$cursorX, cursorY=$cursorY (before update)")
 
         // Calculate safe bounds based on target display
         val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()
@@ -4183,21 +4183,21 @@ if (isResize) {
                 val isMouseSource = event.isFromSource(InputDevice.SOURCE_MOUSE) ||
                                     event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)
 
-                Log.v(BT_TAG, "dispatchGenericMotionEvent: action=${event.actionMasked}, isMouse=$isMouseSource, x=${event.x}, y=${event.y}")
+                // Log.v(BT_TAG, "dispatchGenericMotionEvent: action=${event.actionMasked}, isMouse=$isMouseSource, x=${event.x}, y=${event.y}")
 
                 if (!isMouseSource) {
-                    Log.v(BT_TAG, "├─ Not mouse source, passing to super")
+                    // Log.v(BT_TAG, "├─ Not mouse source, passing to super")
                     return super.dispatchGenericMotionEvent(event)
                 }
 
                 when (event.actionMasked) {
                     MotionEvent.ACTION_HOVER_MOVE -> {
-                        Log.d(BT_TAG, "ACTION_HOVER_MOVE: x=${event.x}, y=${event.y}")
+                        // Log.d(BT_TAG, "ACTION_HOVER_MOVE: x=${event.x}, y=${event.y}")
 
                         if (lastBtMouseX == 0f && lastBtMouseY == 0f) {
                             lastBtMouseX = event.x
                             lastBtMouseY = event.y
-                            Log.d(BT_TAG, "├─ First event, recording position")
+                            // Log.d(BT_TAG, "├─ First event, recording position")
                             return true
                         }
 
@@ -4206,36 +4206,36 @@ if (isResize) {
                         lastBtMouseX = event.x
                         lastBtMouseY = event.y
 
-                        Log.d(BT_TAG, "├─ Raw delta: dx=$rawDx, dy=$rawDy")
+                        // Log.d(BT_TAG, "├─ Raw delta: dx=$rawDx, dy=$rawDy")
 
                         val (scaledDx, scaledDy) = scaleBtMouseMovement(rawDx, rawDy)
-                        Log.d(BT_TAG, "├─ Scaled delta: dx=$scaledDx, dy=$scaledDy")
+                        // Log.d(BT_TAG, "├─ Scaled delta: dx=$scaledDx, dy=$scaledDy")
 
                         handleExternalMouseMove(scaledDx, scaledDy, false)
-                        Log.d(BT_TAG, "├─ Forwarded to handleExternalMouseMove (hover)")
+                        // Log.d(BT_TAG, "├─ Forwarded to handleExternalMouseMove (hover)")
                         return true
                     }
 
                     MotionEvent.ACTION_SCROLL -> {
                         val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
                         val hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
-                        Log.d(BT_TAG, "ACTION_SCROLL: v=$vScroll, h=$hScroll")
+                        // Log.d(BT_TAG, "ACTION_SCROLL: v=$vScroll, h=$hScroll")
                         injectScroll(hScroll * 10f, vScroll * 10f)
                         return true
                     }
 
                     MotionEvent.ACTION_HOVER_ENTER -> {
-                        Log.d(BT_TAG, "ACTION_HOVER_ENTER: Mouse entered capture area")
+                        // Log.d(BT_TAG, "ACTION_HOVER_ENTER: Mouse entered capture area")
                         return true
                     }
 
                     MotionEvent.ACTION_HOVER_EXIT -> {
-                        Log.d(BT_TAG, "ACTION_HOVER_EXIT: Mouse exited capture area")
+                        // Log.d(BT_TAG, "ACTION_HOVER_EXIT: Mouse exited capture area")
                         return true
                     }
                 }
 
-                Log.v(BT_TAG, "├─ Consuming other mouse generic event: ${event.actionMasked}")
+                // Log.v(BT_TAG, "├─ Consuming other mouse generic event: ${event.actionMasked}")
                 return true
             }
 
@@ -4244,7 +4244,7 @@ if (isResize) {
                 val isMouse = toolType == MotionEvent.TOOL_TYPE_MOUSE || 
                               event.isFromSource(InputDevice.SOURCE_MOUSE)
                 
-                Log.v(BT_TAG, "dispatchTouchEvent: action=${event.actionMasked}, toolType=$toolType, isMouse=$isMouse, deviceId=${event.deviceId}")
+                // Log.v(BT_TAG, "dispatchTouchEvent: action=${event.actionMasked}, toolType=$toolType, isMouse=$isMouse, deviceId=${event.deviceId}")
                 
                 // =======================================================================
                 // FINGER TOUCH FORWARDING
@@ -4272,9 +4272,9 @@ if (isResize) {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         if (isRightButton) {
-                             Log.d(BT_TAG, "MOUSE RIGHT DOWN: Ignored (waiting for UP)")
+                             // Log.d(BT_TAG, "MOUSE RIGHT DOWN: Ignored (waiting for UP)")
                         } else {
-                             Log.d(BT_TAG, "MOUSE LEFT DOWN: Starting Touch Stream")
+                             // Log.d(BT_TAG, "MOUSE LEFT DOWN: Starting Touch Stream")
                              lastBtMouseX = event.x
                              lastBtMouseY = event.y
                              isBtMouseDragging = false
@@ -4301,10 +4301,10 @@ if (isResize) {
                     
                     MotionEvent.ACTION_UP -> {
                         if (isRightButton) {
-                             Log.d(BT_TAG, "MOUSE RIGHT UP: Performing Right Click")
+                             // Log.d(BT_TAG, "MOUSE RIGHT UP: Performing Right Click")
                              performClick(true)
                         } else {
-                             Log.d(BT_TAG, "MOUSE LEFT UP: Ending Touch Stream")
+                             // Log.d(BT_TAG, "MOUSE LEFT UP: Ending Touch Stream")
                              handleExternalTouchUp()
                              // REMOVED: performClick(false)
                              // The handleExternalTouchDown() + handleExternalTouchUp() sequence 
@@ -4430,10 +4430,10 @@ if (isResize) {
         val scaledDx = rawDx * scaleX * prefs.cursorSpeed
         val scaledDy = rawDy * scaleY * prefs.cursorSpeed
 
-        Log.v(BT_TAG, "scaleBtMouseMovement: physical=${uiScreenWidth}x${uiScreenHeight}, " +
-                      "virtual=${targetScreenWidth}x${targetScreenHeight}, " +
-                      "scale=($scaleX, $scaleY), " +
-                      "raw=($rawDx, $rawDy) -> scaled=($scaledDx, $scaledDy)")
+        // Log.v(BT_TAG, "scaleBtMouseMovement: physical=${uiScreenWidth}x${uiScreenHeight}, " +
+        //               "virtual=${targetScreenWidth}x${targetScreenHeight}, " +
+        //               "scale=($scaleX, $scaleY), " +
+        //               "raw=($rawDx, @rawDy) -> scaled=($scaledDx, $scaledDy)")
 
         return Pair(scaledDx, scaledDy)
     }
