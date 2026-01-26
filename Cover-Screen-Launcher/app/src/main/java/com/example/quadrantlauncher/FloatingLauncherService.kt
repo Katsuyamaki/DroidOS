@@ -4469,31 +4469,41 @@ else -> AppHolder(View(parent.context)) } }
                 
                                     // SAVE LOGIC
                                     val saveAction = { 
-                                        val newName = holder.nameInput.text.toString().trim()
-                                        if (newName.isNotEmpty() && newName != item.name) { 
-                                            if (item.isCustomSaved) {
-                                                // Rename CUSTOM
-                                                if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { 
+                                        // [FIX] Post to handler to avoid crashing during focus change/layout pass
+                                        uiHandler.post {
+                                            val newName = holder.nameInput.text.toString().trim()
+                                            var changed = false
+                                            
+                                            if (newName.isNotEmpty() && newName != item.name) { 
+                                                if (item.isCustomSaved) {
+                                                    // Rename CUSTOM
+                                                    if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { 
+                                                        safeToast("Renamed to $newName")
+                                                        if (activeCustomLayoutName == item.name) { 
+                                                            activeCustomLayoutName = newName
+                                                            AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId)
+                                                        }
+                                                        switchMode(MODE_LAYOUTS) 
+                                                        changed = true
+                                                    } 
+                                                } else {
+                                                    // Rename DEFAULT
+                                                    AppPreferences.saveDefaultLayoutName(holder.itemView.context, item.type, newName)
                                                     safeToast("Renamed to $newName")
-                                                    if (activeCustomLayoutName == item.name) { 
-                                                        activeCustomLayoutName = newName
-                                                        AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId)
-                                                    }
-                                                    switchMode(MODE_LAYOUTS) 
-                                                } 
-                                            } else {
-                                                // Rename DEFAULT
-                                                AppPreferences.saveDefaultLayoutName(holder.itemView.context, item.type, newName)
-                                                safeToast("Renamed to $newName")
-                                                switchMode(MODE_LAYOUTS)
+                                                    switchMode(MODE_LAYOUTS)
+                                                    changed = true
+                                                }
+                                            }
+                                            
+                                            // Only reset UI locally if we didn't refresh the whole list via switchMode
+                                            if (!changed) {
+                                                endRename(holder.nameInput)
+                                                holder.nameInput.isEnabled = true // Keep text white
+                                                holder.nameInput.isFocusable = false
+                                                holder.nameInput.isClickable = true
+                                                holder.nameInput.inputType = 0
                                             }
                                         }
-                                        
-                                        // Re-lock
-                                        endRename(holder.nameInput)
-                                        holder.nameInput.isFocusable = false
-                                        holder.nameInput.isClickable = true
-                                        holder.nameInput.inputType = 0
                                     }
                                     
                                     holder.nameInput.setOnEditorActionListener { _, actionId, _ -> 
