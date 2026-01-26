@@ -26,6 +26,18 @@
         android:focusableInTouchMode="false" />
 
     <ImageView
+        android:id="@+id/btn_edit_layout_name"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:padding="6dp"
+        android:src="@android:drawable/ic_menu_edit"
+        android:tint="#AAAAAA"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="visible"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <ImageView
         android:id="@+id/btn_save_profile"
         android:layout_width="32dp"
         android:layout_height="32dp"

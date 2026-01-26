@@ -124,6 +124,8 @@ class FloatingLauncherService : AccessibilityService() {
         const val LAYOUT_CORNERS = 4
         const val LAYOUT_TRI_SIDE_MAIN_SIDE = 6
         const val LAYOUT_QUAD_ROW_EVEN = 7
+        const val LAYOUT_QUAD_TALL_SHORT = 8
+        const val LAYOUT_HEX_TALL_SHORT = 9
         const val LAYOUT_CUSTOM_DYNAMIC = 99
 
         const val CHANNEL_ID = "OverlayServiceChannel"
@@ -2432,7 +2434,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     private fun isTrackpadRunning(): Boolean { try { val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager; val runningApps = am.runningAppProcesses; if (runningApps != null) { for (info in runningApps) { if (info.processName == PACKAGE_TRACKPAD) return true } } } catch (e: Exception) {}; return false }
-    private fun getLayoutName(type: Int): String { return when(type) { LAYOUT_FULL -> "1 App - Full"; LAYOUT_SIDE_BY_SIDE -> "Split"; LAYOUT_TOP_BOTTOM -> "Top/Bot"; LAYOUT_TRI_EVEN -> "Tri-Split"; LAYOUT_CORNERS -> "Quadrant"; LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - Side/Main/Side"; LAYOUT_QUAD_ROW_EVEN -> "4 Apps - Row"; LAYOUT_CUSTOM_DYNAMIC -> "Custom"; else -> "Unknown" } }
+    private fun getLayoutName(type: Int): String { 
+        // Check for user-renamed default
+        if (type != LAYOUT_CUSTOM_DYNAMIC) {
+            val custom = AppPreferences.getDefaultLayoutName(this, type)
+            if (custom != null) return custom
+        }
+        
+        return when(type) { 
+            LAYOUT_FULL -> "1 App - Full"
+            LAYOUT_SIDE_BY_SIDE -> "2 Apps - Split"
+            LAYOUT_TOP_BOTTOM -> "2 Apps - Top/Bot"
+            LAYOUT_TRI_EVEN -> "3 Apps - Even"
+            LAYOUT_CORNERS -> "4 Apps - Quadrant"
+            LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - Side/Main/Side"
+            LAYOUT_QUAD_ROW_EVEN -> "4 Apps - Row"
+            LAYOUT_QUAD_TALL_SHORT -> "4 Apps - 2 Tall / 2 Short"
+            LAYOUT_HEX_TALL_SHORT -> "6 Apps - 3 Tall / 3 Short"
+            LAYOUT_CUSTOM_DYNAMIC -> "Custom"
+            else -> "Unknown" 
+        } 
+    }
     private fun getRatioName(index: Int): String { return when(index) { 1 -> "1:1"; 2 -> "16:9"; 3 -> "32:9"; else -> "Default" } }
     private fun getTargetDimensions(index: Int): Pair<Int, Int>? { return when(index) { 1 -> 1422 to 1500; 2 -> 1920 to 1080; 3 -> 3840 to 1080; else -> null } }
     private fun getResolutionCommand(index: Int): String { return when(index) { 1 -> "wm size 1422x1500 -d $currentDisplayId"; 2 -> "wm size 1920x1080 -d $currentDisplayId"; 3 -> "wm size 3840x1080 -d $currentDisplayId"; else -> "wm size reset -d $currentDisplayId" } }
@@ -3491,8 +3513,38 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         when (mode) {
             MODE_SEARCH -> { searchBar.hint = "Search apps..."; refreshSearchList() }
             MODE_LAYOUTS -> { 
-                searchBar.hint = "Select Layout"; displayList.add(ActionOption("Save Current Arrangement") { saveCurrentAsCustom() }); displayList.add(LayoutOption("1 App - Full Screen", LAYOUT_FULL)); displayList.add(LayoutOption("2 Apps - Side by Side", LAYOUT_SIDE_BY_SIDE)); displayList.add(LayoutOption("2 Apps - Top & Bottom", LAYOUT_TOP_BOTTOM)); displayList.add(LayoutOption("3 Apps - Even", LAYOUT_TRI_EVEN)); displayList.add(LayoutOption("3 Apps - Side/Main/Side (25/50/25)", LAYOUT_TRI_SIDE_MAIN_SIDE)); displayList.add(LayoutOption("4 Apps - Corners", LAYOUT_CORNERS)); displayList.add(LayoutOption("4 Apps - Row (Even)", LAYOUT_QUAD_ROW_EVEN));
-                val customNames = AppPreferences.getCustomLayoutNames(this).sorted(); for (name in customNames) { val data = AppPreferences.getCustomLayoutData(this, name); if (data != null) { try { val rects = mutableListOf<Rect>(); val rectParts = data.split("|"); for (rp in rectParts) { val coords = rp.split(","); if (coords.size == 4) { rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt())) } }; displayList.add(LayoutOption(name, LAYOUT_CUSTOM_DYNAMIC, true, rects)) } catch(e: Exception) {} } } 
+                searchBar.hint = "Select Layout"
+                displayList.add(ActionOption("Save Current Arrangement") { saveCurrentAsCustom() })
+                
+                // Add all default layouts (Labels are fetched via getLayoutName which supports renaming)
+                val defaults = listOf(
+                    LAYOUT_FULL, LAYOUT_SIDE_BY_SIDE, LAYOUT_TOP_BOTTOM,
+                    LAYOUT_TRI_EVEN, LAYOUT_TRI_SIDE_MAIN_SIDE,
+                    LAYOUT_CORNERS, LAYOUT_QUAD_ROW_EVEN,
+                    LAYOUT_QUAD_TALL_SHORT, LAYOUT_HEX_TALL_SHORT
+                )
+                
+                for (type in defaults) {
+                    displayList.add(LayoutOption(getLayoutName(type), type))
+                }
+
+                val customNames = AppPreferences.getCustomLayoutNames(this).sorted()
+                for (name in customNames) { 
+                    val data = AppPreferences.getCustomLayoutData(this, name)
+                    if (data != null) { 
+                        try { 
+                            val rects = mutableListOf<Rect>()
+                            val rectParts = data.split("|")
+                            for (rp in rectParts) { 
+                                val coords = rp.split(",")
+                                if (coords.size == 4) { 
+                                    rects.add(Rect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt())) 
+                                } 
+                            } 
+                            displayList.add(LayoutOption(name, LAYOUT_CUSTOM_DYNAMIC, true, rects)) 
+                        } catch(e: Exception) {} 
+                    } 
+                } 
             }
             MODE_RESOLUTION -> {
                 searchBar.hint = "Select Resolution"; displayList.add(CustomResInputOption); val savedResNames = AppPreferences.getCustomResolutionNames(this).sorted(); for (name in savedResNames) { val value = AppPreferences.getCustomResolutionValue(this, name) ?: continue; displayList.add(ResolutionOption(name, "wm size  -d $currentDisplayId", 100 + savedResNames.indexOf(name))) }; displayList.add(ResolutionOption("Default (Reset)", "wm size reset -d $currentDisplayId", 0)); displayList.add(ResolutionOption("1:1 Square (1422x1500)", "wm size 1422x1500 -d $currentDisplayId", 1)); displayList.add(ResolutionOption("16:9 Landscape (1920x1080)", "wm size 1920x1080 -d $currentDisplayId", 2)); displayList.add(ResolutionOption("32:9 Ultrawide (3840x1080)", "wm size 3840x1080 -d $currentDisplayId", 3))
@@ -4176,6 +4228,31 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 rects.add(Rect(quarter * 2, 0, quarter * 3, effectiveH))
                 rects.add(Rect(quarter * 3, 0, w, effectiveH))
             }
+            LAYOUT_QUAD_TALL_SHORT -> {
+                // Top Row: 75% H, 2 Apps (50% W each)
+                // Bottom Row: 25% H, 2 Apps (50% W each)
+                val splitY = (effectiveH * 0.75f).toInt()
+                val midW = w / 2
+                
+                rects.add(Rect(0, 0, midW, splitY))
+                rects.add(Rect(midW, 0, w, splitY))
+                rects.add(Rect(0, splitY, midW, effectiveH))
+                rects.add(Rect(midW, splitY, w, effectiveH))
+            }
+            LAYOUT_HEX_TALL_SHORT -> {
+                // Top Row: 75% H, 3 Apps (Side/Main/Side 25/50/25)
+                // Bottom Row: 25% H, 3 Apps (Same widths)
+                val splitY = (effectiveH * 0.75f).toInt()
+                val q = w / 4
+                
+                rects.add(Rect(0, 0, q, splitY))
+                rects.add(Rect(q, 0, q * 3, splitY))
+                rects.add(Rect(q * 3, 0, w, splitY))
+                
+                rects.add(Rect(0, splitY, q, effectiveH))
+                rects.add(Rect(q, splitY, q * 3, effectiveH))
+                rects.add(Rect(q * 3, splitY, w, effectiveH))
+            }
             LAYOUT_CUSTOM_DYNAMIC -> {
                 if (activeCustomRects != null) {
                     // For custom layouts, we assume they were saved WITH the desired geometry.
@@ -4191,7 +4268,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
         
         // SHIFT ALL RECTS DOWN BY TOP MARGIN
-        if (topPx > 0) {
+        // [FIX] Skip offset for Custom Dynamic layouts (they are absolute snapshots)
+        // This prevents double-margin application when loading saved profiles.
+        if (topPx > 0 && selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
             for (r in rects) {
                 r.offset(0, topPx)
             }
@@ -4252,7 +4331,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     inner class RofiAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         inner class AppHolder(v: View) : RecyclerView.ViewHolder(v) { val icon: ImageView = v.findViewById(R.id.rofi_app_icon); val text: TextView = v.findViewById(R.id.rofi_app_text); val star: ImageView = v.findViewById(R.id.rofi_app_star) }
-        inner class LayoutHolder(v: View) : RecyclerView.ViewHolder(v) { val nameInput: EditText = v.findViewById(R.id.layout_name); val btnSave: ImageView = v.findViewById(R.id.btn_save_profile); val btnExtinguish: ImageView = v.findViewById(R.id.btn_extinguish_item) }
+        inner class LayoutHolder(v: View) : RecyclerView.ViewHolder(v) { val nameInput: EditText = v.findViewById(R.id.layout_name); val btnEdit: ImageView = v.findViewById(R.id.btn_edit_layout_name) }
 
         inner class DpiHolder(v: View) : RecyclerView.ViewHolder(v) { val slider: android.widget.SeekBar = v.findViewById(R.id.sb_dpi_slider); val input: EditText = v.findViewById(R.id.input_dpi_value) }
 
@@ -4334,50 +4413,84 @@ else -> AppHolder(View(parent.context)) } }
             // === APP HOLDER BINDING - END ===
             else if (holder is ProfileRichHolder && item is ProfileOption) { holder.name.setText(item.name); holder.iconsContainer.removeAllViews(); if (!item.isCurrent) { for (pkg in item.apps.take(5)) { val iv = ImageView(holder.itemView.context); val lp = LinearLayout.LayoutParams(60, 60); lp.marginEnd = 8; iv.layoutParams = lp; if (pkg == PACKAGE_BLANK) { iv.setImageResource(R.drawable.ic_box_outline) } else { try { iv.setImageDrawable(packageManager.getApplicationIcon(pkg)) } catch (e: Exception) { iv.setImageResource(R.drawable.ic_launcher_bubble) } }; holder.iconsContainer.addView(iv) }; val info = "${getLayoutName(item.layout)} | ${getRatioName(item.resIndex)} | ${item.dpi}dpi"; holder.details.text = info; holder.details.visibility = View.VISIBLE; holder.btnSave.visibility = View.GONE; if (activeProfileName == item.name) { holder.itemView.setBackgroundResource(R.drawable.bg_item_active) } else { holder.itemView.setBackgroundResource(0) }; holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); loadProfile(item.name) }; holder.itemView.setOnLongClickListener { startRename(holder.name); true }; val saveProfileName = { val newName = holder.name.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameProfile(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); switchMode(MODE_PROFILES) } }; endRename(holder.name) }; holder.name.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveProfileName(); holder.name.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(holder.name.windowToken, 0); updateDrawerHeight(false); true } else false }; holder.name.setOnFocusChangeListener { v, hasFocus -> if (autoResizeEnabled) updateDrawerHeight(hasFocus); if (!hasFocus) saveProfileName() } } else { holder.iconsContainer.removeAllViews(); holder.details.visibility = View.GONE; holder.btnSave.visibility = View.VISIBLE; holder.itemView.setBackgroundResource(0); holder.name.isEnabled = true; holder.name.isFocusable = true; holder.name.isFocusableInTouchMode = true; holder.itemView.setOnClickListener { saveProfile() }; holder.btnSave.setOnClickListener { saveProfile() } } }
             else if (holder is LayoutHolder) {
-                holder.btnSave.visibility = View.GONE; holder.btnExtinguish.visibility = View.GONE
-                
                 // --- APPLY KEYBOARD HIGHLIGHT ---
                 if (isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active)
                 else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
                 // --------------------------------
                 
-                if (item is LayoutOption) {
-                    holder.nameInput.setText(item.name)
-                    val isSelected = if (item.type == LAYOUT_CUSTOM_DYNAMIC) { item.type == selectedLayoutType && item.name == activeCustomLayoutName } else { item.type == selectedLayoutType && activeCustomLayoutName == null }
-                    
-                    // 1. VISUAL STATE
-                    if (isSelected || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) 
-                    else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
-                    
-                    // 2. CLICK HANDLING (Selection Only - No Editing)
-                    // Attach the selection action to BOTH the container and the text view
-                    // This ensures maximum hit target area.
-                    val selectAction = View.OnClickListener { selectLayout(item) }
-                    
-                    holder.itemView.setOnClickListener(selectAction)
-                    holder.nameInput.setOnClickListener(selectAction)
-                    
-                    // 3. LOCK DOWN EDIT TEXT
-                    // Configure EditText to behave exactly like a clickable TextView
-                    holder.nameInput.apply {
-                        isEnabled = true // Keep enabled so text is white (not greyed out)
-                        setTextColor(Color.WHITE)
-                        background = null // Remove underline
-                        
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        isClickable = true // Capture clicks for the listener above
-                        isLongClickable = false
-                        inputType = 0 // TYPE_NULL
-                    }
-
-                    // 4. CLEAR LISTENERS
-                    // Remove any legacy editing listeners to prevent interference
-                    holder.itemView.setOnLongClickListener(null)
-                    holder.nameInput.setOnEditorActionListener(null)
-                    holder.nameInput.onFocusChangeListener = null
-                }
-                else if (item is ResolutionOption) { 
+                                if (item is LayoutOption) { 
+                                    holder.nameInput.setText(item.name)
+                                    val isSelected = if (item.type == LAYOUT_CUSTOM_DYNAMIC) { item.type == selectedLayoutType && item.name == activeCustomLayoutName } else { item.type == selectedLayoutType && activeCustomLayoutName == null }
+                                    
+                                    if (isSelected || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) 
+                                    else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
+                                    
+                                    // SELECTION CLICK
+                                    val selectAction = View.OnClickListener { selectLayout(item) }
+                                    holder.itemView.setOnClickListener(selectAction)
+                                    holder.nameInput.setOnClickListener(selectAction)
+                                    
+                                    // RESET STATE (Default)
+                                    holder.nameInput.apply {
+                                        isEnabled = true
+                                        setTextColor(Color.WHITE)
+                                        background = null
+                                        isFocusable = false
+                                        isFocusableInTouchMode = false
+                                        isClickable = true
+                                        isLongClickable = false
+                                        inputType = 0
+                                    }
+                                    
+                                    // EDIT BUTTON LOGIC (Renaming)
+                                    // Works for BOTH Custom and Default layouts now
+                                    holder.btnEdit.visibility = View.VISIBLE
+                                    holder.btnEdit.setOnClickListener {
+                                        // Enable Editing
+                                        holder.nameInput.isFocusable = true
+                                        holder.nameInput.isFocusableInTouchMode = true
+                                        holder.nameInput.isClickable = true
+                                        holder.nameInput.inputType = android.text.InputType.TYPE_CLASS_TEXT
+                                        
+                                        startRename(holder.nameInput)
+                                    }
+                
+                                    // SAVE LOGIC
+                                    val saveAction = { 
+                                        val newName = holder.nameInput.text.toString().trim()
+                                        if (newName.isNotEmpty() && newName != item.name) { 
+                                            if (item.isCustomSaved) {
+                                                // Rename CUSTOM
+                                                if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { 
+                                                    safeToast("Renamed to $newName")
+                                                    if (activeCustomLayoutName == item.name) { 
+                                                        activeCustomLayoutName = newName
+                                                        AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId)
+                                                    }
+                                                    switchMode(MODE_LAYOUTS) 
+                                                } 
+                                            } else {
+                                                // Rename DEFAULT
+                                                AppPreferences.saveDefaultLayoutName(holder.itemView.context, item.type, newName)
+                                                safeToast("Renamed to $newName")
+                                                switchMode(MODE_LAYOUTS)
+                                            }
+                                        }
+                                        
+                                        // Re-lock
+                                        endRename(holder.nameInput)
+                                        holder.nameInput.isFocusable = false
+                                        holder.nameInput.isClickable = true
+                                        holder.nameInput.inputType = 0
+                                    }
+                                    
+                                    holder.nameInput.setOnEditorActionListener { _, actionId, _ -> 
+                                        if (actionId == EditorInfo.IME_ACTION_DONE) { saveAction(); true } else false 
+                                    }
+                                    holder.nameInput.setOnFocusChangeListener { _, hasFocus -> 
+                                        if (!hasFocus) saveAction() 
+                                    } 
+                                }                else if (item is ResolutionOption) { 
                     holder.nameInput.setText(item.name); if (item.index >= 100) { holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); holder.itemView.setOnLongClickListener { startRename(holder.nameInput); true }; val saveResName = { val newName = holder.nameInput.text.toString().trim(); if (newName.isNotEmpty() && newName != item.name) { if (AppPreferences.renameCustomResolution(holder.itemView.context, item.name, newName)) { safeToast("Renamed to $newName"); switchMode(MODE_RESOLUTION) } }; endRename(holder.nameInput) }; holder.nameInput.setOnEditorActionListener { v, actionId, _ -> if (actionId == EditorInfo.IME_ACTION_DONE) { saveResName(); true } else false }; holder.nameInput.setOnFocusChangeListener { v, hasFocus -> if (!hasFocus) saveResName() } } else { holder.nameInput.isEnabled = false; holder.nameInput.isFocusable = false; holder.nameInput.setTextColor(Color.WHITE) }; val isSelected = (item.index == selectedResolutionIndex); if (isSelected || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { applyResolution(item) } 
                 }
                 else if (item is IconOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if(isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { pickIcon() } }

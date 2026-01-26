@@ -504,4 +504,13 @@ object AppPreferences {
     fun getTopMarginPercent(context: Context, displayId: Int): Int {
         return getPrefs(context).getInt("MARGIN_TOP_D$displayId", 0)
     }
+
+    // --- DEFAULT LAYOUT RENAMING ---
+    fun saveDefaultLayoutName(context: Context, type: Int, name: String) {
+        getPrefs(context).edit().putString("DEF_LAYOUT_NAME_$type", name).apply()
+    }
+
+    fun getDefaultLayoutName(context: Context, type: Int): String? {
+        return getPrefs(context).getString("DEF_LAYOUT_NAME_$type", null)
+    }
 }
