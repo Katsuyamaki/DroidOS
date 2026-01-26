@@ -4643,6 +4643,13 @@ else -> AppHolder(View(parent.context)) } }
                 holder.itemView.setOnLongClickListener(null)
                 holder.itemView.setOnClickListener(null)
                 holder.nameInput.setOnClickListener(null)
+
+                // [FIX] Reset interactivity to prevent ghost touches blocking clicks
+                // LayoutOption enables these explicitly, but other types need them OFF
+                holder.nameInput.isClickable = false
+                holder.nameInput.isFocusable = false
+                holder.nameInput.isFocusableInTouchMode = false
+                holder.nameInput.background = null
                 // --------------------------------
                 
                                 if (item is LayoutOption) { 

@@ -1,3 +1,5 @@
+# ⚠️ NOTICE v4.0 APKs were updated on 2026-01-26. If you downloaded before this date, please re-download for update fixes.
+
 # Changelog
 
 ## [v4.0] - DroidOS Update (2026-01-25)
