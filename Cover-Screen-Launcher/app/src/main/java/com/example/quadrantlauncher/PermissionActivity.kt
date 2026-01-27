@@ -158,18 +158,41 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
         val hasShizuku = try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch(e: Exception) { false }
         val hasAccessibility = isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)
         
-        updateItem(btnGrantOverlay, iconOverlay, hasOverlay)
-        updateItem(btnGrantShizuku, iconShizuku, hasShizuku)
-        updateItem(btnGrantAccessibility, iconAccessibility, hasAccessibility)
+        // 1. Restricted Settings (Implicit check: if accessibility is on, restricted is done)
+        if (hasAccessibility) {
+            updateItem(btnGrantRestricted, iconRestricted, true)
+            iconRestricted.setColorFilter(Color.GREEN)
+        } else {
+            // Can't check explicitly, so we leave it clickable but don't mark green
+            updateItem(btnGrantRestricted, iconRestricted, false)
+        }
 
+        // 2. Overlay
+        updateItem(btnGrantOverlay, iconOverlay, hasOverlay)
+        
+        // 3. Accessibility
+        updateItem(btnGrantAccessibility, iconAccessibility, hasAccessibility)
+        
+        // 4. Shizuku
+        updateItem(btnGrantShizuku, iconShizuku, hasShizuku)
+
+        // ENABLE BUTTON LOGIC
         if (hasOverlay && hasShizuku && hasAccessibility) {
             btnContinue.isEnabled = true
             btnContinue.alpha = 1.0f
-            btnContinue.text = "Start Launcher"
+            btnContinue.text = "LAUNCH DROIDOS"
+            btnContinue.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#3DDC84"))
         } else {
             btnContinue.isEnabled = false
             btnContinue.alpha = 0.5f
-            btnContinue.text = "Grant Permissions to Continue"
+            
+            // Helpful text based on what is missing
+            btnContinue.text = when {
+                !hasOverlay -> "Step 2: Enable Overlay"
+                !hasAccessibility -> "Step 3: Enable Accessibility"
+                !hasShizuku -> "Step 4: Grant Shizuku"
+                else -> "Grant Permissions to Continue"
+            }
         }
     }
 
