@@ -10,3 +10,13 @@ __pycache__/
 gemini.md
 restore_source.md
 fix_git_commit.md
+
+# --- AI Workflow Tools ---
+architect.py
+builder.py
+restore.py
+
+# --- Temporary Plan Files ---
+plan.md
+GEMINI.md
+restore.py.md
