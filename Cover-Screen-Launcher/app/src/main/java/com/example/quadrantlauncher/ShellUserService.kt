@@ -75,8 +75,10 @@ class ShellUserService : IShellService.Stub() {
             displayControlClass = loadedClass
             displayControlClassLoaded = true
             loadedClass
-        } catch (e: Exception) {
-            Log.w(TAG, "DisplayControl not available", e)
+        } catch (e: Throwable) {
+            // [STABILITY] Catch Throwable to handle NoClassDefFoundError/LinkageError
+            Log.w(TAG, "DisplayControl reflection failed: ${e.message}")
+            displayControlClassLoaded = true // Stop retrying if it fails
             null
         }
     }
@@ -119,12 +121,12 @@ class ShellUserService : IShellService.Stub() {
                     }
                     
                     if (token != null) tokens.add(token)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to get token for physical ID $id", e)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Failed to get token for physical ID $id")
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Critical failure getting display tokens", e)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Critical failure getting display tokens: ${e.message}")
         }
         return tokens
     }
