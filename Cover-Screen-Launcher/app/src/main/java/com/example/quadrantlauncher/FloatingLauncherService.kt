@@ -3711,6 +3711,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 Log.e(TAG, "Execute Failed", e)
                 uiHandler.post { safeToast("Execute Failed: ${e.message}") }
             } finally {
+                // [EFFICIENCY] Invalidate cache so "Active Window" updates instantly
+                (shellService as? ShellUserService)?.invalidateVisibleCache()
+
                 isExecuting = false
 
                 // If a request came in while we were running, trigger it now

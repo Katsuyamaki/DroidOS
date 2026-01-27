@@ -3390,8 +3390,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         return true 
     }
     private fun openMenuHandle(event: MotionEvent): Boolean { if (event.action == MotionEvent.ACTION_DOWN) menuManager?.toggle(); return true }
-    private fun injectAction(action: Int, source: Int, button: Int, time: Long) { if (shellService == null) return; Thread { try { shellService?.injectMouse(action, cursorX, cursorY, inputTargetDisplayId, source, button, time) } catch(e: Exception){} }.start() }
-    fun injectScroll(hScroll: Float, vScroll: Float) { if (shellService == null) return; Thread { try { shellService?.injectScroll(cursorX, cursorY, vScroll / 10f, hScroll / 10f, inputTargetDisplayId) } catch(e: Exception){} }.start() }
+    // [EFFICIENCY] Use Executor instead of spawning new Threads for every event
+    private fun injectAction(action: Int, source: Int, button: Int, time: Long) {
+        if (shellService == null) return
+        inputExecutor.execute {
+            try { shellService?.injectMouse(action, cursorX, cursorY, inputTargetDisplayId, source, button, time) } catch(e: Exception){}
+        }
+    }
+
+    fun injectScroll(hScroll: Float, vScroll: Float) {
+        if (shellService == null) return
+        inputExecutor.execute {
+            try { shellService?.injectScroll(cursorX, cursorY, vScroll / 10f, hScroll / 10f, inputTargetDisplayId) } catch(e: Exception){}
+        }
+    }
 
     // Helper to allow external components (like Keyboard) to control the cursor
     // Added 'isDragging' to switch between Hover (Mouse) and Drag (Touch)
@@ -3409,7 +3421,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          CRITICAL: Skips hover injection when cursor is over keyboard bounds
     //          to prevent feedback loop that causes lag/freezing.
     // =================================================================================
+
+    private var lastMouseMoveTime = 0L
+
     fun handleExternalMouseMove(dx: Float, dy: Float, isDragging: Boolean) {
+        // [EFFICIENCY] Throttle input to ~120Hz (8ms)
+        // This prevents flooding the binder transaction buffer
+        val now = SystemClock.uptimeMillis()
+        if (now - lastMouseMoveTime < 8) return
+        lastMouseMoveTime = now
+
         // Log.d(BT_TAG, "handleExternalMouseMove: dx=$dx, dy=$dy, isDragging=$isDragging")
         // Log.d(BT_TAG, "├─ inputTargetDisplayId=$inputTargetDisplayId, currentDisplayId=$currentDisplayId")
         // Log.d(BT_TAG, "├─ cursorX=$cursorX, cursorY=$cursorY (before update)")

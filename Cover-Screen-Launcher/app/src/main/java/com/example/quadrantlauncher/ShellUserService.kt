@@ -421,7 +421,11 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         }
         return list
     }
-    // === GET VISIBLE PACKAGES - END ===
+
+    // [EFFICIENCY] Manual cache invalidation for instant UI updates after actions
+    fun invalidateVisibleCache() {
+        lastVisibleCacheTime = 0
+    }
 
     override fun getAllRunningPackages(): List<String> {
         val list = ArrayList<String>()
