@@ -3394,6 +3394,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private fun injectAction(action: Int, source: Int, button: Int, time: Long) {
         if (shellService == null) return
         inputExecutor.execute {
+            // Log.d("EFFICIENCY_TEST", "Worker Thread ID: ${Thread.currentThread().id}")
             try { shellService?.injectMouse(action, cursorX, cursorY, inputTargetDisplayId, source, button, time) } catch(e: Exception){}
         }
     }
