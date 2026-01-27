@@ -16,11 +16,16 @@ def find_file(filename):
     return matches[0], None
 
 def sanitize_text(text):
-    """Cleans up spaces, markdown fences, and UI artifacts."""
-    text = text.replace('\xa0', ' ') # Fix non-breaking spaces
-    text = re.sub(r"^```\w*\n", "", text) # Remove opening fence
-    text = text.rstrip("`").strip() # Remove closing fence
+    """
+    AGGRESSIVE CLEANING:
+    1. Removes all Markdown code fences (```kotlin, ```, etc).
+    2. Strips non-breaking spaces.
+    3. Removes AI Studio UI artifacts.
+    """
+    # 1. Fix weird spaces
+    text = text.replace('\xa0', ' ')
     
+    # 2. Garbage Collection
     garbage_lines = {
         "code kotlin", "code java", "code python", 
         "downloadcontent_copy", "expand_less", "expand_more"
@@ -28,8 +33,18 @@ def sanitize_text(text):
     
     lines = text.split('\n')
     clean_lines = []
+    
     for line in lines:
-        if line.strip().lower() in garbage_lines: continue
+        stripped = line.strip().lower()
+        
+        # SKIP: Garbage UI lines
+        if stripped in garbage_lines: 
+            continue
+            
+        # SKIP: Markdown Fences (matches ```, ```kotlin, etc.)
+        if re.match(r"^`{3,}\w*$", stripped):
+            continue
+            
         clean_lines.append(line)
         
     return "\n".join(clean_lines)
@@ -71,49 +86,65 @@ def apply_changes(plan_file):
             failed_updates.append((raw_filename, reason, "File not found"))
             continue
 
-        search_block = sanitize_text(search_block)
-        replace_block = sanitize_text(replace_block)
+        # --- SANITIZATION & FEEDBACK LOGIC ---
+        clean_search = sanitize_text(search_block)
+        clean_replace = sanitize_text(replace_block)
+        
+        # Check if "sed" did any work
+        was_cleaned = (clean_search != search_block) or (clean_replace != replace_block)
+        status_icon = "🧹" if was_cleaned else "  " # Broom if cleaned, empty if clean
 
         with open(full_path, 'r', encoding='utf-8') as f: file_content = f.read()
 
         # Try Exact Match
-        if search_block in file_content:
-            new_content = file_content.replace(search_block, replace_block)
+        if clean_search in file_content:
+            new_content = file_content.replace(clean_search, clean_replace)
             with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
-            print(f"✅ Applied: {os.path.basename(full_path)}")
-            applied_updates.append((os.path.basename(full_path), reason))
+            
+            msg = f"✅ Applied: {os.path.basename(full_path)}"
+            if was_cleaned: msg += " (Artifacts Removed 🧹)"
+            print(msg)
+            
+            applied_updates.append((os.path.basename(full_path), reason, was_cleaned))
         
         # Try Fuzzy Match
-        elif search_block.strip() in file_content:
-            new_content = file_content.replace(search_block.strip(), replace_block)
+        elif clean_search.strip() in file_content:
+            new_content = file_content.replace(clean_search.strip(), clean_replace)
             with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
-            print(f"✅ Applied (Fuzzy): {os.path.basename(full_path)}")
-            applied_updates.append((os.path.basename(full_path), reason))
+            
+            msg = f"✅ Applied (Fuzzy): {os.path.basename(full_path)}"
+            if was_cleaned: msg += " (Artifacts Removed 🧹)"
+            print(msg)
+            
+            applied_updates.append((os.path.basename(full_path), reason, was_cleaned))
             
         else:
             print(f"❌ FAILED: {os.path.basename(full_path)}")
+            if was_cleaned: print("   (Note: Script tried to clean markdown artifacts but still failed)")
             failed_updates.append((os.path.basename(full_path), reason, "Anchor text not found"))
 
     # --- SUMMARY REPORT ---
-    print("\n" + "="*50)
-    print("📝 GIT COMMIT SUMMARY (Successful)")
-    print("="*50)
+    print("\n" + "="*60)
+    print("📝 GIT COMMIT SUMMARY")
+    print("="*60)
     if applied_updates:
-        for fname, reason in applied_updates:
+        for fname, reason, cleaned in applied_updates:
+            # Mark the commit message if it required cleaning (optional, mostly for your info)
+            marker = " [Cleaned]" if cleaned else ""
             print(f"* {fname}: {reason}")
     else:
         print("(No changes applied)")
 
     if failed_updates:
-        print("\n" + "!"*50)
-        print("⚠️  MISSED UPDATES (Action Required)")
-        print("!"*50)
+        print("\n" + "!"*60)
+        print("⚠️  MISSED UPDATES")
+        print("!"*60)
         for fname, reason, error in failed_updates:
             print(f"❌ {fname}")
             print(f"   Reason: {reason}")
             print(f"   Error:  {error}")
-            print("-" * 30)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2: print("Usage: python builder.py <plan.md>")
     else: apply_changes(sys.argv[1])
+

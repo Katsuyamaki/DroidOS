@@ -1486,9 +1486,9 @@ private fun buildKeyboard() {
                         // If in Touch Mode, start the "Hold to Drag" timer
                         // This allows hold-to-drag behavior from ANY key when active
                         if (isTrackpadTouchMode) {
-                            // [FIX] Increased to 500ms to prevent accidental drags while typing fast
-                            handler.postDelayed(holdToDragRunnable, 500) 
-                            android.util.Log.d("SpaceTrackpad", "Touch Mode: Started hold-to-drag timer (500ms)")
+                            // [FIX] Increased to 700ms to prevent accidental drags while typing fast
+                            handler.postDelayed(holdToDragRunnable, 700) 
+                            android.util.Log.d("SpaceTrackpad", "Touch Mode: Started hold-to-drag timer (700ms)")
                         }
 
                         // Visual feedback: Always keep SPACE green, even if touching other keys
@@ -1505,7 +1505,9 @@ private fun buildKeyboard() {
                         val dy = y - lastSpaceY
 
                         // Check if user moved significantly
-                        if (kotlin.math.hypot(dx, dy) > touchSlop) {
+                        // [FIX] Increased threshold to 80f (approx 5x touchSlop) to prevent
+                        // accidental trackpad activation when hitting spacebar quickly.
+                        if (kotlin.math.hypot(dx, dy) > 80f) {
                             hasMovedWhileDown = true
 
                             // If we moved BEFORE the hold timer fired, cancel the hold
@@ -1635,28 +1637,57 @@ private fun buildKeyboard() {
                     }
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+            MotionEvent.ACTION_POINTER_UP -> {
+                // Multitouch Lift: Try to find the key under this specific pointer
+                val idx = event.actionIndex
+                val xUp = event.getX(idx)
+                val yUp = event.getY(idx)
+                
+                // 1. Reset specific key under finger (Fixes Multitouch Ghosting)
+                val viewUnderFinger = findKeyView(xUp, yUp)
+                if (viewUnderFinger != null) {
+                    val tag = viewUnderFinger.tag as? String
+                    if (tag != null) {
+                        // If this was the active key, trigger Up logic
+                        if (viewUnderFinger == currentActiveKey) {
+                            onKeyUp(tag, viewUnderFinger)
+                        } else {
+                            // Just visual reset if it wasn't the "primary" active key
+                            setKeyVisual(viewUnderFinger, false, tag)
+                        }
+                    }
+                }
+
+                // 2. Fallback: Reset currentActiveKey if it matches
+                if (currentActiveKey != null && currentActiveKey == viewUnderFinger) {
+                    currentActiveKey = null
+                }
+            }
+            
+            MotionEvent.ACTION_UP -> {
+                // Final Lift: Clean EVERYTHING
                 currentActiveKey?.let {
                     val tag = it.tag as? String
                     if (tag != null) {
-                        // Commit the input
                         onKeyUp(tag, it)
-                        
-                        // [FIX] Force visual reset immediately to prevent stuck green state
                         setKeyVisual(it, false, tag)
                     }
                 }
                 currentActiveKey = null
+                
+                // [SAFETY] Force scan all children to ensure no other keys are stuck green
+                resetAllKeysVisual()
             }
+            
             MotionEvent.ACTION_CANCEL -> {
                 currentActiveKey?.let {
                     val tag = it.tag as? String
-                    if (tag != null) {
-                        // [FIX] Ensure visual reset on cancel
-                        setKeyVisual(it, false, tag)
-                    }
+                    if (tag != null) setKeyVisual(it, false, tag)
                 }
                 currentActiveKey = null
+                
+                // [SAFETY] Force scan all children
+                resetAllKeysVisual()
             }
         }
         
@@ -1947,6 +1978,24 @@ private fun buildKeyboard() {
         if (view != null) {
             setKeyVisual(view, active, tag, color)
         }
+    }
+
+    // [FIX] Safety method to iterate all keys and turn off highlights
+    // Used on ACTION_UP and CANCEL to prevent "Sticky Green Keys"
+    private fun resetAllKeysVisual() {
+        fun traverse(view: View) {
+            if (view is ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    traverse(view.getChildAt(i))
+                }
+            }
+            // If it's a key (has tag), reset it
+            val tag = view.tag as? String
+            if (tag != null) {
+                setKeyVisual(view, false, tag)
+            }
+        }
+        traverse(this)
     }
 
 
