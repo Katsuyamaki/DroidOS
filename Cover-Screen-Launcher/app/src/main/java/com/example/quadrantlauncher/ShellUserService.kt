@@ -349,11 +349,11 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         
         // [EFFICIENCY] Return cached result if valid
         if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty()) {
-            Log.d("EFFICIENCY", "getVisiblePackages: CACHE HIT (Age: ${now - lastVisibleCacheTime}ms)")
+            // Log.d("EFFICIENCY", "getVisiblePackages: CACHE HIT (Age: ${now - lastVisibleCacheTime}ms)")
             return ArrayList(cachedVisiblePackages)
         }
         
-        Log.d("EFFICIENCY", "getVisiblePackages: CACHE MISS - Running dumpsys...")
+        // Log.d("EFFICIENCY", "getVisiblePackages: CACHE MISS - Running dumpsys...")
 
         val list = ArrayList<String>()
         val token = Binder.clearCallingIdentity()
