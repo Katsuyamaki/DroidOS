@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dock_container"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:background="#1A1A1A"
+    android:gravity="center_vertical"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
+
+    <!-- DroidOS Keyboard Toggle -->
+    <ImageView
+        android:id="@+id/btn_dock_keyboard"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@drawable/ic_tab_keyboard"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Open DroidOS Keyboard"
+        android:tint="#3DDC84"/>
+
+    <View android:layout_width="1dp" android:layout_height="24dp" android:background="#333333"/>
+
+    <!-- Voice Input -->
+    <ImageView
+        android:id="@+id/btn_dock_voice"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@android:drawable/ic_btn_speak_now"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Voice Input"
+        android:tint="#FFFFFF"/>
+
+    <!-- Paste Clipboard -->
+    <ImageView
+        android:id="@+id/btn_dock_paste"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@android:drawable/ic_menu_edit"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Paste"
+        android:tint="#FFFFFF"/>
+
+    <View android:layout_width="1dp" android:layout_height="24dp" android:background="#333333"/>
+
+    <!-- Switch IME (Escape Hatch) -->
+    <ImageView
+        android:id="@+id/btn_dock_switch"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@android:drawable/ic_menu_more"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Switch Keyboard"
+        android:tint="#AAAAAA"/>
+
+    <!-- Hide -->
+    <ImageView
+        android:id="@+id/btn_dock_hide"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:contentDescription="Hide Dock"
+        android:tint="#FF5555"/>
+
+</LinearLayout>

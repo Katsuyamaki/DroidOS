@@ -15,136 +15,92 @@ def find_file(filename):
     if len(matches) > 1: return None, f"⚠️  Ambiguous: found {len(matches)} files named '{target_name}'"
     return matches[0], None
 
+def resolve_new_path(filename):
+    if os.path.isabs(filename): return filename
+    return os.path.join(PROJECT_ROOT, filename)
+
 def sanitize_text(text):
-    """
-    AGGRESSIVE CLEANING:
-    1. Removes all Markdown code fences (```kotlin, ```, etc).
-    2. Strips non-breaking spaces.
-    3. Removes AI Studio UI artifacts.
-    """
-    # 1. Fix weird spaces
+    """Cleans Markdown artifacts and normalizes spaces."""
+    # 1. Replace non-breaking spaces with regular spaces
     text = text.replace('\xa0', ' ')
     
-    # 2. Garbage Collection
-    garbage_lines = {
-        "code kotlin", "code java", "code python", 
-        "downloadcontent_copy", "expand_less", "expand_more"
-    }
-    
+    # 2. Strip UI garbage
+    garbage = {"code kotlin", "code java", "code xml", "downloadcontent_copy", "expand_less", "expand_more"}
     lines = text.split('\n')
     clean_lines = []
-    
     for line in lines:
         stripped = line.strip().lower()
-        
-        # SKIP: Garbage UI lines
-        if stripped in garbage_lines: 
-            continue
-            
-        # SKIP: Markdown Fences (matches ```, ```kotlin, etc.)
-        if re.match(r"^`{3,}\w*$", stripped):
-            continue
-            
+        if stripped in garbage: continue
+        if re.match(r"^`{3,}\w*$", stripped): continue
         clean_lines.append(line)
-        
     return "\n".join(clean_lines)
 
-def apply_changes(plan_file):
-    if not os.path.exists(plan_file): 
-        print(f"❌ Plan file not found.")
-        return
+def process_plan(plan_file):
+    if not os.path.exists(plan_file): return print(f"❌ Plan file not found.")
     
     with open(plan_file, 'r', encoding='utf-8') as f: content = f.read()
+    print(f"🚀 Processing Plan...")
 
-    pattern = re.compile(
-        r"FILE_UPDATE:\s*(.+?)\n"
-        r".*?REASON:\s*(.+?)\n"
-        r".*?SEARCH_BLOCK:\s*(.*?)\n\s*"
-        r"REPLACE_BLOCK:\s*(.*?)(?=\nFILE_UPDATE:|$)",
+    # --- PASS 1: FILE CREATION ---
+    create_pattern = re.compile(
+        r"FILE_CREATE:\s*(.+?)\n.*?REASON:\s*(.+?)\n.*?CONTENT_BLOCK:\s*(.*?)(?=\n(?:FILE_UPDATE|FILE_CREATE):|$)",
+        re.DOTALL
+    )
+    
+    creates = create_pattern.findall(content)
+    if creates:
+        print(f"\n🔨 Creating {len(creates)} new files...")
+        for raw_filename, reason, content_block in creates:
+            raw_filename = raw_filename.strip()
+            full_path = resolve_new_path(raw_filename)
+            clean_content = sanitize_text(content_block)
+            
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, 'w', encoding='utf-8') as f: f.write(clean_content)
+            print(f"✨ Created: {raw_filename}")
+
+    # --- PASS 2: FILE UPDATES ---
+    update_pattern = re.compile(
+        r"FILE_UPDATE:\s*(.+?)\n.*?REASON:\s*(.+?)\n.*?SEARCH_BLOCK:\s*(.*?)\n\s*REPLACE_BLOCK:\s*(.*?)(?=\n(?:FILE_UPDATE|FILE_CREATE):|$)",
         re.DOTALL
     )
 
-    matches = pattern.findall(content)
-    
-    if not matches: 
-        print("⚠️  No updates found. Check syntax.")
-        return
-
-    print(f"🔎 Scanning {len(matches)} updates...\n")
-    
-    applied_updates = []
-    failed_updates = []
-
-    for raw_filename, reason, search_block, replace_block in matches:
-        raw_filename = raw_filename.strip()
-        reason = reason.strip()
-        
-        full_path, error = find_file(raw_filename)
-        
-        if error:
-            print(error)
-            failed_updates.append((raw_filename, reason, "File not found"))
-            continue
-
-        # --- SANITIZATION & FEEDBACK LOGIC ---
-        clean_search = sanitize_text(search_block)
-        clean_replace = sanitize_text(replace_block)
-        
-        # Check if "sed" did any work
-        was_cleaned = (clean_search != search_block) or (clean_replace != replace_block)
-        status_icon = "🧹" if was_cleaned else "  " # Broom if cleaned, empty if clean
-
-        with open(full_path, 'r', encoding='utf-8') as f: file_content = f.read()
-
-        # Try Exact Match
-        if clean_search in file_content:
-            new_content = file_content.replace(clean_search, clean_replace)
-            with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
+    updates = update_pattern.findall(content)
+    if updates:
+        print(f"\n🔧 Applying {len(updates)} updates...")
+        for raw_filename, reason, search_block, replace_block in updates:
+            raw_filename = raw_filename.strip()
+            full_path, error = find_file(raw_filename)
             
-            msg = f"✅ Applied: {os.path.basename(full_path)}"
-            if was_cleaned: msg += " (Artifacts Removed 🧹)"
-            print(msg)
-            
-            applied_updates.append((os.path.basename(full_path), reason, was_cleaned))
-        
-        # Try Fuzzy Match
-        elif clean_search.strip() in file_content:
-            new_content = file_content.replace(clean_search.strip(), clean_replace)
-            with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
-            
-            msg = f"✅ Applied (Fuzzy): {os.path.basename(full_path)}"
-            if was_cleaned: msg += " (Artifacts Removed 🧹)"
-            print(msg)
-            
-            applied_updates.append((os.path.basename(full_path), reason, was_cleaned))
-            
-        else:
-            print(f"❌ FAILED: {os.path.basename(full_path)}")
-            if was_cleaned: print("   (Note: Script tried to clean markdown artifacts but still failed)")
-            failed_updates.append((os.path.basename(full_path), reason, "Anchor text not found"))
+            if error:
+                print(f"❌ Skipped: {raw_filename} ({error})")
+                continue
 
-    # --- SUMMARY REPORT ---
-    print("\n" + "="*60)
-    print("📝 GIT COMMIT SUMMARY")
-    print("="*60)
-    if applied_updates:
-        for fname, reason, cleaned in applied_updates:
-            # Mark the commit message if it required cleaning (optional, mostly for your info)
-            marker = " [Cleaned]" if cleaned else ""
-            print(f"* {fname}: {reason}")
-    else:
-        print("(No changes applied)")
+            clean_search = sanitize_text(search_block)
+            clean_replace = sanitize_text(replace_block)
+            
+            with open(full_path, 'r', encoding='utf-8') as f: file_content = f.read()
 
-    if failed_updates:
-        print("\n" + "!"*60)
-        print("⚠️  MISSED UPDATES")
-        print("!"*60)
-        for fname, reason, error in failed_updates:
-            print(f"❌ {fname}")
-            print(f"   Reason: {reason}")
-            print(f"   Error:  {error}")
+            # [FIX] NORMALIZE FILE CONTENT IN MEMORY (Handle NBSP in existing files)
+            # This allows matching even if the file on disk has weird spaces
+            normalized_content = file_content.replace('\xa0', ' ')
+
+            if clean_search in normalized_content:
+                # We matched on normalized content, so we apply the replace there
+                new_content = normalized_content.replace(clean_search, clean_replace)
+                with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
+                print(f"✅ Updated: {os.path.basename(full_path)}")
+                
+            elif clean_search.strip() in normalized_content:
+                new_content = normalized_content.replace(clean_search.strip(), clean_replace)
+                with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
+                print(f"✅ Updated (Fuzzy): {os.path.basename(full_path)}")
+                
+            else:
+                # Debugging Help: Print what the script saw vs what it wanted
+                print(f"❌ Anchor Mismatch: {os.path.basename(full_path)}")
+                # print(f"   Wanted:\n{clean_search[:100]}...") # Uncomment for debug
 
 if __name__ == "__main__":
     if len(sys.argv) < 2: print("Usage: python builder.py <plan.md>")
-    else: apply_changes(sys.argv[1])
-
+    else: process_plan(sys.argv[1])

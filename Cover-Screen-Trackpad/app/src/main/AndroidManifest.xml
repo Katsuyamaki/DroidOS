@@ -104,8 +104,8 @@
         </service>
 
         <service
-            android:name=".NullInputMethodService"
-            android:label="DroidOS Null Keyboard"
+            android:name=".DockInputMethodService"
+            android:label="DroidOS Input Dock"
             android:permission="android.permission.BIND_INPUT_METHOD"
             android:exported="true">
             <intent-filter>
@@ -115,6 +115,7 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
+
         <!-- =================================================================================
              INTER-APP COMMAND RECEIVER
              SUMMARY: Static receiver to handle commands from DroidOS Launcher and ADB.

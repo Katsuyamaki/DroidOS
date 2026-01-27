@@ -484,16 +484,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         Thread {
             try {
-                // 1. Find correct ID for OUR Null Keyboard
+                // 1. Find correct ID for OUR Input Dock
                 val allImes = shellService?.runCommand("ime list -a -s") ?: ""
                 val myImeId = allImes.lines().firstOrNull { 
-                    it.contains(packageName) && it.contains("NullInputMethodService") 
+                    it.contains(packageName) && (it.contains("DockInputMethodService") || it.contains("NullInputMethodService")) 
                 }?.trim()
 
                 if (myImeId.isNullOrEmpty()) {
-                    handler.post { showToast("Error: Null Keyboard not found.") }
+                    handler.post { showToast("Error: DroidOS Keyboard not found.") }
                     return@Thread
                 }
+
 
                 if (enabled) {
                     // --- BLOCKING ---
@@ -714,15 +715,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
                 if (current.contains(packageName) && current.contains("NullInputMethodService")) {
                     
-                    // NEW: Check if NullKeyboard is the user's PREFERRED keyboard
+                    // NEW: Check if Input Dock is the user's PREFERRED keyboard
                     val savedPref = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
                         .getString("user_preferred_ime", null)
                     
-                    if (savedPref != null && savedPref.contains("NullInputMethodService")) {
-                        // User wants NullKeyboard - don't restore away from it
-                        android.util.Log.d(TAG, "ensureSystemKeyboardRestored: NullKB is user preference, keeping it")
+                    if (savedPref != null && (savedPref.contains("DockInputMethodService") || savedPref.contains("NullInputMethodService"))) {
+                        // User wants Dock - don't restore away from it
+                        android.util.Log.d(TAG, "ensureSystemKeyboardRestored: Dock is user preference, keeping it")
                         return@Thread
                     }
+
                     
                     android.util.Log.i(TAG, "Main Screen Detected: Restoring System Keyboard...")
                     handler.post { setSoftKeyboardBlocking(false) }
@@ -770,10 +772,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // 1. Check what is currently active
                 val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
                 
-                // 2. If NullKeyboard is active, DO NOT interfere
+                // 2. If Dock is active, DO NOT interfere
                 // User may have intentionally set it as their default keyboard
-                if (current.contains("NullInputMethodService")) {
-                    android.util.Log.d(TAG, "ensureCoverKeyboardEnforced: NullKB active, not interfering")
+                if (current.contains("DockInputMethodService") || current.contains("NullInputMethodService")) {
+                    android.util.Log.d(TAG, "ensureCoverKeyboardEnforced: Dock active, not interfering")
                     return@Thread
                 }
                 
@@ -781,10 +783,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val sharedPrefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
                 val targetIme = sharedPrefs.getString("user_preferred_ime", null) ?: return@Thread
                 
-                // 4. If target is NullKeyboard, don't fight - it should already be handled
-                if (targetIme.contains("NullInputMethodService")) {
+                // 4. If target is Dock, don't fight - it should already be handled
+                if (targetIme.contains("DockInputMethodService") || targetIme.contains("NullInputMethodService")) {
                     return@Thread
                 }
+
                 
                 // 5. If current matches target, nothing to do
                 if (current == targetIme) {
@@ -1437,11 +1440,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         return
                     }
                     
-                    val isNullKeyboard = current.contains("NullInputMethodService")
+                    val isDock = current.contains("DockInputMethodService") || current.contains("NullInputMethodService")
                     val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
                     val wasGboard = lastObservedIme.contains("com.google.android.inputmethod.latin")
-                    val wasNullKeyboard = lastObservedIme.contains("NullInputMethodService")
+                    val wasDock = lastObservedIme.contains("DockInputMethodService") || lastObservedIme.contains("NullInputMethodService")
                     val isOnMainScreen = currentDisplayId == 0
+
                     // =================================================================================
                     // END BLOCK: SKIP EMPTY ONLY
                     // =================================================================================
@@ -1449,9 +1453,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     // =================================================================================
                     // SAMSUNG TAKEOVER DETECTION
                     // If Samsung just took over FROM Gboard while on Main Screen, fight back NOW!
-                    // Skip if we came from NullKeyboard (handled separately below)
+                    // Skip if we came from Dock (handled separately below)
                     // =================================================================================
-                    if (isSamsung && wasGboard && isOnMainScreen && !wasNullKeyboard) {
+                    if (isSamsung && wasGboard && isOnMainScreen && !wasDock) {
+
                         val now = System.currentTimeMillis()
                         // Throttle: Don't fight more than once per second
                         if (now - lastFightTime > 1000) {
@@ -1514,11 +1519,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     // =================================================================================
                     
                     // =================================================================================
-                    // SAMSUNG TAKEOVER FROM NULLKEYBOARD
-                    // If Samsung took over from NullKeyboard, restore NullKeyboard (not Gboard)
-                    // Only when blocking is OFF (user intentionally wants NullKB)
+                    // SAMSUNG TAKEOVER FROM DOCK
+                    // If Samsung took over from Dock, restore Dock (not Gboard)
+                    // Only when blocking is OFF (user intentionally wants Dock)
                     // =================================================================================
-                    if (isSamsung && wasNullKeyboard && !prefs.prefBlockSoftKeyboard) {
+                    if (isSamsung && wasDock && !prefs.prefBlockSoftKeyboard) {
+
                         val now = System.currentTimeMillis()
                         if (now - lastFightTime > 1000) {
                             lastFightTime = now
@@ -1526,8 +1532,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             
                             Thread {
                                 try {
-                                    val nullKbId = "$packageName/com.example.coverscreentester.NullInputMethodService"
+                                    // Try Dock ID first, fallback is handled if we set it as enabled
+                                    val dockId = "$packageName/com.example.coverscreentester.DockInputMethodService"
                                     val samsungId = current
+
                                     
                                     android.util.Log.w(TAG, "┌─ NULLKB RESTORATION ─┐")
                                     
@@ -1535,11 +1543,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                     shellService?.runCommand("ime disable $samsungId")
                                     android.util.Log.w(TAG, "├─ Samsung disabled")
                                     
-                                    // 2. Enable and set NullKeyboard
-                                    shellService?.runCommand("ime enable $nullKbId")
-                                    shellService?.runCommand("settings put secure default_input_method $nullKbId")
-                                    shellService?.runCommand("ime set $nullKbId")
-                                    android.util.Log.w(TAG, "├─ NullKB set")
+                                    // 2. Enable and set Dock
+                                    shellService?.runCommand("ime enable $dockId")
+                                    shellService?.runCommand("settings put secure default_input_method $dockId")
+                                    shellService?.runCommand("ime set $dockId")
+                                    android.util.Log.w(TAG, "├─ Dock set")
+
                                     
                                     // 3. Wait for stability (past Samsung protection window)
                                     Thread.sleep(3000)
@@ -1551,8 +1560,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                     // 5. Verify
                                     Thread.sleep(500)
                                     val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                    val success = finalIme.contains("NullInputMethodService")
+                                    val success = finalIme.contains("DockInputMethodService")
                                     android.util.Log.w(TAG, "├─ Final: $finalIme")
+
                                     android.util.Log.w(TAG, "└─ Success: $success")
                                     
                                 } catch (e: Exception) {
@@ -1575,14 +1585,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             android.util.Log.d(TAG, "IME Observer: SKIPPING Samsung save")
                             false
                         }
-                        isNullKeyboard && prefs.prefBlockSoftKeyboard -> {
-                            // Blocking is ON - NullKB was set by our blocking, not user choice
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING NullKB save (blocking ON)")
+                        isDock && prefs.prefBlockSoftKeyboard -> {
+                            // Blocking is ON - Dock was set by our blocking, not user choice
+                            android.util.Log.d(TAG, "IME Observer: SKIPPING Dock save (blocking ON)")
                             false
                         }
-                        isNullKeyboard && !prefs.prefBlockSoftKeyboard -> {
-                            // Blocking is OFF - User intentionally selected NullKeyboard
-                            android.util.Log.i(TAG, "IME Observer: SAVING NullKB as user preference (blocking OFF)")
+                        isDock && !prefs.prefBlockSoftKeyboard -> {
+                            // Blocking is OFF - User intentionally selected Dock
+                            android.util.Log.i(TAG, "IME Observer: SAVING Dock as user preference (blocking OFF)")
                             true
                         }
                         !isOnMainScreen -> {
@@ -1605,8 +1615,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         
                         val name = when {
                             current.contains("google.android.inputmethod.latin") -> "Gboard"
-                            current.contains("NullInputMethodService") -> "Null Keyboard"
+                            current.contains("DockInputMethodService") -> "DroidOS Dock"
+                            current.contains("NullInputMethodService") -> "DroidOS Dock"
                             current.contains("honeyboard") -> "Samsung"
+
                             current.contains("juloo.keyboard2") -> "Unexpected KB"
                             else -> "Custom Keyboard"
                         }
@@ -5446,11 +5458,12 @@ if (isResize) {
 
                 // TEXT INPUT KEYS: Route based on active IME
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
+                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
 
-                if (isNullKeyboardActive) {
+                if (isDockActive) {
                     // STRATEGY A: NATIVE via InputConnection (for text input keys only)
                     val intent = Intent("com.example.coverscreentester.INJECT_KEY")
+
                     intent.setPackage(packageName)
                     intent.putExtra("keyCode", keyCode)
                     intent.putExtra("metaState", metaState)
@@ -5484,10 +5497,11 @@ if (isResize) {
             try {
                 // 1. CHECK ACTUAL SYSTEM STATE
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
+                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
 
-                if (isNullKeyboardActive) {
+                if (isDockActive) {
                     // STRATEGY A: NATIVE (Clean & Fast)
+
                     val intent = Intent("com.example.coverscreentester.INJECT_DELETE")
                     intent.setPackage(packageName)
                     intent.putExtra("length", length)
@@ -5516,10 +5530,11 @@ if (isResize) {
 
                 // 1. CHECK ACTUAL SYSTEM STATE
                 val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isNullKeyboardActive = currentIme.contains(packageName) && currentIme.contains("NullInputMethodService")
+                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
 
-                if (isNullKeyboardActive) {
+                if (isDockActive) {
                     // STRATEGY A: NATIVE (Cleanest)
+
                     val intent = Intent("com.example.coverscreentester.INJECT_TEXT")
                     intent.setPackage(packageName)
                     intent.putExtra("text", text)

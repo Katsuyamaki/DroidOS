@@ -608,8 +608,9 @@ class TrackpadMenuManager(
             }
         })
         // NEW: Launch Proxy Activity for Picker
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Null KB to block default)", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Select 'DroidOS Dock')", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
             service.forceSystemKeyboardVisible()
+
             hide() // Close menu
             
             try {
