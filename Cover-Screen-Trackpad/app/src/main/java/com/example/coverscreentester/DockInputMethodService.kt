@@ -396,12 +396,11 @@ class DockInputMethodService : InputMethodService() {
             prefSyncMargin = isChecked
             saveDockPrefs()
             
-            // If turned ON, broadcast current value immediately to sync Launcher
+            // If turned ON, immediately sync values
             if (isChecked) {
+                // 1. Force Launcher to match IME
                 val intent = Intent(ACTION_SET_MARGIN)
                 intent.putExtra("PERCENT", prefResizeScale)
-                // Use a generic display ID or 0/1 depending on context, using -1 implies active?
-                // Launcher handles logic.
                 sendBroadcast(intent)
             }
         }
@@ -536,29 +535,29 @@ class DockInputMethodService : InputMethodService() {
     // =================================================================================
     // FUNCTION: updateInputViewHeight
     // SUMMARY: Adjusts the IME input view height based on Auto Resize setting.
-    //          When enabled, calculates height as [Toolbar Height] + [Spacer Height].
-    //          Spacer Height is calculated as a percentage of Screen Height (0-50%),
-    //          matching the DroidOS Launcher Bottom Margin logic.
+    //          Calculates TOTAL height as percentage of REAL screen height.
+    //          Spacer = Total - Toolbar. This ensures 20% here matches 20% in Launcher.
     // =================================================================================
     private fun updateInputViewHeight() {
         if (dockView == null) return
         
         if (prefAutoResize && prefDockMode) {
-            val metrics = resources.displayMetrics
+            val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val metrics = android.util.DisplayMetrics()
+            wm.defaultDisplay.getRealMetrics(metrics)
+            
             val screenHeight = metrics.heightPixels
-            val density = metrics.density
-            val toolbarHeight = (40 * density).toInt()
             
-            // Calculate spacer based on percentage (0-50%)
-            val spacerHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
+            // Calculate TOTAL height based on percentage (0-50%)
+            // This matches Launcher's logic where margin is total excluded space
+            val totalHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
             
-            val totalHeight = toolbarHeight + spacerHeight
-            
-            android.util.Log.d(TAG, "updateInputViewHeight: ON. %=$prefResizeScale, Spacer=$spacerHeight, Total=$totalHeight")
+            android.util.Log.d(TAG, "updateInputViewHeight: ON. %=$prefResizeScale, Total=$totalHeight (Screen=$screenHeight)")
             
             // Set the wrapped view (Transparent Header + Dock Footer)
             setInputView(createInputViewWrapper(totalHeight))
         } else {
+
             // Reset to normal - just the toolbar
             android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
             
