@@ -79,5 +79,46 @@
             android:background="#555555"/>
     </LinearLayout>
 
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#444444"/>
+
+    <!-- Option 3: Auto Resize Apps (only when dock mode enabled) -->
+    <LinearLayout
+        android:id="@+id/option_auto_resize"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_auto_resize"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_dock_switch"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/text_auto_resize"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Auto Resize Apps"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <View
+            android:id="@+id/toggle_auto_resize"
+            android:layout_width="36dp"
+            android:layout_height="20dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
 </LinearLayout>
+
+
 

@@ -3115,8 +3115,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         keyboardOverlay?.setWindowBounds(marginX, targetY, targetW, kbHeight)
         
+        // Save keyboard height for Dock IME auto-resize feature
+        saveKeyboardHeightForDock(kbHeight)
+        
         android.util.Log.d(TAG, "applyDockMode: x=$marginX, y=$targetY, w=$targetW, h=$kbHeight")
         showToast("Keyboard docked to bottom")
+    }
+    
+    // =================================================================================
+    // FUNCTION: saveKeyboardHeightForDock
+    // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
+    // =================================================================================
+    private fun saveKeyboardHeightForDock(height: Int) {
+        val key = "keyboard_height_d${currentDisplayId}"
+        getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+            .putInt(key, height)
+            .apply()
+        android.util.Log.d(TAG, "Saved keyboard height: $height for display $currentDisplayId")
     }
     // =================================================================================
     // END BLOCK: applyDockMode
