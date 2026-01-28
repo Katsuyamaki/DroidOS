@@ -10,77 +10,67 @@
     android:weightSum="5">
 
     <!-- 1. Keyboard Toggle -->
-    <TextView
+    <ImageView
         android:id="@+id/btn_dock_keyboard"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
-        android:text="KB"
-        android:gravity="center"
-        android:textColor="#3DDC84"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:includeFontPadding="false"
+        android:src="@drawable/ic_dock_keyboard"
+        android:scaleType="centerInside"
+        android:padding="8dp"
+        android:tint="#3DDC84"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Open DroidOS Keyboard"/>
 
     <!-- 2. Voice Input -->
-    <TextView
+    <ImageView
         android:id="@+id/btn_dock_voice"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
-        android:text="MIC"
-        android:gravity="center"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:includeFontPadding="false"
+        android:src="@drawable/ic_dock_mic"
+        android:scaleType="centerInside"
+        android:padding="8dp"
+        android:tint="#FFFFFF"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Voice Input"/>
 
     <!-- 3. Paste -->
-    <TextView
+    <ImageView
         android:id="@+id/btn_dock_paste"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
-        android:text="PST"
-        android:gravity="center"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:includeFontPadding="false"
+        android:src="@drawable/ic_dock_paste"
+        android:scaleType="centerInside"
+        android:padding="8dp"
+        android:tint="#FFFFFF"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Paste"/>
 
     <!-- 4. Switch IME -->
-    <TextView
+    <ImageView
         android:id="@+id/btn_dock_switch"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
-        android:text="IME"
-        android:gravity="center"
-        android:textColor="#AAAAAA"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:includeFontPadding="false"
+        android:src="@drawable/ic_dock_switch"
+        android:scaleType="centerInside"
+        android:padding="8dp"
+        android:tint="#888888"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Switch Keyboard"/>
 
     <!-- 5. Hide -->
-    <TextView
+    <ImageView
         android:id="@+id/btn_dock_hide"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
-        android:text="X"
-        android:gravity="center"
-        android:textColor="#FF5555"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:includeFontPadding="false"
+        android:src="@drawable/ic_dock_close"
+        android:scaleType="centerInside"
+        android:padding="8dp"
+        android:tint="#FF5555"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="Hide Dock"/>
 
