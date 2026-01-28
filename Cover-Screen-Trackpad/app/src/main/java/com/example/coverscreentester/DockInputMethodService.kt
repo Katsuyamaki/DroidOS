@@ -144,12 +144,14 @@ class DockInputMethodService : InputMethodService() {
     private var prefAutoShowOverlay = false
     private var prefDockMode = false
     private var prefAutoResize = false
+    private var prefResizeScale = 50 // Default 50 (1.0x). Range 0-100 (0.0x - 2.0x)
     
     private fun loadDockPrefs() {
         val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         prefAutoShowOverlay = prefs.getBoolean("auto_show_overlay", false)
         prefDockMode = prefs.getBoolean("dock_mode", false)
         prefAutoResize = prefs.getBoolean("auto_resize", false)
+        prefResizeScale = prefs.getInt("auto_resize_scale", 50)
     }
     
     private fun saveDockPrefs() {
@@ -157,11 +159,13 @@ class DockInputMethodService : InputMethodService() {
             .putBoolean("auto_show_overlay", prefAutoShowOverlay)
             .putBoolean("dock_mode", prefDockMode)
             .putBoolean("auto_resize", prefAutoResize)
+            .putInt("auto_resize_scale", prefResizeScale)
             .apply()
     }
     // =================================================================================
     // END BLOCK: DOCK POPUP STATE
     // =================================================================================
+
 
 
 
@@ -318,6 +322,11 @@ class DockInputMethodService : InputMethodService() {
         val textAutoResize = popupView.findViewById<android.widget.TextView>(R.id.text_auto_resize)
         val optionAutoResize = popupView.findViewById<View>(R.id.option_auto_resize)
         
+        val containerSlider = popupView.findViewById<View>(R.id.container_resize_slider)
+        val dividerResize = popupView.findViewById<View>(R.id.divider_resize)
+        val textSliderLabel = popupView.findViewById<android.widget.TextView>(R.id.text_resize_label)
+        val seekResize = popupView.findViewById<android.widget.SeekBar>(R.id.seekbar_resize_height)
+
         fun updateToggleVisuals() {
             // Option 1 & 2 - always enabled
             toggleAutoShow?.setBackgroundColor(if (prefAutoShowOverlay) 0xFF3DDC84.toInt() else 0xFF555555.toInt())
@@ -344,10 +353,38 @@ class DockInputMethodService : InputMethodService() {
                     saveDockPrefs()
                 }
             }
+            
+            // Slider Visibility
+            if (prefAutoResize && prefDockMode) {
+                containerSlider?.visibility = View.VISIBLE
+                dividerResize?.visibility = View.VISIBLE
+            } else {
+                containerSlider?.visibility = View.GONE
+                dividerResize?.visibility = View.GONE
+            }
         }
         updateToggleVisuals()
         
+        // Setup Slider
+        seekResize?.progress = prefResizeScale
+        textSliderLabel?.text = "Height Adjustment: ${prefResizeScale * 2}%"
+        
+        seekResize?.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    prefResizeScale = progress
+                    textSliderLabel?.text = "Height Adjustment: ${progress * 2}%"
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                saveDockPrefs()
+                updateInputViewHeight()
+            }
+        })
+        
         // Option 1: Auto-show overlay
+
         popupView.findViewById<View>(R.id.option_auto_show)?.setOnClickListener {
             prefAutoShowOverlay = !prefAutoShowOverlay
             saveDockPrefs()
@@ -403,8 +440,45 @@ class DockInputMethodService : InputMethodService() {
         popupWindow?.elevation = 16f
         popupWindow?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF2A2A2A.toInt()))
         
-        // Show above the anchor
-        popupWindow?.showAsDropDown(anchor, 0, -anchor.height - 200)
+        // HELPER: Calculate position and show/update
+        fun positionAndShow() {
+            // Measure content to calculate correct offset (Popup grows upwards)
+            popupView.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), 
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val h = popupView.measuredHeight
+            
+            // Calculate Y offset: -AnchorHeight (top of button) - PopupHeight (move popup above)
+            val yOff = -anchor.height - h
+            
+            if (popupWindow?.isShowing == true) {
+                popupWindow?.update(anchor, 0, yOff, -1, -1)
+            } else {
+                popupWindow?.showAsDropDown(anchor, 0, yOff)
+            }
+        }
+
+        // Update listener to reposition when size changes (e.g. slider toggled)
+        optionAutoResize?.setOnClickListener {
+            if (!prefDockMode) return@setOnClickListener
+            
+            prefAutoResize = !prefAutoResize
+            saveDockPrefs()
+            updateToggleVisuals()
+            updateInputViewHeight()
+            
+            // Recalculate position since height changed
+            positionAndShow()
+            
+            val intent = Intent("DOCK_PREF_CHANGED")
+            intent.setPackage(packageName)
+            intent.putExtra("auto_resize", prefAutoResize)
+            sendBroadcast(intent)
+        }
+
+        // Initial Show
+        positionAndShow()
     }
     // =================================================================================
     // END BLOCK: showDockPopup
@@ -414,7 +488,7 @@ class DockInputMethodService : InputMethodService() {
     // FUNCTION: updateInputViewHeight
     // SUMMARY: Adjusts the IME input view height based on Auto Resize setting.
     //          When enabled, adds transparent space above the toolbar to push apps up.
-    //          This makes full-screen apps resize to accommodate the keyboard area.
+    //          Applies a user-configurable scale factor (0% to 200%) to the empty space.
     // =================================================================================
     private fun updateInputViewHeight() {
         if (dockView == null) return
@@ -425,11 +499,21 @@ class DockInputMethodService : InputMethodService() {
             val density = resources.displayMetrics.density
             val defaultKbHeight = (275 * density).toInt()
             val overlayKbHeight = prefs.getInt("keyboard_height_d1", defaultKbHeight)
+            val toolbarHeight = (40 * density).toInt()
             
-            android.util.Log.d(TAG, "updateInputViewHeight: ON. Total Height: $overlayKbHeight")
+            // Calculate base transparent space (overlay height - toolbar height)
+            val baseSpacerHeight = (overlayKbHeight - toolbarHeight).coerceAtLeast(0)
+            
+            // Apply scale factor from slider (50 = 1.0x, 0 = 0.0x, 100 = 2.0x)
+            val scaleFactor = prefResizeScale / 50.0f
+            val scaledSpacerHeight = (baseSpacerHeight * scaleFactor).toInt()
+            
+            val totalHeight = toolbarHeight + scaledSpacerHeight
+            
+            android.util.Log.d(TAG, "updateInputViewHeight: ON. Scale=$scaleFactor, Spacer=$scaledSpacerHeight, Total=$totalHeight")
             
             // Set the wrapped view (Transparent Header + Dock Footer)
-            setInputView(createInputViewWrapper(overlayKbHeight))
+            setInputView(createInputViewWrapper(totalHeight))
         } else {
             // Reset to normal - just the toolbar
             android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
@@ -446,15 +530,14 @@ class DockInputMethodService : InputMethodService() {
     // =================================================================================
     // FUNCTION: createInputViewWrapper
     // SUMMARY: Creates a wrapper view with specified height, toolbar at bottom.
-    //          Uses FrameLayout with overridden onMeasure to strictly enforce height,
-    //          ensuring the IME window grows to push apps up while keeping dock visible.
+    //          Uses FrameLayout with overridden onMeasure to strictly enforce height.
     // =================================================================================
     private fun createInputViewWrapper(totalHeight: Int): View {
         val density = resources.displayMetrics.density
         val toolbarHeight = (40 * density).toInt()
         
-        // Safety: Ensure total height is at least toolbar height to prevent disappearing buttons
-        val safeTotalHeight = if (totalHeight < toolbarHeight) toolbarHeight + 100 else totalHeight
+        // Safety: Ensure total height is at least toolbar height
+        val safeTotalHeight = totalHeight.coerceAtLeast(toolbarHeight)
         
         // 1. Create FrameLayout Container with Enforced Height
         // We override onMeasure to guarantee the IME service respects this size
@@ -465,7 +548,7 @@ class DockInputMethodService : InputMethodService() {
             }
         }
         
-        // Force layout params (though onMeasure handles the real work)
+        // Force layout params
         container.layoutParams = android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             safeTotalHeight
@@ -473,10 +556,7 @@ class DockInputMethodService : InputMethodService() {
         container.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
         // 2. Prepare Dock View
-        // Ensure dock is detached from previous parent
         (dockView?.parent as? android.view.ViewGroup)?.removeView(dockView)
-        
-        // Reset properties to ensure visibility
         dockView?.setPadding(0, 0, 0, 0)
         dockView?.visibility = View.VISIBLE
         

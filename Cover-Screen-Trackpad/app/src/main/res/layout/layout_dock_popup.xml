@@ -118,7 +118,47 @@
             android:background="#555555"/>
     </LinearLayout>
 
+    <View
+        android:id="@+id/divider_resize"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#444444"
+        android:visibility="gone"/>
+
+    <!-- Option 4: Resize Slider (Sub-menu) -->
+    <LinearLayout
+        android:id="@+id/container_resize_slider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/text_resize_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Height Adjustment: 100%"
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp"
+            android:layout_gravity="center_horizontal"/>
+
+        <SeekBar
+            android:id="@+id/seekbar_resize_height"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:progressTint="#3DDC84"
+            android:thumbTint="#3DDC84"/>
+    </LinearLayout>
+
 </LinearLayout>
+
 
 
 
