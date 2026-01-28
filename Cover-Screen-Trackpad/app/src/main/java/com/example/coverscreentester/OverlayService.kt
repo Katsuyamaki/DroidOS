@@ -435,18 +435,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 // =================================================================================
 // FUNCTION: triggerAggressiveBlocking
-// SUMMARY: Enforces Soft Keyboard blocking.
-// CHANGES: Commented out 'enforceZOrder()' to stop the UI Lag Loop. 
-//          We now rely purely on 'softKeyboardController.showMode' which is faster.
+// SUMMARY: Enforces Soft Keyboard blocking. ONLY works on Cover Screen (display 1).
+//          Does nothing on main screen (0) or virtual displays (2+).
 // =================================================================================
     private fun triggerAggressiveBlocking() {
-        // [PERFORMANCE FIX] 
-        // Previously, this called 'enforceZOrder()' which removed/re-added views.
-        // This caused massive lag/stutter on the Cover Screen.
-        // Since we are already setting SHOW_MODE_HIDDEN below, the manual Z-order 
-        // shuffle is unnecessary and harmful.
-        
-        // enforceZOrder() // <--- DISABLED TO FIX LAG
+        // GUARD: Only block keyboard on Cover Screen (display 1)
+        if (currentDisplayId != 1) {
+            android.util.Log.d(TAG, "triggerAggressiveBlocking: Skipping - not on cover screen (display $currentDisplayId)")
+            return
+        }
 
         // Rely on standard Android API to suppress keyboard
         if (Build.VERSION.SDK_INT >= 24) {
@@ -467,6 +464,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
 
+
+
     // =================================================================================
     // SYNCHRONIZATION: Prevent multiple keyboard restoration threads
     // =================================================================================
@@ -477,6 +476,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     
     private fun setSoftKeyboardBlocking(enabled: Boolean) {
         if (shellService == null) return
+        
+        // =================================================================================
+        // GUARD: Keyboard blocking ONLY works on Cover Screen (display 1)
+        // On main screen (0) or virtual displays (2+), blocking is disabled/skipped.
+        // =================================================================================
+        if (enabled && currentDisplayId != 1) {
+            android.util.Log.w(TAG, "setSoftKeyboardBlocking: Blocking only works on cover screen (display 1), current=$currentDisplayId - skipping")
+            return
+        }
+        // =================================================================================
         
         // GUARD: Prevent concurrent restoration attempts
         if (!enabled && isKeyboardRestoreInProgress) {
@@ -504,7 +513,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     shellService?.runCommand("ime set $myImeId")
                     shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
                     
-                    handler.post { showToast("Keyboard Blocked") }
+                    handler.post { showToast("Keyboard Blocked (Cover Screen)") }
+
+
                     
                 } else {
                     // =================================================================================
@@ -741,6 +752,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
     private fun ensureKeyboardBlocked() {
+        // =================================================================================
+        // GUARD: Only enforce blocking on Cover Screen (display 1)
+        // =================================================================================
+        if (currentDisplayId != 1) return
+        
         // Throttle: Check max once every 2 seconds
         if (System.currentTimeMillis() - lastCoverCheck < 2000) return
         lastCoverCheck = System.currentTimeMillis()
@@ -749,13 +765,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             try {
                 // Check if Null Keyboard is NOT active
                 val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
-                if (!current.contains("NullInputMethodService")) {
-                    android.util.Log.i(TAG, "Cover Screen Detected: Enforcing Null Keyboard...")
+                if (!current.contains("NullInputMethodService") && !current.contains("DockInputMethodService")) {
+                    android.util.Log.i(TAG, "Cover Screen (D1): Enforcing DroidOS Keyboard...")
                     handler.post { setSoftKeyboardBlocking(true) }
                 }
             } catch(e: Exception) {}
         }.start()
     }
+
+
 
     // =================================================================================
     // FUNCTION: ensureCoverKeyboardEnforced (GBOARD GUARDIAN)
@@ -864,37 +882,34 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             }
         }
 
-        // [FIX 5] Throttle & Execute Blocking (Only on Cover Screen)
+        // [FIX 5] Throttle & Execute Blocking (ONLY on Cover Screen - display 1)
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
-            if (prefs.prefBlockSoftKeyboard && !isVoiceActive) {
-                 // CASE A: Blocking Enabled -> Force Null Keyboard
+            // GUARD: Only run blocking logic on Cover Screen (display 1)
+            if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive) {
+                 // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
                  ensureKeyboardBlocked()
 
                  val currentTime = System.currentTimeMillis()
-                 // 2. Throttle Aggressive Hidden Mode
                  if (currentTime - lastBlockTime > 500) {
                      lastBlockTime = currentTime
-
                      triggerAggressiveBlocking()
-
-                     // Enforce Hidden Mode
-                     if (Build.VERSION.SDK_INT >= 24) {
-                         try {
-                             if (softKeyboardController.showMode != AccessibilityService.SHOW_MODE_HIDDEN) {
-                                 softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
-                             }
-                         } catch(e: Exception) {}
-                     }
                  }
-            } else {
-                 // CASE B: Blocking Disabled -> Force Gboard (Defeat Samsung Restriction)
-                 // If the user turned off blocking, they expect their preferred keyboard.
-                 ensureCoverKeyboardEnforced()
+            } else if (currentDisplayId != 1) {
+                 // CASE B: Main/Virtual Display -> Ensure keyboard is NOT blocked
+                 if (Build.VERSION.SDK_INT >= 24) {
+                     try {
+                         if (softKeyboardController.showMode != AccessibilityService.SHOW_MODE_AUTO) {
+                             softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                         }
+                     } catch(e: Exception) {}
+                 }
             }
         }
+
+
     }
 
 // =================================================================================
@@ -1247,14 +1262,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     triggerVoiceTyping()
                 }
                 action == Intent.ACTION_SCREEN_ON -> {
-
-                    // [FIX] Only trigger blocking if explicitly enabled in prefs.
-                    // Previously, this ran unconditionally, causing the keyboard to vanish/block
-                    // on the Beam Pro every time the screen turned on.
-                    if (prefs.prefBlockSoftKeyboard) {
+                    // Only trigger blocking on Cover Screen (display 1) when enabled
+                    if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
                         triggerAggressiveBlocking()
                     }
                 }
+
+
 
                 // Universal ADB/External Commands (Suffix Match)
                 matches("SOFT_RESTART") -> {
@@ -1357,7 +1371,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         Thread.sleep(50)
                         injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP)
                     }
-                    if (prefs.prefBlockSoftKeyboard) {
+                    // Only re-enable blocking on cover screen
+                    if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
                         triggerAggressiveBlocking()
                     }
                 } catch (e: Exception) {
@@ -1368,6 +1383,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     // --- Voice Logic & Mic Check Loop ---
+
+
     private val micCheckHandler = Handler(Looper.getMainLooper())
     
     private val micCheckRunnable = object : Runnable {
@@ -1460,9 +1477,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             showToast("Shizuku Connected") 
             initCustomKeyboard()
             
-            // CRITICAL FIX: Only apply blocking if EXPLICITLY enabled. 
-            // Do NOT reset to "1" here, as that unblocks the keyboard every time the app opens.
-            if (prefs.prefBlockSoftKeyboard) {
+            // CRITICAL FIX: Only apply blocking on Cover Screen (display 1) when enabled
+            if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
                 triggerAggressiveBlocking()
                 handler.post(blockingHeartbeat)
             }
@@ -2243,30 +2259,26 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             android.util.Log.w(TAG, "│  └─ showMode: $preShowMode")
             */
 
-            if (displayId == 0) {
-                // android.util.Log.w(TAG, "├─ ACTION: MAIN SCREEN - Checking Blocking Prefs")
-
-                // ALLOW Null Keyboard on Main Screen if preference is set
+            // =================================================================================
+            // KEYBOARD BLOCKING: ONLY on Cover Screen (display 1)
+            // Main screen (0) and virtual displays (2+) should NEVER block keyboard
+            // =================================================================================
+            if (displayId == 1) {
+                // COVER SCREEN - Apply blocking if enabled
                 if (prefs.prefBlockSoftKeyboard) {
-                     // android.util.Log.w(TAG, "│  └─ Blocking enabled on Main Screen: enforcing Null Keyboard")
-                     setSoftKeyboardBlocking(true)
-                } else {
-                     // android.util.Log.w(TAG, "│  └─ Blocking NOT enabled")
-                     // Ensure showMode is AUTO if not blocking
-                     if (Build.VERSION.SDK_INT >= 24) {
-                        try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {}
-                     }
+                    android.util.Log.d(TAG, "setupUI: Cover screen (D1) - enabling keyboard blocking")
+                    triggerAggressiveBlocking()
                 }
             } else {
-
-                // android.util.Log.w(TAG, "├─ ACTION: COVER SCREEN - Checking if blocking needed")
-                if (prefs.prefBlockSoftKeyboard) {
-                    // android.util.Log.w(TAG, "│  └─ Blocking enabled, calling triggerAggressiveBlocking()")
-                    triggerAggressiveBlocking()
-                } else {
-                    // android.util.Log.w(TAG, "│  └─ Blocking NOT enabled, skipping")
+                // MAIN SCREEN (0) or VIRTUAL DISPLAY (2+) - Never block, ensure AUTO mode
+                android.util.Log.d(TAG, "setupUI: Display $displayId - ensuring keyboard NOT blocked")
+                if (Build.VERSION.SDK_INT >= 24) {
+                    try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {}
                 }
             }
+            // =================================================================================
+            // END BLOCK: KEYBOARD BLOCKING LOGIC
+            // =================================================================================
             
             // android.util.Log.w(TAG, "└─ KEYBOARD LOGIC END")
             // =================================================================================
@@ -2988,7 +3000,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "bubble_icon" -> cycleBubbleIcon()
             "bubble_alpha" -> updateBubbleAlpha(value as Int)
             "persistent_service" -> prefs.prefPersistentService = parseBoolean(value)
-            "block_soft_kb" -> { prefs.prefBlockSoftKeyboard = parseBoolean(value); setSoftKeyboardBlocking(prefs.prefBlockSoftKeyboard) }
+            "block_soft_kb" -> { 
+                prefs.prefBlockSoftKeyboard = parseBoolean(value)
+                // Only activate blocking if on cover screen (display 1)
+                if (currentDisplayId == 1) {
+                    setSoftKeyboardBlocking(prefs.prefBlockSoftKeyboard)
+                } else if (prefs.prefBlockSoftKeyboard) {
+                    showToast("KB Blocker saved - will activate on cover screen")
+                }
+            }
             "prediction_aggression" -> { 
                 prefs.prefPredictionAggression = (value as? Float) ?: 0.8f
                 // Apply immediately to Engine

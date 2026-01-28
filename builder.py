@@ -20,15 +20,35 @@ def resolve_new_path(filename):
     return os.path.join(PROJECT_ROOT, filename)
 
 def sanitize_text(text):
+    """
+    Cleans Markdown artifacts, UI garbage, and Claude formatting (---).
+    """
+    # 1. Normalize spaces (NBSP fix)
     text = text.replace('\xa0', ' ')
-    garbage = {"code kotlin", "code java", "code xml", "downloadcontent_copy", "expand_less", "expand_more"}
+    
+    garbage = {
+        "code kotlin", "code java", "code xml", 
+        "downloadcontent_copy", "expand_less", "expand_more"
+    }
+    
     lines = text.split('\n')
     clean_lines = []
+    
     for line in lines:
         stripped = line.strip().lower()
+        
+        # SKIP: UI Garbage
         if stripped in garbage: continue
+        
+        # SKIP: Markdown Fences (```, ```kotlin)
         if re.match(r"^`{3,}\w*$", stripped): continue
+        
+        # SKIP: Horizontal Rules / Separators (---, ___, ===)
+        # Claude loves putting these between headers and code
+        if re.match(r"^[-=_]{3,}$", stripped): continue
+        
         clean_lines.append(line)
+        
     return "\n".join(clean_lines)
 
 def process_plan(plan_file):
@@ -38,7 +58,7 @@ def process_plan(plan_file):
     print(f"🚀 Processing Plan...")
 
     # Trackers for the summary
-    actions_log = [] # Stores tuples: (filename, reason, type="Create"|"Update")
+    actions_log = [] 
     failures_log = []
 
     # --- PASS 1: FILE CREATION ---
