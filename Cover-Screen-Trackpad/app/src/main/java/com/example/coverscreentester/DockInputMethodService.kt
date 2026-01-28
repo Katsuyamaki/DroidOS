@@ -426,20 +426,19 @@ class DockInputMethodService : InputMethodService() {
             val defaultKbHeight = (275 * density).toInt()
             val overlayKbHeight = prefs.getInt("keyboard_height_d1", defaultKbHeight)
             
-            // Total height = overlay keyboard height
-            val toolbarHeight = (40 * density).toInt() // Our visible toolbar
-            val transparentSpace = (overlayKbHeight - toolbarHeight).coerceAtLeast(0)
+            android.util.Log.d(TAG, "updateInputViewHeight: ON. Total Height: $overlayKbHeight")
             
-            android.util.Log.d(TAG, "updateInputViewHeight: overlayKb=$overlayKbHeight, toolbar=$toolbarHeight, transparent=$transparentSpace")
-            
-            // Create a wrapper with transparent space at top, toolbar at bottom
-            dockView?.setPadding(0, transparentSpace, 0, 0)
-            
-            // Request the IME framework to use the new height
+            // Set the wrapped view (Transparent Header + Dock Footer)
             setInputView(createInputViewWrapper(overlayKbHeight))
         } else {
             // Reset to normal - just the toolbar
+            android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
+            
+            // CRITICAL: Must detach from any previous wrapper before re-using
+            (dockView?.parent as? android.view.ViewGroup)?.removeView(dockView)
+            
             dockView?.setPadding(0, 0, 0, 0)
+            dockView?.visibility = View.VISIBLE
             setInputView(dockView)
         }
     }
@@ -447,31 +446,47 @@ class DockInputMethodService : InputMethodService() {
     // =================================================================================
     // FUNCTION: createInputViewWrapper
     // SUMMARY: Creates a wrapper view with specified height, toolbar at bottom.
+    //          Uses FrameLayout with overridden onMeasure to strictly enforce height,
+    //          ensuring the IME window grows to push apps up while keeping dock visible.
     // =================================================================================
     private fun createInputViewWrapper(totalHeight: Int): View {
         val density = resources.displayMetrics.density
         val toolbarHeight = (40 * density).toInt()
-        val transparentSpace = (totalHeight - toolbarHeight).coerceAtLeast(0)
         
-        // Create container
-        val container = android.widget.FrameLayout(this)
+        // Safety: Ensure total height is at least toolbar height to prevent disappearing buttons
+        val safeTotalHeight = if (totalHeight < toolbarHeight) toolbarHeight + 100 else totalHeight
+        
+        // 1. Create FrameLayout Container with Enforced Height
+        // We override onMeasure to guarantee the IME service respects this size
+        val container = object : android.widget.FrameLayout(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val heightSpec = View.MeasureSpec.makeMeasureSpec(safeTotalHeight, View.MeasureSpec.EXACTLY)
+                super.onMeasure(widthMeasureSpec, heightSpec)
+            }
+        }
+        
+        // Force layout params (though onMeasure handles the real work)
         container.layoutParams = android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            totalHeight
+            safeTotalHeight
         )
-        
-        // Remove dockView from old parent if needed
+        container.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        // 2. Prepare Dock View
+        // Ensure dock is detached from previous parent
         (dockView?.parent as? android.view.ViewGroup)?.removeView(dockView)
         
-        // Add dock at bottom
+        // Reset properties to ensure visibility
+        dockView?.setPadding(0, 0, 0, 0)
+        dockView?.visibility = View.VISIBLE
+        
+        // 3. Add Dock to Bottom
         val dockParams = android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             toolbarHeight
         )
         dockParams.gravity = android.view.Gravity.BOTTOM
         container.addView(dockView, dockParams)
-        
-        // The top area stays transparent (no view added)
         
         return container
     }

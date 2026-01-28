@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/item_resize_mode"
+        android:title="Auto Resize App Mode"
+        android:checkable="true"
+        android:checked="false"
+        android:icon="@android:drawable/ic_menu_crop" />
+    
+    <item
+        android:id="@+id/item_switch_ime"
+        android:title="Switch to Gboard/Other"
+        android:icon="@android:drawable/ic_menu_set_as" />
+    
+    <item
+        android:id="@+id/item_settings"
+        android:title="Settings"
+        android:icon="@android:drawable/ic_menu_preferences" />
+        
+    <item
+        android:id="@+id/item_exit"
+        android:title="Exit DroidOS IME"
+        android:icon="@android:drawable/ic_menu_close_clear_cancel" />
+</menu>
+
