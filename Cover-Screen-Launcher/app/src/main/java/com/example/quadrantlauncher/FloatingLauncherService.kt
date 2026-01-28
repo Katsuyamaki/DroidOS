@@ -474,13 +474,14 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
                 bottomMarginPercent = percent
-                AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent)
+                // Fix: Use outer context 'this@FloatingLauncherService'
+                AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 setupVisualQueue() // Recalc HUD pos
                 if (isInstantMode) applyLayoutImmediate()
                 
                 // Update UI if in settings mode
                 if (currentMode == MODE_SETTINGS) {
-                     drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+                     switchMode(MODE_SETTINGS)
                 }
                 safeToast("Margin Updated: $percent%")
             }

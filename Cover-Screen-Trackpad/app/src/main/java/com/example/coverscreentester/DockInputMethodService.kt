@@ -130,19 +130,27 @@ class DockInputMethodService : InputMethodService() {
     
     private val ACTION_MARGIN_CHANGED = "com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED"
     private val ACTION_SET_MARGIN = "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM"
+    
+    // Callback to update UI if popup is open
+    private var onMarginUpdatedCallback: ((Int) -> Unit)? = null
 
     private val marginReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_MARGIN_CHANGED && prefSyncMargin) {
                 val percent = intent.getIntExtra("PERCENT", 0)
+                // Always update if different
                 if (prefResizeScale != percent) {
                     prefResizeScale = percent
                     saveDockPrefs()
                     updateInputViewHeight()
+                    
+                    // Update UI if visible
+                    onMarginUpdatedCallback?.invoke(percent)
                 }
             }
         }
     }
+
 
     override fun onCreate() {
         super.onCreate()
@@ -390,6 +398,17 @@ class DockInputMethodService : InputMethodService() {
         }
         updateToggleVisuals()
         
+        // Register callback for external updates (from Launcher)
+        onMarginUpdatedCallback = { newPercent ->
+            seekResize?.progress = newPercent
+            textSliderLabel?.text = "Bottom Margin: $newPercent%"
+        }
+        
+        // Cleanup callback on dismiss
+        popupWindow?.setOnDismissListener {
+            onMarginUpdatedCallback = null
+        }
+
         // Setup Sync Checkbox
         checkSync?.isChecked = prefSyncMargin
         checkSync?.setOnCheckedChangeListener { _, isChecked ->
@@ -400,6 +419,7 @@ class DockInputMethodService : InputMethodService() {
             if (isChecked) {
                 // 1. Force Launcher to match IME
                 val intent = Intent(ACTION_SET_MARGIN)
+                intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
                 intent.putExtra("PERCENT", prefResizeScale)
                 sendBroadcast(intent)
             }
@@ -424,11 +444,13 @@ class DockInputMethodService : InputMethodService() {
                 // Sync to Launcher if enabled
                 if (prefSyncMargin) {
                     val intent = Intent(ACTION_SET_MARGIN)
+                    intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
                     intent.putExtra("PERCENT", prefResizeScale)
                     sendBroadcast(intent)
                 }
             }
         })
+
 
         
         // Option 1: Auto-show overlay
