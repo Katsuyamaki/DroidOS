@@ -1220,26 +1220,46 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 action == "TOGGLE_DEBUG" -> toggleDebugMode()
                 action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> {
                     val forceShow = intent.getBooleanExtra("FORCE_SHOW", false)
-                    if (forceShow) {
+                    val forceHide = intent.getBooleanExtra("FORCE_HIDE", false)
+                    
+                    if (forceHide) {
+                        // Force hide from Dock IME auto-sync
+                        if (isCustomKeyboardVisible) {
+                            keyboardOverlay?.hide()
+                            isCustomKeyboardVisible = false
+                        }
+                    } else if (forceShow) {
                         // FORCE RESET LOGIC:
-                        // 1. Initialize if null
                         if (keyboardOverlay == null) initCustomKeyboard()
-                        
-                        // 2. Hide first to ensure clean state (fixes "stuck invisible" issues)
                         keyboardOverlay?.hide()
-                        
-                        // 3. Show
                         keyboardOverlay?.show()
                         isCustomKeyboardVisible = true
-                        
-                        // 4. Force Z-Order refresh
                         enforceZOrder()
-                        
-                        handler.post { Toast.makeText(context, "Keyboard Opened", Toast.LENGTH_SHORT).show() }
                     } else {
                         toggleCustomKeyboard()
                     }
                 }
+                
+                action == "DOCK_PREF_CHANGED" -> {
+                    // Handle preference changes from Dock IME popup
+                    if (intent.hasExtra("dock_mode")) {
+                        val dockMode = intent.getBooleanExtra("dock_mode", false)
+                        if (dockMode) {
+                            applyDockMode()
+                        } else {
+                            // Could restore previous position here
+                            showToast("Dock mode disabled")
+                        }
+                    }
+                }
+                
+                action == "APPLY_DOCK_MODE" -> {
+                    if (intent.getBooleanExtra("enabled", false)) {
+                        applyDockMode()
+                    }
+                }
+
+
                 action == "OPEN_MENU" -> { menuManager?.show(); enforceZOrder() }
                 action == "SET_TRACKPAD_VISIBILITY" -> {
 
@@ -1768,6 +1788,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         addAction("TOGGLE_DEBUG")
                         addAction("FORCE_KEYBOARD")
                         addAction("TOGGLE_CUSTOM_KEYBOARD")
+                        addAction("DOCK_PREF_CHANGED")
+                        addAction("APPLY_DOCK_MODE")
                         addAction("SET_TRACKPAD_VISIBILITY")
                         addAction("SET_PREVIEW_MODE") 
                         addAction("OPEN_MENU")
@@ -3067,7 +3089,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         savePrefs() 
     }
     
+    // =================================================================================
+    // FUNCTION: applyDockMode
+    // SUMMARY: Snaps the overlay keyboard to the bottom of the screen, full width.
+    //          Used when "Dock KB to Bottom" is enabled in Dock IME popup.
+    // =================================================================================
+    private fun applyDockMode() {
+        if (keyboardOverlay == null) initCustomKeyboard()
+        if (!isCustomKeyboardVisible) {
+            keyboardOverlay?.show()
+            isCustomKeyboardVisible = true
+        }
+        
+        val density = resources.displayMetrics.density
+        val screenWidth = uiScreenWidth
+        val screenHeight = uiScreenHeight
+        
+        // Get current keyboard height or use default
+        val kbHeight = keyboardOverlay?.getViewHeight() ?: ((275f * (prefs.prefKeyScale / 100f) * density).toInt())
+        
+        // Position at bottom, full width with small margin
+        val marginX = (screenWidth * 0.02f).toInt()
+        val targetW = screenWidth - (marginX * 2)
+        val targetY = screenHeight - kbHeight
+        
+        keyboardOverlay?.setWindowBounds(marginX, targetY, targetW, kbHeight)
+        
+        android.util.Log.d(TAG, "applyDockMode: x=$marginX, y=$targetY, w=$targetW, h=$kbHeight")
+        showToast("Keyboard docked to bottom")
+    }
+    // =================================================================================
+    // END BLOCK: applyDockMode
+    // =================================================================================
+
     fun applyLayoutPreset(type: Int) {
+
+
         if (type == 0) { loadLayout(); showToast("Freeform Profile Loaded"); return }
         val h = uiScreenHeight; val w = uiScreenWidth; val density = resources.displayMetrics.density
         val targetW = (w * 0.96f).toInt(); val marginX = (w - targetW) / 2

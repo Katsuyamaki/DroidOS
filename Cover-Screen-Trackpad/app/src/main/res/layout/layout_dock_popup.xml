@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dock_popup_container"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#2A2A2A"
+    android:padding="8dp"
+    android:elevation="8dp">
+
+    <!-- Option 1: Auto-sync overlay keyboard visibility -->
+    <LinearLayout
+        android:id="@+id/option_auto_show"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_auto_show"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_dock_keyboard"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Auto-show Overlay KB"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <View
+            android:id="@+id/toggle_auto_show"
+            android:layout_width="36dp"
+            android:layout_height="20dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#444444"/>
+
+    <!-- Option 2: Dock mode (snap overlay KB to bottom) -->
+    <LinearLayout
+        android:id="@+id/option_dock_mode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_dock_mode"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_dock_paste"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Dock KB to Bottom"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <View
+            android:id="@+id/toggle_dock_mode"
+            android:layout_width="36dp"
+            android:layout_height="20dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
+</LinearLayout>
+
