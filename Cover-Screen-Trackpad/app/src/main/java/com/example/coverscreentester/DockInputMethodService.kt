@@ -562,7 +562,13 @@ class DockInputMethodService : InputMethodService() {
     //          (Launcher tiles end at [Screen - Margin]. IME starts at [Screen - Nav - IME_H].
     //           If IME_H = Margin, then IME overlaps tiles by Nav height. 
     //           So we need IME_H = Margin - Nav).
+    // [FIX] Avoid calling setInputView() when only adjusting margin, as it triggers
+    //       Android's ADJUST_RESIZE behavior which moves tiled freeform windows.
+    //       Instead, we update the existing wrapper's layout params directly.
     // =================================================================================
+    private var currentInputWrapper: android.view.View? = null
+    private var lastCalculatedHeight: Int = -1
+    
     private fun updateInputViewHeight() {
         if (dockView == null) return
         
@@ -593,10 +599,38 @@ class DockInputMethodService : InputMethodService() {
             
             android.util.Log.d(TAG, "updateInputViewHeight: ON. Margin=$marginHeight, Nav=$navHeight -> IME Height=$correctedHeight")
             
-            // Set the wrapped view (Transparent Header + Dock Footer)
-            setInputView(createInputViewWrapper(correctedHeight))
+            // [FIX] Check if we already have a wrapper with the same height structure
+            // If the wrapper exists and is attached, just request a layout update instead of setInputView()
+            // This prevents Android from triggering ADJUST_RESIZE on tiled windows
+            val existingWrapper = currentInputWrapper
+            if (existingWrapper != null && 
+                existingWrapper.parent != null && 
+                isInputViewShown &&
+                lastCalculatedHeight > 0) {
+                
+                // Update the existing wrapper's height via layout params
+                // This is a "soft" update that doesn't trigger IME inset recalculation
+                val density = resources.displayMetrics.density
+                val toolbarHeight = (40 * density).toInt()
+                val safeTotalHeight = correctedHeight.coerceAtLeast(toolbarHeight)
+                
+                existingWrapper.layoutParams?.let { params ->
+                    params.height = safeTotalHeight
+                    existingWrapper.layoutParams = params
+                }
+                existingWrapper.requestLayout()
+                lastCalculatedHeight = correctedHeight
+                
+                android.util.Log.d(TAG, "updateInputViewHeight: SOFT UPDATE (no setInputView) h=$safeTotalHeight")
+            } else {
+                // First time or wrapper not attached - do full setInputView()
+                val wrapper = createInputViewWrapper(correctedHeight)
+                currentInputWrapper = wrapper
+                lastCalculatedHeight = correctedHeight
+                setInputView(wrapper)
+                android.util.Log.d(TAG, "updateInputViewHeight: FULL UPDATE (setInputView) h=$correctedHeight")
+            }
         } else {
-
             // Reset to normal - just the toolbar
             android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
             
@@ -605,6 +639,8 @@ class DockInputMethodService : InputMethodService() {
             
             dockView?.setPadding(0, 0, 0, 0)
             dockView?.visibility = View.VISIBLE
+            currentInputWrapper = null
+            lastCalculatedHeight = -1
             setInputView(dockView)
         }
     }
