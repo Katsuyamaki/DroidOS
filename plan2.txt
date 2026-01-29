@@ -1,0 +1,732 @@
+
+ ▐▛███▜▌   Claude Code v2.1.23
+▝▜█████▛▘  Opus 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/projects/DroidOS
+
+❯ /plan 
+  ⎿  Enabled plan mode
+
+❯ need to fix a bug. its an interaction between the droidos ime keyboard    
+  /toolbar and floaring windows which were tiled by droidos launchr. when   
+  click to set/unset focus on an input field, the ime kb                    
+  activates/deactivates properly, but the tiled windows sometmes move when  
+  thry should not. knly full screen apps shoule move. I found how           
+  tonreporduce thebug 100%. it happens  ONLY after using the droidos ime    
+  bottom margin slider and only jncresing the margin. it does not move when 
+  decresjng the margin or whrn chsnging mrgin from the the droidos          
+  launcher config slider. also it ONLY happens in the 2 app top/bot layout  
+  and only the bottom app moves                                             
+
+● Explore(Explore IME and tiling bug)
+  ⎿  ❯ I need to understand a bug in the DroidOS project involving the IME      
+
+  ⎿  Error: EACCES: permission denied, mkdir 
+     '/tmp/claude-10402/-data-data-com-termux-files-home-projects-DroidOS/tasks'
+
+● Searched for 3 patterns, read 1 file (ctrl+o to expand)
+
+● I've read the IME service code. The root cause is clear. Let me write the
+  plan.
+
+● Updated plan
+  ⎿  /plan to preview
+
+● The bug is that updateInputViewHeight() calls setInputView() every time the
+  slider changes, which re-triggers Android's ADJUST_RESIZE and causes tiled
+  windows to shift. The fix is to update the existing wrapper's height in-place
+  instead of calling setInputView() again when the IME is already showing a
+  resized view.
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Fix: Tiled windows move after IME margin slider increase                │
+     │                                                                         │
+     │ Root Cause                                                              │
+     │                                                                         │
+     │ In updateInputViewHeight() (line 597), every margin change calls        │
+     │ setInputView(createInputViewWrapper(correctedHeight)). This triggers    │
+     │ Android's ADJUST_RESIZE behavior, which causes the system to recalculate│
+     │  window positions for all apps — including tiled floating windows that  │
+     │ should remain static.                                                   │
+     │                                                                         │
+     │ The bug only manifests when increasing the margin because a larger IME  │
+     │ height pushes more content area upward via ADJUST_RESIZE. Decreasing    │
+     │ doesn't cause visible movement because the IME shrinks and apps don't   │
+     │ need to move.                                                           │
+     │                                                                         │
+     │ The Launcher slider doesn't trigger this because it only changes the    │
+     │ Launcher's tiling — it doesn't call setInputView().                     │
+     │                                                                         │
+     │ Fix                                                                     │
+     │                                                                         │
+     │ File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentes│
+     │ ter/DockInputMethodService.kt                                           │
+     │                                                                         │
+     │ In updateInputViewHeight(): When the IME is already showing a resized   │
+     │ wrapper, update the existing container's layout params in-place instead │
+     │ of calling setInputView() again. Only call setInputView() on the initial│
+     │  creation (when transitioning from toolbar-only to resized mode).       │
+     │                                                                         │
+     │ Specifically:                                                           │
+     │ 1. Track the current wrapper container as a class field (private var    │
+     │ currentWrapper: FrameLayout? = null)                                    │
+     │ 2. In updateInputViewHeight(), check if currentWrapper is already       │
+     │ showing                                                                 │
+     │ 3. If yes: update currentWrapper.layoutParams.height, update the        │
+     │ onMeasure target height, and call currentWrapper.requestLayout() — no   │
+     │ setInputView() call                                                     │
+     │ 4. If no (first time or transitioning from toolbar-only): create wrapper│
+     │  and call setInputView() as before                                      │
+     │ 5. When resetting to toolbar-only mode, clear currentWrapper = null     │
+     │                                                                         │
+     │ This avoids re-triggering ADJUST_RESIZE on every slider adjustment while│
+     │  the IME is already displayed.                                          │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ 1. Build and install the IME                                            │
+     │ 2. Open 2-app top/bottom tiled layout                                   │
+     │ 3. Open IME margin slider, increase margin — bottom app should NOT move │
+     │ 4. Tap input field to show/hide IME — bottom app should NOT move        │
+     │ 5. Decrease margin — should still work correctly                        │
+     │ 6. Toggle auto-resize off/on — should still work correctly              │
+     │                                                                         │
+     │                                                                         │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+
+❯ /stats 
+  ⎿  Stats dialog dismissed
+
+❯ /config 
+  ⎿  Config dialog dismissed
+
+❯ /memory 
+  ⎿  Opened memory file at ./CLAUDE.md
+
+     Using $VISUAL="nvim". To change editor, set $EDITOR or $VISUAL environment 
+     variable.
+
+
+❯ you solved the problem but you did not respond according to claude.md can 
+  you output response according to the .md                                  
+
+● FILE_UPDATE: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreente
+  ster/DockInputMethodService.kt
+  REASON: Track current wrapper to avoid calling setInputView() on every slider
+  change, which triggers ADJUST_RESIZE and moves tiled windows.
+
+  SEARCH_BLOCK:
+      private var popupWindow: android.widget.PopupWindow? = null
+  REPLACE_BLOCK:
+      private var currentWrapper: android.widget.FrameLayout? = null
+      private var currentWrapperHeight: Int = 0
+      private var popupWindow: android.widget.PopupWindow? = null
+
+  SEARCH_BLOCK:
+          if (prefAutoResize && prefDockMode) {
+              val wm = getSystemService(Context.WINDOW_SERVICE) as
+  android.view.WindowManager
+
+              // 1. Get Real Screen Height (Physical pixels)
+              val metrics = android.util.DisplayMetrics()
+              wm.defaultDisplay.getRealMetrics(metrics)
+              val screenHeight = metrics.heightPixels
+
+              // 2. Get Navigation Bar Height (Insets)
+              val windowMetrics = wm.currentWindowMetrics
+              val insets =
+  windowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                  android.view.WindowInsets.Type.navigationBars() or
+                  android.view.WindowInsets.Type.displayCutout()
+              )
+              val navHeight = insets.bottom
+
+              // 3. Calculate Margin Height (Desired clear space)
+              val marginHeight = (screenHeight * (prefResizeScale /
+  100f)).toInt()
+
+              // 4. Calculate IME Window Height
+              // Subtract nav height because IME sits ON TOP of nav bar, while 
+  margin is from physical bottom.
+              // [FIX] Subtract extra 2px safety buffer to handle rounding 
+  errors and ensure
+              // the IME window stays strictly below the Launcher's tiling line.
+              val correctedHeight = (marginHeight - navHeight -
+  2).coerceAtLeast(0)
+
+              android.util.Log.d(TAG, "updateInputViewHeight: ON. 
+  Margin=$marginHeight, Nav=$navHeight -> IME Height=$correctedHeight")
+
+              // Set the wrapped view (Transparent Header + Dock Footer)
+              setInputView(createInputViewWrapper(correctedHeight))
+          } else {
+
+              // Reset to normal - just the toolbar
+              android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
+
+              // CRITICAL: Must detach from any previous wrapper before re-using
+              (dockView?.parent as?
+  android.view.ViewGroup)?.removeView(dockView)
+
+              dockView?.setPadding(0, 0, 0, 0)
+              dockView?.visibility = View.VISIBLE
+              setInputView(dockView)
+          }
+  REPLACE_BLOCK:
+          if (prefAutoResize && prefDockMode) {
+              val wm = getSystemService(Context.WINDOW_SERVICE) as
+  android.view.WindowManager
+
+              // 1. Get Real Screen Height (Physical pixels)
+              val metrics = android.util.DisplayMetrics()
+              wm.defaultDisplay.getRealMetrics(metrics)
+              val screenHeight = metrics.heightPixels
+
+              // 2. Get Navigation Bar Height (Insets)
+              val windowMetrics = wm.currentWindowMetrics
+              val insets =
+  windowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                  android.view.WindowInsets.Type.navigationBars() or
+                  android.view.WindowInsets.Type.displayCutout()
+              )
+              val navHeight = insets.bottom
+
+              // 3. Calculate Margin Height (Desired clear space)
+              val marginHeight = (screenHeight * (prefResizeScale /
+  100f)).toInt()
+
+              // 4. Calculate IME Window Height
+              val correctedHeight = (marginHeight - navHeight -
+  2).coerceAtLeast(0)
+
+              android.util.Log.d(TAG, "updateInputViewHeight: ON. 
+  Margin=$marginHeight, Nav=$navHeight -> IME Height=$correctedHeight")
+
+              // [FIX] If wrapper already exists and is showing, update height 
+  in-place
+              // to avoid calling setInputView() which triggers ADJUST_RESIZE 
+  and moves tiled windows.
+              val wrapper = currentWrapper
+              if (wrapper != null && isInputViewShown) {
+                  currentWrapperHeight = correctedHeight.coerceAtLeast((40 *
+  resources.displayMetrics.density).toInt())
+                  wrapper.layoutParams = android.view.ViewGroup.LayoutParams(
+                      android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                      currentWrapperHeight
+                  )
+                  wrapper.requestLayout()
+              } else {
+                  setInputView(createInputViewWrapper(correctedHeight))
+              }
+          } else {
+
+              // Reset to normal - just the toolbar
+              android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
+
+              currentWrapper = null
+              currentWrapperHeight = 0
+
+              // CRITICAL: Must detach from any previous wrapper before re-using
+              (dockView?.parent as?
+  android.view.ViewGroup)?.removeView(dockView)
+
+              dockView?.setPadding(0, 0, 0, 0)
+              dockView?.visibility = View.VISIBLE
+              setInputView(dockView)
+          }
+
+  SEARCH_BLOCK:
+          val container = object : android.widget.FrameLayout(this) {
+              override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: 
+  Int) {
+                  val heightSpec =
+  View.MeasureSpec.makeMeasureSpec(safeTotalHeight, View.MeasureSpec.EXACTLY)
+                  super.onMeasure(widthMeasureSpec, heightSpec)
+              }
+          }
+  REPLACE_BLOCK:
+          currentWrapperHeight = safeTotalHeight
+          val container = object : android.widget.FrameLayout(this) {
+              override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: 
+  Int) {
+                  val heightSpec =
+  View.MeasureSpec.makeMeasureSpec(currentWrapperHeight,
+  View.MeasureSpec.EXACTLY)
+                  super.onMeasure(widthMeasureSpec, heightSpec)
+              }
+          }
+          currentWrapper = container
+
+❯ /export 
+  ⎿  Failed to copy to clipboard. Make sure xclip or wl-copy is installed on you
+      system and try again.
+
+❯ /export 
+  ⎿  Conversation copied to clipboard
+
+❯ create a patch plan to fix te droidos ovelay keyboard. i need to improve  
+  the accuracy of single charcter by character input. Many times i press a  
+  key but no input is registered. i believe this is because i am pressing   
+  between keys and nothing is registered. Make it impossible for this to    
+  happen. No input gaps between keys. keep the kb visually the same.        
+
+● Bash(find /data/data/com.termux/files/home/projects/DroidOS -name "*.kt" |
+      xargs grep -l -i
+      "overlay.*keyboard\|keyboard.*overlay\|custom.*keyboard\|OverlayService"…)
+  ⎿ /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Launcher
+    /app/src/main/java/com/example/quadrantlauncher/FloatingLauncherService
+    .kt
+    … +26 lines (ctrl+o to expand)
+
+
+
+● Searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● Now let me check the onTouchEvent to see where findKeyView is called for tap
+  input and understand the flow.
+
+● Read 1 file (ctrl+o to expand)
+
+● Now let me check where onKeyDown/onKeyUp are called from onTouchEvent to
+  understand the full tap flow, and see the findNearestKey threshold issue.
+
+● Read 1 file (ctrl+o to expand)
+
+● Now I have a clear picture. The existing findNearestKey uses center-to-point 
+  distance with a 20dp threshold. The problem: for larger keys, a touch in a gap
+   can be far from any key's center even though it's right next to a key's edge.
+   The fix is to use edge-to-point distance instead, which guarantees zero dead
+  zones.
+
+● Updated plan
+  ⎿  /plan to preview
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Fix: Eliminate input gaps between keyboard keys                         │
+     │                                                                         │
+     │ Root Cause                                                              │
+     │                                                                         │
+     │ findNearestKey() in KeyboardView.kt uses center-to-point distance with a│
+     │  20dp max threshold. For wider/taller keys, a touch in a gap between    │
+     │ keys can be far from any key's center, exceeding the threshold and      │
+     │ returning null (no key registered). This is why single-character taps   │
+     │ between keys are silently dropped.                                      │
+     │                                                                         │
+     │ Fix                                                                     │
+     │                                                                         │
+     │ File: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentes│
+     │ ter/KeyboardView.kt                                                     │
+     │                                                                         │
+     │ Change collectKeysWithDistance to use edge-to-point distance (minimum   │
+     │ distance from touch point to key's bounding rectangle) instead of       │
+     │ center-to-point distance. A point touching a key's edge = distance 0. A │
+     │ point in a gap = small distance to nearest edge. This guarantees every  │
+     │ touch resolves to a key.                                                │
+     │                                                                         │
+     │ Also remove the 20dp threshold cap — replace with unlimited fallback so │
+     │ no touch within the keyboard bounds ever returns null.                  │
+     │                                                                         │
+     │ Specific changes                                                        │
+     │                                                                         │
+     │ 1. collectKeysWithDistance (line ~1785): Replace center-distance        │
+     │ calculation with edge-distance:                                         │
+     │   - dx = max(0, max(keyLeft - targetX, targetX - keyRight))             │
+     │   - dy = max(0, max(keyTop - targetY, targetY - keyBottom))             │
+     │   - distance = sqrt(dx² + dy²)                                          │
+     │   - This returns 0 when touch is inside a key, and the actual gap       │
+     │ distance when outside.                                                  │
+     │ 2. findNearestKey (line ~1752): Remove the 20dp maxThresholdPx cap.     │
+     │ Simply return the nearest key unconditionally. Every touch inside the   │
+     │ keyboard will find a key.                                               │
+     │                                                                         │
+     │ No visual changes — only the hit-testing math changes.                  │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ 1. Build and install                                                    │
+     │ 2. Tap rapidly between keys — every tap should register                 │
+     │ 3. Tap at row boundaries (vertical gaps) — should register              │
+     │ 4. Normal typing should feel identical                                  │
+     │ 5. Swipe typing should be unaffected (uses same findKeyView)            │
+     │                                                                         │
+     │                                                                         │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+
+❯ provide output as prescribed in claude.md 
+
+● FILE_UPDATE: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreente
+  ster/KeyboardView.kt
+  REASON: Replace center-to-point distance with edge-to-point distance in
+  collectKeysWithDistance to eliminate dead zones between keys.
+
+  SEARCH_BLOCK:
+              if (child.tag != null) {
+                  // This is a key - calculate distance from touch to key center
+                  val keyCenterX = childAbsX + child.width / 2f
+                  val keyCenterY = childAbsY + child.height / 2f
+
+                  val dx = targetX - keyCenterX
+                  val dy = targetY - keyCenterY
+                  val distance = Math.sqrt((dx * dx + dy *
+  dy).toDouble()).toFloat()
+
+                  onKeyFound(child, distance)
+  REPLACE_BLOCK:
+              if (child.tag != null) {
+                  // This is a key - calculate distance from touch to key EDGE 
+  (not center)
+                  // Edge distance = 0 when touch is inside the key, and the 
+  actual gap
+                  // distance when outside. This eliminates dead zones between 
+  keys.
+                  val keyLeft = childAbsX
+                  val keyRight = childAbsX + child.width
+                  val keyTop = childAbsY
+                  val keyBottom = childAbsY + child.height
+
+                  val dx = maxOf(0f, maxOf(keyLeft - targetX, targetX -
+  keyRight))
+                  val dy = maxOf(0f, maxOf(keyTop - targetY, targetY -
+  keyBottom))
+                  val distance = Math.sqrt((dx * dx + dy *
+  dy).toDouble()).toFloat()
+
+                  onKeyFound(child, distance)
+
+  FILE_UPDATE: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreente
+  ster/KeyboardView.kt
+  REASON: Remove 20dp threshold cap so every touch within the keyboard always
+  resolves to a key. No gaps possible.
+
+  SEARCH_BLOCK:
+      private fun findNearestKey(targetX: Float, targetY: Float): View? {
+          // Maximum distance threshold in pixels (~20dp covers gaps but not 
+  wild misses)
+          val maxThresholdPx = dpToPx(20).toFloat()
+
+          var nearestKey: View? = null
+          var nearestDistance = Float.MAX_VALUE
+
+          // Collect all key views and their bounds
+          collectKeysWithDistance(this, targetX, targetY, 0f, 0f) { keyView,
+  distance ->
+              if (distance < nearestDistance && distance < maxThresholdPx) {
+                  nearestDistance = distance
+                  nearestKey = keyView
+              }
+          }
+
+          return nearestKey
+      }
+  REPLACE_BLOCK:
+      private fun findNearestKey(targetX: Float, targetY: Float): View? {
+          var nearestKey: View? = null
+          var nearestDistance = Float.MAX_VALUE
+
+          // Collect all key views and find the closest by edge distance.
+          // No threshold cap — every touch resolves to a key (zero dead zones).
+          collectKeysWithDistance(this, targetX, targetY, 0f, 0f) { keyView,
+  distance ->
+              if (distance < nearestDistance) {
+                  nearestDistance = distance
+                  nearestKey = keyView
+              }
+          }
+
+          return nearestKey
+      }
+
+❯ /copy 
+  ⎿  Copied to clipboard (3128 characters, 77 lines)
+
+❯ /stats 
+  ⎿  Stats dialog dismissed
+
+❯ create a plan patch as prescribed in claude.md for the following: jn      
+  droidos launcher, i want to have a togglable on/off  auto adjust buttom   
+  margin feature that adjusts bottom margin depending on if ime keyboard is 
+  open or close (text is focused or not). this will make it easjer to use   
+  docked droidos overlay kb/drkid os ime keyboard with tiked                
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ create a plan patch as prescribed in claude.md for the following: jn      
+  droidos launcher, i want to                                               
+  have a togglable on/off  auto adjust buttom margin feature that adjusts   
+  bottom margin depending on                                                
+  if ime keyboard is open or close (text is focused or not). this will      
+  make it easjer to use docked                                              
+  droidos overlay kb/drkid os ime keyboard with tiled apps. if thjs mode    
+  is toggled on, j want the bkttkm margin to be reset to 0 (and trigger a   
+  retile of apps) when the ime keyboard is closed/not focusing apps. when   
+  ime kb is open (texg focused) retile again with margins set to whatever   
+  user has set bottkm margin to be.                                         
+
+● Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now let me check how the Launcher detects IME show/hide and find
+  applyLayoutImmediate:
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● Now let me check if there's already an onServiceConnected with an intent
+  filter and how broadcasts are registered:
+
+● Read 1 file (ctrl+o to expand)
+
+● Now let me check how the DockIME broadcasts its show/hide state:
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● I now have all the context needed. The IME already has
+  onWindowShown/onWindowHidden callbacks. The Launcher already listens for
+  SET_MARGIN_BOTTOM broadcasts and retiles. The plan is straightforward:
+
+  1. IME broadcasts its show/hide state to the Launcher
+  2. Launcher listens for this, and when "auto-adjust margin" is toggled on,
+  sets margin to the user's saved value on IME show, and 0 on IME hide, then
+  retiles
+
+  FILE_UPDATE: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreente
+  ster/DockInputMethodService.kt
+  REASON: Broadcast IME show/hide state to the Launcher so it can auto-adjust
+  bottom margin.
+
+  SEARCH_BLOCK:
+      override fun onWindowShown() {
+          super.onWindowShown()
+          loadDockPrefs()
+
+          // Auto-show overlay keyboard if enabled
+          if (prefAutoShowOverlay) {
+  REPLACE_BLOCK:
+      override fun onWindowShown() {
+          super.onWindowShown()
+          loadDockPrefs()
+
+          // Notify Launcher that IME is now visible
+          val imeIntent =
+  Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+          imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+          imeIntent.putExtra("VISIBLE", true)
+          sendBroadcast(imeIntent)
+
+          // Auto-show overlay keyboard if enabled
+          if (prefAutoShowOverlay) {
+
+  SEARCH_BLOCK:
+      override fun onWindowHidden() {
+          super.onWindowHidden()
+          loadDockPrefs()
+
+          // Auto-hide overlay keyboard if enabled
+  REPLACE_BLOCK:
+      override fun onWindowHidden() {
+          super.onWindowHidden()
+          loadDockPrefs()
+
+          // Notify Launcher that IME is now hidden
+          val imeIntent =
+  Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+          imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+          imeIntent.putExtra("VISIBLE", false)
+          sendBroadcast(imeIntent)
+
+          // Auto-hide overlay keyboard if enabled
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Add state variable for auto-adjust margin feature.
+
+  SEARCH_BLOCK:
+      private var bottomMarginPercent = 0
+  REPLACE_BLOCK:
+      private var bottomMarginPercent = 0
+      private var autoAdjustMarginForIME = false
+      private var savedBottomMarginPercent = 0 // User's configured margin 
+  (restored when IME opens)
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Register the IME_VISIBILITY broadcast action in the IntentFilter.
+
+  SEARCH_BLOCK:
+              addAction("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") // 
+  [FIX] Sync Margin
+          }
+  REPLACE_BLOCK:
+              addAction("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") // 
+  [FIX] Sync Margin
+              addAction("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") // 
+  Auto-adjust margin
+          }
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Handle IME_VISIBILITY broadcast — set margin to saved value when IME
+  opens, 0 when IME closes, then retile.
+
+  SEARCH_BLOCK:
+              } else if (action ==
+  "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
+  REPLACE_BLOCK:
+              } else if (action ==
+  "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
+                  if (autoAdjustMarginForIME) {
+                      val visible = intent?.getBooleanExtra("VISIBLE", false) ?:
+   false
+                      bottomMarginPercent = if (visible)
+  savedBottomMarginPercent else 0
+                      setupVisualQueue()
+                      if (isInstantMode) applyLayoutImmediate()
+                  }
+              } else if (action ==
+  "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: When user changes bottom margin via slider while auto-adjust is on,
+  update the saved value too.
+
+  SEARCH_BLOCK:
+                          } else {
+                              bottomMarginPercent = progress
+
+  AppPreferences.setBottomMarginPercent(holder.itemView.context,
+  currentDisplayId, progress)
+                              safeToast("Bottom Margin: $progress% (Display 
+  $currentDisplayId)")
+  REPLACE_BLOCK:
+                          } else {
+                              bottomMarginPercent = progress
+                              if (autoAdjustMarginForIME)
+  savedBottomMarginPercent = progress
+
+  AppPreferences.setBottomMarginPercent(holder.itemView.context,
+  currentDisplayId, progress)
+                              safeToast("Bottom Margin: $progress% (Display 
+  $currentDisplayId)")
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Also update savedBottomMarginPercent when receiving SET_MARGIN_BOTTOM
+  from IME sync.
+
+  SEARCH_BLOCK:
+              } else if (action ==
+  "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
+                  val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
+                  bottomMarginPercent = percent
+                  // Fix: Use outer context 'this@FloatingLauncherService'
+  REPLACE_BLOCK:
+              } else if (action ==
+  "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
+                  val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
+                  bottomMarginPercent = percent
+                  if (autoAdjustMarginForIME) savedBottomMarginPercent = percent
+                  // Fix: Use outer context 'this@FloatingLauncherService'
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Add the toggle option in the Settings menu, right after the Bottom
+  Margin slider.
+
+  SEARCH_BLOCK:
+                  displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = 
+  Bottom
+                  displayList.add(ToggleOption("Auto-Shrink for Keyboard",
+  autoResizeEnabled) { autoResizeEnabled = it;
+  AppPreferences.setAutoResizeKeyboard(this, it) })
+  REPLACE_BLOCK:
+                  displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = 
+  Bottom
+                  displayList.add(ToggleOption("Auto-Adjust Margin for IME",
+  autoAdjustMarginForIME) {
+                      autoAdjustMarginForIME = it
+                      AppPreferences.setAutoAdjustMarginForIME(this, it)
+                      if (it) savedBottomMarginPercent = bottomMarginPercent
+                  })
+                  displayList.add(ToggleOption("Auto-Shrink for Keyboard",
+  autoResizeEnabled) { autoResizeEnabled = it;
+  AppPreferences.setAutoResizeKeyboard(this, it) })
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Load auto-adjust preference on service start (add after
+  autoResizeEnabled load).
+
+  SEARCH_BLOCK:
+          currentDrawerWidthPercent =
+  AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled =
+  AppPreferences.getAutoResizeKeyboard(this)
+          // Margins now loaded in loadDisplaySettings()
+  REPLACE_BLOCK:
+          currentDrawerWidthPercent =
+  AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled =
+  AppPreferences.getAutoResizeKeyboard(this)
+          autoAdjustMarginForIME =
+  AppPreferences.getAutoAdjustMarginForIME(this)
+          // Margins now loaded in loadDisplaySettings()
+
+  ---
+  FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/FloatingLauncherService.kt
+  REASON: Initialize savedBottomMarginPercent when display settings are loaded.
+
+  SEARCH_BLOCK:
+          bottomMarginPercent = AppPreferences.getBottomMarginPercent(this,
+  displayId)
+  REPLACE_BLOCK:
+          bottomMarginPercent = AppPreferences.getBottomMarginPercent(this,
+  displayId)
+          savedBottomMarginPercent = bottomMarginPercent
+
+  ---
+  Now the AppPreferences helper methods. Let me find the file:
+
+● Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● FILE_UPDATE: Cover-Screen-Launcher/app/src/main/java/com/example/quadrantlaunc
+  her/AppPreferences.kt
+  REASON: Add preference key and getter/setter for auto-adjust margin for IME.
+
+  SEARCH_BLOCK:
+      fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
+          getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD,
+  enable).apply()
+      }
+
+      fun getAutoResizeKeyboard(context: Context): Boolean {
+          return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
+      }
+  REPLACE_BLOCK:
+      fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
+          getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD,
+  enable).apply()
+      }
+
+      fun getAutoResizeKeyboard(context: Context): Boolean {
+          return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
+      }
+
+      fun setAutoAdjustMarginForIME(context: Context, enable: Boolean) {
+          getPrefs(context).edit().putBoolean("auto_adjust_margin_ime",
+  enable).apply()
+      }
+
+      fun getAutoAdjustMarginForIME(context: Context): Boolean {
+          return getPrefs(context).getBoolean("auto_adjust_margin_ime", false)
+      }
+
+✻ Worked for 1m 13s
+
+❯ /copy 
+  ⎿  Copied to clipboard (1155 characters, 31 lines)
+
+❯ /export 
+  ⎿  Conversation exported to: plan.txt

@@ -59,8 +59,20 @@ class DockInputMethodService : InputMethodService() {
         super.onWindowShown()
         loadDockPrefs()
         
+        // Notify Launcher that IME is now visible
+        val imeShowIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+        imeShowIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        imeShowIntent.putExtra("VISIBLE", true)
+        sendBroadcast(imeShowIntent)
+        
         // Auto-show overlay keyboard if enabled
         if (prefAutoShowOverlay) {
+
+
+
+
+
+
             android.util.Log.d(TAG, "Dock shown - auto-showing overlay keyboard")
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
             intent.setPackage(packageName)
@@ -88,7 +100,19 @@ class DockInputMethodService : InputMethodService() {
         super.onWindowHidden()
         loadDockPrefs()
         
+        // Notify Launcher that IME is now hidden
+        val imeHideIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+        imeHideIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        imeHideIntent.putExtra("VISIBLE", false)
+        sendBroadcast(imeHideIntent)
+        
         // Auto-hide overlay keyboard if enabled
+
+
+
+
+
+
         if (prefAutoShowOverlay) {
             android.util.Log.d(TAG, "Dock hidden - auto-hiding overlay keyboard")
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
@@ -134,6 +158,10 @@ class DockInputMethodService : InputMethodService() {
     // Callback to update UI if popup is open
     private var onMarginUpdatedCallback: ((Int) -> Unit)? = null
 
+
+
+
+
     private val marginReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_MARGIN_CHANGED && prefSyncMargin) {
@@ -174,6 +202,8 @@ class DockInputMethodService : InputMethodService() {
         try { unregisterReceiver(inputReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(marginReceiver) } catch (e: Exception) {}
     }
+
+
 
     private fun loadDockPrefs() {
         val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)

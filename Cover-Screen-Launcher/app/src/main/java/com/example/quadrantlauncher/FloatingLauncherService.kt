@@ -401,6 +401,19 @@ private var isSoftKeyboardSupport = false
     private var currentDrawerWidthPercent = 90
     private var autoResizeEnabled = true
     private var bottomMarginPercent = 0
+    private var autoAdjustMarginForIME = false
+    private var imeMarginOverrideActive = false
+    private var imeRetileCooldownUntil = 0L
+
+    private fun effectiveBottomMarginPercent(): Int {
+        return if (autoAdjustMarginForIME && !imeMarginOverrideActive) 0 else bottomMarginPercent
+    }
+
+
+
+
+
+
     private var topMarginPercent = 0
     
     private var reorderSelectionIndex = -1
@@ -471,10 +484,29 @@ private var isSoftKeyboardSupport = false
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") {
                 broadcastKeybindsToKeyboard()
+            } else if (action == "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
+                if (autoAdjustMarginForIME) {
+                    val now = System.currentTimeMillis()
+                    if (now < imeRetileCooldownUntil) {
+                        Log.d(TAG, "IME_VISIBILITY ignored (cooldown)")
+                    } else {
+                        val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
+                        if (visible != imeMarginOverrideActive) {
+                            imeMarginOverrideActive = visible
+                            imeRetileCooldownUntil = now + 1500
+                            setupVisualQueue()
+                            if (isInstantMode) applyLayoutImmediate()
+                        }
+                    }
+                }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
                 bottomMarginPercent = percent
                 // Fix: Use outer context 'this@FloatingLauncherService'
+
+
+
+
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 setupVisualQueue() // Recalc HUD pos
                 if (isInstantMode) applyLayoutImmediate()
@@ -1226,7 +1258,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             addAction("com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") // [FIX] Added this
             addAction("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
             addAction("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") // [FIX] Sync Margin
+            addAction("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") // Auto-adjust margin
         }
+
+
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
 
 
@@ -1242,7 +1277,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
         currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this)
         // Margins now loaded in loadDisplaySettings()
+
+
 
         // Load Custom Mod
         customModKey = AppPreferences.getCustomModKey(this)
@@ -1341,6 +1379,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // 1. Margins (Per Display)
         topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId)
         bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId)
+
+
+
+
         
         // 2. Layout & Custom Rects (Per Display)
         selectedLayoutType = AppPreferences.getLastLayout(this, displayId)
@@ -1582,8 +1624,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val h = metrics.heightPixels
         
         val topPx = (h * topMarginPercent / 100f).toInt()
-        val bottomPx = (h * bottomMarginPercent / 100f).toInt()
+        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
         val effectiveH = h - topPx - bottomPx
+
+
         
         // Absolute Y position = TopMargin + Half Effective Height
         val centerY = topPx + (effectiveH / 2)
@@ -2066,9 +2110,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val h = display.height
         
         val topPx = (h * topMarginPercent / 100f).toInt()
-        val bottomPx = (h * bottomMarginPercent / 100f).toInt()
+        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
         
         // Standard CENTER is at h/2.
+
+
         // Effective Center is at (topPx + (h - topPx - bottomPx)/2) = topPx + h/2 - topPx/2 - bottomPx/2
         // = h/2 + (topPx - bottomPx)/2
         // Offset from standard center = (topPx - bottomPx) / 2
@@ -3982,7 +4028,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
+                displayList.add(ToggleOption("Auto-Adjust Margin for IME", autoAdjustMarginForIME) {
+                    autoAdjustMarginForIME = it
+                    AppPreferences.setAutoAdjustMarginForIME(this, it)
+                    if (!it) imeMarginOverrideActive = false
+                })
+
+
                 displayList.add(ToggleOption("Auto-Shrink for Keyboard", autoResizeEnabled) { autoResizeEnabled = it; AppPreferences.setAutoResizeKeyboard(this, it) })
+
+
                 displayList.add(FontSizeOption(currentFontSize))
                 displayList.add(IconOption("Launcher Icon (Tap to Change)"))
                 displayList.add(ToggleOption("Reorder: Drag & Drop", isReorderDragEnabled) { isReorderDragEnabled = it; AppPreferences.setReorderDrag(this, it) })
@@ -4550,8 +4605,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // === MARGIN LOGIC ===
         // Calculate effective height based on Top and Bottom margins
         val topPx = (h * topMarginPercent / 100f).toInt()
-        val bottomPx = (h * bottomMarginPercent / 100f).toInt()
+        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
         val effectiveH = max(100, h - topPx - bottomPx) // Safety floor
+
+
         // ====================
 
         val rects = mutableListOf<Rect>()
@@ -5045,7 +5102,11 @@ else -> AppHolder(View(parent.context)) } }
                         } else {
                             bottomMarginPercent = progress
                             AppPreferences.setBottomMarginPercent(holder.itemView.context, currentDisplayId, progress)
+
+
                             safeToast("Bottom Margin: $progress% (Display $currentDisplayId)")
+
+
                             
                             // Broadcast change to Dock/Trackpad
                             val intent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")

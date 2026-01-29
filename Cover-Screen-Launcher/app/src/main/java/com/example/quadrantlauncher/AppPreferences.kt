@@ -284,6 +284,14 @@ object AppPreferences {
         return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
     }
 
+    fun setAutoAdjustMarginForIME(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean("auto_adjust_margin_ime", enable).apply()
+    }
+
+    fun getAutoAdjustMarginForIME(context: Context): Boolean {
+        return getPrefs(context).getBoolean("auto_adjust_margin_ime", false)
+    }
+
     // --- SETTINGS ---
     fun setKillOnExecute(context: Context, kill: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_KILL_ON_EXECUTE, kill).apply()
