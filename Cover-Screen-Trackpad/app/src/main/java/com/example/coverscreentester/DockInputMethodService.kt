@@ -761,12 +761,11 @@ class DockInputMethodService : InputMethodService() {
                 // When auto-resize is active the Launcher retiles windows with its own
                 // bottom-margin logic.  We must NOT also report content insets or the
                 // system's adjustResize will shrink apps a second time (double-apply).
-                // Setting contentTopInsets = view height means "nothing is non-overlappable"
-                // so the system leaves app bounds alone.
+                // Use TOUCHABLE_INSETS_FRAME so the full IME window stays interactive.
                 val viewH = window?.window?.decorView?.height ?: 0
                 outInsets.contentTopInsets = viewH
                 outInsets.visibleTopInsets = viewH
-                outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
+                outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_FRAME
             } else {
                 // Normal mode – let the system resize apps above the IME.
                 outInsets.contentTopInsets = 0

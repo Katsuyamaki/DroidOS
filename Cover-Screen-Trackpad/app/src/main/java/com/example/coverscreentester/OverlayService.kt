@@ -1231,7 +1231,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     if (forceHide) {
                         // Force hide from Dock IME auto-sync
                         // Debounce: ignore FORCE_HIDE within 1s of FORCE_SHOW (IME flicker)
-                        if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
+                        val inSpacebarMouse = keyboardOverlay?.getKeyboardView()?.isInSpacebarMouseMode() == true
+                        if (inSpacebarMouse) {
+                            // Spacebar mouse mode is active — keep overlay alive.
+                            // DockIME already sent IME_VISIBILITY(false) to launcher,
+                            // so re-send true to preserve the auto-adjust margin.
+                            val fixIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+                            fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                            fixIntent.putExtra("VISIBLE", true)
+                            sendBroadcast(fixIntent)
+                            android.util.Log.d("OverlayService", "FORCE_HIDE blocked — spacebar mouse active")
+                        } else if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
                             keyboardOverlay?.hide()
                             isCustomKeyboardVisible = false
                             // Save state so bubble tap can restore
