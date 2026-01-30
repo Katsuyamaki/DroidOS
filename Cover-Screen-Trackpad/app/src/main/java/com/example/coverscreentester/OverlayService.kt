@@ -281,6 +281,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var currentDisplayId = 0
     var inputTargetDisplayId = 0
     var isTrackpadVisible = false // Changed: Default OFF
+    private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
+
+
     var isCustomKeyboardVisible = true // Changed: Default ON
     var isScreenOff = false
     private var isPreviewMode = false
@@ -1227,13 +1230,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     
                     if (forceHide) {
                         // Force hide from Dock IME auto-sync
-                        if (isCustomKeyboardVisible) {
+                        // Debounce: ignore FORCE_HIDE within 1s of FORCE_SHOW (IME flicker)
+                        if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
                             keyboardOverlay?.hide()
                             isCustomKeyboardVisible = false
+                            // Save state so bubble tap can restore
+                            pendingRestoreKeyboard = true
+                            hasPendingRestore = true
                         }
                     } else if (forceShow) {
                         // FORCE RESET LOGIC:
+                        lastForceShowTime = System.currentTimeMillis()
                         if (keyboardOverlay == null) initCustomKeyboard()
+
+
                         keyboardOverlay?.hide()
                         keyboardOverlay?.show()
                         isCustomKeyboardVisible = true
@@ -2539,13 +2549,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
     
     private fun handleBubbleTap() {
-        val anythingVisible = (prefs.prefBubbleIncludeTrackpad && isTrackpadVisible) || (prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible)
-        if (anythingVisible) {
+        // Check if any bubble-included component is currently visible
+        val anythingBubbleVisible = (prefs.prefBubbleIncludeTrackpad && isTrackpadVisible) || (prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible)
+        if (anythingBubbleVisible) {
             performSmartHide()
-        } else {
+        } else if (prefs.prefBubbleIncludeTrackpad || prefs.prefBubbleIncludeKeyboard) {
+            // Only restore if at least one component is bubble-included
             performSmartRestore()
         }
+        // If nothing is bubble-included, bubble tap does nothing
     }
+
+
 
     
     private fun executeHardkeyAction(actionId: String, keyEventAction: Int = KeyEvent.ACTION_UP) {
@@ -3692,26 +3707,40 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         pendingRestoreKeyboard = isCustomKeyboardVisible
         hasPendingRestore = true
         
+        val wasKeyboardVisible = prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible
+        
         // Hide only bubble-included components
         if (prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible) toggleCustomKeyboard()
         if (prefs.prefBubbleIncludeTrackpad && isTrackpadVisible) toggleTrackpad()
+        
+        // Notify launcher that overlay KB is gone (for auto-adjust margin)
+        if (wasKeyboardVisible) {
+            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            intent.putExtra("VISIBLE", false)
+            sendBroadcast(intent)
+        }
         
         handler.post { Toast.makeText(this, "Hidden (Tap Bubble to Restore)", Toast.LENGTH_SHORT).show() }
     }
 
 
     fun performSmartRestore() {
-        if (!hasPendingRestore) {
-            // Fallback: Just show Trackpad if no state saved
-            if (!isTrackpadVisible) toggleTrackpad()
-            return
-        }
-        
-        if (pendingRestoreTrackpad && !isTrackpadVisible) toggleTrackpad()
-        if (pendingRestoreKeyboard && !isCustomKeyboardVisible) toggleCustomKeyboard()
-        
+        // Always show all bubble-included components
+        if (prefs.prefBubbleIncludeTrackpad && !isTrackpadVisible) toggleTrackpad()
+        if (prefs.prefBubbleIncludeKeyboard && !isCustomKeyboardVisible) toggleCustomKeyboard()
         hasPendingRestore = false
+
+        // Notify launcher that overlay KB is back (for auto-adjust margin)
+        if (isCustomKeyboardVisible) {
+            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            intent.putExtra("VISIBLE", true)
+            sendBroadcast(intent)
+        }
     }
+
+
 
 
     private fun moveWindow(event: MotionEvent): Boolean { if (prefs.prefAnchored) return true; if (event.action == MotionEvent.ACTION_MOVE) { trackpadParams.x += (event.rawX - lastTouchX).toInt(); trackpadParams.y += (event.rawY - lastTouchY).toInt(); windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }; lastTouchX = event.rawX; lastTouchY = event.rawY; return true }

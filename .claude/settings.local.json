@@ -10,7 +10,8 @@
       "Bash(bash -c \"cd /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Launcher && SHELL=/bin/bash ./gradlew assembleDebug\")",
       "Bash(bash -c \"cd /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Launcher && git status\")",
       "Bash(bash -c \"cd /data/data/com.termux/files/home/projects/DroidOS/Cover-Screen-Trackpad && SHELL=/bin/bash ./gradlew assembleDebug\")",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(find:*)"
     ]
   }
 }
