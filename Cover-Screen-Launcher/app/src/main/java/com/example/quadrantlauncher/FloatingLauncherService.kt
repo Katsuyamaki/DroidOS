@@ -413,6 +413,8 @@ private var isSoftKeyboardSupport = false
     private var imeMarginOverrideActive = false
     private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
+    private var pendingImeRetileRunnable: Runnable? = null
+
 
 
 
@@ -502,6 +504,9 @@ private var isSoftKeyboardSupport = false
                     val newEffective = effectiveBottomMarginPercent()
                     if (newEffective != lastAppliedEffectiveMargin) {
                         val now = System.currentTimeMillis()
+                        // Cancel any stale deferred retile
+                        pendingImeRetileRunnable?.let { uiHandler.removeCallbacks(it) }
+                        pendingImeRetileRunnable = null
                         if (now >= imeRetileCooldownUntil) {
                             lastAppliedEffectiveMargin = newEffective
                             imeRetileCooldownUntil = now + 500
@@ -509,14 +514,18 @@ private var isSoftKeyboardSupport = false
                             retileExistingWindows()
                         } else {
                             Log.d(TAG, "IME_VISIBILITY ($visible) deferred (cooldown)")
-                            uiHandler.postDelayed({
+                            val runnable = Runnable {
                                 val eff = effectiveBottomMarginPercent()
                                 if (eff != lastAppliedEffectiveMargin) {
                                     lastAppliedEffectiveMargin = eff
+                                    imeRetileCooldownUntil = System.currentTimeMillis() + 500
                                     setupVisualQueue()
                                     retileExistingWindows()
                                 }
-                            }, imeRetileCooldownUntil - now + 50)
+                                pendingImeRetileRunnable = null
+                            }
+                            pendingImeRetileRunnable = runnable
+                            uiHandler.postDelayed(runnable, imeRetileCooldownUntil - now + 50)
                         }
                     }
                 }

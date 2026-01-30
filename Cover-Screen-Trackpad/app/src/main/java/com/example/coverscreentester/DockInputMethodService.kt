@@ -757,14 +757,27 @@ class DockInputMethodService : InputMethodService() {
     override fun onComputeInsets(outInsets: InputMethodService.Insets) {
         super.onComputeInsets(outInsets)
         if (isInputViewShown && dockView != null) {
-            // contentTopInsets = 0 relative to the input view tells the system that
-            // the entire height of our view (including transparent spacer) is non-overlappable.
-            // This forces the app to resize (adjustResize) to fit in the remaining space above.
-            outInsets.contentTopInsets = 0
-            outInsets.visibleTopInsets = 0
-            outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
+            if (prefAutoResize && prefDockMode) {
+                // When auto-resize is active the Launcher retiles windows with its own
+                // bottom-margin logic.  We must NOT also report content insets or the
+                // system's adjustResize will shrink apps a second time (double-apply).
+                // Setting contentTopInsets = view height means "nothing is non-overlappable"
+                // so the system leaves app bounds alone.
+                val viewH = window?.window?.decorView?.height ?: 0
+                outInsets.contentTopInsets = viewH
+                outInsets.visibleTopInsets = viewH
+                outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
+            } else {
+                // Normal mode – let the system resize apps above the IME.
+                outInsets.contentTopInsets = 0
+                outInsets.visibleTopInsets = 0
+                outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
+            }
         }
     }
+
+
+
 
     // [FIX] Prevent full-screen extraction mode (landscape/small screen)
     // We always want to behave as a docked bar.
