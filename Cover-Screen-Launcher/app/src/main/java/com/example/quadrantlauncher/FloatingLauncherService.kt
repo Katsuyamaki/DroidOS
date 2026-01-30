@@ -520,6 +520,11 @@ private var isSoftKeyboardSupport = false
                         }
                     }
                 }
+            } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") {
+                val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
+                autoAdjustMarginForIME = enabled
+                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled)
+                if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
                 bottomMarginPercent = percent
@@ -1428,6 +1433,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             addAction("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
             addAction("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") // [FIX] Sync Margin
             addAction("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") // Auto-adjust margin
+            addAction("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") // Sync from DockIME
+
+
         }
 
 

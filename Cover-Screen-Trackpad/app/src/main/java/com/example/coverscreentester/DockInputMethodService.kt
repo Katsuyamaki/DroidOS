@@ -526,7 +526,15 @@ class DockInputMethodService : InputMethodService() {
             intent.putExtra("auto_resize", prefAutoResize)
             sendBroadcast(intent)
             
+            // Sync auto-adjust margin setting to launcher
+            val launcherIntent = Intent("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN")
+            launcherIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            launcherIntent.putExtra("ENABLED", prefAutoResize)
+            sendBroadcast(launcherIntent)
+            
             android.util.Log.d(TAG, "Auto resize: $prefAutoResize")
+
+
         }
         
         // Create popup window
@@ -575,10 +583,18 @@ class DockInputMethodService : InputMethodService() {
             intent.setPackage(packageName)
             intent.putExtra("auto_resize", prefAutoResize)
             sendBroadcast(intent)
+            
+            // Sync auto-adjust margin setting to launcher
+            val launcherIntent = Intent("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN")
+            launcherIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            launcherIntent.putExtra("ENABLED", prefAutoResize)
+            sendBroadcast(launcherIntent)
         }
 
         // Initial Show
         positionAndShow()
+
+
     }
     // =================================================================================
     // END BLOCK: showDockPopup
