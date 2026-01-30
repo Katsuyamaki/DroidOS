@@ -11,7 +11,11 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.graphics.Color
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.ViewGroup
+
 import android.view.MotionEvent
 import java.util.ArrayList
 
@@ -660,7 +664,10 @@ class TrackpadMenuManager(
         val safeAggression = rawAggression.coerceIn(0.3f, 2.0f) // Force valid range
         val sliderValue = ((safeAggression - 0.3f) * 100).toInt()
         
-        list.add(TrackpadMenuAdapter.MenuItem("Prediction: Sloppy (L) vs Neat (R)", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, sliderValue, 170) { v ->
+        val predLabel = SpannableString("Prediction: Sloppy (L) vs Neat (R)")
+        predLabel.setSpan(ForegroundColorSpan(Color.parseColor("#4FC3F7")), 12, 18, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) // "Sloppy" in blue
+        predLabel.setSpan(ForegroundColorSpan(Color.parseColor("#66BB6A")), 26, 30, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) // "Neat" in green
+        list.add(TrackpadMenuAdapter.MenuItem(predLabel, R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, sliderValue, 170) { v ->
             // Explicitly cast v to Int to fix "Unresolved reference" error
             val intV = v as Int
             val floatVal = 0.3f + (intV / 100f)

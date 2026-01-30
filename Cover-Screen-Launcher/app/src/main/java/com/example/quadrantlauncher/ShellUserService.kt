@@ -805,7 +805,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         return true
     }
 
-    // Interface compliance stubs
     override fun batchResize(packages: List<String>, bounds: IntArray) {
         val token = Binder.clearCallingIdentity()
         try {
@@ -815,23 +814,26 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             val taskIds = mutableMapOf<String, Int>()
             for (line in lines) {
                 val trimmed = line.trim()
-                if (!trimmed.contains("taskId=")) continue
+                if (!trimmed.contains("taskId=") || !trimmed.contains(":")) continue
                 val match = Regex("taskId=(\\d+):").find(trimmed) ?: continue
                 val tid = match.groupValues[1].toIntOrNull() ?: continue
                 if (tid <= 0) continue
                 for (pkg in packages) {
                     if (trimmed.contains("$pkg/")) {
-                        taskIds[pkg] = tid
+                        val prev = taskIds[pkg] ?: -1
+                        if (tid > prev) taskIds[pkg] = tid
                     }
                 }
             }
+            val procs = mutableListOf<Process>()
             for (i in packages.indices) {
                 val tid = taskIds[packages[i]] ?: continue
                 val off = i * 4
                 if (off + 3 >= bounds.size) break
                 val cmd = "am task resize $tid ${bounds[off]} ${bounds[off+1]} ${bounds[off+2]} ${bounds[off+3]}"
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd)).waitFor()
+                procs.add(Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd)))
             }
+            for (proc in procs) proc.waitFor()
         } catch (e: Exception) {
             Log.e(TAG, "batchResize failed", e)
         } finally {

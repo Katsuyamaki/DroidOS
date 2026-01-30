@@ -405,6 +405,9 @@ private var isSoftKeyboardSupport = false
     private var autoAdjustMarginForIME = false
     private var imeMarginOverrideActive = false
     private var imeRetileCooldownUntil = 0L
+    private var lastAppliedEffectiveMargin = -1
+
+
 
     private fun effectiveBottomMarginPercent(): Int {
         return if (autoAdjustMarginForIME && !imeMarginOverrideActive) 0 else bottomMarginPercent
@@ -487,16 +490,26 @@ private var isSoftKeyboardSupport = false
                 broadcastKeybindsToKeyboard()
             } else if (action == "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
                 if (autoAdjustMarginForIME) {
-                    val now = System.currentTimeMillis()
-                    if (now < imeRetileCooldownUntil) {
-                        Log.d(TAG, "IME_VISIBILITY ignored (cooldown)")
-                    } else {
-                        val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
-                        if (visible != imeMarginOverrideActive) {
-                            imeMarginOverrideActive = visible
-                            imeRetileCooldownUntil = now + 1500
+                    val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
+                    imeMarginOverrideActive = visible
+                    val newEffective = effectiveBottomMarginPercent()
+                    if (newEffective != lastAppliedEffectiveMargin) {
+                        val now = System.currentTimeMillis()
+                        if (now >= imeRetileCooldownUntil) {
+                            lastAppliedEffectiveMargin = newEffective
+                            imeRetileCooldownUntil = now + 500
                             setupVisualQueue()
                             retileExistingWindows()
+                        } else {
+                            Log.d(TAG, "IME_VISIBILITY ($visible) deferred (cooldown)")
+                            uiHandler.postDelayed({
+                                val eff = effectiveBottomMarginPercent()
+                                if (eff != lastAppliedEffectiveMargin) {
+                                    lastAppliedEffectiveMargin = eff
+                                    setupVisualQueue()
+                                    retileExistingWindows()
+                                }
+                            }, imeRetileCooldownUntil - now + 50)
                         }
                     }
                 }

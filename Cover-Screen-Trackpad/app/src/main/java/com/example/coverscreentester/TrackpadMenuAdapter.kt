@@ -18,7 +18,8 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
     RecyclerView.Adapter<TrackpadMenuAdapter.Holder>() {
 
     data class MenuItem(
-        val title: String,
+        val title: CharSequence,
+
         val iconRes: Int,
         val type: Type,
         val initValue: Int = 0, // For sliders (0-100) or Toggles (0/1)

@@ -3099,22 +3099,19 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         
-        // Merge results - winner's top result first
+        // Merge results - interleave all, winner first
         val merged = mutableListOf<SwipeResult>()
-        
-        if (usePrecise) {
-            // PRECISE wins
-            preciseResults.firstOrNull()?.let { merged.add(it) }
-            shapeResults.firstOrNull()?.let { merged.add(it) }
-            preciseResults.drop(1).firstOrNull()?.let { merged.add(it) }
-        } else {
-            // SHAPE_CONTEXT wins
-            shapeResults.firstOrNull()?.let { merged.add(it) }
-            preciseResults.firstOrNull()?.let { merged.add(it) }
-            shapeResults.drop(1).firstOrNull()?.let { merged.add(it) }
+        val winner = if (usePrecise) preciseResults else shapeResults
+        val loser = if (usePrecise) shapeResults else preciseResults
+
+        // Interleave: winner[0], loser[0], winner[1], loser[1], ...
+        val maxLen = maxOf(winner.size, loser.size)
+        for (i in 0 until maxLen) {
+            if (i < winner.size) merged.add(winner[i])
+            if (i < loser.size) merged.add(loser[i])
         }
-        
-        // Deduplicate by word (keep first occurrence to preserve source)
+
+        // Deduplicate by word (keep first occurrence to preserve priority)
         val seen = HashSet<String>()
         val deduplicated = merged.filter { result ->
             val normalized = result.word.lowercase(Locale.ROOT)
