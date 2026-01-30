@@ -52,9 +52,7 @@ def log_history(action, filename, reason, content_payload):
         print(f"⚠️  History Log Failed: {e}")
 
 def copy_to_clipboard(text):
-    """Uses Termux native clipboard API"""
     try:
-        # Check if termux-clipboard-set exists
         subprocess.run(["termux-clipboard-set"], input=text.encode('utf-8'), check=True)
         print("📋 Copied to clipboard!")
     except FileNotFoundError:
@@ -63,7 +61,6 @@ def copy_to_clipboard(text):
         print(f"⚠️  Clipboard copy failed: {e}")
 
 def get_project_prefix(path):
-    """Returns 'Launcher:' or 'Trackpad:' based on path"""
     if "Cover-Screen-Launcher" in path: return "Launcher: "
     if "Cover-Screen-Trackpad" in path: return "Trackpad: "
     return ""
@@ -97,7 +94,6 @@ def process_plan(plan_file):
                 with open(full_path, 'w', encoding='utf-8') as f: f.write(clean_content)
                 
                 print(f"✨ Created: {raw_filename}")
-                # Store full raw_filename to detect prefix later
                 actions_log.append((raw_filename, reason, "Create"))
                 log_history("CREATE", raw_filename, reason, clean_content)
                 
@@ -135,7 +131,6 @@ def process_plan(plan_file):
                 with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
                 print(f"✅ Updated: {os.path.basename(full_path)}")
                 success = True
-                
             elif clean_search.strip() in normalized_content:
                 new_content = normalized_content.replace(clean_search.strip(), clean_replace)
                 with open(full_path, 'w', encoding='utf-8') as f: f.write(new_content)
@@ -143,37 +138,74 @@ def process_plan(plan_file):
                 success = True
             
             if success:
-                # Store raw_filename (relative path) to detect prefix, NOT just basename
                 actions_log.append((raw_filename, reason, "Update"))
                 log_history("UPDATE", os.path.basename(full_path), reason, (clean_search, clean_replace))
             else:
                 print(f"❌ Anchor Mismatch: {os.path.basename(full_path)}")
                 failures_log.append((os.path.basename(full_path), reason, "Anchor text not found"))
 
-    # --- GIT SUMMARY & CLIPBOARD ---
+    # --- GIT SUMMARY ---
     if actions_log:
         print("\n" + "="*50)
         print("📝 GIT COMMIT SUMMARY")
         print("="*50)
         
-        # Build the clean list for clipboard
         clipboard_lines = []
-        
         for fname, reason, action in actions_log:
             prefix_tag = get_project_prefix(fname)
             base_name = os.path.basename(fname)
             new_tag = "(New) " if action == "Create" else ""
-            
-            # Format: * Launcher: MainActivity.kt: Reason
             line = f"* {prefix_tag}{new_tag}{base_name}: {reason}"
             print(line)
             clipboard_lines.append(line)
             
-        # Interactive Copy
         print("="*50)
-        user_input = input("\nCopy commit message to clipboard? (Y/n): ").strip().lower()
-        if user_input in ["", "y", "yes"]:
+        if input("\nCopy commit message to clipboard? (Y/n): ").strip().lower() in ["", "y", "yes"]:
             copy_to_clipboard("\n".join(clipboard_lines))
+
+        # --- AUTO-BUILD & INSTALL ENGINE ---
+        
+        # Detect Changes
+        launcher_changed = any("Cover-Screen-Launcher" in item[0] for item in actions_log)
+        trackpad_changed = any("Cover-Screen-Trackpad" in item[0] for item in actions_log)
+
+        if launcher_changed or trackpad_changed:
+            target_str = "BOTH" if (launcher_changed and trackpad_changed) else ("Launcher" if launcher_changed else "Trackpad")
+            user_input = input(f"\nBuild and install {target_str} APK(s)? (Y/n): ").strip().lower()
+            
+            if user_input in ["", "y", "yes"]:
+                launcher_dir = os.path.join(PROJECT_ROOT, "Cover-Screen-Launcher")
+                trackpad_dir = os.path.join(PROJECT_ROOT, "Cover-Screen-Trackpad")
+                apk_rel_path = "app/build/outputs/apk/debug/app-debug.apk"
+
+                # PHASE 1: BUILD (Fail fast if error)
+                try:
+                    if launcher_changed:
+                        print("\n🔨 Building Launcher...")
+                        subprocess.run(["./gradlew", "assembleDebug"], cwd=launcher_dir, check=True)
+                    
+                    if trackpad_changed:
+                        print("\n🔨 Building Trackpad...")
+                        subprocess.run(["./gradlew", "assembleDebug"], cwd=trackpad_dir, check=True)
+                        
+                except subprocess.CalledProcessError:
+                    print("\n❌ Build Failed! Aborting installation.")
+                    return # EXIT - Do not install
+
+                # PHASE 2: INSTALL (Only if builds succeeded)
+                try:
+                    if launcher_changed:
+                        print("\n📲 Installing Launcher...")
+                        subprocess.run(["nadb", "install", "-r", apk_rel_path], cwd=launcher_dir, check=True)
+                    
+                    if trackpad_changed:
+                        print("\n📲 Installing Trackpad...")
+                        subprocess.run(["nadb", "install", "-r", apk_rel_path], cwd=trackpad_dir, check=True)
+                        
+                    print("\n✨ All operations complete!")
+                    
+                except subprocess.CalledProcessError:
+                    print("\n❌ Installation Failed!")
     else:
         print("\n(No changes applied)")
 

@@ -40,3 +40,61 @@ if (forceHide) {
 ```
 
 ---
+
+## [2026-01-30 17:34:19] UPDATE: OverlayService.kt
+**Reason:** When the overlay keyboard is manually hidden via its hide button (which calls toggleCustomKeyboard), send IME_VISIBILITY(false) to the launcher so auto-adjust margin retiles apps back to full height. Similarly, when shown, send IME_VISIBILITY(true).
+
+### Search:
+```
+fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
+        if (keyboardOverlay == null) initCustomKeyboard()
+        
+        val isNowVisible = if (keyboardOverlay?.isShowing() == true) { 
+            keyboardOverlay?.hide()
+            false 
+        } else { 
+            keyboardOverlay?.show()
+            // [REMOVED] Stale scale enforcement. 
+            // The show() method already loads the correct saved scale from disk.
+            true 
+        }
+        
+        isCustomKeyboardVisible = isNowVisible
+        enforceZOrder()
+        
+        if (prefs.prefAutomationEnabled && !suppressAutomation) { 
+            if (isNowVisible) turnScreenOn() else turnScreenOff() 
+        }
+    }
+```
+### Replace:
+```
+fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
+        if (keyboardOverlay == null) initCustomKeyboard()
+        
+        val isNowVisible = if (keyboardOverlay?.isShowing() == true) { 
+            keyboardOverlay?.hide()
+            false 
+        } else { 
+            keyboardOverlay?.show()
+            // [REMOVED] Stale scale enforcement. 
+            // The show() method already loads the correct saved scale from disk.
+            true 
+        }
+        
+        isCustomKeyboardVisible = isNowVisible
+        enforceZOrder()
+        
+        // Notify launcher so auto-adjust margin retiles apps when KB is toggled
+        val imeIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+        imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        imeIntent.putExtra("VISIBLE", isNowVisible)
+        sendBroadcast(imeIntent)
+        
+        if (prefs.prefAutomationEnabled && !suppressAutomation) { 
+            if (isNowVisible) turnScreenOn() else turnScreenOff() 
+        }
+    }
+```
+
+---

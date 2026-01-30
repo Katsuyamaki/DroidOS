@@ -3599,6 +3599,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         isCustomKeyboardVisible = isNowVisible
         enforceZOrder()
         
+        // Notify launcher so auto-adjust margin retiles apps when KB is toggled
+        val imeIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+        imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        imeIntent.putExtra("VISIBLE", isNowVisible)
+        sendBroadcast(imeIntent)
+        
         if (prefs.prefAutomationEnabled && !suppressAutomation) { 
             if (isNowVisible) turnScreenOn() else turnScreenOff() 
         }
