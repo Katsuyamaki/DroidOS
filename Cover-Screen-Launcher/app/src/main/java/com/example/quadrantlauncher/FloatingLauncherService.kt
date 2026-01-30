@@ -354,6 +354,10 @@ private var isSoftKeyboardSupport = false
     private val manualStateOverrides = java.util.concurrent.ConcurrentHashMap<String, Long>()
     // [FULLSCREEN] Track when tiled apps are auto-minimized for a full-screen app
     private var tiledAppsAutoMinimized = false
+    // [FULLSCREEN] Cooldown to prevent TYPE_WINDOWS_CHANGED from re-minimizing right after restore
+    private var tiledAppsRestoredAt = 0L
+
+
 
     private val TAB_ORDER = listOf(
         MODE_SEARCH, 
@@ -1239,6 +1243,30 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         if (!isSystemOverlay && !isTiledApp && selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized &&
                             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                             // Full-screen app opened — minimize all tiled windows
+                            // But first verify it actually covers the screen (skip small freeform/popup windows)
+                            var coversScreen = false
+                            try {
+                                val dm = android.util.DisplayMetrics()
+                                windowManager.defaultDisplay.getRealMetrics(dm)
+                                val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
+                                val boundsRect = android.graphics.Rect()
+                                for (window in windows) {
+                                    if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                                    val node = window.root ?: continue
+                                    val windowPkg = node.packageName?.toString()
+                                    node.recycle()
+                                    if (windowPkg == detectedPkg) {
+                                        window.getBoundsInScreen(boundsRect)
+                                        val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
+                                        if (windowArea >= screenArea * 85 / 100) {
+                                            coversScreen = true
+                                        }
+                                        break
+                                    }
+                                }
+                            } catch (e: Exception) { coversScreen = true } // fallback to old behavior on error
+
+                            if (coversScreen) {
                             tiledAppsAutoMinimized = true
 
                             Thread {
@@ -1252,12 +1280,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 } catch (e: Exception) { Log.e(TAG, "Auto-minimize failed", e) }
                             }.start()
                             Log.d(TAG, "FULLSCREEN: Auto-minimized tiled apps for $detectedPkg")
+                            } // end if (coversScreen)
                         } else if (isTiledApp && tiledAppsAutoMinimized) {
                             // Returning to a tiled app — restore all
                             tiledAppsAutoMinimized = false
+                            tiledAppsRestoredAt = System.currentTimeMillis()
                             retileExistingWindows()
                             Log.d(TAG, "FULLSCREEN: Auto-restored tiled apps for $detectedPkg")
                         }
+
+
 
                         // Update UI to show underline for new focus
                         uiHandler.post { updateAllUIs() }
@@ -1268,7 +1300,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // [FULLSCREEN] Detect tiled app maximized via native window toolbar
             // When TYPE_WINDOWS_CHANGED fires, check if any tiled app now covers ~full screen
             if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && 
-                selectedAppsQueue.size > 1 && selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized) {
+                selectedAppsQueue.size > 1 && selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized &&
+                System.currentTimeMillis() - tiledAppsRestoredAt > 1500) {
                 try {
                     val dm = android.util.DisplayMetrics()
                     windowManager.defaultDisplay.getRealMetrics(dm)
@@ -1305,6 +1338,47 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 } catch (e: Exception) { Log.e(TAG, "Auto-minimize others failed", e) }
                             }.start()
                             break
+                        }
+                    }
+                    // Also detect non-tiled (e.g. One UI freeform/popup) apps maximized via toolbar
+                    if (!tiledAppsAutoMinimized) {
+                        for (window in windows) {
+                            if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                            val node = window.root ?: continue
+                            val windowPkg = node.packageName?.toString()
+                            node.recycle()
+                            if (windowPkg == null) continue
+
+                            val isTiled = selectedAppsQueue.any { it.getBasePackage() == windowPkg || it.packageName == windowPkg }
+                            if (isTiled) continue
+
+                            val isSystemOverlay = windowPkg.contains("systemui") ||
+                                windowPkg.contains("launcher") ||
+                                windowPkg.contains("cocktail") ||
+                                windowPkg.contains("edge") ||
+                                windowPkg.contains("samsung.android.app.routines") ||
+                                windowPkg.contains("android.providers") ||
+                                windowPkg.contains("permissioncontroller")
+                            if (isSystemOverlay) continue
+
+                            window.getBoundsInScreen(boundsRect)
+                            val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
+                            if (windowArea >= screenArea * 85 / 100) {
+                                Log.d(TAG, "FULLSCREEN: External app $windowPkg maximized (${boundsRect.width()}x${boundsRect.height()} vs ${dm.widthPixels}x${dm.heightPixels})")
+                                tiledAppsAutoMinimized = true
+                                activePackageName = windowPkg
+                                Thread {
+                                    try {
+                                        for (app in selectedAppsQueue) {
+                                            if (!app.isMinimized) {
+                                                val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
+                                                if (tid != -1) shellService?.moveTaskToBack(tid)
+                                            }
+                                        }
+                                    } catch (e: Exception) { Log.e(TAG, "Auto-minimize for external fullscreen failed", e) }
+                                }.start()
+                                break
+                            }
                         }
                     }
                 } catch (e: Exception) { /* ignore bounds check errors */ }
