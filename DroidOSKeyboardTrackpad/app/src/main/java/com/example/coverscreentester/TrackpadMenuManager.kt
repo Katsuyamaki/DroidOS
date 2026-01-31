@@ -202,7 +202,7 @@ class TrackpadMenuManager(
         // Approx Menu Size (320dp width + margins, ~400dp height)
         val density = metrics.density
         val menuW = (360 * density).toInt() 
-        val menuH = (400 * density).toInt()
+        val menuH = (580 * density).toInt()
         
         drawerParams?.x = (screenWidth - menuW) / 2
         drawerParams?.y = (screenHeight - menuH) / 2
@@ -296,47 +296,9 @@ class TrackpadMenuManager(
         */
         // ---------------------------------
 
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
-            service.resetBubblePosition()
-            hide()
-        })
-        
-        // --- COMMENTED OUT PER REQUEST ---
-        /*
-        list.add(TrackpadMenuAdapter.MenuItem("Move Trackpad Here", R.drawable.ic_tab_move, TrackpadMenuAdapter.Type.ACTION) { service.forceMoveToCurrentDisplay(); hide() })
-        */
-        
-        // Renamed: "Target: ..." -> "Toggle Remote Display"
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Remote Display", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN) })
-
-        // =================================================================================
-        // VIRTUAL MIRROR MODE TOGGLE
-        // SUMMARY: Enhanced toggle for AR glasses/remote displays.
-        //          When enabled:
-        //          - Auto-switches cursor to virtual display
-        //          - Shows keyboard and trackpad
-        //          - Loads mirror-mode specific profile
-        //          When disabled:
-        //          - Returns to local display
-        //          - Restores previous visibility state
-        //          - Saves/loads separate profile
-        // =================================================================================
-        // FUNCTION: Virtual Mirror Toggle
-        // Updated to use R.drawable.mirrorkb
-        list.add(TrackpadMenuAdapter.MenuItem(
-            "Virtual Mirror Mode",
-            R.drawable.mirrorkb,
-            TrackpadMenuAdapter.Type.TOGGLE,
-            if(p.prefVirtualMirrorMode) 1 else 0
-        ) { _ ->
-            service.toggleVirtualMirrorMode()
-            hide()  // Close menu since display context may change
-        })
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE TOGGLE
-        // =================================================================================
-
         // --- ANCHOR TOGGLE: Locks trackpad and keyboard position/size ---
+
+
         list.add(TrackpadMenuAdapter.MenuItem("Anchor (Lock Position)", 
             if(p.prefAnchored) R.drawable.ic_lock_closed else R.drawable.ic_lock_open, 
             TrackpadMenuAdapter.Type.TOGGLE, 
@@ -346,25 +308,62 @@ class TrackpadMenuManager(
         })
         // --- END ANCHOR TOGGLE ---
         
+        // Subheading for bubble tap behavior
+        list.add(TrackpadMenuAdapter.MenuItem("WHEN BUBBLE ICON TAPPED:", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+
         // Toggle Trackpad — controls whether bubble hides/shows trackpad
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Trackpad", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.TOGGLE,
+        list.add(TrackpadMenuAdapter.MenuItem("  Toggle Trackpad", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.TOGGLE,
             if(p.prefBubbleIncludeTrackpad) 1 else 0) { v ->
             service.updatePref("bubble_include_trackpad", v)
         })
 
         // Toggle Keyboard — controls whether bubble hides/shows keyboard
-        list.add(TrackpadMenuAdapter.MenuItem("Toggle Keyboard", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.TOGGLE,
+        list.add(TrackpadMenuAdapter.MenuItem("  Toggle Keyboard", R.drawable.ic_tab_keyboard, TrackpadMenuAdapter.Type.TOGGLE,
             if(p.prefBubbleIncludeKeyboard) 1 else 0) { v ->
             service.updatePref("bubble_include_keyboard", v)
         })
-        list.add(TrackpadMenuAdapter.MenuItem("Reset Cursor", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.resetCursorCenter() })
-        
-        // Renamed: "Hide App" -> "Hide All"
-        list.add(TrackpadMenuAdapter.MenuItem("Hide All", android.R.drawable.ic_menu_close_clear_cancel, TrackpadMenuAdapter.Type.ACTION) { service.hideApp() })
-        
-        // Renamed: "Force Kill Service" -> "Close/Restart App"
+
+        // Virtual Display Control subheading
+        list.add(TrackpadMenuAdapter.MenuItem("VIRTUAL DISPLAY CONTROL:", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+
+        // Renamed: "Toggle Remote Display" -> "Move Cursor to Next Display"
+        list.add(TrackpadMenuAdapter.MenuItem("  Move Cursor to Next Display", R.drawable.ic_cursor, TrackpadMenuAdapter.Type.ACTION) { service.cycleInputTarget(); loadTab(TAB_MAIN)         })
+
+        // FUNCTION: Virtual Mirror Toggle
+        list.add(TrackpadMenuAdapter.MenuItem(
+            "  Virtual Mirror Mode",
+            R.drawable.mirrorkb,
+            TrackpadMenuAdapter.Type.TOGGLE,
+            if(p.prefVirtualMirrorMode) 1 else 0
+        ) { _ ->
+            service.toggleVirtualMirrorMode()
+            hide()  // Close menu since display context may change
+        })
+
+        // Reset / Restart subheading
+        list.add(TrackpadMenuAdapter.MenuItem("RESET / RESTART:", 0, TrackpadMenuAdapter.Type.SUBHEADER))
+
+        list.add(TrackpadMenuAdapter.MenuItem("Reset Bubble Position", android.R.drawable.ic_menu_myplaces, TrackpadMenuAdapter.Type.ACTION) { 
+            service.resetBubblePosition()
+            hide()
+        })
+
+        list.add(TrackpadMenuAdapter.MenuItem("Recenter Cursor", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { service.resetCursorCenter() })
+
+        // Moved from Bubble Customization tab
+        list.add(TrackpadMenuAdapter.MenuItem("Auto Restart on Close", 
+            android.R.drawable.ic_menu_manage, 
+            TrackpadMenuAdapter.Type.TOGGLE, 
+            if(p.prefPersistentService) 1 else 0) { v ->
+            service.updatePref("persistent_service", v)
+            loadTab(TAB_MAIN)
+        })
+
         list.add(TrackpadMenuAdapter.MenuItem("Close/Restart App", android.R.drawable.ic_delete, TrackpadMenuAdapter.Type.ACTION) { service.forceExit() })
+
         return list
+
+
     }
     // =========================
     // END GET MAIN ITEMS
@@ -865,20 +864,9 @@ class TrackpadMenuManager(
             service.resetBubblePosition()
         })
         
-        // --- PERSISTENCE TOGGLE ---
-        list.add(TrackpadMenuAdapter.MenuItem("SERVICE BEHAVIOR", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        val persistHelp = if (p.prefPersistentService) "Bubble stays when app closes" else "Bubble closes with app"
-        list.add(TrackpadMenuAdapter.MenuItem("Keep Alive (Background)", 
-            android.R.drawable.ic_menu_manage, 
-            TrackpadMenuAdapter.Type.TOGGLE, 
-            if(p.prefPersistentService) 1 else 0) { v ->
-            service.updatePref("persistent_service", v)
-            loadTab(TAB_BUBBLE) // Refresh description
-        })
-        list.add(TrackpadMenuAdapter.MenuItem(persistHelp, 0, TrackpadMenuAdapter.Type.INFO))
-        
         return list
+
+
     }
     // =========================
     // END GET BUBBLE ITEMS
