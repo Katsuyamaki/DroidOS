@@ -8,7 +8,9 @@
 
     <LinearLayout
         android:id="@+id/menu_container"
-        android:layout_width="320dp"
+        android:layout_width="400dp"
+
+
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:background="@drawable/bg_trackpad_drawer"

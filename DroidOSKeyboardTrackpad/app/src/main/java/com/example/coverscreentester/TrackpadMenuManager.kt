@@ -201,7 +201,7 @@ class TrackpadMenuManager(
         
         // Approx Menu Size (320dp width + margins, ~400dp height)
         val density = metrics.density
-        val menuW = (360 * density).toInt() 
+        val menuW = (450 * density).toInt() 
         val menuH = (580 * density).toInt()
         
         drawerParams?.x = (screenWidth - menuW) / 2
