@@ -82,6 +82,9 @@
             android:exported="true"
             android:foregroundServiceType="specialUse">
 
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="input_interception_overlay" />
 
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

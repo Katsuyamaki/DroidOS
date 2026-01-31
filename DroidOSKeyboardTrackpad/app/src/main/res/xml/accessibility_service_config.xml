@@ -7,4 +7,7 @@
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="false" 
     android:canRequestFilterKeyEvents="true" 
-    android:accessibilityFlags="flagRequestTouchExplorationMode|flagRequestFilterKeyEvents" />
+    android:accessibilityFlags="flagRequestTouchExplorationMode|flagRequestFilterKeyEvents"
+    android:isAccessibilityTool="false" />
+
+
