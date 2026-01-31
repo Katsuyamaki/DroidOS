@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.quadrantlauncher"
+    namespace = "com.katsuyamaki.DroidOSLauncher"
     compileSdk = 34
 
     defaultConfig {

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.coverscreentester"
+    namespace = "com.katsuyamaki.DroidOSTrackpadKeyboard"
     compileSdk = 34
 
     defaultConfig {
