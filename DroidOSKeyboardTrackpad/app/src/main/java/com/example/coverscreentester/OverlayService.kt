@@ -355,7 +355,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // PREDICTION AGGRESSION (Precision vs Shape)
         // 0.3 (Sloppy/Fast) to 2.0 (Neat/Precise). Default 0.8.
         // =================================================================================
-        var prefPredictionAggression = 0.8f
+        var prefPredictionAggression = 1.1f
+
     
     // =================================================================================
     // SPACEBAR MOUSE EXTENDED MODE PREFERENCE
@@ -3065,7 +3066,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }
             }
             "prediction_aggression" -> { 
-                prefs.prefPredictionAggression = (value as? Float) ?: 0.8f
+                prefs.prefPredictionAggression = (value as? Float) ?: 1.1f
+
+
                 // Apply immediately to Engine
                 PredictionEngine.instance.speedThreshold = prefs.prefPredictionAggression
             }
@@ -3224,7 +3227,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 prefs.prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
 
                 
-                prefs.prefPredictionAggression = p.getFloat("prediction_aggression", 0.8f)
+                prefs.prefPredictionAggression = p.getFloat("prediction_aggression", 1.1f)
+
+
                 // Apply to Engine on startup
                 PredictionEngine.instance.speedThreshold = prefs.prefPredictionAggression
 

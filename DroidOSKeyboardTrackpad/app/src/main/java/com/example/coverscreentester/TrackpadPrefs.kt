@@ -37,7 +37,9 @@ class TrackpadPrefs {
     //          keyboard input resumes.
     // =================================================================================
     var prefVirtualMirrorMode = false
-    var prefMirrorOrientDelayMs = 1000L  // Default 1 second orientation delay
+    var prefMirrorOrientDelayMs = 400L  // Default 400ms orientation delay
+
+
     // =================================================================================
     // END BLOCK: VIRTUAL MIRROR MODE PREFERENCES
     // =================================================================================

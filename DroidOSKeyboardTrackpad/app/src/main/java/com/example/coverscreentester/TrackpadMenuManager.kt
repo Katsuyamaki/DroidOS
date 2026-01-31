@@ -307,7 +307,22 @@ class TrackpadMenuManager(
             loadTab(TAB_MAIN)  // Refresh to update icon
         })
         // --- END ANCHOR TOGGLE ---
-        
+
+        // NEW: Launch Proxy Activity for Picker (moved from Keyboard Settings tab)
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker\nSelect 'DroidOS Input Dock'\nFor More Features", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
+            service.forceSystemKeyboardVisible()
+
+            hide() // Close menu
+            
+            try {
+                val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch(e: Exception) {
+                android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        })
+
         // Subheading for bubble tap behavior
         list.add(TrackpadMenuAdapter.MenuItem("WHEN BUBBLE ICON TAPPED:", 0, TrackpadMenuAdapter.Type.SUBHEADER))
 
@@ -586,44 +601,6 @@ class TrackpadMenuManager(
         list.add(TrackpadMenuAdapter.MenuItem("KEYBOARD SETTINGS", 0, TrackpadMenuAdapter.Type.HEADER))
         
 
-        // [NEW] Set Restore Keyboard Preference (With Visual Feedback)
-        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        val savedIme = prefs.getString("user_preferred_ime", null)
-        
-        // Determine display name
-        val imeName = when {
-            savedIme == null -> "None (Tap to Select)"
-            savedIme.contains("google") -> "Gboard"
-            savedIme.contains("sec") || savedIme.contains("honeyboard") -> "Samsung Keyboard"
-            savedIme.contains("swiftkey") -> "SwiftKey"
-            else -> "Custom Keyboard"
-        }
-
-        list.add(TrackpadMenuAdapter.MenuItem("Restore Target: $imeName", android.R.drawable.ic_menu_save, TrackpadMenuAdapter.Type.ACTION) {
-            try {
-                // Open System Picker so OverlayService can capture the user's choice
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                imm.showInputMethodPicker()
-                android.widget.Toast.makeText(context, "Select the keyboard DroidOS should restore to.", android.widget.Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        })
-        // NEW: Launch Proxy Activity for Picker
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker (Select 'DroidOS Dock')", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
-            service.forceSystemKeyboardVisible()
-
-            hide() // Close menu
-            
-            try {
-                val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-            } catch(e: Exception) {
-                android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        })
-        
         list.add(TrackpadMenuAdapter.MenuItem("Keyboard Opacity", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.SLIDER, p.prefKeyboardAlpha, 255) { v -> service.updatePref("keyboard_alpha", v) })
                 list.add(TrackpadMenuAdapter.MenuItem("Auto Display Off", R.drawable.ic_tab_tune, TrackpadMenuAdapter.Type.TOGGLE, if(p.prefAutomationEnabled) 1 else 0) {
                     v -> service.updatePref("automation_enabled", v as Boolean)
