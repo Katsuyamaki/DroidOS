@@ -786,6 +786,6 @@ class DockInputMethodService : InputMethodService() {
 
     // Ensure we keep the connection active
     override fun onEvaluateInputViewShown(): Boolean {
-        return true
+        return super.onEvaluateInputViewShown()
     }
 }

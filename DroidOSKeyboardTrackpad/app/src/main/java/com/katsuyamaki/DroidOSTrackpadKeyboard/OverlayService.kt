@@ -1545,7 +1545,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Register BOTH new and old prefixes to support all scripts/buttons
         val commandFilter = IntentFilter().apply {
             val cmds = listOf("SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", "TOGGLE_MIRROR", "TOGGLE_VIRTUAL_MIRROR", "OPEN_DRAWER", "STOP_SERVICE", "SET_INPUT_CAPTURE", "SET_CUSTOM_MOD", "UPDATE_KEYBINDS", "SET_NUM_LAYER")
-            val prefixes = listOf("com.katsuyamaki.DroidOSTrackpadKeyboard.", "com.katsuyamaki.DroidOSTrackpadKeyboard.")
+            val prefixes = listOf("com.katsuyamaki.DroidOSTrackpadKeyboard.")
 
             for (p in prefixes) {
                 for (c in cmds) {
