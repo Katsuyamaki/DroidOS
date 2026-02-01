@@ -199,6 +199,8 @@ class PredictionEngine {
     }
     private var lastSwipePath: List<TimedPoint>? = null // Cache last path to learn from
 
+
+
     
     // =================================================================================
     // OPTIMIZATION: Pre-indexed word lookup by first and last letter
@@ -1203,7 +1205,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                                        (locScore * LOCATION_WEIGHT) +
                                        (dirScore * DIRECTION_WEIGHT) +
                                        (turnScore * TURN_WEIGHT) +
-                                       (pathKeyScore * 0.8f)  // NEW: Path key matching weight
+                                       (pathKeyScore * 1.5f)  // INCREASED (was 0.8): Match preview's trust in path keys
                 
 
                 // --- BOOSTS (Original) ---
@@ -1526,12 +1528,16 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 // END DWELL & CONTEXT
                 // =======================================================================
 
-                val integrationScore = (shapeScore * SHAPE_WEIGHT) +
+                // LENGTH MISMATCH PENALTY: Penalize words longer than the path suggests.
+                val expectedLen = pathKeys.size.coerceAtLeast(2)
+                val lengthPenalty = (word.length - expectedLen).coerceAtLeast(0) * 0.4f
 
+                val integrationScore = (shapeScore * SHAPE_WEIGHT) +
                                        (locScore * LOCATION_WEIGHT) +
                                        (dirScore * DIRECTION_WEIGHT) +
                                        (turnScore * TURN_WEIGHT) +
-                                       (pathKeyScore * 0.8f)
+                                       (pathKeyScore * 0.8f) +
+                                       lengthPenalty
                 
                 val rank = template.rank
                 val freqBonus = 1.0f / (1.0f + 0.15f * ln((rank + 1).toFloat()))
@@ -1741,9 +1747,9 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // FAST CANDIDATE COLLECTION - fewer candidates for speed
         val candidates = HashSet<String>()
 
-        // 1. Neighbor Search (smaller radius for speed)
-        val nearbyStart = findNearbyKeys(startPoint, keyMap, 60f)
-        val nearbyEnd = findNearbyKeys(endPoint, keyMap, 60f)
+        // 1. Neighbor Search (widened to match full algorithm - 60f missed adjacent-row keys)
+        val nearbyStart = findNearbyKeys(startPoint, keyMap, 80f)
+        val nearbyEnd = findNearbyKeys(endPoint, keyMap, 80f)
 
         for (s in nearbyStart) {
             for (e in nearbyEnd) {
@@ -1751,11 +1757,17 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             }
         }
 
-        // 2. PREFIX INJECTION (fewer candidates)
-        if (startKey != null) {
-            wordsByFirstLetter[startKey.first()]?.let { words ->
+        // 2. PREFIX INJECTION (widened to include all nearby start keys)
+        for (sk in nearbyStart) {
+            val c = sk.firstOrNull() ?: continue
+            wordsByFirstLetter[c]?.let { words ->
                 candidates.addAll(words.sortedByDescending { userFrequencyMap[it] ?: 0 }.take(15))
             }
+        }
+        // 3. COMMON WORDS INJECTION: Always include top common words matching nearby keys
+        //    This ensures "what", "when", "where" etc. aren't missed by start key drift
+        for (sk in nearbyStart) {
+            candidates.addAll(commonWordsCache.filter { it.startsWith(sk, ignoreCase = true) }.take(10))
         }
         if (pathKeys.size >= 2) {
             val secondKey = pathKeys.getOrNull(1)?.firstOrNull()?.lowercaseChar()
@@ -2947,12 +2959,17 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 val turnScore = calculateTurnScore(inputTurns, templateTurns)
                 val pathKeyScore = calculatePathKeyScore(pathKeys, word) // Added Path Key Score
 
+                // LENGTH MISMATCH PENALTY (same as Precise algorithm)
+                val expectedLen = pathKeys.size.coerceAtLeast(2)
+                val lengthPenalty = (word.length - expectedLen).coerceAtLeast(0) * 0.4f
+
                 // Integration
                 val geometryScore = (shapeScore * SHAPE_CONTEXT_SHAPE_WEIGHT) +
                                     (locScore * SHAPE_CONTEXT_LOCATION_WEIGHT) +
                                     (dirScore * SHAPE_CONTEXT_DIRECTION_WEIGHT) +
                                     (turnScore * SHAPE_CONTEXT_TURN_WEIGHT) +
-                                    (pathKeyScore * 0.5f) // Add fuzzy path key penalty
+                                    (pathKeyScore * 1.2f) +
+                                    lengthPenalty
                 
                 // Smart Penalty
                 var penalty = 0f
@@ -3101,16 +3118,38 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         
-        // Merge results - interleave all, winner first
-        val merged = mutableListOf<SwipeResult>()
-        val winner = if (usePrecise) preciseResults else shapeResults
-        val loser = if (usePrecise) shapeResults else preciseResults
+        // =======================================================================
+        // SMART MERGE: Precise overrides Shape when it found a shorter/equal,
+        // higher-rank word. This prevents "wheat" from beating "what" just
+        // because the swipe was fast. Otherwise use speed-based winner.
+        // =======================================================================
+        val preciseTop = preciseResults.firstOrNull()
+        val shapeTop = shapeResults.firstOrNull()
+        
+        var finalWinner = if (usePrecise) preciseResults else shapeResults
+        var finalLoser = if (usePrecise) shapeResults else preciseResults
+        
+        // Override: If Shape would win but Precise has a shorter/equal, more common word
+        if (!usePrecise && preciseTop != null && shapeTop != null) {
+            val preciseWord = preciseTop.word.lowercase(Locale.ROOT)
+            val shapeWord = shapeTop.word.lowercase(Locale.ROOT)
+            if (preciseWord != shapeWord) {
+                val preciseRank = getWordRank(preciseWord)
+                val shapeRank = getWordRank(shapeWord)
+                // Precise wins if its word is shorter/equal AND more common (lower rank)
+                if (preciseWord.length <= shapeWord.length && preciseRank < shapeRank) {
+                    android.util.Log.d("DroidOS_Dual", "OVERRIDE: Precise '${preciseWord}'(rank=$preciseRank, len=${preciseWord.length}) beats Shape '${shapeWord}'(rank=$shapeRank, len=${shapeWord.length})")
+                    finalWinner = preciseResults
+                    finalLoser = shapeResults
+                }
+            }
+        }
 
-        // Interleave: winner[0], loser[0], winner[1], loser[1], ...
-        val maxLen = maxOf(winner.size, loser.size)
+        val merged = mutableListOf<SwipeResult>()
+        val maxLen = maxOf(finalWinner.size, finalLoser.size)
         for (i in 0 until maxLen) {
-            if (i < winner.size) merged.add(winner[i])
-            if (i < loser.size) merged.add(loser[i])
+            if (i < finalWinner.size) merged.add(finalWinner[i])
+            if (i < finalLoser.size) merged.add(finalLoser[i])
         }
 
         // Deduplicate by word (keep first occurrence to preserve priority)
