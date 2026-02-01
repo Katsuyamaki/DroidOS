@@ -200,7 +200,7 @@ class NullInputMethodService : InputMethodService() {
     //          Without this, the InputConnection may not be available when we need it.
     // =================================================================================
     override fun onEvaluateInputViewShown(): Boolean {
-        return true
+        return super.onEvaluateInputViewShown()
     }
     // =================================================================================
     // END BLOCK: onEvaluateInputViewShown

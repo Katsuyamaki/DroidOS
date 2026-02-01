@@ -162,11 +162,9 @@ class PredictionEngine {
     private val wordList = ArrayList<String>()
 
     // =================================================================================
-    // SETTINGS: PREDICTION AGGRESSION
-    // Controls the crossover point between Precise (Neat) and Shape (Sloppy) algorithms.
-    // Lower (0.3) = Mostly Shape (Fast/Sloppy)
-    // Higher (2.0) = Mostly Precise (Slow/Neat)
-    // Default: 0.8f
+    // SETTINGS: PREDICTION AGGRESSION (Legacy)
+    // Kept for backwards compatibility with settings serialization.
+    // No longer affects prediction behavior — preview cache is used instead.
     // =================================================================================
     var speedThreshold: Float = 0.8f
 
@@ -1462,7 +1460,12 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         synchronized(userFrequencyMap) {
+            val nearbyStartChars = nearbyStart.mapNotNull { it.firstOrNull()?.lowercaseChar() }.toSet()
             candidates.addAll(userFrequencyMap.entries
+                .filter { entry -> 
+                    val firstChar = entry.key.firstOrNull()?.lowercaseChar()
+                    firstChar != null && firstChar in nearbyStartChars
+                }
                 .sortedByDescending { it.value }
                 .take(30)
                 .map { it.key })
@@ -1537,13 +1540,14 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 val expectedLen = minOf(pathKeys.size, turnBasedLen).coerceAtLeast(2)
                 val lengthPenalty = (word.length - expectedLen).coerceAtLeast(0) * 0.5f
 
-                // SHORT WORD SCORING: For words ≤5 letters, use preview-style
-                // pathKey-dominant formula. Short swipes lack geometry for shape/turn
-                // to be reliable — they just add noise.
+                // SHORT WORD SCORING: For words ≤5 letters, use pathKey-dominant
+                // formula. Short swipes lack geometry for shape/turn to be reliable.
+                // pathKeyScore at 1.0 makes intermediate key mismatches (past vs part,
+                // 2.0 penalty for s≠r) strongly decisive over location/direction noise.
                 val integrationScore = if (word.length <= 5) {
-                    (locScore * 0.4f) +
-                    (dirScore * 0.2f) +
-                    (pathKeyScore * 0.6f) +
+                    (locScore * 0.3f) +
+                    (dirScore * 0.15f) +
+                    (pathKeyScore * 1.0f) +
                     lengthPenalty
                 } else {
                     (shapeScore * SHAPE_WEIGHT) +
@@ -1614,18 +1618,24 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // despite identical swipe paths.
         // =======================================================================
         // =======================================================================
-        // PREVIEW PRIORITY: If a recent preview exists (within 500ms), use it
-        // directly. The preview is consistently more accurate because it uses a
-        // simpler formula without the noisy boost layers, and operates on the
-        // mid-swipe path before finger-release drift corrupts the endpoint.
+        // VALIDATED PREVIEW CACHE: Use the cached preview result ONLY if its top
+        // word also appears in the full decode's top-5 candidates. This catches
+        // bad previews from incomplete paths (e.g. fast "past" → "power") while
+        // keeping the preview's superior accuracy for words it gets right.
         // =======================================================================
         val previewAge = System.currentTimeMillis() - lastPreviewTimestamp
         if (lastPreviewWords.isNotEmpty() && previewAge < 500L) {
-            android.util.Log.d("DroidOS_Preview", "USING CACHED PREVIEW: $lastPreviewWords (age=${previewAge}ms)")
-            return lastPreviewWords.map { word ->
-                val apostropheVariant = findApostropheVariant(word)
-                val base = apostropheVariant ?: word
-                getDisplayForm(base)
+            val fullDecodeTop5 = scored.sortedBy { it.second }.take(5).map { it.first.lowercase() }
+            val previewTop = lastPreviewWords.firstOrNull()?.lowercase() ?: ""
+            if (previewTop in fullDecodeTop5) {
+                android.util.Log.d("DroidOS_Preview", "VALIDATED PREVIEW: $lastPreviewWords (top '$previewTop' found in full decode top-5: $fullDecodeTop5)")
+                return lastPreviewWords.map { word ->
+                    val apostropheVariant = findApostropheVariant(word)
+                    val base = apostropheVariant ?: word
+                    getDisplayForm(base)
+                }
+            } else {
+                android.util.Log.d("DroidOS_Preview", "REJECTED PREVIEW: '$previewTop' NOT in full decode top-5: $fullDecodeTop5 — using full decode")
             }
         }
 
@@ -1888,7 +1898,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 // Add path key score for better intermediate key matching
                 val pathKeyScore = calculatePathKeyScore(pathKeys, word)
 
-                val integrationScore = locScore * 0.4f + dirScore * 0.2f + pathKeyScore * 0.6f  // Path keys most important for preview
+                val integrationScore = locScore * 0.4f + dirScore * 0.2f + pathKeyScore * 0.6f
 
                 // Basic boosts
                 val rank = template.rank
@@ -2025,6 +2035,20 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             }
         }
 
+        // 2b. MIDPOINT FALLBACK: If turn detection found no intermediate keys
+        //     (only start key so far), sample evenly-spaced points along the path.
+        //     This catches short words like "past" where a→s is too small for turn detection.
+        if (keys.size <= 1 && path.size > 10) {
+            val numMidpoints = minOf(3, path.size / 4)
+            for (i in 1..numMidpoints) {
+                val idx = (path.size * i) / (numMidpoints + 1)
+                val midKey = findClosestKey(path[idx], keyMap)?.lowercase()
+                if (midKey != null && (keys.isEmpty() || keys.last() != midKey)) {
+                    keys.add(midKey)
+                }
+            }
+        }
+
         // 3. Always add End Key
         val endKey = findClosestKey(path.last(), keyMap)?.lowercase()
         if (endKey != null && (keys.isEmpty() || keys.last() != endKey)) {
@@ -2032,7 +2056,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         // DEBUG: Log extracted keys
-        android.util.Log.d("DroidOS_PathKeys", "Extracted: ${keys.joinToString("→")} from ${path.size} pts (Sharp turns only)")
+        android.util.Log.d("DroidOS_PathKeys", "Extracted: ${keys.joinToString("→")} from ${path.size} pts (Sharp turns + midpoint fallback)")
 
         return keys.take(maxKeys)
     }
@@ -3002,7 +3026,12 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         synchronized(userFrequencyMap) {
+            val nearbyStartChars = nearbyStart.mapNotNull { it.firstOrNull()?.lowercaseChar() }.toSet()
             candidates.addAll(userFrequencyMap.entries
+                .filter { entry -> 
+                    val firstChar = entry.key.firstOrNull()?.lowercaseChar()
+                    firstChar != null && firstChar in nearbyStartChars
+                }
                 .sortedByDescending { it.value }
                 .take(30)
                 .map { it.key })
@@ -3162,13 +3191,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         val swipePath = timedPath.map { it.toPointF() }
         val keyDwellTimes = calculateKeyDwellTimes(timedPath, keyMap)
         
-        // Calculate speed to determine winner
-        val speed = calculateSwipeSpeed(timedPath)
-        // Use instance variable 'speedThreshold' instead of constant
-        val usePrecise = speed < speedThreshold
-        
         android.util.Log.d("DroidOS_Dual", "========== DUAL DECODE ==========")
-        android.util.Log.d("DroidOS_Dual", "Speed: ${"%.3f".format(speed)} px/ms | Using: ${if (usePrecise) "PRECISE" else "SHAPE_CONTEXT"}")
         
         // Run BOTH algorithms
         val preciseResults = mutableListOf<SwipeResult>()
@@ -3212,11 +3235,9 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         val preciseTop = preciseResults.firstOrNull()
         val shapeTop = shapeResults.firstOrNull()
         
-        // ALWAYS use Precise as primary for slot #1. Precise's path-key-heavy
-        // scoring consistently matches mid-swipe preview (which users trust).
-        // Shape results fill remaining slots as alternatives.
-        var finalWinner = preciseResults
-        var finalLoser = shapeResults
+        // Precise is always primary (slot #1). Shape fills remaining slots.
+        val finalWinner = preciseResults
+        val finalLoser = shapeResults
 
         val merged = mutableListOf<SwipeResult>()
         val maxLen = maxOf(finalWinner.size, finalLoser.size)
