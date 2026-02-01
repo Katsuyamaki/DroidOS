@@ -36,7 +36,12 @@ class DockInputMethodService : InputMethodService() {
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            launcherTiledActive = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
+            val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
+            if (newState != launcherTiledActive) {
+                launcherTiledActive = newState
+                // Force the system to recompute insets with the new tiled state
+                window?.window?.decorView?.requestLayout()
+            }
         }
     }
 
