@@ -38,6 +38,7 @@ Unleash the full power of your Galaxy Z Flip, Fold, or other foldable devices:
 ---
 
 🛠️ How It Works
+
 DroidOS utilizes Shizuku to access elevated system APIs without requiring root access. This allows it to:
  * Inject raw input events (Mouse/Keyboard) directly into the system input stream.
  * Manage window sizes, positions, and display power states via hidden Android APIs (Reflection).
