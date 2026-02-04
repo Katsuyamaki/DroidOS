@@ -1282,7 +1282,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         savePrefs()
                         // Reposition keyboard if dock mode is active
                         if (isCustomKeyboardVisible) {
-                            applyDockMode()
+                            applyDockModeWithMargin(intent.getIntExtra("resize_to_margin", -1))
+                        }
+                    }
+                    if (intent.hasExtra("resize_to_margin")) {
+                        val marginPercent = intent.getIntExtra("resize_to_margin", -1)
+                        if (marginPercent >= 0 && isCustomKeyboardVisible) {
+                            applyDockModeWithMargin(marginPercent)
                         }
                     }
                 }
@@ -3172,6 +3178,42 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         android.util.Log.d(TAG, "applyDockMode: x=0, y=$targetY, w=$targetW, h=$kbHeight, aboveDock=${prefs.prefShowKBAboveDock}")
         showToast("Keyboard docked to bottom")
     }
+    
+    // =================================================================================
+    // FUNCTION: applyDockModeWithMargin
+    // SUMMARY: Docks keyboard to bottom and resizes it to fit the specified margin %.
+    //          The keyboard height is calculated from the margin percentage.
+    // =================================================================================
+    private fun applyDockModeWithMargin(marginPercent: Int) {
+        if (keyboardOverlay == null) initCustomKeyboard()
+        if (!isCustomKeyboardVisible) {
+            keyboardOverlay?.show()
+            isCustomKeyboardVisible = true
+        }
+        
+        val density = resources.displayMetrics.density
+        val screenWidth = uiScreenWidth
+        val screenHeight = uiScreenHeight
+        
+        // Calculate keyboard height from margin percentage
+        val dockToolbarHeight = if (prefs.prefShowKBAboveDock) (40 * density).toInt() else 0
+        val marginHeight = (screenHeight * (marginPercent / 100f)).toInt()
+        val kbHeight = (marginHeight - dockToolbarHeight).coerceAtLeast((100 * density).toInt()) // Min 100dp
+        
+        // Position at bottom (above dock toolbar if enabled)
+        val targetW = screenWidth
+        val targetY = screenHeight - kbHeight - dockToolbarHeight
+        
+        keyboardOverlay?.setWindowBounds(0, targetY, targetW, kbHeight)
+        
+        // Save keyboard height for Dock IME auto-resize feature
+        saveKeyboardHeightForDock(kbHeight)
+        
+        android.util.Log.d(TAG, "applyDockModeWithMargin: margin=$marginPercent%, y=$targetY, h=$kbHeight, aboveDock=${prefs.prefShowKBAboveDock}")
+    }
+    // =================================================================================
+    // END BLOCK: applyDockModeWithMargin
+    // =================================================================================
     
     // =================================================================================
     // FUNCTION: saveKeyboardHeightForDock

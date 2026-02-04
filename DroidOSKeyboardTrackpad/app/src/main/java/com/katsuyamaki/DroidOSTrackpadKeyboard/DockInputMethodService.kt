@@ -546,6 +546,13 @@ class DockInputMethodService : InputMethodService() {
                     intent.putExtra("PERCENT", prefResizeScale)
                     sendBroadcast(intent)
                 }
+                
+                // Notify OverlayService to resize keyboard to fit margin
+                val kbIntent = Intent("DOCK_PREF_CHANGED")
+                kbIntent.setPackage(packageName)
+                kbIntent.putExtra("resize_to_margin", prefResizeScale)
+                kbIntent.putExtra("show_kb_above_dock", prefShowKBAboveDock)
+                sendBroadcast(kbIntent)
             }
         })
 
@@ -725,18 +732,8 @@ class DockInputMethodService : InputMethodService() {
             val navHeight = insets.bottom
             
             // 3. Calculate Margin Height (Desired clear space)
-            var marginHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
-            
-            // 3b. If "Show KB Above Dock" is enabled, add overlay keyboard height to margin
-            // This ensures apps don't get blocked by the overlay keyboard
-            if (prefShowKBAboveDock) {
-                val overlayKBHeight = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                    .getInt("keyboard_height_d0", 0) // Default display 0
-                if (overlayKBHeight > 0) {
-                    marginHeight += overlayKBHeight
-                    android.util.Log.d(TAG, "updateInputViewHeight: Added overlay KB height $overlayKBHeight to margin")
-                }
-            }
+            // The overlay keyboard now resizes to fit this margin, so no need to add its height
+            val marginHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
             
             // 4. Calculate IME Window Height
             // Subtract nav height because IME sits ON TOP of nav bar, while margin is from physical bottom.
