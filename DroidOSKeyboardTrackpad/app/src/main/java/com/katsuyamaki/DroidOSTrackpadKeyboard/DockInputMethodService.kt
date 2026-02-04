@@ -33,18 +33,21 @@ class DockInputMethodService : InputMethodService() {
     private var dockView: View? = null
 
     private var launcherTiledActive = false
+    private var forceFullUpdate = false // Flag to force full setInputView() on next update
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
             android.util.Log.w(TAG, ">>> TILED_STATE received: $newState (was $launcherTiledActive)")
             if (newState != launcherTiledActive) {
+                val wasTransitionToFullscreen = launcherTiledActive && !newState
                 launcherTiledActive = newState
                 // Force the system to recompute insets with the new tiled state
                 window?.window?.decorView?.requestLayout()
-                // [FIX] If switched to fullscreen, force full update to recalculate insets
-                if (!newState && prefAutoResize && prefDockMode) {
-                    android.util.Log.w(TAG, ">>> TILED_STATE: Switched to FULLSCREEN, forcing updateInputViewHeight")
+                // If switched to fullscreen, set flag to force full update
+                if (wasTransitionToFullscreen && prefAutoResize && prefDockMode) {
+                    android.util.Log.w(TAG, ">>> TILED_STATE: Switched to FULLSCREEN, setting forceFullUpdate flag")
+                    forceFullUpdate = true
                     updateInputViewHeight()
                 }
             }
@@ -752,7 +755,8 @@ class DockInputMethodService : InputMethodService() {
                 existingWrapper.parent != null && 
                 isInputViewShown &&
                 lastCalculatedHeight > 0 &&
-                launcherTiledActive // Only soft update for tiled apps
+                launcherTiledActive && // Only soft update for tiled apps
+                !forceFullUpdate // Respect forced full update flag
                 
             if (canSoftUpdate) {
                 // Update the existing wrapper's height via layout params
@@ -774,6 +778,7 @@ class DockInputMethodService : InputMethodService() {
                 val wrapper = createInputViewWrapper(correctedHeight)
                 currentInputWrapper = wrapper
                 lastCalculatedHeight = correctedHeight
+                forceFullUpdate = false // Clear flag after full update
                 setInputView(wrapper)
                 android.util.Log.d(TAG, "updateInputViewHeight: FULL UPDATE (setInputView) h=$correctedHeight fullscreen=${!launcherTiledActive}")
             }

@@ -1264,10 +1264,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         keyboardOverlay?.hide()
                         keyboardOverlay?.show()
                         isCustomKeyboardVisible = true
-                        // Reapply dock mode positioning with IME toolbar offset
-                        if (prefs.prefShowKBAboveDock) {
-                            applyDockMode()
-                        }
+                        // Don't call applyDockMode() here - it can interfere with DockIME's
+                        // inset timing for fullscreen apps. The keyboard position is already
+                        // restored from saved prefs by show(). Position adjustment for dock
+                        // toolbar happens via DOCK_PREF_CHANGED broadcast.
                         enforceZOrder()
                     } else {
                         // Manual toggle - DockIME may not be visible
