@@ -282,7 +282,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var inputTargetDisplayId = 0
     var isTrackpadVisible = false // Changed: Default OFF
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
-    private var isDockIMEVisible = false // Track whether DockIME toolbar is currently showing
+    private var isDockIMEVisible = false
+    private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
 
 
     var isCustomKeyboardVisible = true // Changed: Default ON
@@ -1305,7 +1306,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 
                 action == "APPLY_DOCK_MODE" -> {
                     if (intent.getBooleanExtra("enabled", false)) {
-                        applyDockMode()
+                        val marginPercent = intent.getIntExtra("resize_to_margin", -1)
+                        if (marginPercent >= 0) {
+                            lastDockMarginPercent = marginPercent
+                            applyDockModeWithMargin(marginPercent)
+                        } else {
+                            applyDockMode()
+                        }
                     }
                 }
 
@@ -3683,9 +3690,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         isCustomKeyboardVisible = isNowVisible
         
         // [FIX] When manually showing, reapply dock mode positioning
-        // This ensures correct position based on whether DockIME is actually visible
+        // Use margin-adjusted sizing if auto resize was active
         if (isNowVisible && prefs.prefShowKBAboveDock) {
-            applyDockMode()
+            if (lastDockMarginPercent >= 0) {
+                applyDockModeWithMargin(lastDockMarginPercent)
+            } else {
+                applyDockMode()
+            }
         }
         
         enforceZOrder()

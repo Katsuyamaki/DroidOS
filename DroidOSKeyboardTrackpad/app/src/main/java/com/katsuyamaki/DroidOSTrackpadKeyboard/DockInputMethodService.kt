@@ -115,13 +115,15 @@ class DockInputMethodService : InputMethodService() {
         
         // Apply dock mode if enabled
         if (prefDockMode) {
-            android.util.Log.d(TAG, "Dock shown - applying dock mode")
+            android.util.Log.d(TAG, "Dock shown - applying dock mode (autoResize=$prefAutoResize, margin=$prefResizeScale%)")
             val intent = Intent("APPLY_DOCK_MODE")
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
+            if (prefAutoResize) {
+                intent.putExtra("resize_to_margin", prefResizeScale)
+            }
             sendBroadcast(intent)
             
-            // Apply auto resize if enabled
             if (prefAutoResize) {
                 updateInputViewHeight()
             }
