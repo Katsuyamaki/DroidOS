@@ -123,10 +123,12 @@ class DockInputMethodService : InputMethodService() {
         loadDockPrefs()
         
         // Notify Launcher that IME is now hidden
+        // [FIX] Add FORCE_RETILE to ensure apps resize when manually hiding via X button
         val imeHideIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
         imeHideIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
         imeHideIntent.putExtra("VISIBLE", false)
         imeHideIntent.putExtra("IS_TILED", launcherTiledActive)
+        imeHideIntent.putExtra("FORCE_RETILE", true)
         sendBroadcast(imeHideIntent)
         
         // [FIX] Force inset recomputation when window hidden
@@ -204,6 +206,16 @@ class DockInputMethodService : InputMethodService() {
     }
 
 
+    // [FIX] Receiver to hide DockIME when overlay KB is manually hidden
+    private val hideDockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME") {
+                android.util.Log.w(TAG, ">>> HIDE_DOCK_IME received - hiding self")
+                requestHideSelf(0)
+            }
+        }
+    }
+    
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter().apply {
@@ -213,14 +225,17 @@ class DockInputMethodService : InputMethodService() {
             addAction(ACTION_MARGIN_CHANGED)
         }
         val tiledFilter = IntentFilter("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
+        val hideFilter = IntentFilter("com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(inputReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(marginReceiver, IntentFilter(ACTION_MARGIN_CHANGED), Context.RECEIVER_EXPORTED)
             registerReceiver(tiledStateReceiver, tiledFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(hideDockReceiver, hideFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(inputReceiver, filter)
             registerReceiver(marginReceiver, IntentFilter(ACTION_MARGIN_CHANGED))
             registerReceiver(tiledStateReceiver, tiledFilter)
+            registerReceiver(hideDockReceiver, hideFilter)
         }
     }
 
@@ -229,6 +244,7 @@ class DockInputMethodService : InputMethodService() {
         try { unregisterReceiver(inputReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(marginReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(tiledStateReceiver) } catch (e: Exception) {}
+        try { unregisterReceiver(hideDockReceiver) } catch (e: Exception) {}
     }
 
 

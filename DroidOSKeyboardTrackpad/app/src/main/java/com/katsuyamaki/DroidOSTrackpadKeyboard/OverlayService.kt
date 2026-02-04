@@ -3603,12 +3603,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         isCustomKeyboardVisible = isNowVisible
         enforceZOrder()
-        
+
         // Notify launcher so auto-adjust margin retiles apps when KB is toggled
+        // IS_TILED=false triggers 100ms delay for fullscreen apps to let Android handle insets first
+        // FORCE_RETILE ensures retile happens on manual hide even if margin was already 0
         val imeIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
         imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
         imeIntent.putExtra("VISIBLE", isNowVisible)
+        imeIntent.putExtra("IS_TILED", false)
+        imeIntent.putExtra("MANUAL_TOGGLE", true)
+        if (!isNowVisible) {
+            imeIntent.putExtra("FORCE_RETILE", true)
+        }
         sendBroadcast(imeIntent)
+        
+        // [FIX] For fullscreen apps: when manually hiding overlay KB, also hide DockIME
+        // so Android recalculates insets and app resizes to full height
+        if (!isNowVisible) {
+            val hideIntent = android.content.Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME")
+            hideIntent.setPackage(packageName)
+            sendBroadcast(hideIntent)
+            android.util.Log.d(TAG, "Manual KB hide: sent HIDE_DOCK_IME broadcast")
+        }
         
         if (prefs.prefAutomationEnabled && !suppressAutomation) { 
             if (isNowVisible) turnScreenOn() else turnScreenOff() 
@@ -3728,19 +3744,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         pendingRestoreKeyboard = isCustomKeyboardVisible
         hasPendingRestore = true
         
-        val wasKeyboardVisible = prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible
-        
         // Hide only bubble-included components
+        // [FIX] toggleCustomKeyboard() already sends IME_VISIBILITY broadcast, no need for duplicate
         if (prefs.prefBubbleIncludeKeyboard && isCustomKeyboardVisible) toggleCustomKeyboard()
         if (prefs.prefBubbleIncludeTrackpad && isTrackpadVisible) toggleTrackpad()
-        
-        // Notify launcher that overlay KB is gone (for auto-adjust margin)
-        if (wasKeyboardVisible) {
-            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
-            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
-            intent.putExtra("VISIBLE", false)
-            sendBroadcast(intent)
-        }
         
         handler.post { Toast.makeText(this, "Hidden (Tap Bubble to Restore)", Toast.LENGTH_SHORT).show() }
     }

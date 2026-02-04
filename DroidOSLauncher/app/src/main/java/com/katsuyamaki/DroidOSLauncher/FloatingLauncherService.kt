@@ -501,10 +501,12 @@ private var isSoftKeyboardSupport = false
                 if (autoAdjustMarginForIME) {
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
                     val isTiled = intent?.getBooleanExtra("IS_TILED", true) ?: true
+                    val forceRetile = intent?.getBooleanExtra("FORCE_RETILE", false) ?: false
                     imeMarginOverrideActive = visible
                     val newEffective = effectiveBottomMarginPercent()
-                    // [FIX] Always process for tiled apps, and force retile for fullscreen apps
-                    val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || (!isTiled && visible)
+                    // [FIX] Always process for tiled apps, force retile for fullscreen apps, 
+                    // and honor FORCE_RETILE flag for manual hide to ensure apps resize
+                    val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || (!isTiled && visible) || forceRetile
                     if (shouldRetile) {
                         val now = System.currentTimeMillis()
                         // Cancel any stale deferred retile
