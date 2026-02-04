@@ -79,6 +79,43 @@
             android:background="#555555"/>
     </LinearLayout>
 
+    <!-- Option 2b: Show KB Above Dock (sub-option of Dock Mode) -->
+    <LinearLayout
+        android:id="@+id/option_kb_above_dock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="32dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_kb_above_dock"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:src="@drawable/ic_dock_keyboard"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/text_kb_above_dock"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Show KB Above Toolbar"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"/>
+
+        <View
+            android:id="@+id/toggle_kb_above_dock"
+            android:layout_width="32dp"
+            android:layout_height="16dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"

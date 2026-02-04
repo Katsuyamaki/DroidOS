@@ -29,3 +29,5 @@ droid_stats.py
 wrapper.sh
 debug_cron.log
 automargindebugtets.md
+growth_stats.png
+droid_stats_graph.py

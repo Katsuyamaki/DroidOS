@@ -177,6 +177,7 @@ class DockInputMethodService : InputMethodService() {
     private var prefAutoResize = false
     private var prefResizeScale = 0 // Default 0% (Range 0-50%)
     private var prefSyncMargin = false
+    private var prefShowKBAboveDock = true // Default ON when dock mode is enabled
     
     private val ACTION_MARGIN_CHANGED = "com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED"
     private val ACTION_SET_MARGIN = "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM"
@@ -256,6 +257,7 @@ class DockInputMethodService : InputMethodService() {
         prefAutoResize = prefs.getBoolean("auto_resize", false)
         prefResizeScale = prefs.getInt("auto_resize_scale", 0)
         prefSyncMargin = prefs.getBoolean("sync_margin", false)
+        prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock", true) // Default ON
     }
     
     private fun saveDockPrefs() {
@@ -265,6 +267,7 @@ class DockInputMethodService : InputMethodService() {
             .putBoolean("auto_resize", prefAutoResize)
             .putInt("auto_resize_scale", prefResizeScale)
             .putBoolean("sync_margin", prefSyncMargin)
+            .putBoolean("show_kb_above_dock", prefShowKBAboveDock)
             .apply()
     }
     // =================================================================================
@@ -433,6 +436,12 @@ class DockInputMethodService : InputMethodService() {
         val textSliderLabel = popupView.findViewById<android.widget.TextView>(R.id.text_resize_label)
         val seekResize = popupView.findViewById<android.widget.SeekBar>(R.id.seekbar_resize_height)
         val checkSync = popupView.findViewById<android.widget.CheckBox>(R.id.checkbox_sync_margin)
+        
+        // Option 2b: Show KB Above Dock
+        val optionKBAboveDock = popupView.findViewById<View>(R.id.option_kb_above_dock)
+        val toggleKBAboveDock = popupView.findViewById<View>(R.id.toggle_kb_above_dock)
+        val iconKBAboveDock = popupView.findViewById<android.widget.ImageView>(R.id.icon_kb_above_dock)
+        val textKBAboveDock = popupView.findViewById<android.widget.TextView>(R.id.text_kb_above_dock)
 
         fun updateToggleVisuals() {
             // Option 1 & 2 - always enabled
@@ -468,6 +477,21 @@ class DockInputMethodService : InputMethodService() {
             } else {
                 containerSlider?.visibility = View.GONE
                 dividerResize?.visibility = View.GONE
+            }
+            
+            // Option 2b - KB Above Dock: Only enabled when Dock Mode is ON
+            optionKBAboveDock?.alpha = if (prefDockMode) 1.0f else 0.4f
+            optionKBAboveDock?.isClickable = prefDockMode
+            optionKBAboveDock?.visibility = if (prefDockMode) View.VISIBLE else View.GONE
+            
+            if (prefDockMode) {
+                toggleKBAboveDock?.setBackgroundColor(if (prefShowKBAboveDock) 0xFF3DDC84.toInt() else 0xFF555555.toInt())
+                iconKBAboveDock?.setColorFilter(if (prefShowKBAboveDock) 0xFF3DDC84.toInt() else 0xFF888888.toInt())
+                textKBAboveDock?.setTextColor(0xFFCCCCCC.toInt())
+            } else {
+                toggleKBAboveDock?.setBackgroundColor(0xFF333333.toInt())
+                iconKBAboveDock?.setColorFilter(0xFF555555.toInt())
+                textKBAboveDock?.setTextColor(0xFF666666.toInt())
             }
         }
         updateToggleVisuals()
@@ -545,15 +569,37 @@ class DockInputMethodService : InputMethodService() {
         // Option 2: Dock mode
         popupView.findViewById<View>(R.id.option_dock_mode)?.setOnClickListener {
             prefDockMode = !prefDockMode
+            // Auto-enable KB Above Dock when dock mode is first enabled
+            if (prefDockMode && !getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).contains("show_kb_above_dock")) {
+                prefShowKBAboveDock = true
+            }
             saveDockPrefs()
             updateToggleVisuals()
             
             val intent = Intent("DOCK_PREF_CHANGED")
             intent.setPackage(packageName)
             intent.putExtra("dock_mode", prefDockMode)
+            intent.putExtra("show_kb_above_dock", prefShowKBAboveDock && prefDockMode)
             sendBroadcast(intent)
             
             android.util.Log.d(TAG, "Dock mode: $prefDockMode")
+        }
+        
+        // Option 2b: Show KB Above Dock (sub-option of Dock Mode)
+        optionKBAboveDock?.setOnClickListener {
+            if (!prefDockMode) return@setOnClickListener
+            
+            prefShowKBAboveDock = !prefShowKBAboveDock
+            saveDockPrefs()
+            updateToggleVisuals()
+            
+            // Notify OverlayService to reposition keyboard
+            val intent = Intent("DOCK_PREF_CHANGED")
+            intent.setPackage(packageName)
+            intent.putExtra("show_kb_above_dock", prefShowKBAboveDock)
+            sendBroadcast(intent)
+            
+            android.util.Log.d(TAG, "Show KB Above Dock: $prefShowKBAboveDock")
         }
         
         // Option 3: Auto Resize Apps (only when dock mode enabled)
@@ -679,7 +725,18 @@ class DockInputMethodService : InputMethodService() {
             val navHeight = insets.bottom
             
             // 3. Calculate Margin Height (Desired clear space)
-            val marginHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
+            var marginHeight = (screenHeight * (prefResizeScale / 100f)).toInt()
+            
+            // 3b. If "Show KB Above Dock" is enabled, add overlay keyboard height to margin
+            // This ensures apps don't get blocked by the overlay keyboard
+            if (prefShowKBAboveDock) {
+                val overlayKBHeight = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                    .getInt("keyboard_height_d0", 0) // Default display 0
+                if (overlayKBHeight > 0) {
+                    marginHeight += overlayKBHeight
+                    android.util.Log.d(TAG, "updateInputViewHeight: Added overlay KB height $overlayKBHeight to margin")
+                }
+            }
             
             // 4. Calculate IME Window Height
             // Subtract nav height because IME sits ON TOP of nav bar, while margin is from physical bottom.

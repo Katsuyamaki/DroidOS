@@ -347,6 +347,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         var prefPersistentService = false 
         var prefBubbleIncludeTrackpad = true
         var prefBubbleIncludeKeyboard = true
+        var prefShowKBAboveDock = true // Default ON - position overlay KB above DockIME toolbar
 
         var prefBlockSoftKeyboard = false
 
@@ -1273,6 +1274,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         } else {
                             // Could restore previous position here
                             showToast("Dock mode disabled")
+                        }
+                    }
+                    if (intent.hasExtra("show_kb_above_dock")) {
+                        val showAbove = intent.getBooleanExtra("show_kb_above_dock", true)
+                        prefs.prefShowKBAboveDock = showAbove
+                        savePrefs()
+                        // Reposition keyboard if dock mode is active
+                        if (isCustomKeyboardVisible) {
+                            applyDockMode()
                         }
                     }
                 }
@@ -3146,14 +3156,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         // Position at bottom, full width (100%)
         val targetW = screenWidth
-        val targetY = screenHeight - kbHeight
+        var targetY = screenHeight - kbHeight
+        
+        // If "Show KB Above Dock" is enabled, position above the DockIME toolbar (40dp)
+        if (prefs.prefShowKBAboveDock) {
+            val dockToolbarHeight = (40 * density).toInt()
+            targetY = screenHeight - kbHeight - dockToolbarHeight
+        }
         
         keyboardOverlay?.setWindowBounds(0, targetY, targetW, kbHeight)
         
         // Save keyboard height for Dock IME auto-resize feature
         saveKeyboardHeightForDock(kbHeight)
         
-        android.util.Log.d(TAG, "applyDockMode: x=0, y=$targetY, w=$targetW, h=$kbHeight")
+        android.util.Log.d(TAG, "applyDockMode: x=0, y=$targetY, w=$targetW, h=$kbHeight, aboveDock=${prefs.prefShowKBAboveDock}")
         showToast("Keyboard docked to bottom")
     }
     
@@ -3210,6 +3226,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         prefs.prefHPosTop = p.getBoolean("h_pos_top", false)
         prefs.prefAnchored = p.getBoolean("anchored", false)
         prefs.prefHandleTouchSize = p.getInt("handle_touch_size", 80)
+        prefs.prefShowKBAboveDock = p.getBoolean("show_kb_above_dock", true)
         prefs.prefScrollTouchSize = p.getInt("scroll_touch_size", 80)
         prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 4)
                 prefs.prefCursorSize = p.getInt("cursor_size", 50)
@@ -3367,6 +3384,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         e.putBoolean("bubble_include_trackpad", prefs.prefBubbleIncludeTrackpad)
         e.putBoolean("bubble_include_keyboard", prefs.prefBubbleIncludeKeyboard)
         e.putBoolean("block_soft_kb", prefs.prefBlockSoftKeyboard)
+        e.putBoolean("show_kb_above_dock", prefs.prefShowKBAboveDock)
 
         e.putFloat("prediction_aggression", prefs.prefPredictionAggression)
 
