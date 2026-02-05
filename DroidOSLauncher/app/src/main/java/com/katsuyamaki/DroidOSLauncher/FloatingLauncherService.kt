@@ -1288,23 +1288,23 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         val isTiledApp = activeNonMinimized.size > 1 && isManagedApp
 
                         // ===================================================================================
-                        // WARNING: DOUBLE-MARGIN BUG - SEE processWindowManagerCommand() FOR FULL EXPLANATION
+                        // CRITICAL: TILED vs FULLSCREEN INSET BEHAVIOR
                         // ===================================================================================
-                        // Broadcast tells DockIME if FOCUSED app is managed (suppress insets) or not (use insets).
-                        // - Tiled/Managed apps: Launcher handles resize, suppress insets to avoid double-resize
-                        // - Fullscreen apps: Android handles resize via insets, don't suppress
+                        // - TILED (2+ non-minimized apps): Launcher resizes apps, DockIME suppresses insets
+                        // - FULLSCREEN (0-1 app visible): Android resizes via insets, DockIME uses normal insets
                         //
-                        // The SharedPrefs flag (launcher_has_managed_apps) is a fallback for timing issues
-                        // but ONLY for tiled apps. Fullscreen apps must NOT suppress insets.
+                        // Key insight: An app in the queue running ALONE should behave like fullscreen,
+                        // not tiled. Only when multiple apps are actively tiled should we suppress insets.
                         //
                         // TEST PROCEDURE:
                         // 1. Open 2 tiled apps (top/bottom layout), tap text field - NO blank gap
-                        // 2. Open fullscreen app, tap text field - app should resize for keyboard
+                        // 2. Open 1 app (even if in queue), tap text field - app should resize for keyboard
                         // ===================================================================================
+                        val isActuallyTiled = activeNonMinimized.size > 1 && isManagedApp
                         if (!isSystemOverlay) {
                             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                                 .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                                .putExtra("TILED_ACTIVE", isManagedApp))
+                                .putExtra("TILED_ACTIVE", isActuallyTiled))
                         }
                         // [FULLSCREEN] Skip auto-minimize during cooldown after explicit tiled app launch.
                         // This prevents newly launched tiled apps from being immediately hidden.
@@ -5114,13 +5114,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 .putBoolean("launcher_has_managed_apps", hasManagedApps)
                 .apply()
 
-            // Broadcast tells DockIME if focused app is managed (for inset suppression)
+            // Broadcast tells DockIME if app is actively TILED (2+ apps visible).
+            // Single app (even in queue) should behave as fullscreen for proper inset handling.
             if (activePackageName != null) {
                 val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
                 val isManaged = activeNonMinimized.any { it.getBasePackage() == activePackageName || it.packageName == activePackageName || (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard") }
+                val isActuallyTiled = activeNonMinimized.size > 1 && isManaged
                 sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                     .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                    .putExtra("TILED_ACTIVE", isManaged))
+                    .putExtra("TILED_ACTIVE", isActuallyTiled))
             }
 
             safeToast(msg)
