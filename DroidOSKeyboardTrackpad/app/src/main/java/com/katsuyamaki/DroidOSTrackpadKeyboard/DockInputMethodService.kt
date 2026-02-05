@@ -35,6 +35,18 @@ class DockInputMethodService : InputMethodService() {
     private var launcherTiledActive = false
     private var forceFullUpdate = false // Flag to force full setInputView() on next update
     private var lastTiledStateTime = 0L // Timestamp of last TILED_STATE broadcast
+    private var windowShownTime = 0L // Timestamp of last onWindowShown
+    private val staleTiledHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val staleTiledCheck = Runnable {
+        // If no TILED_STATE broadcast received since onWindowShown, tiled state is stale
+        // from a previous tiled app. Force fullscreen so insets are reported correctly.
+        if (lastTiledStateTime < windowShownTime && launcherTiledActive && isInputViewShown) {
+            android.util.Log.w(TAG, ">>> Stale tiled state detected (no TILED_STATE since show at $windowShownTime, last=$lastTiledStateTime) - forcing fullscreen")
+            launcherTiledActive = false
+            forceFullUpdate = true
+            updateInputViewHeight()
+        }
+    }
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -85,8 +97,9 @@ class DockInputMethodService : InputMethodService() {
         super.onWindowShown()
         loadDockPrefs()
         
-        // Trust the current launcherTiledActive value - TILED_STATE broadcasts 
-        // keep it accurate. Don't reset it here.
+        // Record show time for stale tiled state detection
+        windowShownTime = System.currentTimeMillis()
+        staleTiledHandler.removeCallbacks(staleTiledCheck)
         
         android.util.Log.w(TAG, ">>> onWindowShown: tiled=$launcherTiledActive, autoResize=$prefAutoResize, dockMode=$prefDockMode, scale=$prefResizeScale")
         
@@ -127,12 +140,18 @@ class DockInputMethodService : InputMethodService() {
             if (prefAutoResize) {
                 updateInputViewHeight()
             }
+            
+            // Schedule stale tiled state check (only if currently tiled - could be stale)
+            if (prefAutoResize && launcherTiledActive) {
+                staleTiledHandler.postDelayed(staleTiledCheck, 350)
+            }
         }
     }
     
     override fun onWindowHidden() {
         super.onWindowHidden()
         loadDockPrefs()
+        staleTiledHandler.removeCallbacks(staleTiledCheck)
         
         // Notify Launcher that IME is now hidden
         // [FIX] Add FORCE_RETILE to ensure apps resize when manually hiding via X button
@@ -254,6 +273,7 @@ class DockInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        staleTiledHandler.removeCallbacks(staleTiledCheck)
         try { unregisterReceiver(inputReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(marginReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(tiledStateReceiver) } catch (e: Exception) {}

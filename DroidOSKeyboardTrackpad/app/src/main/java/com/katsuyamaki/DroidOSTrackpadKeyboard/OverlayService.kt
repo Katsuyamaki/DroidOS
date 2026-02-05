@@ -3739,9 +3739,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         isCustomKeyboardVisible = isNowVisible
         
         // [FIX] When manually showing, reapply dock mode positioning
+        // Only when DockIME is actually visible — not with Gboard or other IMEs
         // Use margin-adjusted sizing only if auto resize is active (lastDockMarginPercent >= 0)
-        // When auto resize is off, lastDockMarginPercent is -1 so we use normal dock mode
-        if (isNowVisible && prefs.prefShowKBAboveDock) {
+        if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEVisible) {
             if (lastDockMarginPercent >= 0) {
                 applyDockModeWithMargin(lastDockMarginPercent)
             } else {
