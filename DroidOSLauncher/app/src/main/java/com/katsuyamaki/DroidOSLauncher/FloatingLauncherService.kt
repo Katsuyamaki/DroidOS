@@ -1264,13 +1264,28 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             detectedPkg.contains("samsung.android.app.routines") ||
                             detectedPkg.contains("android.providers") ||
                             detectedPkg.contains("permissioncontroller")
-                        // [FIX] App is only "tiled" if it's in queue, NOT minimized, AND we have multiple active windows
+                        // [FIX] Managed state: if app is in queue and not minimized, DroidOS is managing its bounds.
+                        // We notify the IME to suppress insets for ANY managed app (even single apps) 
+                        // to prevent double-resizing/pushing.
                         val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
-                        val isTiledApp = activeNonMinimized.size > 1 && 
-                            activeNonMinimized.any { it.getBasePackage() == detectedPkg || it.packageName == detectedPkg }
-                        // Notify IME whether the focused app is tiled (suppress insets) or fullscreen (normal insets)
+                        val isGeminiDetect = detectedPkg == "com.google.android.googlequicksearchbox"
+                        val isManagedApp = activeNonMinimized.any { 
+                            val base = it.getBasePackage()
+                            base == detectedPkg || it.packageName == detectedPkg || (isGeminiDetect && base == "com.google.android.apps.bard")
+                        }
+                        
+                        // Traditional Tiled state (multi-window) for auto-minimize logic
+                        val isTiledApp = activeNonMinimized.size > 1 && isManagedApp
+
+                        // [FIX] Notify IME whether to suppress insets.
+                        // When autoAdjustMarginForIME is ON and there are managed apps, ALWAYS suppress.
+                        // This prevents double-margin bug: Launcher resizes apps, then Android ADJUST_RESIZE also pushes them.
+                        // The old logic used isManagedApp which fluctuates during IME transitions (focus changes).
+                        val shouldSuppressInsets = (autoAdjustMarginForIME && activeNonMinimized.isNotEmpty()) || isManagedApp
                         if (!isSystemOverlay) {
-                            sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE").setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard").putExtra("TILED_ACTIVE", isTiledApp))
+                            sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
+                                .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+                                .putExtra("TILED_ACTIVE", shouldSuppressInsets))
                         }
                         if (!isSystemOverlay && !isTiledApp && selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized &&
                             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -4962,6 +4977,25 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // Auto-save queue state
             val identifiers = selectedAppsQueue.map { it.getIdentifier() }
             AppPreferences.saveLastQueue(this, identifiers)
+
+            // [FIX] Write managed-apps state to DockIMEPrefs for reliable reading by DockIME.
+            // Broadcasts are unreliable due to timing issues during IME transitions.
+            val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
+            val hasManagedApps = autoAdjustMarginForIME && activeNonMinimized.isNotEmpty()
+            getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                .putBoolean("launcher_has_managed_apps", hasManagedApps)
+                .apply()
+
+            // [FIX] Notify IME of managed state change (e.g. after minimize/kill)
+            // When autoAdjustMarginForIME is ON and there are managed apps, suppress insets to prevent double-margin.
+            if (activePackageName != null) {
+                val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
+                val isManaged = activeNonMinimized.any { it.getBasePackage() == activePackageName || it.packageName == activePackageName || (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard") }
+                val shouldSuppressInsets = hasManagedApps || isManaged
+                sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
+                    .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+                    .putExtra("TILED_ACTIVE", shouldSuppressInsets))
+            }
 
             safeToast(msg)
 

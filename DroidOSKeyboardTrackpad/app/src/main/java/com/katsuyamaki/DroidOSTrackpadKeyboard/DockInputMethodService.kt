@@ -32,20 +32,15 @@ class DockInputMethodService : InputMethodService() {
 
     private var dockView: View? = null
 
-    private var launcherTiledActive = false
+    // [FIX] Default to true so that managed apps (tiled) have insets suppressed 
+    // immediately on window show, preventing the "double margin" race.
+    private var launcherTiledActive = true
     private var forceFullUpdate = false // Flag to force full setInputView() on next update
     private var lastTiledStateTime = 0L // Timestamp of last TILED_STATE broadcast
     private var windowShownTime = 0L // Timestamp of last onWindowShown
     private val staleTiledHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val staleTiledCheck = Runnable {
-        // If no TILED_STATE broadcast received since onWindowShown, tiled state is stale
-        // from a previous tiled app. Force fullscreen so insets are reported correctly.
-        if (lastTiledStateTime < windowShownTime && launcherTiledActive && isInputViewShown) {
-            android.util.Log.w(TAG, ">>> Stale tiled state detected (no TILED_STATE since show at $windowShownTime, last=$lastTiledStateTime) - forcing fullscreen")
-            launcherTiledActive = false
-            forceFullUpdate = true
-            updateInputViewHeight()
-        }
+        // Stale check removed - it caused race conditions forcing fullscreen insets on tiled apps.
     }
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
@@ -60,10 +55,9 @@ class DockInputMethodService : InputMethodService() {
                 // Force the system to recompute insets with the new tiled state
                 window?.window?.decorView?.requestLayout()
                 if (prefAutoResize && prefDockMode) {
-                    // Switching to fullscreen needs full setInputView() for insets
-                    if (!newState) {
-                        forceFullUpdate = true
-                    }
+                    // Any state change (Managed <-> Independent) needs full setInputView() 
+                    // to trigger OS inset recalculation (suppress vs apply).
+                    forceFullUpdate = true
                     updateInputViewHeight()
                 }
             }
@@ -916,10 +910,17 @@ class DockInputMethodService : InputMethodService() {
         if (isInputViewShown && dockView != null) {
             val viewH = window?.window?.decorView?.height ?: 0
             val wrapperH = currentInputWrapper?.height ?: -1
-            android.util.Log.w(TAG, ">>> onComputeInsets: tiled=$launcherTiledActive, autoResize=$prefAutoResize, dockMode=$prefDockMode, viewH=$viewH, wrapperH=$wrapperH, lastCalcH=$lastCalculatedHeight")
             
-            if (prefAutoResize && prefDockMode && launcherTiledActive) {
-                // Tiled: Launcher handles resize, suppress insets to avoid double-resize
+            // [FIX] Read launcher_has_managed_apps directly from SharedPreferences.
+            // This is more reliable than launcherTiledActive which depends on broadcast timing.
+            val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            val launcherHasManagedApps = prefs.getBoolean("launcher_has_managed_apps", false)
+            val shouldSuppressInsets = launcherTiledActive || launcherHasManagedApps
+            
+            android.util.Log.w(TAG, ">>> onComputeInsets: tiled=$launcherTiledActive, managedApps=$launcherHasManagedApps, autoResize=$prefAutoResize, dockMode=$prefDockMode, viewH=$viewH, wrapperH=$wrapperH, lastCalcH=$lastCalculatedHeight")
+            
+            if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
+                // Tiled/Managed: Launcher handles resize, suppress insets to avoid double-resize
                 outInsets.contentTopInsets = viewH
                 outInsets.visibleTopInsets = viewH
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_FRAME
