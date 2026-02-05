@@ -284,6 +284,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
     private var isDockIMEVisible = false
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
+    private var manualKeyScaleBeforeMargin = -1 // Save manual key scale before margin adjustment
 
 
     var isCustomKeyboardVisible = true // Changed: Default ON
@@ -1293,13 +1294,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         savePrefs()
                         // Reposition keyboard if dock mode is active
                         if (isCustomKeyboardVisible) {
-                            applyDockModeWithMargin(intent.getIntExtra("resize_to_margin", -1))
+                            val margin = intent.getIntExtra("resize_to_margin", -1)
+                            if (margin >= 0) {
+                                applyDockModeWithMargin(margin)
+                            } else {
+                                applyDockMode()
+                            }
                         }
                     }
                     if (intent.hasExtra("resize_to_margin")) {
                         val marginPercent = intent.getIntExtra("resize_to_margin", -1)
                         if (marginPercent >= 0 && isCustomKeyboardVisible) {
                             applyDockModeWithMargin(marginPercent)
+                        }
+                    }
+                    if (intent.hasExtra("auto_resize")) {
+                        val autoResize = intent.getBooleanExtra("auto_resize", false)
+                        if (!autoResize) {
+                            // Auto resize turned OFF - stop using margin-based sizing
+                            lastDockMarginPercent = -1
+                            if (isCustomKeyboardVisible) {
+                                // Restore manual keyboard scale and reposition
+                                val restoreScale = if (manualKeyScaleBeforeMargin > 0) manualKeyScaleBeforeMargin else prefs.prefKeyScale
+                                manualKeyScaleBeforeMargin = -1
+                                prefs.prefKeyScale = restoreScale
+                                val density = resources.displayMetrics.density
+                                val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
+                                val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
+                                val targetY = uiScreenHeight - kbHeight - dockToolbarHeight
+                                keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
+                                saveKeyboardHeightForDock(kbHeight)
+                            } else {
+                                manualKeyScaleBeforeMargin = -1
+                            }
                         }
                     }
                 }
@@ -3210,6 +3237,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             isCustomKeyboardVisible = true
         }
         
+        // Save manual key scale before overwriting (for restore when auto resize is turned off)
+        if (manualKeyScaleBeforeMargin < 0) {
+            manualKeyScaleBeforeMargin = prefs.prefKeyScale
+        }
+        
         val density = resources.displayMetrics.density
         val screenWidth = uiScreenWidth
         val screenHeight = uiScreenHeight
@@ -3690,7 +3722,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         isCustomKeyboardVisible = isNowVisible
         
         // [FIX] When manually showing, reapply dock mode positioning
-        // Use margin-adjusted sizing if auto resize was active
+        // Use margin-adjusted sizing only if auto resize is active (lastDockMarginPercent >= 0)
+        // When auto resize is off, lastDockMarginPercent is -1 so we use normal dock mode
         if (isNowVisible && prefs.prefShowKBAboveDock) {
             if (lastDockMarginPercent >= 0) {
                 applyDockModeWithMargin(lastDockMarginPercent)
