@@ -904,15 +904,40 @@ class DockInputMethodService : InputMethodService() {
         ic.sendKeyEvent(upEvent)
     }
 
-    // Suppress insets for tiled apps (Launcher handles resize), report normally for fullscreen
+    // ===================================================================================
+    // CRITICAL: DOUBLE-MARGIN BUG FIX - DO NOT MODIFY WITHOUT UNDERSTANDING
+    // ===================================================================================
+    // PROBLEM: When auto-adjust margin is enabled, tiled apps were getting resized TWICE:
+    //   1. By Launcher's retileExistingWindows() which applies bottomMarginPercent
+    //   2. By Android's ADJUST_RESIZE which responds to IME insets
+    // This left a blank gap between the bottom tiled app and the keyboard.
+    //
+    // SOLUTION: When Launcher is managing apps (autoAdjustMarginForIME + non-minimized apps),
+    // DockIME must SUPPRESS insets (contentTopInsets=viewH) so Android doesn't also resize.
+    //
+    // WHY WE READ SharedPreferences:
+    // - The original fix used launcherTiledActive from TILED_STATE broadcasts
+    // - But broadcasts have timing issues: accessibility events fire rapidly during IME
+    //   transitions, causing launcherTiledActive to flip false momentarily
+    // - SharedPreferences (launcher_has_managed_apps) are persistent and reliable
+    // - We check BOTH for defense in depth (broadcast || prefs)
+    //
+    // TEST PROCEDURE if you modify this:
+    // 1. Open 2 tiled apps (top/bottom layout) with auto-adjust margin ON
+    // 2. Tap text field to show IME with DockIME as active keyboard
+    // 3. Verify NO blank gap between bottom app and keyboard
+    // 4. Hide/show IME multiple times rapidly
+    // 5. Switch focus between apps while IME visible
+    // 6. Test with fullscreen (non-tiled) app - should resize normally
+    // ===================================================================================
     override fun onComputeInsets(outInsets: InputMethodService.Insets) {
         super.onComputeInsets(outInsets)
         if (isInputViewShown && dockView != null) {
             val viewH = window?.window?.decorView?.height ?: 0
             val wrapperH = currentInputWrapper?.height ?: -1
             
-            // [FIX] Read launcher_has_managed_apps directly from SharedPreferences.
-            // This is more reliable than launcherTiledActive which depends on broadcast timing.
+            // Read launcher_has_managed_apps from SharedPreferences for reliability.
+            // launcherTiledActive (from broadcasts) can have timing issues during IME transitions.
             val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
             val launcherHasManagedApps = prefs.getBoolean("launcher_has_managed_apps", false)
             val shouldSuppressInsets = launcherTiledActive || launcherHasManagedApps
@@ -920,21 +945,21 @@ class DockInputMethodService : InputMethodService() {
             android.util.Log.w(TAG, ">>> onComputeInsets: tiled=$launcherTiledActive, managedApps=$launcherHasManagedApps, autoResize=$prefAutoResize, dockMode=$prefDockMode, viewH=$viewH, wrapperH=$wrapperH, lastCalcH=$lastCalculatedHeight")
             
             if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
-                // Tiled/Managed: Launcher handles resize, suppress insets to avoid double-resize
+                // TILED/MANAGED: Launcher handles resize via retileExistingWindows().
+                // Suppress insets so Android's ADJUST_RESIZE doesn't ALSO resize = double margin.
                 outInsets.contentTopInsets = viewH
                 outInsets.visibleTopInsets = viewH
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_FRAME
                 android.util.Log.w(TAG, ">>> onComputeInsets: TILED MODE - suppressing insets (contentTop=$viewH)")
             } else if (prefAutoResize && prefDockMode) {
-                // [FIX] Fullscreen: Let Android use our wrapper's actual height for insets
-                // Setting contentTopInsets=0 means "content starts at top of IME frame"
-                // Android will measure our wrapper and resize the app accordingly
+                // FULLSCREEN (independent app): Let Android handle resize via normal insets.
+                // contentTopInsets=0 means "content starts at top of IME frame".
                 outInsets.contentTopInsets = 0
                 outInsets.visibleTopInsets = 0
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
                 android.util.Log.w(TAG, ">>> onComputeInsets: FULLSCREEN MODE - using default insets (wrapper=$wrapperH)")
             } else {
-                // No auto-resize: minimal toolbar only
+                // No auto-resize: minimal toolbar only, normal inset behavior
                 outInsets.contentTopInsets = 0
                 outInsets.visibleTopInsets = 0
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT

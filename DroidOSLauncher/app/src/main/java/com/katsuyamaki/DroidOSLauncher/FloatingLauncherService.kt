@@ -411,6 +411,7 @@ private var isSoftKeyboardSupport = false
     private var bottomMarginPercent = 0
     private var autoAdjustMarginForIME = false
     private var imeMarginOverrideActive = false
+    private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
     private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeRetileRunnable: Runnable? = null
@@ -498,6 +499,13 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") {
                 broadcastKeybindsToKeyboard()
             } else if (action == "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
+                // [FIX] Mark DroidOS IME as detected. This proves it's active even on cover screen
+                // where system settings may not reflect the actual IME in use.
+                if (!droidOsImeDetected) {
+                    droidOsImeDetected = true
+                    AppPreferences.setDroidOsImeDetected(this@FloatingLauncherService, true)
+                    Log.d(TAG, "DroidOS IME detected via IME_VISIBILITY broadcast")
+                }
                 if (autoAdjustMarginForIME) {
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
                     val isTiled = intent?.getBooleanExtra("IS_TILED", true) ?: true
@@ -1277,10 +1285,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // Traditional Tiled state (multi-window) for auto-minimize logic
                         val isTiledApp = activeNonMinimized.size > 1 && isManagedApp
 
-                        // [FIX] Notify IME whether to suppress insets.
-                        // When autoAdjustMarginForIME is ON and there are managed apps, ALWAYS suppress.
-                        // This prevents double-margin bug: Launcher resizes apps, then Android ADJUST_RESIZE also pushes them.
-                        // The old logic used isManagedApp which fluctuates during IME transitions (focus changes).
+                        // ===================================================================================
+                        // WARNING: DOUBLE-MARGIN BUG - SEE processWindowManagerCommand() FOR FULL EXPLANATION
+                        // ===================================================================================
+                        // This broadcast is SUPPLEMENTARY. The primary fix is in processWindowManagerCommand()
+                        // where we write launcher_has_managed_apps to SharedPreferences.
+                        //
+                        // DO NOT change shouldSuppressInsets logic without testing:
+                        // 1. Open 2 tiled apps (top/bottom layout)
+                        // 2. Tap text field to show IME
+                        // 3. Verify NO blank gap between bottom app and keyboard
+                        // 4. Hide/show IME multiple times rapidly
+                        // 5. Switch focus between the two apps while IME is visible
+                        // ===================================================================================
                         val shouldSuppressInsets = (autoAdjustMarginForIME && activeNonMinimized.isNotEmpty()) || isManagedApp
                         if (!isSystemOverlay) {
                             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
@@ -1497,6 +1514,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         isReorderTapEnabled = AppPreferences.getReorderTap(this); currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
         currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this)
+        droidOsImeDetected = AppPreferences.getDroidOsImeDetected(this)
         // Margins now loaded in loadDisplaySettings()
 
 
@@ -4282,10 +4300,18 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
-                // [FIX] Check if DroidOS IME is active before allowing auto-adjust toggle
-                val isDroidOsImeActive = try {
+                // [FIX] Improved DroidOS IME detection for Flip 7 cover screen compatibility.
+                // On Samsung Flip cover screen, One UI manages IME per-display and DEFAULT_INPUT_METHOD
+                // may not reflect the actual IME. We use multiple detection methods:
+                // 1. droidOsImeDetected: Set when we receive IME_VISIBILITY broadcast (most reliable)
+                // 2. System default IME check (works on main screen)
+                // 3. Enabled IME check (fallback)
+                val isDroidOsImeActive = droidOsImeDetected || try {
                     val currentIme = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
-                    currentIme?.contains("DroidOSTrackpadKeyboard") == true || currentIme?.contains("DockInputMethodService") == true
+                    val enabledImes = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ENABLED_INPUT_METHODS)
+                    val isDefault = currentIme?.contains("DroidOSTrackpadKeyboard") == true || currentIme?.contains("DockInputMethodService") == true
+                    val isEnabled = enabledImes?.contains("DroidOSTrackpadKeyboard") == true
+                    isDefault || isEnabled
                 } catch (e: Exception) { false }
                 
                 if (isDroidOsImeActive) {
@@ -4295,9 +4321,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {
-                    // Greyed out option when DroidOS IME not active
+                    // Greyed out option when DroidOS IME not detected
                     displayList.add(ToggleOption("Auto-Adjust Margin for IME (Requires DroidOS IME)", false) {
-                        safeToast("Enable DroidOS IME first")
+                        safeToast("Enable DroidOS IME in system settings, then show keyboard once")
                     })
                 }
 
@@ -4978,16 +5004,34 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             val identifiers = selectedAppsQueue.map { it.getIdentifier() }
             AppPreferences.saveLastQueue(this, identifiers)
 
-            // [FIX] Write managed-apps state to DockIMEPrefs for reliable reading by DockIME.
-            // Broadcasts are unreliable due to timing issues during IME transitions.
+            // ===================================================================================
+            // CRITICAL: DOUBLE-MARGIN BUG FIX - DO NOT MODIFY WITHOUT UNDERSTANDING
+            // ===================================================================================
+            // PROBLEM: When IME shows with auto-adjust margin enabled, apps were getting resized
+            // TWICE - once by Launcher (via retileExistingWindows) and once by Android's
+            // ADJUST_RESIZE (via IME insets). This left a blank gap between the bottom app
+            // and the keyboard.
+            //
+            // WHY BROADCASTS FAILED: The original fix used TILED_STATE broadcasts to tell DockIME
+            // whether to suppress insets. But broadcasts have timing issues - accessibility events
+            // fire rapidly during IME transitions, and focus can briefly go to non-managed elements
+            // (IME itself, popups, etc.), causing launcherTiledActive to flip to false momentarily.
+            // Even a 200ms false state causes Android to apply insets = double margin.
+            //
+            // SOLUTION: Write the managed-apps state to SharedPreferences (DockIMEPrefs).
+            // DockIME reads this directly in onComputeInsets(). SharedPreferences are persistent
+            // and not subject to broadcast timing issues.
+            //
+            // KEY INVARIANT: When autoAdjustMarginForIME=true AND there are non-minimized managed
+            // apps, DockIME MUST suppress insets. The Launcher handles ALL app resizing.
+            // ===================================================================================
             val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
             val hasManagedApps = autoAdjustMarginForIME && activeNonMinimized.isNotEmpty()
             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                 .putBoolean("launcher_has_managed_apps", hasManagedApps)
                 .apply()
 
-            // [FIX] Notify IME of managed state change (e.g. after minimize/kill)
-            // When autoAdjustMarginForIME is ON and there are managed apps, suppress insets to prevent double-margin.
+            // Broadcast is kept for backward compatibility but DockIME primarily uses SharedPrefs
             if (activePackageName != null) {
                 val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
                 val isManaged = activeNonMinimized.any { it.getBasePackage() == activePackageName || it.packageName == activePackageName || (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard") }

@@ -292,6 +292,17 @@ object AppPreferences {
         return getPrefs(context).getBoolean("auto_adjust_margin_ime", false)
     }
 
+    // Track when DroidOS IME has been detected via IME_VISIBILITY broadcast.
+    // This is the most reliable indicator on Flip cover screen where system settings
+    // may not reflect the actual IME in use.
+    fun setDroidOsImeDetected(context: Context, detected: Boolean) {
+        getPrefs(context).edit().putBoolean("droidos_ime_detected", detected).apply()
+    }
+
+    fun getDroidOsImeDetected(context: Context): Boolean {
+        return getPrefs(context).getBoolean("droidos_ime_detected", false)
+    }
+
     // --- SETTINGS ---
     fun setKillOnExecute(context: Context, kill: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_KILL_ON_EXECUTE, kill).apply()
