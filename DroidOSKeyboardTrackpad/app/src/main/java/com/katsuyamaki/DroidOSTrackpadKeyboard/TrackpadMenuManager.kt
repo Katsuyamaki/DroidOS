@@ -314,6 +314,12 @@ class TrackpadMenuManager(
 
             hide() // Close menu
             
+            // [FIX] Hide overlay keyboard so it doesn't cover the picker
+            val hideKbIntent = android.content.Intent("TOGGLE_CUSTOM_KEYBOARD")
+            hideKbIntent.setPackage(context.packageName)
+            hideKbIntent.putExtra("FORCE_HIDE", true)
+            context.sendBroadcast(hideKbIntent)
+            
             try {
                 val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
