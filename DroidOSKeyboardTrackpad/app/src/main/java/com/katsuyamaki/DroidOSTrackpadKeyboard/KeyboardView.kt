@@ -92,7 +92,8 @@ class KeyboardView @JvmOverloads constructor(
         BACKSPACE, ENTER, SPACE, SHIFT, CAPS_LOCK, SYMBOLS, ABC,
         TAB, ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT,
         HOME, END, DELETE, ESCAPE, CTRL, ALT,
-        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT, HIDE_KEYBOARD
+        VOL_UP, VOL_DOWN, MUTE, BACK_NAV, FWD_NAV, VOICE_INPUT, HIDE_KEYBOARD,
+        PAGE_UP, PAGE_DOWN
     }
 
     enum class KeyboardState {
@@ -564,9 +565,8 @@ private var customModKeyCode = 0
 
     private val symbols2Rows = listOf(
         listOf("~", "`", "|", "^", "=", "{", "}", "[", "]", "\\"),
-        listOf("<", ">", "/", "_", "©", "®", "™", "°", "•"),
-        // Replaced MODE with root to keep layout balanced, MODE is now contextual on SCREEN key
-        listOf("√", "€", "£", "¥", "¢", "§", "¶", "∆", "BKSP")
+        listOf("<", ">", "/", "_", "PGUP", "PGDN", "HOME", "END", "DEL"),
+        listOf("SYM1", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "BKSP")
     )
 
     // Row 4 
@@ -2312,6 +2312,19 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                 
                                         "TAB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.TAB, meta) }            "HIDE_KB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.HIDE_KEYBOARD, meta) }
                 
+                "PGUP" -> listener?.onSpecialKey(SpecialKey.PAGE_UP, meta)
+                "PGDN" -> listener?.onSpecialKey(SpecialKey.PAGE_DOWN, meta)
+                "HOME" -> listener?.onSpecialKey(SpecialKey.HOME, meta)
+                "END" -> listener?.onSpecialKey(SpecialKey.END, meta)
+                "DEL" -> listener?.onSpecialKey(SpecialKey.DELETE, meta)
+                "F1" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F1, null, meta) }
+                "F2" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F2, null, meta) }
+                "F3" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F3, null, meta) }
+                "F4" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F4, null, meta) }
+                "F5" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F5, null, meta) }
+                "F6" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F6, null, meta) }
+                "F7" -> { if (!fromRepeat) listener?.onKeyPress(KeyEvent.KEYCODE_F7, null, meta) }
+                
                 "SYM", "SYM1" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_1; buildKeyboard() } }
                 "SYM2" -> { if (!fromRepeat) { currentState = KeyboardState.SYMBOLS_2; buildKeyboard() } }
                 "ABC" -> { if (!fromRepeat) { currentState = KeyboardState.LOWERCASE; buildKeyboard() } }
@@ -2403,7 +2416,8 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
             '*' -> KeyEvent.KEYCODE_8 to true
             '(' -> KeyEvent.KEYCODE_9 to true
             ')' -> KeyEvent.KEYCODE_0 to true
-            '√' -> KeyEvent.KEYCODE_UNKNOWN to false // Filler
+            '<' -> KeyEvent.KEYCODE_COMMA to true
+            '>' -> KeyEvent.KEYCODE_PERIOD to true
             else -> KeyEvent.KEYCODE_UNKNOWN to false
         }
     }

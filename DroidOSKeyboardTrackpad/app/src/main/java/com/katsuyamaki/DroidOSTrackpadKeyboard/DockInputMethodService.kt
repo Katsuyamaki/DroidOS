@@ -339,7 +339,7 @@ class DockInputMethodService : InputMethodService() {
         
         val longPressRunnable = Runnable {
             kbLongPressTriggered = true
-            android.util.Log.d(TAG, "KB long press -> showing popup")
+            android.util.Log.d(TAG, "KB long press -> unhide keyboard")
             // Vibrate feedback
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
             if (android.os.Build.VERSION.SDK_INT >= 26) {
@@ -348,7 +348,12 @@ class DockInputMethodService : InputMethodService() {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(30)
             }
-            showDockPopup(btnKeyboard!!)
+            // Long press: unhide keyboard if hidden
+            val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
+            intent.setPackage(packageName)
+            intent.putExtra("FORCE_SHOW", true)
+            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            sendBroadcast(intent)
         }
         val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
         
@@ -385,14 +390,10 @@ class DockInputMethodService : InputMethodService() {
                     val duration = System.currentTimeMillis() - kbTouchStartTime
                     
                     if (!kbLongPressTriggered) {
-                        // Normal tap - toggle keyboard (only if no popup was shown)
+                        // Normal tap - show popup menu (only if no long press was triggered)
                         if (duration < longPressDelay && kotlin.math.abs(deltaY) < swipeThreshold) {
-                            android.util.Log.d(TAG, "Dock KB tap -> TOGGLE_CUSTOM_KEYBOARD")
-                            val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
-                            intent.setPackage(packageName)
-                            intent.putExtra("FORCE_SHOW", true)
-                            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-                            sendBroadcast(intent)
+                            android.util.Log.d(TAG, "Dock KB tap -> showing popup")
+                            showDockPopup(v)
                         }
                     }
                     v.performClick()

@@ -1792,6 +1792,8 @@ windowManager.addView(keyboardContainer, keyboardParams)
             KeyboardView.SpecialKey.VOL_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
             KeyboardView.SpecialKey.BACK_NAV -> KeyEvent.KEYCODE_BACK
             KeyboardView.SpecialKey.FWD_NAV -> KeyEvent.KEYCODE_FORWARD
+            KeyboardView.SpecialKey.PAGE_UP -> KeyEvent.KEYCODE_PAGE_UP
+            KeyboardView.SpecialKey.PAGE_DOWN -> KeyEvent.KEYCODE_PAGE_DOWN
             else -> return
         }
         injectKey(keyCode, metaState)
