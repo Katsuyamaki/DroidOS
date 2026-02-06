@@ -2491,6 +2491,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     private fun showVisualQueue(prompt: String, highlightSlot0Based: Int = -1) {
+        // DEFENSIVE CLEANUP: Force-remove any lingering visual queue views before showing
+        if (visualQueueView != null && isVisualQueueVisible) {
+            Log.w(TAG, "Visual Queue cleanup: removing stale view before showing new one")
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
+        
         if (visualQueueView == null) setupVisualQueue()
 
         // Ensure list is sorted active-first before showing
