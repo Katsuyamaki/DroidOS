@@ -158,6 +158,7 @@ class FloatingLauncherService : AccessibilityService() {
 
     // Command State Machine
     private var pendingCommandId: String? = null
+    private var vqCursorIndex: Int = 0  // Arrow-key cursor for visual queue HUD
 
 // Custom Modifier State
     private val MOD_CUSTOM = -999 // Internal ID for custom modifier
@@ -969,10 +970,31 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
         Log.d("DroidOS_Keys", "INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
-        // 1. INPUT MODE (Entering Numbers)
+        // 1. INPUT MODE (Entering Numbers or Arrow Navigation)
         if (pendingCommandId != null) {
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
                 abortCommandMode()
+                return true
+            }
+
+            // Arrow key navigation in visual queue
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (vqCursorIndex > 0) {
+                    vqCursorIndex--
+                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                }
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (vqCursorIndex < selectedAppsQueue.size - 1) {
+                    vqCursorIndex++
+                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                }
+                return true
+            }
+            // Space or Enter confirms the arrow-key selection
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                handleCommandInput(vqCursorIndex + 1) // +1 because handleCommandInput expects 1-based
                 return true
             }
 
@@ -983,11 +1005,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 return true
             }
 
-            // NEW: If any non-number key is pressed while HUD is open, CANCEL IT.
-            // This prevents the HUD from getting stuck if the user changes their mind
-            // and starts typing a sentence.
+            // If any other key is pressed while HUD is open, CANCEL IT.
             abortCommandMode()
-            return true // Consume the "cancel" key so it doesn't type into app
+            return true
         }
 
         // 2. TRIGGER MODE (Detecting Hotkeys)
@@ -1046,19 +1066,40 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
         Log.d("DroidOS_Keys", "REMOTE INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
-        // 1. INPUT MODE (Entering Numbers for Visual Queue)
+        // 1. INPUT MODE (Entering Numbers or Arrow Navigation for Visual Queue)
         if (pendingCommandId != null) {
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
                 abortCommandMode()
                 return
             }
+
+            // Arrow key navigation in visual queue
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (vqCursorIndex > 0) {
+                    vqCursorIndex--
+                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                }
+                return
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (vqCursorIndex < selectedAppsQueue.size - 1) {
+                    vqCursorIndex++
+                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                }
+                return
+            }
+            // Space or Enter confirms the arrow-key selection
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                handleCommandInput(vqCursorIndex + 1)
+                return
+            }
+
             val num = keyEventToNumber(keyCode)
             if (num != -1) {
                 handleCommandInput(num)
                 return
             }
 
-            // NEW: If any non-number key is pressed while HUD is open, CANCEL IT.
             abortCommandMode()
             return
         }
@@ -1122,7 +1163,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // Enter Input Mode
             pendingCommandId = cmd.id
             pendingArg1 = -1
-            showVisualQueue("${cmd.label}: Enter Slot #")
+            vqCursorIndex = 0
+            showVisualQueue("${cmd.label}: Enter Slot #", highlightSlot0Based = 0)
         }
     }
 
@@ -1144,7 +1186,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 hideVisualQueue()
                 pendingCommandId = null
             } else {
-                // Need Second Arg
+                // Need Second Arg - reset cursor for second selection
+                vqCursorIndex = slotIndex
                 showVisualQueue("${cmd.label}: Swap with?", slotIndex)
             }
         } else {
@@ -4778,6 +4821,30 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                              // RESTORING: Bring to Front on Current Display
                              // We reuse the launch logic which handles "Bring to Front" if already running.
                              // We run this in background to avoid UI stutter.
+
+                             tiledAppsAutoMinimized = false
+                             lastExplicitTiledLaunchAt = System.currentTimeMillis()
+
+                             // [FULLSCREEN] If there's a visible fullscreen app not in the queue, add it.
+                             // This converts the fullscreen app into a tiled app so both stay open together,
+                             // matching the executeLaunch behavior. Without this, fullscreen detection
+                             // would auto-minimize the restored tiled app.
+                             try {
+                                 val activeApps = shellService?.getVisiblePackages(currentDisplayId)
+                                     ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+                                     ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                                     ?: emptyList()
+                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+                                 val fsApps = activeApps.filter { it.getBasePackage() !in queuePkgs && !it.isMinimized }
+                                 if (fsApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized || it == app }) {
+                                     for (fsApp in fsApps) {
+                                         selectedAppsQueue.add(fsApp.copy())
+                                         Log.d(TAG, "UNMINIMIZE: Added fullscreen app ${fsApp.packageName} to queue for tiling")
+                                     }
+                                     uiHandler.post { updateAllUIs() }
+                                 }
+                             } catch (e: Exception) { Log.e(TAG, "UNMINIMIZE: Failed to detect fullscreen apps", e) }
+
                              Thread {
                                  try {
                                      // Use launchViaShell which forces display ID and windowing mode
