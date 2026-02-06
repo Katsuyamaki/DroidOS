@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.katsuyamaki.DroidOSLauncher"
-        minSdk = 30
+        minSdk = 29
         targetSdk = 34
         versionCode = 3
         versionName = "2.1"

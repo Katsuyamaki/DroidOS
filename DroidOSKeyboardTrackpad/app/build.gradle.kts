@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.katsuyamaki.DroidOSTrackpadKeyboard"
-        minSdk = 30
+        minSdk = 29
         targetSdk = 34
         versionCode = 3
         versionName = "3.0"
