@@ -5139,7 +5139,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             "OPEN_DRAWER" -> {
                 Log.d(TAG, "OPEN_DRAWER command received, calling toggleDrawer()")
                 toggleDrawer()
-                refreshQueueAndLayout("Toggled Drawer")
+                refreshQueueAndLayout("Toggled Drawer", skipTiling = true)
             }
             "SET_FOCUS" -> {
                 // 'index' is 0-based here
@@ -5326,7 +5326,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         return rects
     }
 
-    private fun refreshQueueAndLayout(msg: String, focusPackage: String? = null) {
+    private fun refreshQueueAndLayout(msg: String, focusPackage: String? = null, skipTiling: Boolean = false) {
         uiHandler.post {
             sortAppQueue() // Ensure active apps are at the front
             updateAllUIs()
@@ -5375,8 +5375,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             safeToast(msg)
 
-            // Trigger Tiling
-            if (isInstantMode) {
+            // Trigger Tiling (skip when just opening drawer/visual queue to prevent restoring minimized apps)
+            if (isInstantMode && !skipTiling) {
                 applyLayoutImmediate(focusPackage)
             }
         }
