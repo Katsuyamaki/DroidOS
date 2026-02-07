@@ -349,6 +349,20 @@ object AppPreferences {
         return str.split(",").filter { it.isNotEmpty() }
     }
     
+    // [FIX] Persist minimized states so UNMINIMIZE works after queue reload
+    private const val KEY_MINIMIZED_PACKAGES = "minimized_packages"
+    
+    fun saveMinimizedPackages(context: Context, packages: Set<String>) {
+        val str = packages.joinToString(",")
+        getPrefs(context).edit().putString(KEY_MINIMIZED_PACKAGES, str).apply()
+    }
+    
+    fun getMinimizedPackages(context: Context): Set<String> {
+        val str = getPrefs(context).getString(KEY_MINIMIZED_PACKAGES, "") ?: ""
+        if (str.isEmpty()) return emptySet()
+        return str.split(",").filter { it.isNotEmpty() }.toSet()
+    }
+    
     fun setShowShizukuWarning(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_SHOW_SHIZUKU_WARNING, enable).apply()
     }

@@ -3851,6 +3851,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Ensures Visual Queue is populated even if the Drawer hasn't been opened yet.
     private fun restoreQueueFromPrefs() {
         val lastQueue = AppPreferences.getLastQueue(this)
+        val minimizedPkgs = AppPreferences.getMinimizedPackages(this)
         selectedAppsQueue.clear()
         
         for (identifier in lastQueue) {
@@ -3859,6 +3860,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             } else {
                 val appInfo = findAppByIdentifier(identifier)
                 if (appInfo != null) {
+                    // [FIX] Restore minimized state from saved preferences
+                    appInfo.isMinimized = minimizedPkgs.contains(appInfo.getBasePackage())
                     selectedAppsQueue.add(appInfo)
                 }
             }
@@ -3867,7 +3870,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Preserve sorting (Active -> Minimized)
         sortAppQueue()
         updateAllUIs()
-        Log.d(TAG, "Restored ${selectedAppsQueue.size} apps from prefs")
+        Log.d(TAG, "Restored ${selectedAppsQueue.size} apps from prefs (minimized: ${minimizedPkgs.size})")
     }
     // === RESTORE QUEUE IMMEDIATE - END ===
 
@@ -5503,9 +5506,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             sortAppQueue() // Ensure active apps are at the front
             updateAllUIs()
 
-            // Auto-save queue state
+            // Auto-save queue state including minimized packages
             val identifiers = selectedAppsQueue.map { it.getIdentifier() }
             AppPreferences.saveLastQueue(this, identifiers)
+            val minimizedPkgs = selectedAppsQueue.filter { it.isMinimized }.map { it.getBasePackage() }.toSet()
+            AppPreferences.saveMinimizedPackages(this, minimizedPkgs)
 
             // ===================================================================================
             // CRITICAL: DOUBLE-MARGIN BUG FIX - DO NOT MODIFY WITHOUT UNDERSTANDING
