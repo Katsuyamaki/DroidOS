@@ -1522,11 +1522,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             } // end if (coversScreen) else
                         } else if (isManagedApp && !isTiledApp && tiledAppsAutoMinimized) {
                             // [FULLSCREEN] Managed app gained focus while tiled apps were auto-minimized.
-                            // This means user opened a tiled app via hotkey/sidebar while fullscreen was active.
-                            // Restore tiled state - the managed app will be shown.
+                            // Detect fullscreen app, put at slot 1, then tile everything with applyLayoutImmediate.
                             tiledAppsAutoMinimized = false
                             tiledAppsRestoredAt = System.currentTimeMillis()
-                            retileExistingWindows()
+                            ensureFullscreenAppAtSlot1()  // Same logic as launcher app queue
+                            applyLayoutImmediate()  // Force freeform mode and tile all apps
                             Log.d(TAG, "FULLSCREEN: Restored tiled apps for managed app $detectedPkg")
                         } else if (isManagedApp && !isTiledApp && !tiledAppsAutoMinimized &&
                             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -1557,20 +1557,22 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             } catch (e: Exception) { /* ignore */ }
                             
                             if (fullscreenPkg != null) {
-                                // Found a fullscreen app not in queue - add it and tile together
+                                // Found a fullscreen app not in queue - add at slot 1 and tile together
                                 val fsAppInfo = allAppsList.find { it.packageName == fullscreenPkg || it.getBasePackage() == fullscreenPkg }
                                 if (fsAppInfo != null) {
-                                    selectedAppsQueue.add(fsAppInfo.copy())
-                                    Log.d(TAG, "FULLSCREEN: Added fullscreen app $fullscreenPkg to queue, tiling with $detectedPkg")
+                                    selectedAppsQueue.add(0, fsAppInfo.copy())  // Add at position 0 (slot 1)
+                                    Log.d(TAG, "FULLSCREEN: Added fullscreen app $fullscreenPkg at slot 1, tiling with $detectedPkg")
                                     uiHandler.post { updateAllUIs() }
-                                    retileExistingWindows()
+                                    applyLayoutImmediate()  // Force freeform mode and tile all apps
                                 }
                             }
                         } else if (isTiledApp && tiledAppsAutoMinimized) {
                             // Returning to a tiled app — restore all
+                            // Detect fullscreen app, put at slot 1, then tile everything with applyLayoutImmediate.
                             tiledAppsAutoMinimized = false
                             tiledAppsRestoredAt = System.currentTimeMillis()
-                            retileExistingWindows()
+                            ensureFullscreenAppAtSlot1()  // Same logic as launcher app queue
+                            applyLayoutImmediate()  // Force freeform mode and tile all apps
                             Log.d(TAG, "FULLSCREEN: Auto-restored tiled apps for $detectedPkg")
                         }
 
@@ -2681,6 +2683,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Ensure list is sorted active-first before showing
         sortAppQueue()
 
+        // [FULLSCREEN] Detect any app covering >90% screen and ensure it's at slot 1 (position 0)
+        ensureFullscreenAppAtSlot1()
+
         // FAST SYNC CHECK: Get visible packages for THIS display immediately
         // This ensures the HUD reflects reality even if the background poller hasn't run.
         val visiblePkgs = if (shellService != null) {
@@ -3439,6 +3444,62 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun getRatioName(index: Int): String { return when(index) { 1 -> "1:1"; 2 -> "16:9"; 4 -> "16:10"; 3 -> "32:9"; else -> "Default" } }
     private fun getTargetDimensions(index: Int): Pair<Int, Int>? { return when(index) { 1 -> 1422 to 1500; 2 -> 1920 to 1080; 4 -> 1920 to 1200; 3 -> 3840 to 1080; else -> null } }
     private fun getResolutionCommand(index: Int): String { return when(index) { 1 -> "wm size 1422x1500 -d $currentDisplayId"; 2 -> "wm size 1920x1080 -d $currentDisplayId"; 4 -> "wm size 1920x1200 -d $currentDisplayId"; 3 -> "wm size 3840x1080 -d $currentDisplayId"; else -> "wm size reset -d $currentDisplayId" } }
+
+// [FULLSCREEN] Detect any app covering >90% screen and ensure it's at queue position 0 (slot 1).
+// Uses same logic as launcher app queue. Returns true if a fullscreen app was found and positioned.
+            private fun ensureFullscreenAppAtSlot1(): Boolean {
+                try {
+                    val dm = android.util.DisplayMetrics()
+                    windowManager.defaultDisplay.getRealMetrics(dm)
+                    val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
+                    val boundsRect = android.graphics.Rect()
+                    
+                    for (window in windows) {
+                        if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                        val node = window.root ?: continue
+                        val windowPkg = node.packageName?.toString()
+                        node.recycle()
+                        if (windowPkg == null) continue
+                        
+                        // Skip system packages
+                        if (windowPkg == packageName || windowPkg == PACKAGE_TRACKPAD ||
+                            windowPkg.contains("systemui") || windowPkg.contains("launcher") ||
+                            windowPkg.contains("home") || windowPkg.contains("wallpaper") ||
+                            windowPkg.contains("inputmethod") || windowPkg.contains("NavigationBar")) continue
+                        
+                        window.getBoundsInScreen(boundsRect)
+                        val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
+                        
+                        // If this app covers >90% of screen, ensure it's at position 0
+                        if (windowArea >= screenArea * 90 / 100) {
+                            val existingIdx = selectedAppsQueue.indexOfFirst { 
+                                it.getBasePackage() == windowPkg || it.packageName == windowPkg 
+                            }
+                            if (existingIdx > 0) {
+                                // Already in queue but not at position 0 - move it
+                                val app = selectedAppsQueue.removeAt(existingIdx)
+                                selectedAppsQueue.add(0, app)
+                                Log.d(TAG, "FULLSCREEN: Moved $windowPkg to slot 1")
+                            } else if (existingIdx == -1) {
+                                // Not in queue - add at position 0
+                                var appInfo = allAppsList.find { it.getBasePackage() == windowPkg || it.packageName == windowPkg }
+                                if (appInfo == null) {
+                                    val label = try {
+                                        packageManager.getApplicationLabel(packageManager.getApplicationInfo(windowPkg, 0)).toString()
+                                    } catch (e: Exception) { windowPkg }
+                                    appInfo = MainActivity.AppInfo(label, windowPkg, null, false, false)
+                                }
+                                selectedAppsQueue.add(0, appInfo.copy())
+                                Log.d(TAG, "FULLSCREEN: Added $windowPkg at slot 1")
+                            }
+                            return true  // Found and positioned fullscreen app
+                        }
+                    }
+                } catch (e: Exception) { 
+                    Log.e(TAG, "ensureFullscreenAppAtSlot1 failed", e)
+                }
+                return false
+            }
 
 // Sorts queue: fullscreen first, tiled by layout position (top-left to bottom-right), minimized newest-to-oldest
             private fun sortAppQueue() {
