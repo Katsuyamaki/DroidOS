@@ -298,6 +298,8 @@ private var isSoftKeyboardSupport = false
 
                     // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
                     if (display.state == Display.STATE_ON && currentDisplayId != 0) {
+                        // [FIX] Dismiss visual queue before display change to prevent stuck state
+                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable { 
                             try { performDisplayChange(0) } catch(e: Exception) {} 
                         }
@@ -305,6 +307,8 @@ private var isSoftKeyboardSupport = false
                     } 
                     // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                     else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
+                        // [FIX] Dismiss visual queue before display change to prevent stuck state
+                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable {
                             try { 
                                 val d0 = displayManager?.getDisplay(0)
@@ -490,6 +494,11 @@ private var isSoftKeyboardSupport = false
             else if (action == Intent.ACTION_SCREEN_ON) {
                 if (isScreenOffState) {
                     wakeUp()
+                }
+                // [FIX] Dismiss visual queue on screen on if stuck from screen off
+                if (isVisualQueueVisible) {
+                    hideVisualQueue()
+                    pendingCommandId = null
                 }
 } else if (action == ACTION_TOGGLE_VIRTUAL) {
                 toggleVirtualDisplay()
@@ -1897,6 +1906,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         try { 
             if (isExpanded) windowManager.removeView(drawerView) 
         } catch (e: Exception) {}
+        
+        // [FIX] Clean up visual queue on destroy to prevent orphaned views
+        if (visualQueueView != null) {
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            visualQueueView = null
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
 
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
     setKeepScreenOn(false)
@@ -2472,6 +2490,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === VISUAL QUEUE (HUD) ===
 
     private fun setupVisualQueue() {
+        // [FIX] Remove existing visual queue view BEFORE creating new one to prevent orphaned views
+        if (isVisualQueueVisible && visualQueueView != null) {
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
         val themeContext = ContextThemeWrapper(displayContext ?: this, R.style.Theme_QuadrantLauncher)
         visualQueueView = LayoutInflater.from(themeContext).inflate(R.layout.layout_visual_queue, null)
 
@@ -2621,8 +2647,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             recycler?.adapter?.notifyDataSetChanged()
         }
 
-        // NO TIMEOUT - Removed postDelayed (stays open until command completes or ESC)
+        // [FIX] Safety timeout to prevent visual queue from getting stuck forever
         uiHandler.removeCallbacks(commandTimeoutRunnable)
+        uiHandler.postDelayed(commandTimeoutRunnable, 30000L) // 30 second safety net
 
         // Tell Trackpad to redirect input to us
         val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
@@ -3702,6 +3729,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun performScreenOff() {
         vibrate()
         isScreenOffState = true
+        // [FIX] Dismiss visual queue on screen off to prevent it getting stuck
+        if (isVisualQueueVisible) {
+            hideVisualQueue()
+            pendingCommandId = null
+        }
         safeToast("Screen Off: Double press Power Button to turn on")
         
         if (useAltScreenOff) {
