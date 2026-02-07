@@ -22,8 +22,12 @@ GEMINI.md
 restore.py.md
 planhistory.md
 CLAUDE.md
+CODEX.md 
+codexplan.md 
 
-# --- Other ---
+
+
+--- Other ---
 DroidOSDownloads.csv
 droid_stats.py
 wrapper.sh

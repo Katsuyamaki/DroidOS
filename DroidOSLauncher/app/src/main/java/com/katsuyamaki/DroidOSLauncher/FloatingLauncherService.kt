@@ -237,6 +237,12 @@ private var isSoftKeyboardSupport = false
     @Volatile private var isExecuting = false
     @Volatile private var pendingExecutionNeeded = false
     @Volatile private var pendingFocusPackage: String? = null
+    @Volatile private var pendingHeadlessRetile = false
+    private var pendingHeadlessRetileReason: String? = null
+    private val headlessRetileRunnable = Runnable { runPendingHeadlessRetile() }
+    private val pendingWindowManagerCommands: ArrayDeque<Intent> = ArrayDeque()
+    private var pendingWmRetryScheduled = false
+    private var lastWmBindAttemptAt = 0L
     // === EXECUTION DEBOUNCE - END ===
 
     private var manualRefreshRateSet = false // [NEW] Prevents auto-force from overwriting user choice
@@ -726,6 +732,13 @@ private var isSoftKeyboardSupport = false
             updateExecuteButtonColor(true)
             updateBubbleIcon()
             safeToast("Shizuku Connected")
+
+            if (pendingHeadlessRetile) {
+                uiHandler.postDelayed(headlessRetileRunnable, 200)
+            }
+            if (pendingWindowManagerCommands.isNotEmpty()) {
+                uiHandler.post { flushPendingWindowManagerCommands() }
+            }
 
             // NEW: Auto-Restart Trackpad if enabled
             if (autoRestartTrackpad) {
@@ -3738,7 +3751,88 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }.start()
     }
 
+    private fun ensureQueueLoadedForCommands() {
+        if (selectedAppsQueue.isNotEmpty()) return
+        val lastQueue = AppPreferences.getLastQueue(this)
+        if (lastQueue.isEmpty()) return
+        if (allAppsList.isEmpty()) loadInstalledApps()
+        restoreQueueFromPrefs()
+    }
 
+    private fun requestHeadlessRetile(reason: String, delayMs: Long = 200L) {
+        pendingHeadlessRetile = true
+        pendingHeadlessRetileReason = reason
+        uiHandler.removeCallbacks(headlessRetileRunnable)
+        uiHandler.postDelayed(headlessRetileRunnable, delayMs)
+    }
+
+    private fun runPendingHeadlessRetile() {
+        if (!pendingHeadlessRetile) return
+        if (!isBound || shellService == null) {
+            Log.d(TAG, "Headless retile pending (Shizuku not bound) reason=$pendingHeadlessRetileReason")
+            return
+        }
+        if (isExecuting) {
+            Log.d(TAG, "Headless retile pending (execute running) reason=$pendingHeadlessRetileReason")
+            uiHandler.postDelayed(headlessRetileRunnable, 200)
+            return
+        }
+        pendingHeadlessRetile = false
+        pendingHeadlessRetileReason = null
+        refreshDisplayId()
+        retileExistingWindows()
+    }
+
+    private fun tryBindShizukuIfPermitted() {
+        try {
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                bindShizuku()
+            }
+        } catch (e: Exception) {}
+    }
+
+    private fun queueWindowManagerCommand(intent: Intent, cmd: String) {
+        val copy = Intent(intent)
+        if (pendingWindowManagerCommands.size >= 20) {
+            pendingWindowManagerCommands.removeFirst()
+        }
+        pendingWindowManagerCommands.addLast(copy)
+        Log.d(TAG, "WM Command queued: $cmd (pending=${pendingWindowManagerCommands.size})")
+        schedulePendingWindowManagerFlush(400L)
+    }
+
+    private fun schedulePendingWindowManagerFlush(delayMs: Long) {
+        if (pendingWmRetryScheduled) return
+        pendingWmRetryScheduled = true
+        uiHandler.postDelayed({
+            pendingWmRetryScheduled = false
+            flushPendingWindowManagerCommands()
+        }, delayMs)
+    }
+
+    private fun flushPendingWindowManagerCommands() {
+        if (!isBound || shellService == null) {
+            val now = System.currentTimeMillis()
+            if (now - lastWmBindAttemptAt > 1000) {
+                lastWmBindAttemptAt = now
+                tryBindShizukuIfPermitted()
+            }
+            if (pendingWindowManagerCommands.isNotEmpty()) {
+                schedulePendingWindowManagerFlush(600L)
+            }
+            return
+        }
+
+        var processed = 0
+        while (pendingWindowManagerCommands.isNotEmpty() && processed < 5) {
+            val cmdIntent = pendingWindowManagerCommands.removeFirst()
+            handleWindowManagerCommand(cmdIntent)
+            processed++
+        }
+        if (pendingWindowManagerCommands.isNotEmpty()) {
+            schedulePendingWindowManagerFlush(200L)
+        }
+    }
 
     // === RESTORE QUEUE IMMEDIATE - START ===
     // Loads the saved queue from preferences immediately without checking shell/running state.
@@ -4824,9 +4918,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // =================================================================================
     private fun handleWindowManagerCommand(intent: Intent) {
         val cmd = intent.getStringExtra("COMMAND")?.uppercase(Locale.ROOT) ?: return
+
+        if (!isBound || shellService == null) {
+            Log.w(TAG, "WM Command $cmd queued (Shizuku not bound)")
+            tryBindShizukuIfPermitted()
+            queueWindowManagerCommand(intent, cmd)
+            return
+        }
         
         // [FIX] Sync display context before executing commands to prevent stale state
         refreshDisplayId()
+        ensureQueueLoadedForCommands()
         
         // CONVERT 1-BASED INDEX TO 0-BASED INTERNAL INDEX
         // If user sends 1, we get 0. If user sends 0 or nothing (-1), it stays invalid (-1).
@@ -5050,7 +5152,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                              }.start()
                         }
 
-                        refreshQueueAndLayout(if (newState) "Minimized ${app.label}" else "Restored ${app.label}")
+                        val retileDelay = if (newState) 200L else 350L
+                        refreshQueueAndLayout(
+                            if (newState) "Minimized ${app.label}" else "Restored ${app.label}",
+                            forceRetile = true,
+                            retileDelayMs = retileDelay
+                        )
                     }
                 }
             }
@@ -5109,7 +5216,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 // Layout: [A, B, C] -> HIDE B -> [A, Blank, C, B(min)]
                                 Collections.swap(selectedAppsQueue, index, selectedAppsQueue.lastIndex)
                                 
-                                refreshQueueAndLayout("Hidden Slot ${index + 1}")
+                                refreshQueueAndLayout(
+                                    "Hidden Slot ${index + 1}",
+                                    forceRetile = true,
+                                    retileDelayMs = 200L
+                                )
                              }
                         }            "LAYOUT" -> {
                 val type = intent.getIntExtra("TYPE", -1)
@@ -5326,7 +5437,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         return rects
     }
 
-    private fun refreshQueueAndLayout(msg: String, focusPackage: String? = null, skipTiling: Boolean = false) {
+    private fun refreshQueueAndLayout(
+        msg: String,
+        focusPackage: String? = null,
+        skipTiling: Boolean = false,
+        forceRetile: Boolean = false,
+        retileDelayMs: Long = 200L
+    ) {
         uiHandler.post {
             sortAppQueue() // Ensure active apps are at the front
             updateAllUIs()
@@ -5378,6 +5495,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // Trigger Tiling (skip when just opening drawer/visual queue to prevent restoring minimized apps)
             if (isInstantMode && !skipTiling) {
                 applyLayoutImmediate(focusPackage)
+            } else if (forceRetile && !skipTiling) {
+                requestHeadlessRetile("refreshQueue:$msg", retileDelayMs)
             }
         }
     }
