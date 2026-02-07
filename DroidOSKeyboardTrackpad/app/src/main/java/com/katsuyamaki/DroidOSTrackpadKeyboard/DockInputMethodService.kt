@@ -128,6 +128,7 @@ class DockInputMethodService : InputMethodService() {
             val intent = Intent("APPLY_DOCK_MODE")
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
+            intent.putExtra("nav_bar_height", getActualNavBarHeight())
             if (prefAutoResize) {
                 intent.putExtra("resize_to_margin", prefResizeScale)
             }
@@ -892,6 +893,16 @@ class DockInputMethodService : InputMethodService() {
     // =================================================================================
     // END BLOCK: updateInputViewHeight
     // =================================================================================
+
+    private fun getActualNavBarHeight(): Int {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val windowMetrics = wm.currentWindowMetrics
+        val insets = windowMetrics.windowInsets.getInsetsIgnoringVisibility(
+            android.view.WindowInsets.Type.navigationBars() or
+            android.view.WindowInsets.Type.displayCutout()
+        )
+        return insets.bottom
+    }
 
     // Helper: Send key with meta state
     private fun sendKeyEventWithMeta(ic: InputConnection, keyCode: Int, metaState: Int) {

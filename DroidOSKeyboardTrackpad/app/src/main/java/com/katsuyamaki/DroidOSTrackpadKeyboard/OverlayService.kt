@@ -283,6 +283,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var isTrackpadVisible = false // Changed: Default OFF
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
     private var isDockIMEVisible = false
+    private var dockNavBarHeight: Int = -1
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
     private var manualKeyScaleBeforeMargin = -1 // Save manual key scale before margin adjustment
 
@@ -1326,9 +1327,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                 manualKeyScaleBeforeMargin = -1
                                 prefs.prefKeyScale = restoreScale
                                 val density = resources.displayMetrics.density
+                                val navBarHeight = getNavBarHeight()
                                 val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
                                 val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
-                                val targetY = uiScreenHeight - kbHeight - dockToolbarHeight
+                                val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
                                 keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
                                 saveKeyboardHeightForDock(kbHeight)
                             } else {
@@ -1339,6 +1341,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }
                 
                 action == "APPLY_DOCK_MODE" -> {
+                    dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
                     if (intent.getBooleanExtra("enabled", false)) {
                         val marginPercent = intent.getIntExtra("resize_to_margin", -1)
                         if (marginPercent >= 0) {
@@ -3259,9 +3262,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Get current keyboard height or use default
         val kbHeight = keyboardOverlay?.getViewHeight() ?: ((275f * (prefs.prefKeyScale / 100f) * density).toInt())
         
-        // Nav bar height — overlay uses full-screen coords but DockIME sits above nav bar
-        val navResId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
-        val navBarHeight = if (navResId > 0) resources.getDimensionPixelSize(navResId) else 0
+        // Nav bar height — use runtime value from DockIME broadcast, fall back to system resource
+        val navBarHeight = getNavBarHeight()
         
         // Position at bottom, full width (100%)
         val targetW = screenWidth
@@ -3305,9 +3307,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val screenWidth = uiScreenWidth
         val screenHeight = uiScreenHeight
         
-        // Nav bar height — overlay uses full-screen coords but DockIME sits above nav bar
-        val navResId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
-        val navBarHeight = if (navResId > 0) resources.getDimensionPixelSize(navResId) else 0
+        // Nav bar height — use runtime value from DockIME broadcast, fall back to system resource
+        val navBarHeight = getNavBarHeight()
         
         // Calculate keyboard height from margin percentage
         // Only account for dock toolbar if it's enabled AND DockIME is actually visible
@@ -3340,6 +3341,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // FUNCTION: saveKeyboardHeightForDock
     // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
     // =================================================================================
+    private fun getNavBarHeight(): Int {
+        if (dockNavBarHeight >= 0) return dockNavBarHeight
+        val navResId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        return if (navResId > 0) resources.getDimensionPixelSize(navResId) else 0
+    }
+
     private fun saveKeyboardHeightForDock(height: Int) {
         val key = "keyboard_height_d${currentDisplayId}"
         getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
