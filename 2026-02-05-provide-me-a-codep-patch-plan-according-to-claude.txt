@@ -1,0 +1,135 @@
+
+ ▐▛███▜▌   Claude Code v2.1.33
+▝▜█████▛▘  Opus 4.6 · Claude Pro
+  ▘▘ ▝▝    ~/projects/DroidOS
+
+❯ provide me a codep patch plan according to claude.md for the following jn 
+   ths session. we wjll always always use the patch plan and a builder      
+  script to implement the code changes: when i have a full screen android   
+  app open nd i try to tile a droidos tiled app on top ith the hotkey       
+  broadcast command (restore app),  othing happens. weirdly i have to       
+  usethe cmd to hide app for any tiledapp tk show (but the app i hide wont  
+  show up, irll be another app in ym queue)                                 
+
+● Let me investigate the relevant code to understand the restore/hide/tiling
+  logic first.
+
+● Explore(Explore tiling/restore logic)
+  ⎿  Done (20 tool uses · 126.1k tokens · 2m 14s)
+
+● Good, I have a detailed understanding. Now let me read the specific code
+  sections for the UNMINIMIZE handler and the accessibility event logic to
+  identify the exact bug.
+
+● Read 1 file (ctrl+o to expand)
+
+● Now let me read the executeLaunch() function and retileExistingWindows() to
+  compare how they handle the fullscreen case.
+
+● Read 1 file (ctrl+o to expand)
+
+● Let me also read the refreshQueueAndLayout() function to understand if it
+  triggers instant mode re-layout.
+
+● Read 1 file (ctrl+o to expand)
+
+● Let me also check the HIDE command's full code path to understand why it works
+   when UNMINIMIZE doesn't.
+
+● Read 1 file (ctrl+o to expand)
+
+● Let me check how isInstantMode is defined.
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(Find isInstantMode definition)
+  ⎿  Done (1 tool use · 6.6k tokens · 9s)
+
+● Let me read executeLaunch()'s main thread body to see what it does that the
+  UNMINIMIZE handler doesn't.
+
+● Read 1 file (ctrl+o to expand)
+
+● I now have a complete picture of the bug. Here's the analysis and patch plan:
+
+  ---
+  Root Cause Analysis
+
+  The UNMINIMIZE command handler (line 4777) never sets the fullscreen cooldown 
+  variables. Compare with executeLaunch() (lines 3948-3951) which does:
+
+  tiledAppsAutoMinimized = false
+  lastExplicitTiledLaunchAt = System.currentTimeMillis()
+
+  What happens step by step:
+
+  1. Fullscreen app is covering the screen
+  2. User sends UNMINIMIZE via hotkey → am start --windowingMode 5 brings the
+  tiled app up
+  3. Accessibility event fires for the fullscreen app (still covering screen)
+  4. Scenario A in onAccessibilityEvent (line 1316) checks
+  !inExplicitLaunchCooldown → TRUE (no cooldown was set!)
+  5. Fullscreen app covers ≥95% → Scenario A re-minimizes the just-restored
+  tiled app immediately
+  6. User sees "nothing happens"
+
+  Why HIDE works (but shows the wrong app):
+  HIDE → refreshQueueAndLayout() → applyLayoutImmediate() → executeLaunch() →
+  sets the cooldown. But the HIDE'd app is now minimized, so a different
+  non-minimized app from the queue gets launched instead.
+
+  ---
+  FILE_UPDATE: DroidOSLauncher/app/src/main/java/com/katsuyamaki/DroidOSLauncher
+  /FloatingLauncherService.kt
+  REASON: Add fullscreen cooldown protection to UNMINIMIZE/restore path,
+  matching what executeLaunch already does. Without this, the fullscreen
+  auto-minimize in onAccessibilityEvent immediately re-hides the restored app.
+  SEARCH_BLOCK:
+                                                                  } else {
+                              // RESTORING: Bring to Front on Current Display
+                              // We reuse the launch logic which handles "Bring 
+  to Front" if already running.
+                              // We run this in background to avoid UI stutter.
+                              Thread {
+  REPLACE_BLOCK:
+                                                                  } else {
+                              // RESTORING: Bring to Front on Current Display
+                              // We reuse the launch logic which handles "Bring 
+  to Front" if already running.
+                              // We run this in background to avoid UI stutter.
+
+                              // [FULLSCREEN] Treat manual restore as an 
+  explicit tiled launch.
+                              // This resets auto-minimize state and sets a 
+  2-second cooldown so that
+                              // the fullscreen detection in 
+  onAccessibilityEvent (Scenario A) does NOT
+                              // immediately re-hide the app we are restoring.
+                              tiledAppsAutoMinimized = false
+                              lastExplicitTiledLaunchAt =
+  System.currentTimeMillis()
+
+                              Thread {
+  END_OF_UPDATE_BLOCK
+
+  ---
+  Single change, two lines. This mirrors the protection already present in
+  executeLaunch() (lines 3948-3951). The lastExplicitTiledLaunchAt timestamp
+  feeds into inExplicitLaunchCooldown (line 1311) which blocks Scenario A for 2
+  seconds — enough time for the restored app to appear and for
+  onAccessibilityEvent to properly handle it via Scenario B or C (which add the
+  fullscreen app to the queue / retile).
+
+✻ Crunched for 7m 39s
+
+❯ /copy 
+  ⎿  Copied to clipboard (3210 characters, 58 lines)
+
+❯ /copy 
+  ⎿  Copied to clipboard (3210 characters, 58 lines)
+
+❯ /copy 
+  ⎿  Copied to clipboard (3210 characters, 58 lines)
+
+❯ /export 
+  ⎿  Conversation copied to clipboard

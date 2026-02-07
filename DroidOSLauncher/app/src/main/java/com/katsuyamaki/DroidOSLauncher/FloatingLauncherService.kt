@@ -147,6 +147,7 @@ class FloatingLauncherService : AccessibilityService() {
     private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY
     // Tracks the currently focused app package for "Active Window" commands
     private var activePackageName: String? = null
+    private val minimizedAtTimestamps = mutableMapOf<String, Long>() // Track when apps were minimized (newest first)
     // History for focus restoration (ignoring overlays)
     private var lastValidPackageName: String? = null
     private var secondLastValidPackageName: String? = null
@@ -2543,15 +2544,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             emptyList()
         }
         
-        // Detect fullscreen app and ensure it's at position #1 before showing queue
+        // [FIX] Sync visible packages for adapter WITHOUT reordering queue.
+        // Queue order defines tiling position (queue[0] = rects[0]).
+        // Do NOT move apps to position 0 just because they're visible/focused.
+        // Only add truly fullscreen apps (single visible app not in queue).
         Thread {
             val visible = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
-            
-            // Find the fullscreen app (first visible non-system app)
-            var fullscreenPkg: String? = null
-            for (pkgName in visible) {
+
+            val userVisibleApps = visible.mapNotNull { pkgName ->
                 val pkg = if (pkgName.contains(":")) pkgName.substringBefore(":") else pkgName
-                // Skip DroidOS packages and system UI
                 if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
                     pkg.contains("DroidOS") || pkg.contains("katsuyamaki") ||
                     pkg.contains("systemui") || pkg.contains("inputmethod") ||
@@ -2559,37 +2560,29 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     pkg.contains("Wallpaper") || pkg.contains("wallpaper") ||
                     pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.") ||
                     !pkg.contains(".")) {
-                    continue
+                    null
+                } else {
+                    pkg
                 }
-                fullscreenPkg = pkg
-                break
             }
-            
+
             uiHandler.post {
-                // Move/add fullscreen app to position #1
-                if (fullscreenPkg != null) {
-                    val currentFirst = selectedAppsQueue.getOrNull(0)?.getBasePackage()
-                    if (currentFirst != fullscreenPkg) {
-                        val existingIndex = selectedAppsQueue.indexOfFirst { it.getBasePackage() == fullscreenPkg }
-                        if (existingIndex > 0) {
-                            // Move from current position to #1
-                            val app = selectedAppsQueue.removeAt(existingIndex)
-                            selectedAppsQueue.add(0, app)
-                        } else if (existingIndex == -1) {
-                            // Not in queue - add to #1
-                            var appInfo = allAppsList.find { it.getBasePackage() == fullscreenPkg }
-                            if (appInfo == null) {
-                                val label = try {
-                                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(fullscreenPkg, 0)).toString()
-                                } catch (e: Exception) { fullscreenPkg }
-                                appInfo = MainActivity.AppInfo(label, fullscreenPkg, null, false, false)
-                            }
-                            selectedAppsQueue.add(0, appInfo.copy())
+                // Only add app if exactly ONE visible (truly fullscreen) and NOT in queue
+                if (userVisibleApps.size == 1) {
+                    val fullscreenPkg = userVisibleApps.first()
+                    val existingIndex = selectedAppsQueue.indexOfFirst { it.getBasePackage() == fullscreenPkg }
+                    if (existingIndex == -1) {
+                        var appInfo = allAppsList.find { it.getBasePackage() == fullscreenPkg }
+                        if (appInfo == null) {
+                            val label = try {
+                                packageManager.getApplicationLabel(packageManager.getApplicationInfo(fullscreenPkg, 0)).toString()
+                            } catch (e: Exception) { fullscreenPkg }
+                            appInfo = MainActivity.AppInfo(label, fullscreenPkg, null, false, false)
                         }
+                        selectedAppsQueue.add(0, appInfo.copy())
                     }
                 }
-                
-                // Update adapter with visibility info
+
                 val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
                 recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
                 (recycler?.adapter as? VisualQueueAdapter)?.updateVisibility(visible)
@@ -3292,11 +3285,22 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun getTargetDimensions(index: Int): Pair<Int, Int>? { return when(index) { 1 -> 1422 to 1500; 2 -> 1920 to 1080; 4 -> 1920 to 1200; 3 -> 3840 to 1080; else -> null } }
     private fun getResolutionCommand(index: Int): String { return when(index) { 1 -> "wm size 1422x1500 -d $currentDisplayId"; 2 -> "wm size 1920x1080 -d $currentDisplayId"; 4 -> "wm size 1920x1200 -d $currentDisplayId"; 3 -> "wm size 3840x1080 -d $currentDisplayId"; else -> "wm size reset -d $currentDisplayId" } }
 
-// Sorts active apps to front and minimized to back.
-            // Maintains relative order (Stable Sort), ensuring newly minimized apps
-            // appear at the front of the inactive group (Left-to-Right).
+// Sorts queue: fullscreen first, tiled by layout position (top-left to bottom-right), minimized newest-to-oldest
             private fun sortAppQueue() {
-                selectedAppsQueue.sortWith(compareBy { it.isMinimized })
+                val rects = getLayoutRects()
+                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
+
+                // Sort minimized apps: newest first (highest timestamp), oldest last
+                val sortedMinimized = minimizedApps.sortedByDescending { 
+                    minimizedAtTimestamps[it.getBasePackage()] ?: 0L 
+                }
+
+                // Active apps maintain their queue position (which defines their layout rect)
+                // No re-sorting needed for active apps - their queue index IS their screen position
+                selectedAppsQueue.clear()
+                selectedAppsQueue.addAll(activeApps)
+                selectedAppsQueue.addAll(sortedMinimized)
             }
 
             private fun updateAllUIs() {
@@ -5053,6 +5057,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                                                 // [FIX] Record manual override timestamp
                                                                 manualStateOverrides[basePkg] = System.currentTimeMillis()
                                                                 
+                                                                // Track minimization timestamp for queue ordering (newest first)
+                                                                if (newState) {
+                                                                    minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                                                                } else {
+                                                                    minimizedAtTimestamps.remove(basePkg)
+                                                                }
+                                                                
                                                                 val cls = app.className
                                                                 
                                                                 if (newState) {
@@ -5101,11 +5112,34 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
                              tiledAppsAutoMinimized = false
                              lastExplicitTiledLaunchAt = System.currentTimeMillis()
+                             minimizedAtTimestamps.remove(app.getBasePackage()) // Clear minimized timestamp
 
-                             // [FULLSCREEN] If there's a visible fullscreen app not in the queue, add it.
-                             // This converts the fullscreen app into a tiled app so both stay open together,
-                             // matching the executeLaunch behavior. Without this, fullscreen detection
-                             // would auto-minimize the restored tiled app.
+                             // [FULLSCREEN] If there's a visible fullscreen app not in the queue, add it to position 0.
+                             // This converts the fullscreen app into a tiled app so both stay open together.
+                             // The fullscreen app goes to position 0 (first tiling slot).
+                             try {
+                                 val visiblePkgs = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
+                                 val userVisibleApps = visiblePkgs.mapNotNull { pkgName ->
+                                     val pkg = if (pkgName.contains(":")) pkgName.substringBefore(":") else pkgName
+                                     if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
+                                         pkg.contains("systemui") || pkg.contains("inputmethod") ||
+                                         pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.")) null
+                                     else allAppsList.find { it.getBasePackage() == pkg }
+                                 }.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                                 
+                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+                                 
+                                 // If exactly one visible app (fullscreen) not in queue, add to position 0
+                                 if (userVisibleApps.size == 1) {
+                                     val fullscreenApp = userVisibleApps.first()
+                                     if (!queuePkgs.contains(fullscreenApp.getBasePackage())) {
+                                         fullscreenApp.isMinimized = false
+                                         selectedAppsQueue.add(0, fullscreenApp.copy())
+                                     }
+                                 }
+                             } catch (e: Exception) { Log.e(TAG, "Failed to detect fullscreen app", e) }
+                             
+                             // Continue with existing logic for multiple visible apps
                              try {
                                  val activeApps = shellService?.getVisiblePackages(currentDisplayId)
                                      ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
