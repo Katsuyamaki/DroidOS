@@ -24,7 +24,7 @@ planhistory.md
 CLAUDE.md
 CODEX.md 
 codexplan.md 
-
+codexplan.md.bak
 
 
 --- Other ---
@@ -37,3 +37,10 @@ growth_stats.png
 droid_stats_graph.py
 DroidOS_Repomix_*.md
 log.md
+# Ignore all files in the project root
+/*
+# Do NOT ignore directories (this allows Git to see your app folders)
+!/*/
+# Ignore specific log and backup files
+*.log
+*.bak
