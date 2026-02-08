@@ -431,6 +431,7 @@ private var isSoftKeyboardSupport = false
     private var isVirtualDisplayActive = false
     private var currentDrawerHeightPercent = 70
     private var currentDrawerWidthPercent = 90
+    private var currentAspectRatio: String = "16_9"
     private var autoResizeEnabled = true
     private var bottomMarginPercent = 0
     private var autoAdjustMarginForIME = false
@@ -1940,12 +1941,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Load preferences
         loadInstalledApps(); currentFontSize = AppPreferences.getFontSize(this)
         killAppOnExecute = AppPreferences.getKillOnExecute(this); targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
-    bubbleSizePercent = AppPreferences.getBubbleSize(this)
         autoRestartTrackpad = AppPreferences.getAutoRestartTrackpad(this) // NEW LOAD
         isInstantMode = AppPreferences.getInstantMode(this); showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
-        isReorderTapEnabled = AppPreferences.getReorderTap(this); currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercent(this)
-        currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercent(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
+        isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
+        // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
         autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this)
         droidOsImeDetected = AppPreferences.getDroidOsImeDetected(this)
         // Margins now loaded in loadDisplaySettings()
@@ -2046,6 +2046,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
 
     private fun loadDisplaySettings(displayId: Int) { 
+        // 0. Compute current aspect ratio for per-config settings
+        val dm = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(dm)
+        currentAspectRatio = AppPreferences.getAspectRatioCategory(dm.widthPixels, dm.heightPixels)
+        
+        // Load per-config drawer/bubble settings (with global fallback)
+        currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercentForConfig(this, displayId, currentAspectRatio)
+            ?: AppPreferences.getDrawerHeightPercent(this)
+        currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercentForConfig(this, displayId, currentAspectRatio)
+            ?: AppPreferences.getDrawerWidthPercent(this)
+        bubbleSizePercent = AppPreferences.getBubbleSizeForConfig(this, displayId, currentAspectRatio)
+            ?: AppPreferences.getBubbleSize(this)
+        
         // 1. Margins (Per Display)
         topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId)
         bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId)
@@ -2312,7 +2325,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val centerY = topPx + (effectiveH / 2)
         
         val screenW = metrics.widthPixels
-        bubbleParams.gravity = Gravity.TOP or Gravity.START; bubbleParams.x = (screenW / 2) - 80; bubbleParams.y = centerY
+        bubbleParams.gravity = Gravity.TOP or Gravity.START
+        // Load saved position for this display+resolution, or use default
+        val savedPos = AppPreferences.getBubblePositionForConfig(this, currentDisplayId, currentAspectRatio, screenW, h)
+        if (savedPos != null) { bubbleParams.x = savedPos.first; bubbleParams.y = savedPos.second }
+        else { bubbleParams.x = (screenW / 2) - 80; bubbleParams.y = centerY }
         
         // ... (Keep existing OnTouchListener logic here) ...
         var velocityTracker: VelocityTracker? = null
@@ -2347,7 +2364,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return true
                         }
 
-                        if (!isDrag) {
+                        if (isDrag) {
+                            // Save bubble position for this display+resolution
+                            val dm = DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
+                            AppPreferences.setBubblePositionForConfig(this@FloatingLauncherService, currentDisplayId, currentAspectRatio, bubbleParams.x, bubbleParams.y, dm.widthPixels, dm.heightPixels)
+                        } else {
                             if (!isBound && showShizukuWarning) {
                                 if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
                                     bindShizuku()
@@ -2388,7 +2409,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     
     private fun changeBubbleSize(delta: Int) {
         bubbleSizePercent = (bubbleSizePercent + delta).coerceIn(50, 200)
-        AppPreferences.saveBubbleSize(this, bubbleSizePercent)
+        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, bubbleSizePercent)
+        AppPreferences.saveBubbleSize(this, bubbleSizePercent) // Global fallback
         applyBubbleSize()
         if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS)
     }
@@ -4697,8 +4719,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
     private fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
-    private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
-    private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
+    private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
+    private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim(); if (name.isNullOrEmpty()) { val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); name = "Profile_$timestamp" }; val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs); safeToast("Saved: $name"); drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText(""); switchMode(MODE_PROFILES) }
     private fun loadProfile(name: String) { 

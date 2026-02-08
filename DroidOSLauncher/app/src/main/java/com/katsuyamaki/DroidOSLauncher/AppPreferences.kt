@@ -46,6 +46,26 @@ object AppPreferences {
     private fun getPrefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    // === ASPECT RATIO DETECTION ===
+    fun getAspectRatioCategory(width: Int, height: Int): String {
+        val w = maxOf(width, height)
+        val h = minOf(width, height)
+        val ratio = w.toFloat() / h.toFloat()
+        return when {
+            ratio < 1.4f -> "4_3"
+            ratio < 1.65f -> "16_10"
+            ratio < 1.85f -> "16_9"
+            ratio < 2.2f -> "21_9"
+            ratio < 2.8f -> "24_10"
+            ratio < 3.8f -> "32_9"
+            else -> "WIDE"
+        }
+    }
+
+    private fun getDisplayCategory(displayId: Int): String {
+        return if (displayId > 1) "VIRTUAL" else "D$displayId"
+    }
+
     fun savePackage(context: Context, key: String, packageName: String) {
         getPrefs(context).edit().putString(key, packageName).apply()
     }
@@ -284,6 +304,56 @@ object AppPreferences {
     
     fun getDrawerWidthPercent(context: Context): Int {
         return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 90)
+    }
+
+    // === PER-DISPLAY + RESOLUTION SETTINGS ===
+    
+    fun setDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
+        getPrefs(context).edit().putInt("DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio", percent).apply()
+    }
+
+    fun getDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
+        val key = "DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 70) else null
+    }
+
+    fun setDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
+        getPrefs(context).edit().putInt("DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio", percent).apply()
+    }
+
+    fun getDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
+        val key = "DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 90) else null
+    }
+
+    fun setBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
+        getPrefs(context).edit().putInt("BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio", percent).apply()
+    }
+
+    fun getBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
+        val key = "BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 100) else null
+    }
+
+    fun setBubblePositionForConfig(context: Context, displayId: Int, aspectRatio: String,
+                                    xPx: Int, yPx: Int, screenW: Int, screenH: Int) {
+        val xPermille = (xPx.toFloat() / screenW * 1000).toInt().coerceIn(0, 1000)
+        val yPermille = (yPx.toFloat() / screenH * 1000).toInt().coerceIn(0, 1000)
+        getPrefs(context).edit().putString("BUBBLE_POS_${getDisplayCategory(displayId)}_$aspectRatio", "$xPermille|$yPermille").apply()
+    }
+
+    fun getBubblePositionForConfig(context: Context, displayId: Int, aspectRatio: String,
+                                    screenW: Int, screenH: Int): Pair<Int, Int>? {
+        val key = "BUBBLE_POS_${getDisplayCategory(displayId)}_$aspectRatio"
+        val data = getPrefs(context).getString(key, null) ?: return null
+        return try {
+            val parts = data.split("|")
+            if (parts.size != 2) return null
+            Pair((parts[0].toInt() / 1000f * screenW).toInt(), (parts[1].toInt() / 1000f * screenH).toInt())
+        } catch (e: Exception) { null }
     }
     
     fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
