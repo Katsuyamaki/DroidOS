@@ -129,6 +129,7 @@ private var customModKeyCode = 0
     //          Empty set = block nothing (allow all shortcuts through to system)
     // =================================================================================
     private var launcherBlockedShortcuts: Map<String, Int> = emptyMap()
+    private var launcherKeybindKeycodes: Set<Int> = emptySet()
     // =================================================================================
     // END BLOCK: LAUNCHER BLOCKED SHORTCUTS SET
     // =================================================================================
@@ -677,7 +678,9 @@ private var customModKeyCode = 0
             }
         }
         launcherBlockedShortcuts = map
-        android.util.Log.d(TAG, "KeyboardView: Updated blocked shortcuts: ${map.size} entries")
+        // [FIX] Extract just keyCodes for queue mode (works without modifiers)
+        launcherKeybindKeycodes = map.keys.mapNotNull { it.split("|").getOrNull(1)?.toIntOrNull() }.toSet()
+        android.util.Log.d(TAG, "KeyboardView: Updated blocked shortcuts: ${map.size} entries, keycodes: $launcherKeybindKeycodes")
     }
     // =================================================================================
     // END FUNCTION: setLauncherBlockedShortcuts
@@ -2381,14 +2384,73 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
 
                 
                 "BKSP" -> listener?.onSpecialKey(SpecialKey.BACKSPACE, meta)
-                "ENTER" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ENTER, meta) }
+                "ENTER" -> { 
+                    if (!fromRepeat) {
+                        listener?.onSpecialKey(SpecialKey.ENTER, meta)
+                        if (launcherKeybindKeycodes.isNotEmpty()) {
+                            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                            intent.putExtra("keyCode", KeyEvent.KEYCODE_ENTER)
+                            intent.putExtra("metaState", meta)
+                            context.sendBroadcast(intent)
+                        }
+                    }
+                }
                 "SPACE" -> listener?.onSpecialKey(SpecialKey.SPACE, meta)
-                "ESC" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.ESCAPE, meta) }
+                "ESC" -> { 
+                    if (!fromRepeat) {
+                        listener?.onSpecialKey(SpecialKey.ESCAPE, meta)
+                        if (launcherKeybindKeycodes.isNotEmpty()) {
+                            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                            intent.putExtra("keyCode", KeyEvent.KEYCODE_ESCAPE)
+                            intent.putExtra("metaState", meta)
+                            context.sendBroadcast(intent)
+                        }
+                    }
+                }
                 
-                "←" -> listener?.onSpecialKey(SpecialKey.ARROW_LEFT, meta)
-                "→" -> listener?.onSpecialKey(SpecialKey.ARROW_RIGHT, meta)
-                "↑" -> listener?.onSpecialKey(SpecialKey.ARROW_UP, meta)
-                "↓" -> listener?.onSpecialKey(SpecialKey.ARROW_DOWN, meta)
+                "←" -> { 
+                    listener?.onSpecialKey(SpecialKey.ARROW_LEFT, meta)
+                    // [FIX] Also broadcast for drawer queue navigation on all displays
+                    if (launcherKeybindKeycodes.isNotEmpty()) {
+                        val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                        intent.putExtra("keyCode", KeyEvent.KEYCODE_DPAD_LEFT)
+                        intent.putExtra("metaState", meta)
+                        context.sendBroadcast(intent)
+                    }
+                }
+                "→" -> { 
+                    listener?.onSpecialKey(SpecialKey.ARROW_RIGHT, meta)
+                    if (launcherKeybindKeycodes.isNotEmpty()) {
+                        val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                        intent.putExtra("keyCode", KeyEvent.KEYCODE_DPAD_RIGHT)
+                        intent.putExtra("metaState", meta)
+                        context.sendBroadcast(intent)
+                    }
+                }
+                "↑" -> { 
+                    listener?.onSpecialKey(SpecialKey.ARROW_UP, meta)
+                    if (launcherKeybindKeycodes.isNotEmpty()) {
+                        val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                        intent.putExtra("keyCode", KeyEvent.KEYCODE_DPAD_UP)
+                        intent.putExtra("metaState", meta)
+                        context.sendBroadcast(intent)
+                    }
+                }
+                "↓" -> { 
+                    listener?.onSpecialKey(SpecialKey.ARROW_DOWN, meta)
+                    if (launcherKeybindKeycodes.isNotEmpty()) {
+                        val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                        intent.putExtra("keyCode", KeyEvent.KEYCODE_DPAD_DOWN)
+                        intent.putExtra("metaState", meta)
+                        context.sendBroadcast(intent)
+                    }
+                }
                 
                 "MUTE" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.MUTE, meta) }
                 "VOL-" -> listener?.onSpecialKey(SpecialKey.VOL_DOWN, meta)
@@ -2426,6 +2488,16 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                         val shiftNeeded = pair.second
                         if (shiftNeeded) meta = meta or KeyEvent.META_SHIFT_ON
                         listener?.onKeyPress(code, char, meta)
+                        // [FIX] Also broadcast REMOTE_KEY if this keyCode is a registered keybind
+                        // This enables drawer queue hotkeys (j/k/x etc.) to work on soft keyboard
+                        if (!fromRepeat && code != 0 && launcherKeybindKeycodes.contains(code)) {
+                            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+                            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                            intent.putExtra("keyCode", code)
+                            intent.putExtra("metaState", 0) // No modifier for queue mode
+                            context.sendBroadcast(intent)
+                            android.util.Log.d(TAG, "Broadcasting keybind key: $key ($code) for queue mode")
+                        }
                         if (!fromRepeat && currentState == KeyboardState.UPPERCASE) { 
                             currentState = KeyboardState.LOWERCASE
                             buildKeyboard()

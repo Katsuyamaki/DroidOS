@@ -1118,6 +1118,95 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
         Log.d("DroidOS_Keys", "REMOTE INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
+        // 0. DRAWER QUEUE NAVIGATION (via REMOTE_KEY for soft keyboard support on all displays)
+        if (isExpanded && currentFocusArea == FOCUS_QUEUE) {
+            val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    if (queueSelectedIndex > 0) {
+                        val old = queueSelectedIndex
+                        queueSelectedIndex--
+                        uiHandler.post {
+                            selectedRecycler?.adapter?.notifyItemChanged(old)
+                            selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
+                            selectedRecycler?.scrollToPosition(queueSelectedIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (queueSelectedIndex < selectedAppsQueue.size - 1) {
+                        val old = queueSelectedIndex
+                        queueSelectedIndex++
+                        uiHandler.post {
+                            selectedRecycler?.adapter?.notifyItemChanged(old)
+                            selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
+                            selectedRecycler?.scrollToPosition(queueSelectedIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    currentFocusArea = FOCUS_SEARCH
+                    queueSelectedIndex = -1
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        debugStatusView?.visibility = View.GONE
+                        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    currentFocusArea = FOCUS_LIST
+                    queueSelectedIndex = -1
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        debugStatusView?.visibility = View.GONE
+                        val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+                        if (displayList.isNotEmpty()) {
+                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler?.scrollToPosition(selectedListIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_ENTER -> {
+                    val intent = Intent().putExtra("COMMAND", "TOGGLE_MINIMIZE").putExtra("INDEX", queueSelectedIndex + 1)
+                    handleWindowManagerCommand(intent)
+                    return
+                }
+                KeyEvent.KEYCODE_ESCAPE -> {
+                    currentFocusArea = FOCUS_SEARCH
+                    queueSelectedIndex = -1
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        debugStatusView?.visibility = View.GONE
+                    }
+                    return
+                }
+                else -> {
+                    for (cmd in AVAILABLE_COMMANDS) {
+                        val bind = AppPreferences.getKeybind(this, cmd.id)
+                        if (bind.second == keyCode && keyCode != KeyEvent.KEYCODE_SPACE) {
+                            if (cmd.argCount == 2) {
+                                queueCommandPending = cmd
+                                queueCommandSourceIndex = queueSelectedIndex
+                                uiHandler.post {
+                                    debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
+                                    selectedRecycler?.adapter?.notifyDataSetChanged()
+                                }
+                            } else {
+                                val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
+                                handleWindowManagerCommand(intent)
+                            }
+                            return
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. INPUT MODE (Entering Numbers or Arrow Navigation for Visual Queue)
         if (pendingCommandId != null) {
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
@@ -2314,7 +2403,46 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
         // === MODE ICON CLICK LISTENERS - END ===
         executeBtn.setOnClickListener { executeLaunch(selectedLayoutType, closeDrawer = true) }
-        searchBar.addTextChangedListener(object : TextWatcher { override fun afterTextChanged(s: Editable?) { filterList(s.toString()) }; override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}; override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {} })
+        searchBar.addTextChangedListener(object : TextWatcher { 
+            override fun afterTextChanged(s: Editable?) { 
+                // [FIX] In FOCUS_QUEUE mode, intercept typed characters and check for keybinds
+                if (currentFocusArea == FOCUS_QUEUE && s != null && s.isNotEmpty()) {
+                    val typed = s.toString()
+                    val lastChar = typed.lastOrNull()
+                    if (lastChar != null) {
+                        // Get keyCode for this character
+                        val keyCode = KeyEvent.keyCodeFromString("KEYCODE_${lastChar.uppercaseChar()}")
+                        if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+                            // Check if this matches any keybind
+                            for (cmd in AVAILABLE_COMMANDS) {
+                                val bind = AppPreferences.getKeybind(this@FloatingLauncherService, cmd.id)
+                                if (bind.second == keyCode) {
+                                    // Clear the typed character
+                                    s.clear()
+                                    // Execute the command
+                                    if (cmd.argCount == 2) {
+                                        queueCommandPending = cmd
+                                        queueCommandSourceIndex = queueSelectedIndex
+                                        debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
+                                        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+                                    } else {
+                                        val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
+                                        handleWindowManagerCommand(intent)
+                                    }
+                                    return
+                                }
+                            }
+                        }
+                    }
+                    // Not a keybind, clear and stay in queue mode
+                    s.clear()
+                    return
+                }
+                filterList(s.toString()) 
+            }
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {} 
+        })
         searchBar.imeOptions = EditorInfo.IME_ACTION_DONE
         searchBar.setOnEditorActionListener { v, actionId, event -> if (actionId == EditorInfo.IME_ACTION_DONE) { dismissKeyboardAndRestore(); return@setOnEditorActionListener true }; false }
         
@@ -2356,6 +2484,87 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         }
                     }
                     return@setOnKeyListener true
+                }
+                // [FIX] Handle queue navigation from searchBar for soft keyboard support (display 1)
+                // When focus stays on searchBar but currentFocusArea is FOCUS_QUEUE, handle queue keys here
+                if (currentFocusArea == FOCUS_QUEUE) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (queueSelectedIndex > 0) {
+                                val old = queueSelectedIndex
+                                queueSelectedIndex--
+                                selectedRecycler.adapter?.notifyItemChanged(old)
+                                selectedRecycler.adapter?.notifyItemChanged(queueSelectedIndex)
+                                selectedRecycler.scrollToPosition(queueSelectedIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (queueSelectedIndex < selectedAppsQueue.size - 1) {
+                                val old = queueSelectedIndex
+                                queueSelectedIndex++
+                                selectedRecycler.adapter?.notifyItemChanged(old)
+                                selectedRecycler.adapter?.notifyItemChanged(queueSelectedIndex)
+                                selectedRecycler.scrollToPosition(queueSelectedIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP -> {
+                            // Exit queue back to search
+                            currentFocusArea = FOCUS_SEARCH
+                            queueSelectedIndex = -1
+                            selectedRecycler.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.GONE
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            // Exit to list
+                            dismissKeyboardAndRestore()
+                            drawerView?.requestFocus()
+                            currentFocusArea = FOCUS_LIST
+                            queueSelectedIndex = -1
+                            selectedRecycler.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.GONE
+                            if (displayList.isNotEmpty()) {
+                                if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                                mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
+                                mainRecycler.scrollToPosition(selectedListIndex)
+                            }
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_ENTER -> {
+                            // Toggle minimize
+                            val intent = Intent().putExtra("COMMAND", "TOGGLE_MINIMIZE").putExtra("INDEX", queueSelectedIndex + 1)
+                            handleWindowManagerCommand(intent)
+                            return@setOnKeyListener true
+                        }
+                        KeyEvent.KEYCODE_ESCAPE -> {
+                            // Exit queue
+                            currentFocusArea = FOCUS_SEARCH
+                            queueSelectedIndex = -1
+                            selectedRecycler.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.GONE
+                            return@setOnKeyListener true
+                        }
+                        else -> {
+                            // Check for hotkey commands (j, k, x, etc.)
+                            for (cmd in AVAILABLE_COMMANDS) {
+                                val bind = AppPreferences.getKeybind(this, cmd.id)
+                                if (bind.second == keyCode && keyCode != KeyEvent.KEYCODE_SPACE) {
+                                    if (cmd.argCount == 2) {
+                                        queueCommandPending = cmd
+                                        queueCommandSourceIndex = queueSelectedIndex
+                                        debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
+                                        selectedRecycler.adapter?.notifyDataSetChanged()
+                                    } else {
+                                        val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
+                                        handleWindowManagerCommand(intent)
+                                    }
+                                    return@setOnKeyListener true
+                                }
+                            }
+                        }
+                    }
                 }
                 // ENTER: Launch top result immediately
                 if (keyCode == KeyEvent.KEYCODE_ENTER) {
