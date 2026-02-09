@@ -3517,11 +3517,25 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 holder.icon.alpha = if (isActuallyActive) 1.0f else 0.4f
             }
 
-            // Highlight logic - White outline to match launcher app queue
-            if (position == highlightIndex) {
+            // Highlight logic - matches drawer queue style
+            // 1. Current selection = solid white border
+            // 2. Command source (pendingArg1) = dashed green border
+            val isCurrentSelection = (position == highlightIndex)
+            val isCommandSource = (pendingArg1 >= 0 && position == pendingArg1)
+            
+            if (isCurrentSelection) {
+                // Solid white border for current selection
                 holder.highlight.visibility = View.VISIBLE
                 val bg = GradientDrawable()
                 bg.setStroke(4, Color.WHITE)
+                bg.cornerRadius = 8f
+                bg.setColor(Color.parseColor("#44FFFFFF")) // Semi-transparent fill
+                holder.highlight.background = bg
+            } else if (isCommandSource) {
+                // Dashed green border for source
+                holder.highlight.visibility = View.VISIBLE
+                val bg = GradientDrawable()
+                bg.setStroke(4, Color.GREEN, 10f, 5f) // Dashed
                 bg.cornerRadius = 8f
                 bg.setColor(Color.TRANSPARENT)
                 holder.highlight.background = bg
