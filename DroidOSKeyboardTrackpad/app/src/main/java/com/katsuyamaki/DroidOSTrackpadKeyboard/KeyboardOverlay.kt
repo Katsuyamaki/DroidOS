@@ -405,6 +405,7 @@ class KeyboardOverlay(
     fun getScale(): Float = internalScale // [FIX] Added accessor
     fun getKeyboardView(): KeyboardView? = keyboardView
     fun getContainerView(): View? = keyboardContainer // NEW
+    fun getSuggestionStripHeight(): Int = keyboardView?.getSuggestionStripHeight() ?: 0
 
 
     

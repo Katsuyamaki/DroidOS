@@ -785,6 +785,10 @@ private var customModKeyCode = 0
     // SUMMARY: Returns the key tag at the given coordinates, or null if no key found.
     //          Used by mirror mode to check if finger is on a repeatable key.
     // =================================================================================
+    fun getSuggestionStripHeight(): Int {
+        return suggestionStrip?.height ?: 0
+    }
+    
     fun getKeyAtPosition(x: Float, y: Float): String? {
         val touchedView = findKeyView(x, y)
         return touchedView?.tag as? String

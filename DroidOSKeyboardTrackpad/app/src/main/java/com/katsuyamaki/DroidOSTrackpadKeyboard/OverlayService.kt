@@ -1072,12 +1072,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
     private val orientationModeTimeout = Runnable {
-        // DYNAMIC HEIGHT CALCULATION
-        val currentHeight = if (physicalKbHeight > 0) physicalKbHeight else 400f
-        
-        // ADJUSTMENT: Set to 19% (0.19f)
-        // 0.23f blocked the top row. 0.17f caused ghost words. 0.19f is the sweet spot.
-        val stripHeight = currentHeight * 0.12f
+        // Get actual suggestion strip height from the physical keyboard
+        val stripHeight = keyboardOverlay?.getKeyboardView()?.getSuggestionStripHeight()?.toFloat() ?: 0f
 
         // Check if finger is currently holding on the Prediction Bar
         if (lastOrientY < stripHeight) {
