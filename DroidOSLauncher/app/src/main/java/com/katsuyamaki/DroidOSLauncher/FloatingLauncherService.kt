@@ -162,7 +162,12 @@ class FloatingLauncherService : AccessibilityService() {
     private var pendingCommandId: String? = null
     private var vqCursorIndex: Int = 0  // Arrow-key cursor for visual queue HUD
     private var lastQueueNavTime: Long = 0L  // [FIX] Dedup timestamp for queue navigation
+    private var lastEnterToggleTime: Long = 0L  // [FIX] Debounce for ENTER smart toggle
     private var vqTextWatcher: android.text.TextWatcher? = null
+    
+    // [FIX] Command queue for sequential execution
+    private val wmCommandQueue = java.util.concurrent.LinkedBlockingQueue<Intent>()
+    private var isProcessingWmCommand = false
 
 // Custom Modifier State
     private val MOD_CUSTOM = -999 // Internal ID for custom modifier
@@ -512,7 +517,7 @@ private var isSoftKeyboardSupport = false
                 setKeepScreenOn(enable)
                 safeToast(if (enable) "Screen: Always On" else "Screen: Normal Timeout")
             } else if (action == "com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER") {
-                handleWindowManagerCommand(intent)
+                queueWindowManagerCommand(intent)
 } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_CUSTOM_MOD_SYNC") {
                 // Trackpad is asking for the key, send it
                 if (customModKey != 0) {
@@ -1230,7 +1235,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             .putExtra("COMMAND", queueCommandPending!!.id)
                             .putExtra("INDEX_A", queueCommandSourceIndex + 1)
                             .putExtra("INDEX_B", queueSelectedIndex + 1)
-                        handleWindowManagerCommand(intent)
+                        queueWindowManagerCommand(intent)
                         queueCommandPending = null
                         queueCommandSourceIndex = -1
                         uiHandler.post {
@@ -1238,8 +1243,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             selectedRecycler?.adapter?.notifyDataSetChanged()
                         }
                     } else {
-                        val intent = Intent().putExtra("COMMAND", "TOGGLE_MINIMIZE").putExtra("INDEX", queueSelectedIndex + 1)
-                        handleWindowManagerCommand(intent)
+                        // [FIX] Smart toggle based on app's isMinimized state
+                        if (queueSelectedIndex in selectedAppsQueue.indices) {
+                            val app = selectedAppsQueue[queueSelectedIndex]
+                            val cmd = if (app.isMinimized) "UNMINIMIZE" else "MINIMIZE"
+                            val intent = Intent().putExtra("COMMAND", cmd).putExtra("INDEX", queueSelectedIndex + 1)
+                            queueWindowManagerCommand(intent)
+                        }
                     }
                     return
                 }
@@ -1285,7 +1295,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 }
                             } else {
                                 val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
-                                handleWindowManagerCommand(intent)
+                                queueWindowManagerCommand(intent)
                             }
                             return
                         }
@@ -2589,8 +2599,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                         debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
                                         drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
                                     } else {
+                                        // [FIX] Use command queue for sequential execution
                                         val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
-                                        handleWindowManagerCommand(intent)
+                                        queueWindowManagerCommand(intent)
                                     }
                                     return
                                 }
@@ -2705,9 +2716,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_ENTER -> {
-                            // Toggle minimize
-                            val intent = Intent().putExtra("COMMAND", "TOGGLE_MINIMIZE").putExtra("INDEX", queueSelectedIndex + 1)
-                            handleWindowManagerCommand(intent)
+                            // [FIX] Skip - let REMOTE_KEY handler process ENTER exclusively
+                            // This avoids race conditions between both handlers
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_ESCAPE -> {
@@ -2729,8 +2739,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                         debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
                                         selectedRecycler.adapter?.notifyDataSetChanged()
                                     } else {
+                                        // [FIX] Use command queue for sequential execution
                                         val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
-                                        handleWindowManagerCommand(intent)
+                                        queueWindowManagerCommand(intent)
                                     }
                                     return@setOnKeyListener true
                                 }
@@ -2821,8 +2832,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 selectedRecycler.adapter?.notifyDataSetChanged()
                             } else {
                                 // 1-Step Command (e.g. Kill, Minimize, Focus Last)
+                                // [FIX] Use command queue for sequential execution
                                 val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
-                                handleWindowManagerCommand(intent)
+                                queueWindowManagerCommand(intent)
                             }
                             return@setOnKeyListener true
                         }
@@ -2877,18 +2889,23 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         KeyEvent.KEYCODE_ENTER -> {
                             if (queueCommandPending != null) {
                                 // Complete 2-Step Command
+                                // [FIX] Use command queue for sequential execution
                                 val intent = Intent()
                                     .putExtra("COMMAND", queueCommandPending!!.id)
                                     .putExtra("INDEX_A", queueCommandSourceIndex + 1)
                                     .putExtra("INDEX_B", queueSelectedIndex + 1)
-                                handleWindowManagerCommand(intent)
+                                queueWindowManagerCommand(intent)
                                 queueCommandPending = null
                                 queueCommandSourceIndex = -1
                                 debugStatusView?.text = "Command Executed"
                             } else {
-                                // DEFAULT ENTER: TOGGLE MINIMIZE (Hide/Unhide)
-                                val intent = Intent().putExtra("COMMAND", "TOGGLE_MINIMIZE").putExtra("INDEX", queueSelectedIndex + 1)
-                                handleWindowManagerCommand(intent)
+                                // [FIX] Smart toggle based on app's isMinimized state
+                                if (queueSelectedIndex in selectedAppsQueue.indices) {
+                                    val app = selectedAppsQueue[queueSelectedIndex]
+                                    val cmd = if (app.isMinimized) "UNMINIMIZE" else "MINIMIZE"
+                                    val intent = Intent().putExtra("COMMAND", cmd).putExtra("INDEX", queueSelectedIndex + 1)
+                                    queueWindowManagerCommand(intent)
+                                }
                             }
                             return@setOnKeyListener true
                         }
@@ -3193,6 +3210,26 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             pendingArg1 = -1
             hideVisualQueue()
         }
+    }
+    
+    // [FIX] Queue commands for sequential execution to avoid race conditions
+    private fun queueWindowManagerCommand(intent: Intent) {
+        wmCommandQueue.offer(intent)
+        processNextWmCommand()
+    }
+    
+    private fun processNextWmCommand() {
+        if (isProcessingWmCommand) return
+        val intent = wmCommandQueue.poll() ?: return
+        
+        isProcessingWmCommand = true
+        handleWindowManagerCommand(intent)
+        
+        // Allow next command after tiling completes (use same delay as retile)
+        uiHandler.postDelayed({
+            isProcessingWmCommand = false
+            processNextWmCommand() // Process next in queue if any
+        }, 400)
     }
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
@@ -3848,6 +3885,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 // Sorts queue: fullscreen first, tiled by layout position (top-left to bottom-right), minimized newest-to-oldest
             private fun sortAppQueue() {
                 val rects = getLayoutRects()
+                
+                // [FIX] Track currently selected app to preserve selection across sort
+                val selectedApp = if (queueSelectedIndex in selectedAppsQueue.indices) {
+                    selectedAppsQueue[queueSelectedIndex]
+                } else null
+                
                 val activeApps = selectedAppsQueue.filter { !it.isMinimized }
                 val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
 
@@ -3861,6 +3904,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 selectedAppsQueue.clear()
                 selectedAppsQueue.addAll(activeApps)
                 selectedAppsQueue.addAll(sortedMinimized)
+                
+                // [FIX] Restore selection to same app after sort
+                if (selectedApp != null) {
+                    val newIndex = selectedAppsQueue.indexOfFirst { 
+                        it.packageName == selectedApp.packageName && it.className == selectedApp.className 
+                    }
+                    if (newIndex >= 0) {
+                        queueSelectedIndex = newIndex
+                    }
+                }
             }
 
             private fun updateAllUIs() {
