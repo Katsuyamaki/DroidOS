@@ -651,9 +651,7 @@ private var customModKeyCode = 0
         isInputCaptureActive = active
         // [FIX] Don't clear shortcutCooldownUntil here - let the cooldown run its natural course
         // to block any lingering key presses that arrive after the command completes.
-        // Visual feedback? maybe dim the keyboard slightly or change border
-        if (active) setBackgroundColor(Color.parseColor("#330000")) // Subtle Red tint
-        else setBackgroundColor(Color.parseColor("#1A1A1A"))
+        // No visual feedback - keep normal keyboard color
     }
 
     fun setOverrideSystemShortcuts(enabled: Boolean) {

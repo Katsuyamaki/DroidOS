@@ -535,6 +535,7 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REMOTE_KEY") {
                 val keyCode = intent?.getIntExtra("keyCode", 0) ?: 0
                 val metaState = intent?.getIntExtra("metaState", 0) ?: 0
+                Log.w("DroidOS_Queue", "REMOTE_KEY: keyCode=$keyCode meta=$metaState focus=$currentFocusArea expanded=$isExpanded")
                 if (keyCode != 0) {
                     // Simulate the event passing through the same logic as hardware keys
                     handleRemoteKeyEvent(keyCode, metaState)
@@ -1155,6 +1156,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 if (selectedAppsQueue.isNotEmpty()) {
                     currentFocusArea = FOCUS_QUEUE
                     queueSelectedIndex = 0
+                    // [FIX] Tell keyboard to capture all keys for queue navigation
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", true)
+                    sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
                         debugStatusView?.visibility = View.VISIBLE
@@ -1214,6 +1220,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     currentFocusArea = FOCUS_SEARCH
                     queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
                         debugStatusView?.visibility = View.GONE
@@ -1224,6 +1235,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     currentFocusArea = FOCUS_LIST
                     queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
                         debugStatusView?.visibility = View.GONE
@@ -1265,6 +1281,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 KeyEvent.KEYCODE_ESCAPE -> {
                     currentFocusArea = FOCUS_SEARCH
                     queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
                         debugStatusView?.visibility = View.GONE
@@ -1292,9 +1313,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return
                 }
                 else -> {
+                    Log.w("DroidOS_Queue", "KEYBIND_CHECK: keyCode=$keyCode in FOCUS_QUEUE")
                     for (cmd in AVAILABLE_COMMANDS) {
                         val bind = AppPreferences.getKeybind(this, cmd.id)
                         if (bind.second == keyCode && keyCode != KeyEvent.KEYCODE_SPACE) {
+                            Log.w("DroidOS_Queue", "KEYBIND_MATCH: ${cmd.id}")
                             if (cmd.argCount == 2) {
                                 queueCommandPending = cmd
                                 queueCommandSourceIndex = queueSelectedIndex
@@ -1333,6 +1356,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // Go to queue
                         currentFocusArea = FOCUS_QUEUE
                         queueSelectedIndex = 0
+                        // [FIX] Tell keyboard to capture all keys for queue navigation
+                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                        captureIntent.setPackage(PACKAGE_TRACKPAD)
+                        captureIntent.putExtra("CAPTURE", true)
+                        sendBroadcast(captureIntent)
                         uiHandler.post {
                             drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
                             debugStatusView?.visibility = View.VISIBLE
@@ -2659,6 +2687,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // Go to Queue
                         currentFocusArea = FOCUS_QUEUE
                         queueSelectedIndex = 0
+                        // [FIX] Tell keyboard to capture all keys for queue navigation
+                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                        captureIntent.setPackage(PACKAGE_TRACKPAD)
+                        captureIntent.putExtra("CAPTURE", true)
+                        sendBroadcast(captureIntent)
                         selectedRecycler.adapter?.notifyDataSetChanged()
                         debugStatusView?.visibility = View.VISIBLE
                         debugStatusView?.text = "Queue Navigation: Use Arrows / Hotkeys"
@@ -2966,6 +2999,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 if (selectedAppsQueue.isNotEmpty()) {
                                     currentFocusArea = FOCUS_QUEUE
                                     queueSelectedIndex = 0
+                                    // [FIX] Tell keyboard to capture all keys for queue navigation
+                                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                                    captureIntent.putExtra("CAPTURE", true)
+                                    sendBroadcast(captureIntent)
                                     selectedRecycler.adapter?.notifyDataSetChanged()
                                     debugStatusView?.visibility = View.VISIBLE
                                     debugStatusView?.text = "Queue Navigation"
@@ -3223,13 +3261,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     
     // [FIX] Queue commands for sequential execution to avoid race conditions
     private fun queueWindowManagerCommand(intent: Intent) {
+        val cmd = intent.getStringExtra("COMMAND") ?: "?"
+        Log.w("DroidOS_Queue", "QUEUE_ADD: $cmd isProcessing=$isProcessingWmCommand queueSize=${wmCommandQueue.size}")
         wmCommandQueue.offer(intent)
         processNextWmCommand()
     }
     
     private fun processNextWmCommand() {
-        if (isProcessingWmCommand) return
+        if (isProcessingWmCommand) {
+            Log.w("DroidOS_Queue", "QUEUE_SKIP: already processing, queueSize=${wmCommandQueue.size}")
+            return
+        }
         val intent = wmCommandQueue.poll() ?: return
+        val cmd = intent.getStringExtra("COMMAND") ?: "?"
+        Log.w("DroidOS_Queue", "QUEUE_EXEC: $cmd")
         
         isProcessingWmCommand = true
         handleWindowManagerCommand(intent)
