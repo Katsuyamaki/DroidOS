@@ -1657,7 +1657,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             detectedPkg.contains("samsung.android.app.routines") ||
                             detectedPkg.contains("android.providers") ||
                             detectedPkg.contains("permissioncontroller") ||
-                            detectedPkg.contains("DroidOSTrackpadKeyboard")
+                            detectedPkg.contains("DroidOSTrackpadKeyboard") ||
+                            detectedPkg.contains("inputmethod") ||
+                            detectedPkg == "android"
                         // [FIX] Managed state: if app is in queue and not minimized, DroidOS is managing its bounds.
                         // We notify the IME to suppress insets for ANY managed app (even single apps) 
                         // to prevent double-resizing/pushing.
