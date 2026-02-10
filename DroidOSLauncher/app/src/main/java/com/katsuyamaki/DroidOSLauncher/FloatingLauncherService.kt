@@ -5643,9 +5643,41 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     val appA = selectedAppsQueue[idxA]
                     val appB = selectedAppsQueue[idxB]
 
-                    // LOGIC: State Swap if mixed Active/Inactive
-                    // This allows inactive apps to "take the place" of active ones
-                    if (appA.isMinimized != appB.isMinimized) {
+                    // Track apps that need window state changes
+                    val appsToMinimize = mutableListOf<MainActivity.AppInfo>()
+                    val appsToRestore = mutableListOf<MainActivity.AppInfo>()
+
+                    val aIsBlank = appA.packageName == PACKAGE_BLANK
+                    val bIsBlank = appB.packageName == PACKAGE_BLANK
+                    
+                    // [FIX] Special case: swapping active app with active blank
+                    // When an active real app swaps with an active blank, the app should be minimized
+                    if (!appA.isMinimized && !appB.isMinimized && (aIsBlank || bIsBlank)) {
+                        // One is blank, one is real app - minimize the real app
+                        if (!aIsBlank) {
+                            appsToMinimize.add(appA)
+                            appA.isMinimized = true
+                        }
+                        if (!bIsBlank) {
+                            appsToMinimize.add(appB)
+                            appB.isMinimized = true
+                        }
+                    } else if (appA.isMinimized != appB.isMinimized) {
+                        // LOGIC: State Swap if mixed Active/Inactive
+                        // This allows inactive apps to "take the place" of active ones
+                        if (!appA.isMinimized && !aIsBlank) {
+                            appsToMinimize.add(appA)
+                        }
+                        if (!appB.isMinimized && !bIsBlank) {
+                            appsToMinimize.add(appB)
+                        }
+                        if (appA.isMinimized && !aIsBlank) {
+                            appsToRestore.add(appA)
+                        }
+                        if (appB.isMinimized && !bIsBlank) {
+                            appsToRestore.add(appB)
+                        }
+
                         val stateA = appA.isMinimized
                         appA.isMinimized = appB.isMinimized
                         appB.isMinimized = stateA
@@ -5653,17 +5685,73 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
                     Collections.swap(selectedAppsQueue, idxA, idxB)
 
-                    // LOGIC: Remove Inactive Blanks (Auto-Delete)
-                    // If a blank space was swapped into an inactive state, delete it
-                    val toRemove = mutableListOf<MainActivity.AppInfo>()
-                    if (appA.packageName == PACKAGE_BLANK && appA.isMinimized) toRemove.add(appA)
-                    if (appB.packageName == PACKAGE_BLANK && appB.isMinimized) toRemove.add(appB)
+                    // [FIX] Actually minimize windows
+                    for (app in appsToMinimize) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        // Clear focus if minimizing the active app
+                        val isGemini = basePkg == "com.google.android.apps.bard"
+                        val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                        if (activePackageName == basePkg || 
+                            activePackageName == app.packageName ||
+                            (isGemini && activeIsGoogle)) {
+                            activePackageName = null
+                        }
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                        
+                        Thread {
+                            try {
+                                if (currentDisplayId >= 2) {
+                                    val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                    if (visibleCount <= 1) {
+                                        showWallpaper()
+                                    } else {
+                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                    }
+                                } else {
+                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                }
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
                     
-                    if (toRemove.isNotEmpty()) {
-                        selectedAppsQueue.removeAll(toRemove)
+                    // [FIX] Actually restore windows
+                    for (app in appsToRestore) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps.remove(basePkg)
+                        
+                        Thread {
+                            try {
+                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                val cmd = if (component != null) {
+                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                } else {
+                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                }
+                                shellService?.runCommand(cmd)
+                            } catch (e: Exception) {}
+                        }.start()
                     }
 
-                    refreshQueueAndLayout("Swapped slots $rawA & $rawB")
+                    // LOGIC: Remove Inactive Blanks (Auto-Delete)
+                    // [FIX] Remove by index - all blanks are equals() so removeAll removes all of them
+                    val indicesToRemove = mutableListOf<Int>()
+                    if (appA.packageName == PACKAGE_BLANK && appA.isMinimized) indicesToRemove.add(idxB)
+                    if (appB.packageName == PACKAGE_BLANK && appB.isMinimized) indicesToRemove.add(idxA)
+                    
+                    for (i in indicesToRemove.sortedDescending()) {
+                        selectedAppsQueue.removeAt(i)
+                    }
+
+                    refreshQueueAndLayout("Swapped slots $rawA & $rawB", forceRetile = true, retileDelayMs = 300L)
                 }
             }
             // =====================================================================

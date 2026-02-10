@@ -74,5 +74,9 @@
             android:theme="@android:style/Theme.NoTitleBar"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".MenuActivity"
+            android:exported="false" />
+
     </application>
 </manifest>
