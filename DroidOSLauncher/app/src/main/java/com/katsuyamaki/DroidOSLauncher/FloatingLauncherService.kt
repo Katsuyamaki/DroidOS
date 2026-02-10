@@ -1140,14 +1140,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (now - lastQueueNavTime < 80) return
             lastQueueNavTime = now
             
-            // [FIX] ENTER: Launch top search result (same as hardware keyboard)
+            // [FIX] ENTER: Activate first filtered result (works for all menu types)
             if (keyCode == KeyEvent.KEYCODE_ENTER) {
                 if (displayList.isNotEmpty()) {
                     val item = displayList[0]
-                    if (item is MainActivity.AppInfo) {
-                        addToSelection(item)
-                        return
+                    when (item) {
+                        is MainActivity.AppInfo -> addToSelection(item)
+                        is LayoutOption -> selectLayout(item)
+                        is ActionOption -> { dismissKeyboardAndRestore(); item.action() }
+                        is ToggleOption -> { item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() }
+                        is RefreshItemOption -> if (item.isAvailable) { dismissKeyboardAndRestore(); applyRefreshRate(item.targetRate) }
+                        is ProfileOption -> loadProfile(item.name)
+                        is ResolutionOption -> { dismissKeyboardAndRestore(); Thread { try { shellService?.runCommand(item.command) } catch(e: Exception){} }.start(); safeToast("Applied: ${item.name}") }
                     }
+                    return
                 }
             }
             
@@ -3995,10 +4001,57 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }
             }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty()) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
+    
+    // Helper to get searchable text from any option type
+    private fun getOptionSearchText(item: Any): String {
+        return when (item) {
+            is LayoutOption -> item.name
+            is ResolutionOption -> item.name
+            is ActionOption -> item.name
+            is ToggleOption -> item.name
+            is RefreshHeaderOption -> item.text
+            is RefreshItemOption -> item.label
+            is ProfileOption -> item.name
+            is LegendOption -> item.text
+            is KeybindOption -> "${item.def.label} ${item.def.description}"
+            is DpiOption -> "DPI Density"
+            is FontSizeOption -> "Font Size Text"
+            is HeightOption -> "Drawer Height"
+            is WidthOption -> "Drawer Width"
+            is BubbleSizeOption -> "Bubble Icon Size"
+            is MarginOption -> if (item.type == 0) "Top Margin" else "Bottom Margin"
+            is IconOption -> item.name
+            is CustomModConfigOption -> "Custom Modifier Key"
+            is MainActivity.AppInfo -> item.label
+            else -> ""
+        }
+    }
+    
     private fun filterList(query: String) {
-        if (currentMode != MODE_SEARCH) return; val actualQuery = query.substringAfterLast(",").trim(); displayList.clear()
-        val filtered = if (actualQuery.isEmpty()) { allAppsList } else { allAppsList.filter { it.label.contains(actualQuery, ignoreCase = true) } }
-        val sorted = filtered.sortedWith(compareBy<MainActivity.AppInfo> { it.packageName != PACKAGE_BLANK }.thenByDescending { it.isFavorite }.thenBy { it.label.lowercase() }); displayList.addAll(sorted); drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+        val actualQuery = query.trim()
+        
+        if (currentMode == MODE_SEARCH) {
+            // App search mode - use allAppsList
+            displayList.clear()
+            val filtered = if (actualQuery.isEmpty()) { allAppsList } else { allAppsList.filter { it.label.contains(actualQuery, ignoreCase = true) } }
+            val sorted = filtered.sortedWith(compareBy<MainActivity.AppInfo> { it.packageName != PACKAGE_BLANK }.thenByDescending { it.isFavorite }.thenBy { it.label.lowercase() })
+            displayList.addAll(sorted)
+        } else {
+            // Menu filtering mode - use unfilteredDisplayList
+            displayList.clear()
+            if (actualQuery.isEmpty()) {
+                displayList.addAll(unfilteredDisplayList)
+            } else {
+                val filtered = unfilteredDisplayList.filter { item ->
+                    getOptionSearchText(item).contains(actualQuery, ignoreCase = true)
+                }
+                displayList.addAll(filtered)
+            }
+        }
+        
+        // Reset selection to first item
+        selectedListIndex = 0
+        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
     }
 
     // Helper to scrub dead apps from focus history so we don't accidentally re-launch them
@@ -5481,6 +5534,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 })
             }
         }
+        // Store unfiltered list for menu search/filter
+        unfilteredDisplayList.clear()
+        unfilteredDisplayList.addAll(displayList)
+        // Clear search bar when switching modes (except SEARCH which has its own query)
+        if (mode != MODE_SEARCH) {
+            drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
+        }
         drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
     }
     // === SWITCH MODE - END ===
@@ -5506,6 +5566,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     data class LayoutOption(val name: String, val type: Int, val isCustomSaved: Boolean = false, val customRects: List<Rect>? = null)
     private var isLayoutNameEditMode = false
+    private val unfilteredDisplayList = mutableListOf<Any>() // Store full list for menu filtering
     data class ResolutionOption(val name: String, val command: String, val index: Int)
     data class DpiOption(val currentDpi: Int)
     data class ProfileOption(val name: String, val isCurrent: Boolean, val layout: Int, val resIndex: Int, val dpi: Int, val apps: List<String>)
