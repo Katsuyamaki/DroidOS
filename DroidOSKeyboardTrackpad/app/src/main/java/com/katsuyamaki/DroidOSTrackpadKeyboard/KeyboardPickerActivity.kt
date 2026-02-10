@@ -15,6 +15,7 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
@@ -104,9 +105,9 @@ class KeyboardPickerActivity : Activity() {
                 }
             }
             
-            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            val dialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Select Keyboard")
-                .setSingleChoiceItems(adapter, currentIndex) { dialog, which ->
+                .setSingleChoiceItems(adapter, currentIndex) { dlg, which ->
                     // Skip if disabled item
                     if (which == droidOSPlaceholderIndex && !isDroidOSEnabled) {
                         Toast.makeText(this, "Enable in Settings first", Toast.LENGTH_SHORT).show()
@@ -118,7 +119,7 @@ class KeyboardPickerActivity : Activity() {
                     
                     if (which == currentIndex) {
                         Toast.makeText(this, "$selectedName is already active", Toast.LENGTH_SHORT).show()
-                        dialog.dismiss()
+                        dlg.dismiss()
                         finish()
                         return@setSingleChoiceItems
                     }
@@ -131,21 +132,25 @@ class KeyboardPickerActivity : Activity() {
                     sendBroadcast(switchIntent)
                     
                     Toast.makeText(this, "Switching to $selectedName...", Toast.LENGTH_SHORT).show()
-                    dialog.dismiss()
+                    dlg.dismiss()
                     finish()
                 }
-                .setNegativeButton("Cancel") { dialog, _ ->
-                    dialog.dismiss()
+                .setNegativeButton("Cancel") { dlg, _ ->
+                    dlg.dismiss()
                     finish()
                 }
-                .setNeutralButton("Settings") { dialog, _ ->
-                    dialog.dismiss()
+                .setNeutralButton("Settings") { dlg, _ ->
+                    dlg.dismiss()
                     openKeyboardSettings()
                 }
                 .setOnCancelListener {
                     finish()
                 }
-                .show()
+                .create()
+            
+            // Set window type to appear above overlay keyboard but below bubble
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            dialog.show()
                 
         } catch (e: Exception) {
             e.printStackTrace()
