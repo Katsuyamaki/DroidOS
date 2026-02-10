@@ -309,47 +309,25 @@ class TrackpadMenuManager(
         // --- END ANCHOR TOGGLE ---
 
         // NEW: Launch Proxy Activity for Picker (moved from Keyboard Settings tab)
-        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker\nSelect 'DroidOS Keyboard Toolbar'\nFor More Features", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) { 
+        // Always opens our custom KeyboardPickerActivity which handles showing
+        // DroidOS greyed out with a warning if it's not enabled yet
+        list.add(TrackpadMenuAdapter.MenuItem("Keyboard Picker\nSelect 'DroidOS Keyboard Toolbar'\nFor More Features", android.R.drawable.ic_menu_agenda, TrackpadMenuAdapter.Type.ACTION) {
             hide() // Close menu
 
-            // Check if DroidOS IME is enabled using InputMethodManager
-            val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
-            val isDroidOSImeEnabled = imm?.enabledInputMethodList?.any { 
-                it.packageName == "com.katsuyamaki.DroidOSTrackpadKeyboard" 
-            } ?: false
+            service.forceSystemKeyboardVisible()
 
-            if (!isDroidOSImeEnabled) {
-                // IME not enabled — redirect to Android keyboard settings
-                android.widget.Toast.makeText(context, "Please enable 'DroidOS Keyboard Toolbar' first", android.widget.Toast.LENGTH_LONG).show()
-                try {
-                    // [FIX] Tell launcher to minimize tiled apps first — Settings opens as a regular
-                    // fullscreen activity which goes behind freeform/resized tiled windows, so the
-                    // accessibility-based auto-minimize never triggers.
-                    context.sendBroadcast(android.content.Intent("com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING")
-                        .setPackage("com.katsuyamaki.DroidOSLauncher"))
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
-                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                } catch(e: Exception) {
-                    android.widget.Toast.makeText(context, "Error opening keyboard settings", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                // IME enabled — show picker normally
-                service.forceSystemKeyboardVisible()
+            // [FIX] Hide overlay keyboard so it doesn't cover the picker
+            val hideKbIntent = android.content.Intent("TOGGLE_CUSTOM_KEYBOARD")
+            hideKbIntent.setPackage(context.packageName)
+            hideKbIntent.putExtra("FORCE_HIDE", true)
+            context.sendBroadcast(hideKbIntent)
 
-                // [FIX] Hide overlay keyboard so it doesn't cover the picker
-                val hideKbIntent = android.content.Intent("TOGGLE_CUSTOM_KEYBOARD")
-                hideKbIntent.setPackage(context.packageName)
-                hideKbIntent.putExtra("FORCE_HIDE", true)
-                context.sendBroadcast(hideKbIntent)
-
-                try {
-                    val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
-                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                } catch(e: Exception) {
-                    android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
-                }
+            try {
+                val intent = android.content.Intent(context, KeyboardPickerActivity::class.java)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch(e: Exception) {
+                android.widget.Toast.makeText(context, "Error launching picker", android.widget.Toast.LENGTH_SHORT).show()
             }
         })
 
