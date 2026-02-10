@@ -425,11 +425,12 @@ private var isSoftKeyboardSupport = false
     private var activeCustomRects: List<Rect>? = null
     private var activeCustomLayoutName: String? = null
     
-    private var killAppOnExecute = true
+    // [DEPRECATED] Execute mode removed - instant mode is always active
+    // private var killAppOnExecute = true
     private var autoRestartTrackpad = false // NEW VARIABLE
     private var targetDisplayIndex = 1 
     private var isScreenOffState = false
-    private var isInstantMode = true 
+    private val isInstantMode = true // [DEPRECATED] Execute mode removed - always instant mode
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
     
@@ -2019,9 +2020,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // Load preferences
         loadInstalledApps(); currentFontSize = AppPreferences.getFontSize(this)
-        killAppOnExecute = AppPreferences.getKillOnExecute(this); targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
+        // [DEPRECATED] killAppOnExecute = AppPreferences.getKillOnExecute(this)
+        targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
         autoRestartTrackpad = AppPreferences.getAutoRestartTrackpad(this) // NEW LOAD
-        isInstantMode = AppPreferences.getInstantMode(this); showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
+        // [DEPRECATED] isInstantMode = AppPreferences.getInstantMode(this) - now always true
+        showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
@@ -2572,7 +2575,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
 
         val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val mainRecycler = drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view); val selectedRecycler = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
-        if (isBound) executeBtn.setColorFilter(Color.GREEN) else executeBtn.setColorFilter(Color.RED)
+        // [DEPRECATED] Execute button always hidden - instant mode only
+        // if (isBound) executeBtn.setColorFilter(Color.GREEN) else executeBtn.setColorFilter(Color.RED)
+        executeBtn.visibility = View.GONE
         // === MODE ICON CLICK LISTENERS - START ===
         // Sets up click listeners for mode switching icons in drawer
         drawerView!!.findViewById<ImageView>(R.id.icon_search_mode).setOnClickListener { dismissKeyboardAndRestore(); switchMode(MODE_SEARCH) }
@@ -2612,7 +2617,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             switchMode(MODE_SETTINGS) 
         }
         // === MODE ICON CLICK LISTENERS - END ===
-        executeBtn.setOnClickListener { executeLaunch(selectedLayoutType, closeDrawer = true) }
+        // [DEPRECATED] Execute button removed - instant mode only
+        // executeBtn.setOnClickListener { executeLaunch(selectedLayoutType, closeDrawer = true) }
         searchBar.addTextChangedListener(object : TextWatcher { 
             override fun afterTextChanged(s: Editable?) { 
                 // [FIX] In FOCUS_QUEUE mode, intercept typed characters and check for keybinds
@@ -5041,7 +5047,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Kill/Prep Logic - Only wait if we actually have apps to launch
                 // [FIX] If activeApps is empty (we are just minimizing), SKIP THE SLEEP.
                 if (activeApps.isNotEmpty()) {
-                    if (killAppOnExecute) { 
+                    // [DEPRECATED] killAppOnExecute removed
+                    if (false) { // killAppOnExecute
                         for (app in activeApps) { 
                             if (app.packageName != PACKAGE_BLANK) { 
                                 val basePkg = app.getBasePackage()
@@ -5209,7 +5216,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val iconRefresh = drawerView!!.findViewById<ImageView>(R.id.icon_mode_refresh); val iconDpi = drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi); val iconBlacklist = drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist); val iconProf = drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles); val iconKeybinds = drawerView!!.findViewById<ImageView>(R.id.icon_mode_keybinds); val iconSet = drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
         searchIcon.setColorFilter(if(mode==MODE_SEARCH) Color.WHITE else Color.GRAY); iconWin.setColorFilter(if(mode==MODE_LAYOUTS) Color.WHITE else Color.GRAY);        iconRes.setColorFilter(if(mode==MODE_RESOLUTION) Color.WHITE else Color.GRAY);
         iconRefresh?.setColorFilter(if(mode==MODE_REFRESH) Color.WHITE else Color.GRAY); iconDpi.setColorFilter(if(mode==MODE_DPI) Color.WHITE else Color.GRAY); iconBlacklist?.setColorFilter(if(mode==MODE_BLACKLIST) Color.WHITE else Color.GRAY); iconProf.setColorFilter(if(mode==MODE_PROFILES) Color.WHITE else Color.GRAY); iconKeybinds?.setColorFilter(if(mode==MODE_KEYBINDS) Color.WHITE else Color.GRAY); iconSet.setColorFilter(if(mode==MODE_SETTINGS) Color.WHITE else Color.GRAY)
-        executeBtn.visibility = if (isInstantMode) View.GONE else View.VISIBLE; displayList.clear(); val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); dock.visibility = if (mode == MODE_SEARCH && selectedAppsQueue.isNotEmpty()) View.VISIBLE else View.GONE
+        executeBtn.visibility = View.GONE; displayList.clear(); val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); dock.visibility = if (mode == MODE_SEARCH && selectedAppsQueue.isNotEmpty()) View.VISIBLE else View.GONE
 
         when (mode) {
             MODE_SEARCH -> { searchBar.hint = "Search apps..."; refreshSearchList() }
@@ -5422,8 +5429,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(BubbleSizeOption(bubbleSizePercent))
                 displayList.add(ToggleOption("Reorder: Drag & Drop", isReorderDragEnabled) { isReorderDragEnabled = it; AppPreferences.setReorderDrag(this, it) })
                 displayList.add(ToggleOption("Reorder: Tap to Swap (Long Press)", isReorderTapEnabled) { isReorderTapEnabled = it; AppPreferences.setReorderTap(this, it) })
-                displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
-                displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
+                // [DEPRECATED] Execute mode removed - instant mode is always active
+                // displayList.add(ToggleOption("Instant Mode (Live Changes)", isInstantMode) { isInstantMode = it; AppPreferences.setInstantMode(this, it); executeBtn.visibility = if (it) View.GONE else View.VISIBLE; if (it) fetchRunningApps() })
+                // displayList.add(ToggleOption("Kill App on Execute", killAppOnExecute) { killAppOnExecute = it; AppPreferences.setKillOnExecute(this, it) })
                 
                 // --- V2.0 MENU ITEMS RESTORED ---
                 
@@ -6076,7 +6084,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     try { 
                                         val tid = shellService?.getTaskId(basePkg, cls) ?: -1
                                         if (tid != -1) shellService?.moveTaskToBack(tid)
-                                        if (killAppOnExecute) shellService?.forceStop(basePkg)
+                                        // [DEPRECATED] if (killAppOnExecute) shellService?.forceStop(basePkg)
                                     } catch(e: Exception){}
                                 }.start()
                                 
@@ -6108,14 +6116,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }
             }
             "CLEAR_ALL" -> {
-                if (killAppOnExecute) {
-                    val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
-                    Thread {
-                        for (app in activeApps) {
-                            try { shellService?.forceStop(app.getBasePackage()) } catch(e: Exception){}
-                        }
-                    }.start()
-                }
+                // [DEPRECATED] killAppOnExecute removed - apps are not force stopped on clear
+                // if (killAppOnExecute) {
+                //     val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+                //     Thread {
+                //         for (app in activeApps) {
+                //             try { shellService?.forceStop(app.getBasePackage()) } catch(e: Exception){}
+                //         }
+                //     }.start()
+                // }
                 // Wipe all history
                 activePackageName = null
                 lastValidPackageName = null
