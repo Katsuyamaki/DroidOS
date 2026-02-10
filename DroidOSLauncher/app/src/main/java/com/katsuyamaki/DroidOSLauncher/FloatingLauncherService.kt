@@ -3704,8 +3704,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === SHOW QUEUE DEBUG STATE - END ===
     private fun updateGlobalFontSize() { 
         val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
-        searchBar?.textSize = currentFontSize
-        debugStatusView?.textSize = currentFontSize * 0.8f // Update debug view as well
+        searchBar?.setScaledTextSize(currentFontSize, 1.0f) // Match rest of UI (16sp base)
+        debugStatusView?.setScaledTextSize(currentFontSize, 0.8f) // Update debug view as well
         drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() 
     }
 
