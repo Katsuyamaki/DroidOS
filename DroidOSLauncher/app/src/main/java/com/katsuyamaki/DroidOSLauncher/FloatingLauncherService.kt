@@ -598,19 +598,12 @@ private var isSoftKeyboardSupport = false
                 // Freeform/resized tiled windows float above regular fullscreen activities,
                 // so the accessibility-based auto-minimize never triggers — the fullscreen app
                 // opens behind the tiled windows and never gains focus.
+                // Use MINIMIZE_ALL command through queue for consistency and race condition safety.
                 if (selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized) {
                     tiledAppsAutoMinimized = true
-                    Thread {
-                        try {
-                            for (app in selectedAppsQueue) {
-                                if (!app.isMinimized) {
-                                    val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                                    if (tid != -1) shellService?.moveTaskToBack(tid)
-                                }
-                            }
-                        } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_APP_OPENING: Auto-minimize failed", e) }
-                    }.start()
-                    Log.d(TAG, "FULLSCREEN_APP_OPENING: Minimized tiled apps for external fullscreen request")
+                    val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
+                    queueWindowManagerCommand(minimizeIntent)
+                    Log.d(TAG, "FULLSCREEN_APP_OPENING: Queued MINIMIZE_ALL for external fullscreen request")
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") {
                 val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
@@ -1746,17 +1739,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             pendingFullscreenCheckRunnable = null
                             tiledAppsAutoMinimized = true
 
-                            Thread {
-                                try {
-                                    for (app in selectedAppsQueue) {
-                                        if (!app.isMinimized) {
-                                            val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                                            if (tid != -1) shellService?.moveTaskToBack(tid)
-                                        }
-                                    }
-                                } catch (e: Exception) { Log.e(TAG, "Auto-minimize failed", e) }
-                            }.start()
-                            Log.d(TAG, "FULLSCREEN: Auto-minimized tiled apps for $detectedPkg")
+                            // Use MINIMIZE_ALL command for consistency and proper state tracking
+                            val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
+                            queueWindowManagerCommand(minimizeIntent)
+                            Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $detectedPkg")
                             } else {
                             // [FULLSCREEN] Window doesn't cover screen yet (may still be animating).
                             // Schedule a delayed re-check to catch apps like Android Settings that
@@ -1790,31 +1776,21 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 } catch (e: Exception) { /* ignore */ }
                                 if (nowCoversScreen) {
                                     tiledAppsAutoMinimized = true
-                                    Thread {
-                                        try {
-                                            for (app in selectedAppsQueue) {
-                                                if (!app.isMinimized) {
-                                                    val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                                                    if (tid != -1) shellService?.moveTaskToBack(tid)
-                                                }
-                                            }
-                                        } catch (e: Exception) { Log.e(TAG, "Auto-minimize (delayed) failed", e) }
-                                    }.start()
-                                    Log.d(TAG, "FULLSCREEN: Auto-minimized tiled apps for $recheckPkg (delayed re-check)")
+                                    // Use MINIMIZE_ALL command for consistency and proper state tracking
+                                    val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
+                                    queueWindowManagerCommand(minimizeIntent)
+                                    Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $recheckPkg (delayed re-check)")
                                 }
                                 pendingFullscreenCheckRunnable = null
                             }
                             pendingFullscreenCheckRunnable = recheckRunnable
                             uiHandler.postDelayed(recheckRunnable, 500)
                             } // end if (coversScreen) else
-                        } else if (isManagedApp && !isTiledApp && tiledAppsAutoMinimized) {
-                            // [FULLSCREEN] Managed app gained focus while tiled apps were auto-minimized.
-                            // Detect fullscreen app, put at slot 1, then tile everything with applyLayoutImmediate.
-                            tiledAppsAutoMinimized = false
-                            tiledAppsRestoredAt = System.currentTimeMillis()
-                            ensureFullscreenAppAtSlot1()  // Same logic as launcher app queue
-                            applyLayoutImmediate()  // Force freeform mode and tile all apps
-                            Log.d(TAG, "FULLSCREEN: Restored tiled apps for managed app $detectedPkg")
+                        // [REMOVED] Auto-restore when managed app gains focus.
+                        // Fullscreen apps should STAY fullscreen until user explicitly:
+                        // 1. Clicks a tiled app (handled by isTiledApp && tiledAppsAutoMinimized below)
+                        // 2. Uses RESTORE_ALL or UNMINIMIZE commands
+                        // 3. Opens a tiled app via drawer/hotkey
                         } else if (isManagedApp && !isTiledApp && !tiledAppsAutoMinimized &&
                             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                             // [FULLSCREEN] Managed app opened while fullscreen app is visible (not previously auto-minimized).
