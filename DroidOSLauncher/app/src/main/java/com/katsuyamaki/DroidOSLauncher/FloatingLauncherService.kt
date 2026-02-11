@@ -3873,15 +3873,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
         
         return when(type) { 
-            LAYOUT_FULL -> "1 App - 1×1"
-            LAYOUT_SIDE_BY_SIDE -> "2 Apps - 1×2"
-            LAYOUT_TOP_BOTTOM -> "2 Apps - 2×1"
-            LAYOUT_TRI_EVEN -> "3 Apps - 1×3"
-            LAYOUT_CORNERS -> "4 Apps - 2×2"
-            LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - 1×3 [1:2:1]"
-            LAYOUT_QUAD_ROW_EVEN -> "4 Apps - 1×4"
-            LAYOUT_QUAD_TALL_SHORT -> "4 Apps - 2×2 [R 3:1]"
-            LAYOUT_HEX_TALL_SHORT -> "6 Apps - 2×3 [R 3:1, C 1:2:1]"
+            LAYOUT_FULL -> "1 App - 1x1"
+            LAYOUT_SIDE_BY_SIDE -> "2 Apps - 1x2"
+            LAYOUT_TOP_BOTTOM -> "2 Apps - 2x1"
+            LAYOUT_TRI_EVEN -> "3 Apps - 1x3"
+            LAYOUT_CORNERS -> "4 Apps - 2x2"
+            LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - 1x3 [1:2:1]"
+            LAYOUT_QUAD_ROW_EVEN -> "4 Apps - 1x4"
+            LAYOUT_QUAD_TALL_SHORT -> "4 Apps - 2x2 [R 3:1]"
+            LAYOUT_HEX_TALL_SHORT -> "6 Apps - 2x3 [R 3:1, C 1:2:1]"
             LAYOUT_CUSTOM_DYNAMIC -> "Custom"
             else -> "Unknown" 
         } 
@@ -3990,7 +3990,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
                     recycler?.adapter?.notifyDataSetChanged()
                 }
-            }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty()) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
+            }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
     
     // Helper to get searchable text from any option type
@@ -6609,14 +6609,18 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     private fun buildAdbCommand(cmdId: String): String? {
         return when (cmdId) {
-            "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
+            "OPEN_DRAWER" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER"
+            "SET_FOCUS" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SET_FOCUS --ei INDEX 1"
+            "FOCUS_LAST" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND FOCUS_LAST"
+            "KILL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND KILL --ei INDEX 1"
             "SWAP_ACTIVE_LEFT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_LEFT"
             "SWAP_ACTIVE_RIGHT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_RIGHT"
-            "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
             "MINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE --ei INDEX 1"
             "UNMINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND UNMINIMIZE --ei INDEX 1"
-            "KILL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND KILL --ei INDEX 1"
-            "OPEN_DRAWER" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER"
+            "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
+            "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
+            "MINIMIZE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE_ALL"
+            "RESTORE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND RESTORE_ALL"
             else -> null
         }
     }
