@@ -1867,6 +1867,65 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     detectedPkg != PACKAGE_TRACKPAD &&
                     !detectedPkg.contains("inputmethod")) {
 
+                    // [FULLSCREEN] Handle TYPE_WINDOWS_CHANGED for fullscreen detection even when package hasn't changed
+                    // This catches Settings and system menus that fire TYPE_VIEW_FOCUSED first (which sets activePackageName)
+                    // then TYPE_WINDOWS_CHANGED later (which would be skipped because package is same)
+                    if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
+                        activePackageName == detectedPkg &&
+                        selectedAppsQueue.any { !it.isMinimized } &&
+                        !tiledAppsAutoMinimized) {
+                        val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
+                        val isGeminiDetect = detectedPkg == "com.google.android.googlequicksearchbox"
+                        val isManagedApp = activeNonMinimized.any { 
+                            val base = it.getBasePackage()
+                            base == detectedPkg || it.packageName == detectedPkg || (isGeminiDetect && base == "com.google.android.apps.bard")
+                        }
+                        val isSystemOverlay = detectedPkg.contains("systemui") ||
+                            detectedPkg.contains("launcher") ||
+                            detectedPkg.contains("cocktail") ||
+                            detectedPkg.contains("edge") ||
+                            detectedPkg == "android"
+                        
+                        if (!isSystemOverlay && !isManagedApp) {
+                            Log.d(TAG, "FULLSCREEN_DEBUG: TYPE_WINDOWS_CHANGED for same pkg $detectedPkg, checking bounds")
+                            // Check if this app covers the screen
+                            var coversScreen = false
+                            try {
+                                val dm = android.util.DisplayMetrics()
+                                windowManager.defaultDisplay.getRealMetrics(dm)
+                                val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
+                                val screenHeight = dm.heightPixels
+                                val boundsRect = android.graphics.Rect()
+                                for (window in windows) {
+                                    val windowType = window.type
+                                    val isRelevantType = windowType == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
+                                                         windowType == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM
+                                    if (!isRelevantType) continue
+                                    val node = window.root ?: continue
+                                    val windowPkg = node.packageName?.toString()
+                                    node.recycle()
+                                    if (windowPkg == detectedPkg) {
+                                        window.getBoundsInScreen(boundsRect)
+                                        val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
+                                        val startsAtTop = boundsRect.top < screenHeight * 5 / 100
+                                        Log.d(TAG, "FULLSCREEN_DEBUG: $detectedPkg bounds=$boundsRect coverage=${windowArea*100/screenArea}% startsAtTop=$startsAtTop")
+                                        if (windowArea >= screenArea * 85 / 100 && startsAtTop) {
+                                            coversScreen = true
+                                        }
+                                        break
+                                    }
+                                }
+                            } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_DEBUG: Error", e) }
+                            
+                            if (coversScreen) {
+                                tiledAppsAutoMinimized = true
+                                val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
+                                queueWindowManagerCommand(minimizeIntent)
+                                Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $detectedPkg (TYPE_WINDOWS_CHANGED)")
+                            }
+                        }
+                    }
+                    
                     // Update history if package changed
                     if (activePackageName != detectedPkg) {
                         secondLastValidPackageName = lastValidPackageName
@@ -1925,16 +1984,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // This prevents newly launched tiled apps from being immediately hidden.
                         val inExplicitLaunchCooldown = System.currentTimeMillis() - lastExplicitTiledLaunchAt < 2000
                         
+                        // [DEBUG] Log fullscreen detection state
+                        val hasNonMinimized = selectedAppsQueue.any { !it.isMinimized }
+                        Log.d(TAG, "FULLSCREEN_DEBUG: pkg=$detectedPkg isSystemOverlay=$isSystemOverlay isManagedApp=$isManagedApp isTiledApp=$isTiledApp hasNonMinimized=$hasNonMinimized tiledAppsAutoMinimized=$tiledAppsAutoMinimized inCooldown=$inExplicitLaunchCooldown eventType=${event.eventType}")
+                        
                         // [FULLSCREEN] Key insight: Only auto-minimize if the FOCUSED app is NOT managed.
                         // If the focused app IS managed (user opened a tiled app via hotkey/sidebar),
                         // we should tile together, not minimize the tiled app.
+                        // Allow both TYPE_WINDOW_STATE_CHANGED (32) and TYPE_WINDOWS_CHANGED (4194304)
+                        // Settings and some system apps only fire TYPE_WINDOWS_CHANGED
+                        val isFullscreenTriggerEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                                                       event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
                         if (!isSystemOverlay && !isManagedApp && !isTiledApp && selectedAppsQueue.any { !it.isMinimized } && !tiledAppsAutoMinimized &&
                             !inExplicitLaunchCooldown &&
-                            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                            isFullscreenTriggerEvent) {
                             // Full-screen app opened — minimize all tiled windows
                             // But first verify it actually covers the screen (skip small freeform/popup windows)
                             // [FIX] Also check that window starts at top of screen (y near 0).
                             // One UI popup/sidebar apps have offset from top and shouldn't trigger auto-minimize.
+                            // [FIX] System packages (Settings) may open as side panels on Samsung One UI - use lower threshold.
+                            val systemPanelPackages = setOf("com.android.settings", "com.samsung.android.settings", "com.android.systemui")
+                            val isSystemPanel = systemPanelPackages.contains(detectedPkg)
                             var coversScreen = false
                             try {
                                 val dm = android.util.DisplayMetrics()
@@ -1942,24 +2012,38 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
                                 val screenHeight = dm.heightPixels
                                 val boundsRect = android.graphics.Rect()
+                                var foundWindow = false
+                                Log.d(TAG, "FULLSCREEN_DEBUG: Checking windows for $detectedPkg, screen=${dm.widthPixels}x${dm.heightPixels} isSystemPanel=$isSystemPanel")
                                 for (window in windows) {
-                                    if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
-                                    val node = window.root ?: continue
-                                    val windowPkg = node.packageName?.toString()
-                                    node.recycle()
+                                    val windowType = window.type
+                                    // Check both TYPE_APPLICATION and TYPE_SYSTEM to catch Android system menus
+                                    val isRelevantType = windowType == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
+                                                         windowType == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM
+                                    val node = window.root
+                                    val windowPkg = node?.packageName?.toString()
+                                    node?.recycle()
+                                    Log.d(TAG, "FULLSCREEN_DEBUG: Window type=$windowType pkg=$windowPkg isRelevant=$isRelevantType")
+                                    if (!isRelevantType) continue
+                                    if (node == null) continue
                                     if (windowPkg == detectedPkg) {
+                                        foundWindow = true
                                         window.getBoundsInScreen(boundsRect)
                                         val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
-                                        // Must cover 95% of screen area AND start near top (within 5% of screen height)
+                                        val coveragePercent = (windowArea * 100 / screenArea).toInt()
+                                        // Must cover threshold% of screen area AND start near top (within 5% of screen height)
                                         // This filters out One UI popup/freeform windows which have offset from top
+                                        // System panels (Settings) use lower 50% threshold since Samsung opens them as side panels
+                                        val coverageThreshold = if (isSystemPanel) 50 else 95
                                         val startsAtTop = boundsRect.top < screenHeight * 5 / 100
-                                        if (windowArea >= screenArea * 95 / 100 && startsAtTop) {
+                                        Log.d(TAG, "FULLSCREEN_DEBUG: $detectedPkg bounds=$boundsRect coverage=$coveragePercent% threshold=$coverageThreshold% startsAtTop=$startsAtTop")
+                                        if (coveragePercent >= coverageThreshold && startsAtTop) {
                                             coversScreen = true
                                         }
                                         break
                                     }
                                 }
-                            } catch (e: Exception) { /* Don't auto-minimize on error - safer default */ }
+                                if (!foundWindow) Log.d(TAG, "FULLSCREEN_DEBUG: Window not found for $detectedPkg")
+                            } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_DEBUG: Error checking coversScreen", e) }
 
                             if (coversScreen) {
                             pendingFullscreenCheckRunnable?.let { uiHandler.removeCallbacks(it) }
@@ -1975,6 +2059,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             // Schedule a delayed re-check to catch apps like Android Settings that
                             // expand to fullscreen after the initial accessibility event fires.
                             val recheckPkg = detectedPkg
+                            val recheckIsSystemPanel = isSystemPanel
                             pendingFullscreenCheckRunnable?.let { uiHandler.removeCallbacks(it) }
                             val recheckRunnable = Runnable {
                                 if (tiledAppsAutoMinimized || selectedAppsQueue.none { !it.isMinimized }) return@Runnable
@@ -1985,22 +2070,29 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
                                     val screenHeight = dm.heightPixels
                                     val boundsRect = android.graphics.Rect()
-                                    for (window in windows) {
-                                        if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                                    // [FIX] Get fresh windows - the captured 'windows' reference is stale after 500ms
+                                    val freshWindows = this@FloatingLauncherService.windows
+                                    for (window in freshWindows) {
+                                        // Check both TYPE_APPLICATION and TYPE_SYSTEM to catch Android system menus
+                                        val isRelevantType = window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
+                                                             window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM
+                                        if (!isRelevantType) continue
                                         val node = window.root ?: continue
                                         val windowPkg = node.packageName?.toString()
                                         node.recycle()
                                         if (windowPkg == recheckPkg) {
                                             window.getBoundsInScreen(boundsRect)
                                             val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
+                                            val coveragePercent = (windowArea * 100 / screenArea).toInt()
+                                            val recheckThreshold = if (recheckIsSystemPanel) 50 else 85
                                             val startsAtTop = boundsRect.top < screenHeight * 5 / 100
-                                            if (windowArea >= screenArea * 85 / 100 && startsAtTop) {
+                                            if (coveragePercent >= recheckThreshold && startsAtTop) {
                                                 nowCoversScreen = true
                                             }
                                             break
                                         }
                                     }
-                                } catch (e: Exception) { /* ignore */ }
+                                } catch (e: Exception) { Log.e(TAG, "FULLSCREEN re-check failed", e) }
                                 if (nowCoversScreen) {
                                     tiledAppsAutoMinimized = true
                                     // Use MINIMIZE_ALL command for consistency and proper state tracking
