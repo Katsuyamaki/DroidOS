@@ -448,6 +448,7 @@ private var isSoftKeyboardSupport = false
     private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeRetileRunnable: Runnable? = null
+    private var imeShowRetileCompleted = false // Tracks if show-retile finished (for hide logic)
 
 
 
@@ -556,41 +557,53 @@ private var isSoftKeyboardSupport = false
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
                     val isTiled = intent?.getBooleanExtra("IS_TILED", true) ?: true
                     val forceRetile = intent?.getBooleanExtra("FORCE_RETILE", false) ?: false
-                    imeMarginOverrideActive = visible
-                    val newEffective = effectiveBottomMarginPercent()
-                    // [FIX] Always process for tiled apps, force retile for fullscreen apps, 
-                    // and honor FORCE_RETILE flag for manual hide to ensure apps resize
-                    val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || (!isTiled && visible) || forceRetile
-                    if (shouldRetile) {
-                        val now = System.currentTimeMillis()
-                        // Cancel any stale deferred retile
+
+                    // [FIX] Ignore isTiled=false broadcasts - they come from OverlayService
+                    if (!isTiled && !forceRetile) {
+                        return@onReceive
+                    }
+
+                    // [FIX] Debounced show: delay retile 350ms on VISIBLE=true.
+                    // If VISIBLE=false arrives before timer fires, cancel it.
+                    // Prevents focus-loss loops on Zillow/Google Voice.
+                    if (visible) {
                         pendingImeRetileRunnable?.let { uiHandler.removeCallbacks(it) }
-                        pendingImeRetileRunnable = null
-                        if (now >= imeRetileCooldownUntil) {
-                            lastAppliedEffectiveMargin = newEffective
-                            imeRetileCooldownUntil = now + 500
-                            setupVisualQueue()
-                            // [FIX] For fullscreen apps, use longer delay to let Android handle insets first
-                            if (!isTiled) {
-                                uiHandler.postDelayed({ retileExistingWindows() }, 100)
-                            } else {
+                        imeMarginOverrideActive = true
+                        val runnable = Runnable {
+                            val newEffective = effectiveBottomMarginPercent()
+                            if (newEffective != lastAppliedEffectiveMargin) {
+                                lastAppliedEffectiveMargin = newEffective
+                                imeRetileCooldownUntil = System.currentTimeMillis() + 500
+                                setupVisualQueue()
                                 retileExistingWindows()
                             }
-                        } else {
-                            Log.d(TAG, "IME_VISIBILITY ($visible) deferred (cooldown)")
-                            val runnable = Runnable {
-                                val eff = effectiveBottomMarginPercent()
-                                if (eff != lastAppliedEffectiveMargin) {
-                                    lastAppliedEffectiveMargin = eff
-                                    imeRetileCooldownUntil = System.currentTimeMillis() + 500
-                                    setupVisualQueue()
-                                    retileExistingWindows()
-                                }
-                                pendingImeRetileRunnable = null
-                            }
-                            pendingImeRetileRunnable = runnable
-                            uiHandler.postDelayed(runnable, imeRetileCooldownUntil - now + 50)
+                            pendingImeRetileRunnable = null
+                            imeShowRetileCompleted = true
                         }
+                        pendingImeRetileRunnable = runnable
+                        imeShowRetileCompleted = false
+                        uiHandler.postDelayed(runnable, 350)
+                    } else {
+                        // Keyboard hiding - cancel pending show-retile if exists
+                        if (pendingImeRetileRunnable != null) {
+                            uiHandler.removeCallbacks(pendingImeRetileRunnable!!)
+                            pendingImeRetileRunnable = null
+                            imeMarginOverrideActive = false
+                            return@onReceive
+                        }
+                        imeMarginOverrideActive = false
+                        val newEffective = effectiveBottomMarginPercent()
+                        val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
+                        if (shouldRetile && imeShowRetileCompleted) {
+                            val now = System.currentTimeMillis()
+                            if (now >= imeRetileCooldownUntil) {
+                                lastAppliedEffectiveMargin = newEffective
+                                imeRetileCooldownUntil = now + 500
+                                setupVisualQueue()
+                                retileExistingWindows()
+                            }
+                        }
+                        imeShowRetileCompleted = false
                     }
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING") {
