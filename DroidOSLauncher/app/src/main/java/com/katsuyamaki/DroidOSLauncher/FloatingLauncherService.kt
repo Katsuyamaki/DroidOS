@@ -229,6 +229,7 @@ private var isSoftKeyboardSupport = false
         CommandDef("HIDE", "Hide (Blank)", 1, "Replace slot with blank space"),
         CommandDef("SWAP", "Swap Slots", 2, "Swap app in Slot A with Slot B"),
         CommandDef("MOVE_TO", "Move To", 2, "Move app to slot # (shifts others)"),
+        CommandDef("OPEN_MOVE_TO", "Open & Move To", 0, "Open app and place in slot #"),
         CommandDef("MINIMIZE_ALL", "Minimize All", 0, "Minimize all tiled apps"),
         CommandDef("RESTORE_ALL", "Restore All", 0, "Restore minimized apps to slots")
     )
@@ -373,6 +374,11 @@ private var isSoftKeyboardSupport = false
     private var queueSelectedIndex = -1
     private var queueCommandPending: CommandDef? = null
     private var queueCommandSourceIndex = -1
+    
+    // OPEN_MOVE_TO State
+    private var isOpenMoveToMode = false
+    private var openMoveToApp: MainActivity.AppInfo? = null
+    private var showSlotNumbersInQueue = false
     
     // [FIX] Map to track manual minimize toggles to prevent auto-refresh overwriting them
     private val manualStateOverrides = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -1233,6 +1239,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
+                    // Block navigation away from queue during OPEN_MOVE_TO slot selection
+                    if (isOpenMoveToMode && openMoveToApp != null) {
+                        return
+                    }
+                    
                     currentFocusArea = FOCUS_SEARCH
                     queueSelectedIndex = -1
                     // [FIX] Release keyboard capture when leaving queue
@@ -1242,12 +1253,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
-                        debugStatusView?.visibility = View.GONE
+                        if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
                     }
                     return
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // Block navigation away from queue during OPEN_MOVE_TO slot selection
+                    if (isOpenMoveToMode && openMoveToApp != null) {
+                        return
+                    }
+                    
                     currentFocusArea = FOCUS_LIST
                     queueSelectedIndex = -1
                     // [FIX] Release keyboard capture when leaving queue
@@ -1257,7 +1273,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
-                        debugStatusView?.visibility = View.GONE
+                        if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                         val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
                         if (displayList.isNotEmpty()) {
                             if (selectedListIndex >= displayList.size) selectedListIndex = 0
@@ -1268,6 +1284,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return
                 }
                 KeyEvent.KEYCODE_ENTER -> {
+                    // OPEN_MOVE_TO: Enter confirms current selection
+                    if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenMoveTo(queueSelectedIndex + 1)
+                        return
+                    }
+                    
                     // [FIX] Complete pending 2-step command (like swap) if active
                     if (queueCommandPending != null) {
                         val intent = Intent()
@@ -1294,6 +1316,18 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return
                 }
                 KeyEvent.KEYCODE_ESCAPE -> {
+                    // OPEN_MOVE_TO: Cancel mode
+                    if (isOpenMoveToMode) {
+                        cancelOpenMoveToMode()
+                        safeToast("Open & Move To cancelled")
+                        // Release keyboard capture
+                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                        captureIntent.setPackage(PACKAGE_TRACKPAD)
+                        captureIntent.putExtra("CAPTURE", false)
+                        sendBroadcast(captureIntent)
+                        return
+                    }
+                    
                     currentFocusArea = FOCUS_SEARCH
                     queueSelectedIndex = -1
                     // [FIX] Release keyboard capture when leaving queue
@@ -1303,11 +1337,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     sendBroadcast(captureIntent)
                     uiHandler.post {
                         selectedRecycler?.adapter?.notifyDataSetChanged()
-                        debugStatusView?.visibility = View.GONE
+                        if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                     }
                     return
                 }
                 KeyEvent.KEYCODE_SPACE -> {
+                    // OPEN_MOVE_TO: Space confirms current selection
+                    if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenMoveTo(queueSelectedIndex + 1)
+                        return
+                    }
+                    
                     // [FIX] SPACE: Toggle Internal Focus (Green Underline) - same as hardware keyboard
                     if (queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
                         val app = selectedAppsQueue[queueSelectedIndex]
@@ -1328,6 +1368,26 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     return
                 }
                 else -> {
+                    // OPEN_MOVE_TO: Handle number keys for slot selection
+                    if (isOpenMoveToMode && openMoveToApp != null) {
+                        val num = when (keyCode) {
+                            KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> 1
+                            KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_NUMPAD_2 -> 2
+                            KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_NUMPAD_3 -> 3
+                            KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_NUMPAD_4 -> 4
+                            KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_NUMPAD_5 -> 5
+                            KeyEvent.KEYCODE_6, KeyEvent.KEYCODE_NUMPAD_6 -> 6
+                            KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_NUMPAD_7 -> 7
+                            KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> 8
+                            KeyEvent.KEYCODE_9, KeyEvent.KEYCODE_NUMPAD_9 -> 9
+                            else -> -1
+                        }
+                        if (num in 1..(selectedAppsQueue.size + 1)) {
+                            executeOpenMoveTo(num)
+                            return
+                        }
+                    }
+                    
                     for (cmd in AVAILABLE_COMMANDS) {
                         val bind = AppPreferences.getKeybind(this, cmd.id)
                         if (bind.second == keyCode && keyCode != KeyEvent.KEYCODE_SPACE) {
@@ -1510,6 +1570,32 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     private fun triggerCommand(cmd: CommandDef) {
         if (cmd.argCount == 0) {
+            // Special case: OPEN_MOVE_TO opens drawer in app selection mode
+            if (cmd.id == "OPEN_MOVE_TO") {
+                Log.d("DroidOS_Keys", "OPEN_MOVE_TO: Opening drawer for app selection")
+                isOpenMoveToMode = true
+                openMoveToApp = null
+                showSlotNumbersInQueue = false
+                
+                // Open drawer if not already open
+                if (!isExpanded) {
+                    toggleDrawer()
+                }
+                
+                // Switch to search mode and focus search bar
+                switchMode(MODE_SEARCH)
+                currentFocusArea = FOCUS_SEARCH
+                val et = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
+                et?.setText("")
+                et?.requestFocus()
+                
+                // Show prompt
+                debugStatusView?.visibility = View.VISIBLE
+                debugStatusView?.text = "Open & Move To: Select an app"
+                
+                return
+            }
+            
             // Immediate
             Log.d("DroidOS_Keys", "Executing Immediate Command: ${cmd.id}")
             val intent = Intent().putExtra("COMMAND", cmd.id)
@@ -2740,21 +2826,29 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
+                            // Block navigation during OPEN_MOVE_TO slot selection
+                            if (isOpenMoveToMode && openMoveToApp != null) {
+                                return@setOnKeyListener true
+                            }
                             // Exit queue back to search
                             currentFocusArea = FOCUS_SEARCH
                             queueSelectedIndex = -1
                             selectedRecycler.adapter?.notifyDataSetChanged()
-                            debugStatusView?.visibility = View.GONE
+                            if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            // Block navigation during OPEN_MOVE_TO slot selection
+                            if (isOpenMoveToMode && openMoveToApp != null) {
+                                return@setOnKeyListener true
+                            }
                             // Exit to list
                             dismissKeyboardAndRestore()
                             drawerView?.requestFocus()
                             currentFocusArea = FOCUS_LIST
                             queueSelectedIndex = -1
                             selectedRecycler.adapter?.notifyDataSetChanged()
-                            debugStatusView?.visibility = View.GONE
+                            if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                             if (displayList.isNotEmpty()) {
                                 if (selectedListIndex >= displayList.size) selectedListIndex = 0
                                 mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
@@ -2768,6 +2862,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_ESCAPE -> {
+                            // Cancel OPEN_MOVE_TO if active
+                            if (isOpenMoveToMode) {
+                                cancelOpenMoveToMode()
+                                safeToast("Open & Move To cancelled")
+                                return@setOnKeyListener true
+                            }
                             // Exit queue
                             currentFocusArea = FOCUS_SEARCH
                             queueSelectedIndex = -1
@@ -2833,6 +2933,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 
                 // GLOBAL: ESCAPE (Cancel/Close)
                 if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                    if (isOpenMoveToMode) {
+                        // Cancel OPEN_MOVE_TO mode
+                        cancelOpenMoveToMode()
+                        safeToast("Open & Move To cancelled")
+                        return@setOnKeyListener true
+                    }
                     if (queueCommandPending != null) {
                         // Cancel pending command
                         queueCommandPending = null
@@ -2845,6 +2951,26 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         toggleDrawer()
                     }
                     return@setOnKeyListener true
+                }
+                
+                // OPEN_MOVE_TO: Handle number keys for slot selection
+                if (isOpenMoveToMode && openMoveToApp != null) {
+                    val num = when (keyCode) {
+                        KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> 1
+                        KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_NUMPAD_2 -> 2
+                        KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_NUMPAD_3 -> 3
+                        KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_NUMPAD_4 -> 4
+                        KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_NUMPAD_5 -> 5
+                        KeyEvent.KEYCODE_6, KeyEvent.KEYCODE_NUMPAD_6 -> 6
+                        KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_NUMPAD_7 -> 7
+                        KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> 8
+                        KeyEvent.KEYCODE_9, KeyEvent.KEYCODE_NUMPAD_9 -> 9
+                        else -> -1
+                    }
+                    if (num in 1..(selectedAppsQueue.size + 1)) {
+                        executeOpenMoveTo(num)
+                        return@setOnKeyListener true
+                    }
                 }
 
                 // GLOBAL: TAB (Switch Modes)
@@ -2910,22 +3036,30 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
+                            // Block navigation during OPEN_MOVE_TO slot selection
+                            if (isOpenMoveToMode && openMoveToApp != null) {
+                                return@setOnKeyListener true
+                            }
                             // Exit to Search
                             currentFocusArea = FOCUS_SEARCH
                             queueSelectedIndex = -1
                             selectedRecycler.adapter?.notifyDataSetChanged()
-                            debugStatusView?.visibility = View.GONE
+                            if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                             searchBar.requestFocus()
                             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                             imm.showSoftInput(searchBar, InputMethodManager.SHOW_IMPLICIT)
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            // Block navigation during OPEN_MOVE_TO slot selection
+                            if (isOpenMoveToMode && openMoveToApp != null) {
+                                return@setOnKeyListener true
+                            }
                             // Exit to List
                             currentFocusArea = FOCUS_LIST
                             queueSelectedIndex = -1
                             selectedRecycler.adapter?.notifyDataSetChanged()
-                            debugStatusView?.visibility = View.GONE
+                            if (!isOpenMoveToMode) debugStatusView?.visibility = View.GONE
                             if (displayList.isNotEmpty()) {
                                 if (selectedListIndex >= displayList.size) selectedListIndex = 0
                                 mainRecycler.adapter?.notifyItemChanged(selectedListIndex)
@@ -2934,6 +3068,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_ENTER -> {
+                            // OPEN_MOVE_TO: Enter confirms current selection
+                            if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                                executeOpenMoveTo(queueSelectedIndex + 1)
+                                return@setOnKeyListener true
+                            }
+                            
                             if (queueCommandPending != null) {
                                 // Complete 2-Step Command
                                 // [FIX] Use command queue for sequential execution
@@ -2957,6 +3097,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             return@setOnKeyListener true
                         }
                         KeyEvent.KEYCODE_SPACE -> {
+                            // OPEN_MOVE_TO: Space confirms current selection
+                            if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                                executeOpenMoveTo(queueSelectedIndex + 1)
+                                return@setOnKeyListener true
+                            }
+                            
                             if (queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
                                 // [FIX] DEFAULT SPACE: Toggle Internal Focus (Green Underline)
                                 val app = selectedAppsQueue[queueSelectedIndex]
@@ -3262,6 +3408,85 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             pendingArg1 = -1
             hideVisualQueue()
         }
+    }
+    
+    private fun cancelOpenMoveToMode() {
+        isOpenMoveToMode = false
+        openMoveToApp = null
+        showSlotNumbersInQueue = false
+        currentFocusArea = FOCUS_SEARCH
+        queueSelectedIndex = -1
+        debugStatusView?.visibility = View.GONE
+        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+        
+        // Release keyboard capture
+        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        captureIntent.setPackage(PACKAGE_TRACKPAD)
+        captureIntent.putExtra("CAPTURE", false)
+        sendBroadcast(captureIntent)
+        
+        // Return focus to search
+        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
+    }
+    
+    private fun executeOpenMoveTo(targetSlot: Int) {
+        val app = openMoveToApp ?: return
+        
+        // Reset mode state
+        isOpenMoveToMode = false
+        showSlotNumbersInQueue = false
+        val savedApp = app
+        openMoveToApp = null
+        
+        // Release keyboard capture
+        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        captureIntent.setPackage(PACKAGE_TRACKPAD)
+        captureIntent.putExtra("CAPTURE", false)
+        sendBroadcast(captureIntent)
+        
+        // Check if app is already in queue
+        val existingIdx = selectedAppsQueue.indexOfFirst { 
+            it.packageName == savedApp.packageName && it.className == savedApp.className 
+        }
+        
+        if (existingIdx != -1) {
+            // App already in queue - just do MOVE_TO
+            val intent = Intent()
+                .putExtra("COMMAND", "MOVE_TO")
+                .putExtra("INDEX_A", existingIdx + 1)
+                .putExtra("INDEX_B", targetSlot)
+            handleWindowManagerCommand(intent)
+        } else {
+            // App not in queue - add it first, then move
+            savedApp.isMinimized = false
+            selectedAppsQueue.add(savedApp)
+            sortAppQueue()
+            
+            // Find where it landed after sort
+            val newIdx = selectedAppsQueue.indexOfFirst { 
+                it.packageName == savedApp.packageName && it.className == savedApp.className 
+            }
+            
+            if (newIdx != -1 && newIdx + 1 != targetSlot) {
+                // Move to target slot
+                val intent = Intent()
+                    .putExtra("COMMAND", "MOVE_TO")
+                    .putExtra("INDEX_A", newIdx + 1)
+                    .putExtra("INDEX_B", targetSlot)
+                handleWindowManagerCommand(intent)
+            } else {
+                // Already in correct position or couldn't find - just retile
+                refreshQueueAndLayout("Opened ${savedApp.label}", forceRetile = true, retileDelayMs = 300L)
+            }
+        }
+        
+        // Close drawer
+        debugStatusView?.visibility = View.GONE
+        if (isExpanded) {
+            toggleDrawer()
+        }
+        
+        safeToast("Opened ${savedApp.label} in slot $targetSlot")
     }
     
     // [FIX] Queue commands for sequential execution to avoid race conditions
@@ -3638,7 +3863,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             queueSelectedIndex = -1
             queueCommandPending = null
             queueCommandSourceIndex = -1
-            debugStatusView?.visibility = View.GONE
+            
+            // Reset OPEN_MOVE_TO state (unless we're opening for that purpose)
+            if (!isOpenMoveToMode) {
+                openMoveToApp = null
+                showSlotNumbersInQueue = false
+                debugStatusView?.visibility = View.GONE
+            }
             
             switchMode(MODE_SEARCH)
             
@@ -4075,6 +4306,40 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun addToSelection(app: MainActivity.AppInfo) {
         dismissKeyboardAndRestore()
         val et = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar)
+        
+        // OPEN_MOVE_TO MODE: Intercept app selection
+        if (isOpenMoveToMode && openMoveToApp == null) {
+            if (app.packageName == PACKAGE_BLANK) {
+                safeToast("Cannot open a blank spacer")
+                return
+            }
+            
+            // Store the selected app
+            openMoveToApp = app
+            
+            // Switch focus to queue for slot selection
+            currentFocusArea = FOCUS_QUEUE
+            queueSelectedIndex = 0
+            showSlotNumbersInQueue = true
+            
+            // Tell keyboard to capture all keys for slot selection
+            val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+            captureIntent.setPackage(PACKAGE_TRACKPAD)
+            captureIntent.putExtra("CAPTURE", true)
+            sendBroadcast(captureIntent)
+            
+            // Update UI
+            debugStatusView?.visibility = View.VISIBLE
+            debugStatusView?.text = "Open & Move To: Select slot # (1-${selectedAppsQueue.size + 1})"
+            updateSelectedAppsDock()
+            drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+            
+            // Request focus on queue area
+            val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
+            selectedRecycler?.requestFocus()
+            
+            return
+        }
         
         // Handle blank spacer
         if (app.packageName == PACKAGE_BLANK) { 
@@ -5614,6 +5879,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             val icon: ImageView = v.findViewById(R.id.selected_app_icon)
             val underline: View = v.findViewById(R.id.focus_underline)
             val frame: View = itemView // Use root frame for border
+            val slotBadge: TextView = v.findViewById(R.id.slot_number_badge)
         }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder { return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_selected_app, parent, false)) }
 
@@ -5659,6 +5925,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 holder.frame.background = null
             }
             // =====================================
+            
+            // Show slot number badge when in OPEN_MOVE_TO slot selection mode
+            if (showSlotNumbersInQueue) {
+                holder.slotBadge.visibility = View.VISIBLE
+                holder.slotBadge.text = (position + 1).toString()
+            } else {
+                holder.slotBadge.visibility = View.GONE
+            }
 
             holder.icon.clearColorFilter()
             
@@ -5743,6 +6017,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         Log.d(TAG, "WM Command: $cmd RawIdx: $rawIndex (Internal: $index)")
 
         when (cmd) {
+            "OPEN_MOVE_TO" -> {
+                // Trigger the OPEN_MOVE_TO flow via triggerCommand
+                val cmdDef = AVAILABLE_COMMANDS.find { it.id == "OPEN_MOVE_TO" }
+                if (cmdDef != null) {
+                    triggerCommand(cmdDef)
+                }
+            }
             "SWAP" -> {
                 // Convert both A and B from 1-based
                 val rawA = intent.getIntExtra("INDEX_A", -1)
@@ -6754,6 +7035,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
             "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
             "MOVE_TO" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MOVE_TO --ei INDEX_A 1 --ei INDEX_B 2"
+            "OPEN_MOVE_TO" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND OPEN_MOVE_TO"
             "MINIMIZE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE_ALL"
             "RESTORE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND RESTORE_ALL"
             else -> null

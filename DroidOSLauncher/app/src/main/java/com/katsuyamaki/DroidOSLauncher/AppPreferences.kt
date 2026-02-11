@@ -561,6 +561,7 @@ object AppPreferences {
             "MINIMIZE_ALL" -> Pair(2, 42)      // Alt + N
             "RESTORE_ALL" -> Pair(2, 41)       // Alt + M
             "MOVE_TO" -> Pair(2, 44)           // Alt + P
+            "OPEN_MOVE_TO" -> Pair(2, 54)      // Alt + Z
             else -> Pair(0, 0)
         }
     }

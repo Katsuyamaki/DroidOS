@@ -13,6 +13,19 @@
         android:padding="2dp"
         android:clipToOutline="true"/>
 
+    <!-- Slot Number Badge (for OPEN_MOVE_TO mode) -->
+    <TextView
+        android:id="@+id/slot_number_badge"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_gravity="top|start"
+        android:background="#CC000000"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:visibility="gone"/>
+
     <!-- Focus Indicator (Underline) -->
     <View
         android:id="@+id/focus_underline"
