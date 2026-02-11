@@ -546,7 +546,7 @@ object AppPreferences {
         }
 
         // DEFAULTS (Alt = 2)
-        // O=43, H=36, L=40, I=37, J=38, K=39, X=52, Space=62, F=34, G=35, N=42, M=41
+        // O=43, H=36, L=40, I=37, J=38, K=39, X=52, Space=62, F=34, G=35, N=42, M=41, P=44
         return when (cmdId) {
             "SWAP" -> Pair(2, 43)              // Alt + O
             "SWAP_ACTIVE_LEFT" -> Pair(2, 36)  // Alt + H
@@ -560,6 +560,7 @@ object AppPreferences {
             "FOCUS_LAST" -> Pair(2, 35)        // Alt + G
             "MINIMIZE_ALL" -> Pair(2, 42)      // Alt + N
             "RESTORE_ALL" -> Pair(2, 41)       // Alt + M
+            "MOVE_TO" -> Pair(2, 44)           // Alt + P
             else -> Pair(0, 0)
         }
     }

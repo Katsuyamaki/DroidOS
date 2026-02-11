@@ -228,6 +228,7 @@ private var isSoftKeyboardSupport = false
         CommandDef("UNMINIMIZE", "Restore", 1, "Restore app in slot"),
         CommandDef("HIDE", "Hide (Blank)", 1, "Replace slot with blank space"),
         CommandDef("SWAP", "Swap Slots", 2, "Swap app in Slot A with Slot B"),
+        CommandDef("MOVE_TO", "Move To", 2, "Move app to slot # (shifts others)"),
         CommandDef("MINIMIZE_ALL", "Minimize All", 0, "Minimize all tiled apps"),
         CommandDef("RESTORE_ALL", "Restore All", 0, "Restore minimized apps to slots")
     )
@@ -1543,7 +1544,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             } else {
                 // Need Second Arg - reset cursor for second selection
                 vqCursorIndex = slotIndex
-                showVisualQueue("${cmd.label}: Swap with?", slotIndex)
+                val secondPrompt = if (cmd.id == "MOVE_TO") "${cmd.label}: Move to slot?" else "${cmd.label}: Swap with?"
+                showVisualQueue(secondPrompt, slotIndex)
             }
         } else {
             // Second Arg Received (only supported for 2-arg commands like SWAP)
@@ -5864,6 +5866,138 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }
             }
             // =====================================================================
+            // MOVE_TO: Move app from slot A to slot B, shifting others
+            // Example: 4 active apps + 1 minimized. MOVE_TO minimized app to slot 3:
+            // - Apps in slots 3,4 shift to 4,5 (slot 5 becomes minimized)
+            // - Previously minimized app is restored and placed in slot 3
+            // =====================================================================
+            "MOVE_TO" -> {
+                val rawA = intent.getIntExtra("INDEX_A", -1)
+                val rawB = intent.getIntExtra("INDEX_B", -1)
+                val srcIdx = if (rawA > 0) rawA - 1 else -1
+                val dstIdx = if (rawB > 0) rawB - 1 else -1
+                
+                if (srcIdx == dstIdx) {
+                    safeToast("Source and destination are the same")
+                    return
+                }
+                
+                if (srcIdx in selectedAppsQueue.indices && dstIdx in selectedAppsQueue.indices) {
+                    val movingApp = selectedAppsQueue[srcIdx]
+                    val movingIsBlank = movingApp.packageName == PACKAGE_BLANK
+                    
+                    // Get active slot count from current layout
+                    val rects = getLayoutRects()
+                    val activeSlotCount = rects.size
+                    
+                    // Track if moving app was minimized (to restore it if moving to active slot)
+                    val wasMinimized = movingApp.isMinimized
+                    
+                    // Track apps that need window state changes
+                    val appsToMinimize = mutableListOf<MainActivity.AppInfo>()
+                    val appsToRestore = mutableListOf<MainActivity.AppInfo>()
+                    
+                    // Remove app from source position
+                    selectedAppsQueue.removeAt(srcIdx)
+                    
+                    // Adjust destination index if source was before it
+                    val adjustedDstIdx = if (srcIdx < dstIdx) dstIdx - 1 else dstIdx
+                    
+                    // Insert at destination
+                    selectedAppsQueue.add(adjustedDstIdx, movingApp)
+                    
+                    // Now update minimized states based on new positions
+                    for (i in selectedAppsQueue.indices) {
+                        val app = selectedAppsQueue[i]
+                        if (app.packageName == PACKAGE_BLANK) continue
+                        
+                        val isInActiveSlot = i < activeSlotCount
+                        val wasActive = !app.isMinimized
+                        
+                        if (isInActiveSlot && app.isMinimized) {
+                            // App moved into active slot - needs to be restored
+                            app.isMinimized = false
+                            appsToRestore.add(app)
+                        } else if (!isInActiveSlot && !app.isMinimized) {
+                            // App pushed out of active slots - needs to be minimized
+                            app.isMinimized = true
+                            appsToMinimize.add(app)
+                        }
+                    }
+                    
+                    // Execute minimize operations
+                    for (app in appsToMinimize) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        // Clear focus if minimizing the active app
+                        val isGemini = basePkg == "com.google.android.apps.bard"
+                        val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                        if (activePackageName == basePkg || 
+                            activePackageName == app.packageName ||
+                            (isGemini && activeIsGoogle)) {
+                            activePackageName = null
+                        }
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                        
+                        Thread {
+                            try {
+                                if (currentDisplayId >= 2) {
+                                    val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                    if (visibleCount <= 1) {
+                                        showWallpaper()
+                                    } else {
+                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                    }
+                                } else {
+                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                }
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+                    
+                    // Execute restore operations
+                    for (app in appsToRestore) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps.remove(basePkg)
+                        
+                        Thread {
+                            try {
+                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                val cmd = if (component != null) {
+                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                } else {
+                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                }
+                                shellService?.runCommand(cmd)
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+                    
+                    // Remove inactive blanks (same cleanup as SWAP)
+                    val indicesToRemove = mutableListOf<Int>()
+                    for (i in selectedAppsQueue.indices) {
+                        val app = selectedAppsQueue[i]
+                        if (app.packageName == PACKAGE_BLANK && app.isMinimized) {
+                            indicesToRemove.add(i)
+                        }
+                    }
+                    for (i in indicesToRemove.sortedDescending()) {
+                        selectedAppsQueue.removeAt(i)
+                    }
+                    
+                    val appName = if (movingIsBlank) "Blank" else movingApp.getBasePackage().substringAfterLast('.')
+                    refreshQueueAndLayout("Moved $appName to slot $rawB", forceRetile = true, retileDelayMs = 300L)
+                }
+            }
+            // =====================================================================
             // ACTIVE WINDOW COMMANDS (PC Style)
             // Finds the currently focused app in the queue and moves it.
             // =====================================================================
@@ -6619,6 +6753,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             "UNMINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND UNMINIMIZE --ei INDEX 1"
             "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
             "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
+            "MOVE_TO" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MOVE_TO --ei INDEX_A 1 --ei INDEX_B 2"
             "MINIMIZE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE_ALL"
             "RESTORE_ALL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND RESTORE_ALL"
             else -> null
