@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.res.Configuration
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -934,6 +935,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =========================
     private var uiScreenWidth = 1080
     private var uiScreenHeight = 2640
+    private var lastKnownScreenW = 0
+    private var lastKnownScreenH = 0
     private var targetScreenWidth = 1920
     private var targetScreenHeight = 1080
     private var cursorX = 300f
@@ -2202,6 +2205,23 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     override fun onInterrupt() {}
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val display = displayManager?.getDisplay(currentDisplayId)
+        if (display != null) {
+            val metrics = android.util.DisplayMetrics()
+            display.getRealMetrics(metrics)
+            val w = metrics.widthPixels; val h = metrics.heightPixels
+            if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
+                (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                lastKnownScreenW = w; lastKnownScreenH = h
+                handler.post { setupUI(currentDisplayId) }
+            } else {
+                lastKnownScreenW = w; lastKnownScreenH = h
+            }
+        }
+    }
+
     // Use dispatchKeyEvent to catch BOTH Down and Up events in one place
     override fun onKeyEvent(event: KeyEvent): Boolean {
         val isVolKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
@@ -2457,8 +2477,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             prefs.prefBubbleX = (uiScreenWidth / 2) + 80
             prefs.prefBubbleY = uiScreenHeight / 2
         }
-        bubbleParams.x = prefs.prefBubbleX
-        bubbleParams.y = prefs.prefBubbleY
+        bubbleParams.x = prefs.prefBubbleX.coerceIn(0, (uiScreenWidth - 60).coerceAtLeast(0))
+        bubbleParams.y = prefs.prefBubbleY.coerceIn(0, (uiScreenHeight - 60).coerceAtLeast(0))
         
         var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
         var isLongPressHandled = false
@@ -3391,19 +3411,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     
     fun resetBubblePosition() { bubbleParams.x = (uiScreenWidth / 2) + 80; bubbleParams.y = uiScreenHeight / 2; try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}; prefs.prefBubbleX = bubbleParams.x; prefs.prefBubbleY = bubbleParams.y; savePrefs(); showToast("Bubble Reset") }
 
-    private fun clampBubbleToScreen() {
-        if (bubbleView == null || bubbleView?.isAttachedToWindow != true) return
-        try {
-            updateUiMetrics()
-            val bw = bubbleParams.width.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
-            val bh = bubbleParams.height.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
-            bubbleParams.x = bubbleParams.x.coerceIn(0, (uiScreenWidth - bw).coerceAtLeast(0))
-            bubbleParams.y = bubbleParams.y.coerceIn(0, (uiScreenHeight - bh).coerceAtLeast(0))
-            windowManager?.updateViewLayout(bubbleView, bubbleParams)
-            prefs.prefBubbleX = bubbleParams.x
-            prefs.prefBubbleY = bubbleParams.y
-        } catch (e: Exception) { Log.e(TAG, "clampBubbleToScreen failed", e) }
-    }
+
 
     private fun loadPrefs() { 
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
@@ -5837,9 +5845,21 @@ if (isResize) {
         // END BLOCK: VIRTUAL DISPLAY PROTECTION
         // =================================================================================
 
-        // ORIENTATION CHANGE: Clamp bubble when current display dimensions change
+        // ORIENTATION CHANGE: Full UI rebuild when screen dimensions change
         if (displayId == currentDisplayId) {
-            clampBubbleToScreen()
+            val display = displayManager?.getDisplay(currentDisplayId)
+            if (display != null) {
+                val metrics = android.util.DisplayMetrics()
+                display.getRealMetrics(metrics)
+                val w = metrics.widthPixels; val h = metrics.heightPixels
+                if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
+                    (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                    lastKnownScreenW = w; lastKnownScreenH = h
+                    handler.post { setupUI(currentDisplayId) }
+                } else {
+                    lastKnownScreenW = w; lastKnownScreenH = h
+                }
+            }
         }
 
         // We only monitor the Main Screen (0) state changes to determine "Open/Closed"

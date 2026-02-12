@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.app.ActivityManager
 import android.app.Service
 import android.view.accessibility.AccessibilityEvent
+import android.content.res.Configuration
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -378,9 +379,19 @@ private var isSoftKeyboardSupport = false
             // END BLOCK: VIRTUAL DISPLAY PROTECTION
             // =================================================================================
 
-            // ORIENTATION CHANGE: Clamp bubble when current display dimensions change
+            // ORIENTATION CHANGE: Full UI rebuild when screen dimensions change
             if (displayId == currentDisplayId) {
-                clampBubbleToScreen()
+                val display = displayManager?.getDisplay(currentDisplayId) ?: return
+                val metrics = DisplayMetrics()
+                display.getRealMetrics(metrics)
+                val w = metrics.widthPixels; val h = metrics.heightPixels
+                if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
+                    (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                    lastKnownScreenW = w; lastKnownScreenH = h
+                    uiHandler.post { refreshUIForOrientationChange() }
+                } else {
+                    lastKnownScreenW = w; lastKnownScreenH = h
+                }
             }
 
             // Logic to detect Fold/Unfold events monitoring Display 0 (Main)
@@ -426,6 +437,9 @@ private var isSoftKeyboardSupport = false
     // END BLOCK: DISPLAY LISTENER
     // =================================================================================
 
+
+    private var lastKnownScreenW = 0
+    private var lastKnownScreenH = 0
 
     private var bubbleView: View? = null
     private var drawerView: View? = null
@@ -2294,6 +2308,21 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     override fun onInterrupt() {}
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val display = displayManager?.getDisplay(currentDisplayId) ?: return
+        val metrics = DisplayMetrics()
+        display.getRealMetrics(metrics)
+        val w = metrics.widthPixels; val h = metrics.heightPixels
+        if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
+            (w != lastKnownScreenW || h != lastKnownScreenH)) {
+            lastKnownScreenW = w; lastKnownScreenH = h
+            uiHandler.post { refreshUIForOrientationChange() }
+        } else {
+            lastKnownScreenW = w; lastKnownScreenH = h
+        }
+    }
+
     // AccessibilityService entry point - called when user enables service in Settings
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -2694,20 +2723,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { Log.e(TAG, "Bind Shizuku Failed", e) } }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
 
-    private fun clampBubbleToScreen() {
-        if (bubbleView == null || !bubbleView!!.isAttachedToWindow) return
+    private fun refreshUIForOrientationChange() {
         try {
-            val display = displayManager?.getDisplay(currentDisplayId) ?: return
-            val metrics = DisplayMetrics()
-            display.getRealMetrics(metrics)
-            val screenW = metrics.widthPixels
-            val screenH = metrics.heightPixels
-            val bw = bubbleParams.width.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
-            val bh = bubbleParams.height.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
-            bubbleParams.x = bubbleParams.x.coerceIn(0, (screenW - bw).coerceAtLeast(0))
-            bubbleParams.y = bubbleParams.y.coerceIn(0, (screenH - bh).coerceAtLeast(0))
-            windowManager.updateViewLayout(bubbleView, bubbleParams)
-        } catch (e: Exception) { Log.e(TAG, "clampBubbleToScreen failed", e) }
+            val wm = attachedWindowManager ?: windowManager
+            if (bubbleView != null) { try { wm.removeView(bubbleView) } catch(e: Exception) {} }
+            if (drawerView != null && isExpanded) { try { wm.removeView(drawerView) } catch(e: Exception) {} }
+            setupDisplayContext(currentDisplayId)
+            setupBubble()
+            setupDrawer()
+            updateBubbleIcon()
+            isExpanded = false
+            // Retile all tiled windows to fit the new screen dimensions
+            requestHeadlessRetile("orientation-change", 400L)
+        } catch (e: Exception) { Log.e(TAG, "refreshUIForOrientationChange failed", e) }
     }
 
     private fun setupBubble() {
