@@ -2968,7 +2968,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     fun getProfileKey(): String {
         val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
-        return "P_${uiScreenWidth}_${uiScreenHeight}_$mode"
+        val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        return "P_${uiScreenWidth}_${uiScreenHeight}_$mode$orientSuffix"
     }
 
     fun getSavedProfileList(): List<String> {
@@ -2977,11 +2978,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val allKeys = p.all.keys
         val profiles = java.util.HashSet<String>()
         
-        // Regex matches: X_P_{width}_{height}_{suffix}
+        // Regex matches: X_P_{width}_{height}_{mode}_{orient}
         // Group 1: Width
         // Group 2: Height
-        // Group 3: Optional Suffix (MIRROR or STD)
-        val regex = Regex("X_P_(\\d+)_(\\d+)(?:_([A-Z]+))?")
+        // Group 3: Mode suffix (STD or MIRROR)
+        // Group 4: Optional orientation suffix (_L or _P)
+        val regex = Regex("X_P_(\\d+)_(\\d+)(?:_(STD|MIRROR))?(?:_([LP]))?")
         
         for (key in allKeys) { 
             // We only care about X position keys to identify a profile exists
@@ -2991,7 +2993,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             if (match != null) {
                 val w = match.groupValues[1]
                 val h = match.groupValues[2]
-                val suffix = match.groupValues.getOrNull(3) // Can be null, STD, or MIRROR
+                val suffix = match.groupValues.getOrNull(3) // STD or MIRROR
+                val orient = match.groupValues.getOrNull(4) // L or P
                 
                 var displayLabel = "$w x $h"
                 
@@ -2999,6 +3002,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (suffix == "MIRROR") {
                     displayLabel += " VM"
                 }
+                // Append orientation label
+                if (orient == "L") displayLabel += " Land"
+                else if (orient == "P") displayLabel += " Port"
                 
                 profiles.add(displayLabel)
             }
@@ -4343,6 +4349,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // 2. Load Settings String
         val settings = p.getString("SETTINGS_$key", null)
         var keyboardUpdated = false
+
+        // If no saved profile for this orientation, apply landscape defaults
+        if (settings == null && uiScreenWidth > uiScreenHeight) {
+            val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            dockPrefs.edit()
+                .putBoolean("dock_mode_d$currentDisplayId", true)
+                .putBoolean("dock_mode", true)
+                .putBoolean("auto_resize", true)
+                .apply()
+        }
 
         if (settings != null) {
             val parts = settings.split(";")

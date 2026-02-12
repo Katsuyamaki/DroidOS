@@ -5619,18 +5619,18 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         
         when (currentProfileSaveMode) {
             0 -> {
-                // Layout + Apps: Save everything including margins
+                // Layout + Apps: Save everything including margins + orientation
                 val pkgs = selectedAppsQueue.map { it.packageName }
-                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs, 0, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME)
+                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs, 0, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
             }
             1 -> {
-                // Layout Only: Save settings including margins, no apps
-                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, emptyList(), 1, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME)
+                // Layout Only: Save settings including margins + orientation, no apps
+                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, emptyList(), 1, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
             }
             2 -> {
                 // App Queue Only: Save apps, use -1 for layout settings to indicate "don't change"
                 val pkgs = selectedAppsQueue.map { it.packageName }
-                AppPreferences.saveProfile(this, name, -1, -1, -1, pkgs, 2, -1, -1, false)
+                AppPreferences.saveProfile(this, name, -1, -1, -1, pkgs, 2, -1, -1, false, 0)
             }
         }
         
@@ -5661,12 +5661,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             } else if (parts.size > 4) {
                 parts[4].split(",").filter { it.isNotEmpty() }
             } else emptyList()
+            // Parse orientation mode (index 8 in newest format: 9+ parts)
+            val orientMode = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
             
             when (profileType) {
-                0 -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar)
-                1 -> loadProfileLayoutOnly(name, layoutType, resIndex, dpiSetting, topMar, botMar, autoMar)
+                0 -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
+                1 -> loadProfileLayoutOnly(name, layoutType, resIndex, dpiSetting, topMar, botMar, autoMar, orientMode)
                 2 -> loadProfileQueueOnly(name, pkgList)
-                else -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar)
+                else -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
             }
         } catch (e: Exception) { 
             // Fallback for old profile format (no type prefix)
@@ -5684,11 +5686,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     
     // Profile Type 0: Layout + Apps - Opens apps from profile, minimizes others
-    private fun loadProfileLayoutAndApps(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, pkgList: List<String>, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false) {
+    private fun loadProfileLayoutAndApps(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, pkgList: List<String>, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
         // Apply layout settings
         selectedLayoutType = layoutType
         selectedResolutionIndex = resIndex
         currentDpiSetting = dpiSetting
+        
+        // Apply orientation from profile
+        currentOrientationMode = orientMode
+        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
+        applyOrientation()
         
         // Apply margin settings
         topMarginPercent = topMar
@@ -5764,11 +5771,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     
     // Profile Type 1: Layout Only - Applies layout settings, keeps current apps
-    private fun loadProfileLayoutOnly(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false) {
+    private fun loadProfileLayoutOnly(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
         // Apply layout settings
         selectedLayoutType = layoutType
         selectedResolutionIndex = resIndex
         currentDpiSetting = dpiSetting
+        
+        // Apply orientation from profile
+        currentOrientationMode = orientMode
+        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
+        applyOrientation()
         
         // Apply margin settings
         topMarginPercent = topMar
@@ -6408,8 +6420,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             val autoMar: Boolean
                             val pkgs: List<String>
                             
+                            var orient = 0
                             if (parts.size >= 8) {
-                                // New format: type|layout|res|dpi|topMargin|bottomMargin|autoAdjust|apps
+                                // New format: type|layout|res|dpi|topMargin|bottomMargin|autoAdjust|apps[|orient]
                                 profileType = parts[0].toInt()
                                 lay = parts[1].toInt()
                                 res = parts[2].toInt()
@@ -6418,6 +6431,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 botMar = parts[5].toInt()
                                 autoMar = parts[6] == "1"
                                 pkgs = parts[7].split(",").filter { it.isNotEmpty() }
+                                orient = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
                             } else if (parts.size >= 5) {
                                 // Intermediate format: type|layout|res|dpi|apps
                                 profileType = parts[0].toInt()
@@ -6439,7 +6453,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 autoMar = false
                                 pkgs = parts[3].split(",").filter { it.isNotEmpty() }
                             }
-                            displayList.add(ProfileOption(pName, false, lay, res, d, pkgs, profileType, topMar, botMar, autoMar)) 
+                            displayList.add(ProfileOption(pName, false, lay, res, d, pkgs, profileType, topMar, botMar, autoMar, orient)) 
                         } catch(e: Exception) {} 
                     } 
                 } 
@@ -6610,7 +6624,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     data class ResolutionOption(val name: String, val command: String, val index: Int)
     data class DpiOption(val currentDpi: Int)
     // profileType: 0 = Layout + Apps, 1 = Layout Only, 2 = App Queue Only
-    data class ProfileOption(val name: String, val isCurrent: Boolean, val layout: Int, val resIndex: Int, val dpi: Int, val apps: List<String>, val profileType: Int = 0, val topMargin: Int = 0, val bottomMargin: Int = 0, val autoAdjustMargin: Boolean = false)
+    data class ProfileOption(val name: String, val isCurrent: Boolean, val layout: Int, val resIndex: Int, val dpi: Int, val apps: List<String>, val profileType: Int = 0, val topMargin: Int = 0, val bottomMargin: Int = 0, val autoAdjustMargin: Boolean = false, val orientMode: Int = 0)
     data class FontSizeOption(val currentSize: Float)
     data class HeightOption(val currentPercent: Int)
     data class WidthOption(val currentPercent: Int)
