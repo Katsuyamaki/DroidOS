@@ -720,6 +720,7 @@ private var isSoftKeyboardSupport = false
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
+                Log.d("MarginSlider", "SET_MARGIN_BOTTOM received: percent=$percent (current bottomMarginPercent=$bottomMarginPercent)")
                 bottomMarginPercent = percent
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 setupVisualQueue() // Recalc HUD pos
@@ -6411,6 +6412,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
                 displayList.add(WidthOption(currentDrawerWidthPercent))
+                Log.d("MarginSlider", "switchMode(MODE_SETTINGS): Adding MarginOptions with top=$topMarginPercent bottom=$bottomMarginPercent")
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
                 // [FIX] Improved DroidOS IME detection for Flip 7 cover screen compatibility.
@@ -8291,21 +8293,43 @@ else -> AppHolder(View(parent.context)) } }
                 holder.btnPlus.setOnClickListener { changeDrawerWidth(5) } 
             }
             else if (holder is MarginHolder && item is MarginOption) {
+                val listItem = displayList.getOrNull(position) as? MarginOption
+                Log.d("MarginSlider", "onBind: type=${item.type} item.currentPercent=${item.currentPercent} listItem.currentPercent=${listItem?.currentPercent} slider.progress=${holder.slider.progress} pos=$position")
                 holder.label.text = if (item.type == 0) "Top Margin:" else "Bottom Margin:"
                 holder.label.setScaledTextSize(currentFontSize, 1.0f)
                 holder.text.text = "${item.currentPercent}%"
                 holder.text.setScaledTextSize(currentFontSize, 1.125f)
-                holder.slider.progress = item.currentPercent
+                // Only set progress if different to prevent snap-back during active drag
+                if (holder.slider.progress != item.currentPercent) {
+                    Log.d("MarginSlider", "onBind: SETTING progress from ${holder.slider.progress} to ${item.currentPercent}")
+                    holder.slider.progress = item.currentPercent
+                }
                 
                 holder.slider.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                        Log.d("MarginSlider", "onProgressChanged: progress=$progress fromUser=$fromUser type=${item.type}")
                         if (fromUser) {
                             holder.text.text = "$progress%"
                         }
                     }
-                    override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+                    override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {
+                        Log.d("MarginSlider", "onStartTrackingTouch: type=${item.type}")
+                    }
                     override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
                         val progress = seekBar?.progress ?: 0
+                        Log.d("MarginSlider", "onStopTrackingTouch: progress=$progress type=${item.type}")
+                        
+                        // Update displayList AND unfilteredDisplayList to prevent snap-back on rebind
+                        val pos = holder.adapterPosition
+                        if (pos != RecyclerView.NO_POSITION) {
+                            Log.d("MarginSlider", "Updating displayList[$pos] to MarginOption(${item.type}, $progress)")
+                            val newOption = MarginOption(item.type, progress)
+                            displayList[pos] = newOption
+                            // Also update unfilteredDisplayList so filterList() doesn't restore old value
+                            if (pos < unfilteredDisplayList.size && unfilteredDisplayList[pos] is MarginOption) {
+                                unfilteredDisplayList[pos] = newOption
+                            }
+                        }
                         
                         if (item.type == 0) {
                             topMarginPercent = progress
@@ -8314,11 +8338,7 @@ else -> AppHolder(View(parent.context)) } }
                         } else {
                             bottomMarginPercent = progress
                             AppPreferences.setBottomMarginPercent(holder.itemView.context, currentDisplayId, progress)
-
-
                             safeToast("Bottom Margin: $progress% (Display $currentDisplayId)")
-
-
                             
                             // Broadcast change to Dock/Trackpad
                             val intent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
