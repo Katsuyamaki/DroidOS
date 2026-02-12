@@ -378,6 +378,11 @@ private var isSoftKeyboardSupport = false
             // END BLOCK: VIRTUAL DISPLAY PROTECTION
             // =================================================================================
 
+            // ORIENTATION CHANGE: Clamp bubble when current display dimensions change
+            if (displayId == currentDisplayId) {
+                clampBubbleToScreen()
+            }
+
             // Logic to detect Fold/Unfold events monitoring Display 0 (Main)
             if (displayId == 0) {
                 val display = displayManager?.getDisplay(0)
@@ -2688,6 +2693,22 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun startForegroundService() { val channelId = if (android.os.Build.VERSION.SDK_INT >= 26) { val channel = android.app.NotificationChannel(CHANNEL_ID, "Floating Launcher", android.app.NotificationManager.IMPORTANCE_LOW); getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel); CHANNEL_ID } else ""; val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build(); if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification) }
     private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { Log.e(TAG, "Bind Shizuku Failed", e) } }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
+
+    private fun clampBubbleToScreen() {
+        if (bubbleView == null || !bubbleView!!.isAttachedToWindow) return
+        try {
+            val display = displayManager?.getDisplay(currentDisplayId) ?: return
+            val metrics = DisplayMetrics()
+            display.getRealMetrics(metrics)
+            val screenW = metrics.widthPixels
+            val screenH = metrics.heightPixels
+            val bw = bubbleParams.width.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
+            val bh = bubbleParams.height.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
+            bubbleParams.x = bubbleParams.x.coerceIn(0, (screenW - bw).coerceAtLeast(0))
+            bubbleParams.y = bubbleParams.y.coerceIn(0, (screenH - bh).coerceAtLeast(0))
+            windowManager.updateViewLayout(bubbleView, bubbleParams)
+        } catch (e: Exception) { Log.e(TAG, "clampBubbleToScreen failed", e) }
+    }
 
     private fun setupBubble() {
         val context = displayContext ?: this

@@ -3391,6 +3391,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     
     fun resetBubblePosition() { bubbleParams.x = (uiScreenWidth / 2) + 80; bubbleParams.y = uiScreenHeight / 2; try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}; prefs.prefBubbleX = bubbleParams.x; prefs.prefBubbleY = bubbleParams.y; savePrefs(); showToast("Bubble Reset") }
 
+    private fun clampBubbleToScreen() {
+        if (bubbleView == null || bubbleView?.isAttachedToWindow != true) return
+        try {
+            updateUiMetrics()
+            val bw = bubbleParams.width.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
+            val bh = bubbleParams.height.let { if (it <= 0) (60 * resources.displayMetrics.density).toInt() else it }
+            bubbleParams.x = bubbleParams.x.coerceIn(0, (uiScreenWidth - bw).coerceAtLeast(0))
+            bubbleParams.y = bubbleParams.y.coerceIn(0, (uiScreenHeight - bh).coerceAtLeast(0))
+            windowManager?.updateViewLayout(bubbleView, bubbleParams)
+            prefs.prefBubbleX = bubbleParams.x
+            prefs.prefBubbleY = bubbleParams.y
+        } catch (e: Exception) { Log.e(TAG, "clampBubbleToScreen failed", e) }
+    }
+
     private fun loadPrefs() { 
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f)
@@ -5822,6 +5836,11 @@ if (isResize) {
         // =================================================================================
         // END BLOCK: VIRTUAL DISPLAY PROTECTION
         // =================================================================================
+
+        // ORIENTATION CHANGE: Clamp bubble when current display dimensions change
+        if (displayId == currentDisplayId) {
+            clampBubbleToScreen()
+        }
 
         // We only monitor the Main Screen (0) state changes to determine "Open/Closed"
         if (displayId == 0) {
