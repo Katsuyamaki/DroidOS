@@ -513,6 +513,7 @@ private var isSoftKeyboardSupport = false
 
     private var selectedLayoutType = 2
     private var selectedResolutionIndex = 0
+    private var currentOrientationMode = 0 // 0=System Default, 1=Portrait, 2=Landscape
     private var currentDpiSetting = -1
     // [FIX] State tracking to avoid redundant resolution calls/sleeps
     private var lastAppliedResIndex = -1
@@ -2489,6 +2490,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
         
         selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId)
+        currentOrientationMode = AppPreferences.getOrientationMode(this, displayId)
         
         // [FIX] On fresh install, grab the CURRENT system DPI instead of defaulting to -1 (Reset).
         // This prevents the "everything got huge" issue where "reset" reverts to a factory default
@@ -5547,7 +5549,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
 
 
-    private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread { val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
+    private fun applyOrientation() { Thread { try { when (currentOrientationMode) { 1 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 0") }; 2 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 1") }; else -> { shellService?.runCommand("settings put system accelerometer_rotation 1") } } } catch (e: Exception) { e.printStackTrace() } }.start() }
+    private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread {     if (currentOrientationMode != 0) { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" }) }; val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
     private fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
     private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
     private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
@@ -5890,6 +5893,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             try { 
                 var configChanged = false
 
+                // Apply orientation if not System Default
+                if (currentOrientationMode != 0) {
+                    shellService?.runCommand("settings put system accelerometer_rotation 0")
+                    shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" })
+                    configChanged = true
+                }
+
                 // Apply resolution only if changed
                 if (selectedResolutionIndex != lastAppliedResIndex) {
                     val resCmd = getResolutionCommand(selectedResolutionIndex)
@@ -6211,7 +6221,18 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(LegendOption(AppPreferences.getLegendText(this)))
             }
             MODE_RESOLUTION -> {
-                searchBar.hint = "Select Resolution"; displayList.add(CustomResInputOption); val savedResNames = AppPreferences.getCustomResolutionNames(this).sorted(); for (name in savedResNames) { val value = AppPreferences.getCustomResolutionValue(this, name) ?: continue; displayList.add(ResolutionOption(name, "wm size  -d $currentDisplayId", 100 + savedResNames.indexOf(name))) }; displayList.add(ResolutionOption("Default (Reset)", "wm size reset -d $currentDisplayId", 0)); displayList.add(ResolutionOption("1:1 Square (1422x1500)", "wm size 1422x1500 -d $currentDisplayId", 1)); displayList.add(ResolutionOption("16:9 Landscape (1920x1080)", "wm size 1920x1080 -d $currentDisplayId", 2)); displayList.add(ResolutionOption("16:10 Landscape (1920x1200)", "wm size 1920x1200 -d $currentDisplayId", 4)); displayList.add(ResolutionOption("32:9 Ultrawide (3840x1080)", "wm size 3840x1080 -d $currentDisplayId", 3))
+                searchBar.hint = "Select Resolution"
+                val orientLabel = when (currentOrientationMode) { 1 -> "Portrait"; 2 -> "Landscape"; else -> "System Default" }
+                displayList.add(ActionOption("Orientation: $orientLabel (tap to cycle)") { currentOrientationMode = (currentOrientationMode + 1) % 3; AppPreferences.saveOrientationMode(this@FloatingLauncherService, currentDisplayId, currentOrientationMode); applyOrientation(); switchMode(MODE_RESOLUTION) })
+                displayList.add(CustomResInputOption)
+                val savedResNames = AppPreferences.getCustomResolutionNames(this).sorted()
+                for (name in savedResNames) { val value = AppPreferences.getCustomResolutionValue(this, name) ?: continue; displayList.add(ResolutionOption(name, "wm size $value -d $currentDisplayId", 100 + savedResNames.indexOf(name))) }
+                val dmSvc = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager; val disp = dmSvc.getDisplay(currentDisplayId); val dMode = disp?.mode; val physW = dMode?.physicalWidth ?: 0; val physH = dMode?.physicalHeight ?: 0; val physLabel = if (physW > 0 && physH > 0) " — Device: ${physW}x${physH}" else ""
+                displayList.add(ResolutionOption("Default (Reset)$physLabel", "wm size reset -d $currentDisplayId", 0))
+                displayList.add(ResolutionOption("1:1 Square (1422x1500)", "wm size 1422x1500 -d $currentDisplayId", 1))
+                displayList.add(ResolutionOption("16:9 Landscape (1920x1080)", "wm size 1920x1080 -d $currentDisplayId", 2))
+                displayList.add(ResolutionOption("16:10 Landscape (1920x1200)", "wm size 1920x1200 -d $currentDisplayId", 4))
+                displayList.add(ResolutionOption("32:9 Ultrawide (3840x1080)", "wm size 3840x1080 -d $currentDisplayId", 3))
             }
 
 // =================================================================================

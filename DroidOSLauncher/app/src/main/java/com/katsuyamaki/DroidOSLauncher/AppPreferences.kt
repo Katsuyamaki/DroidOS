@@ -147,6 +147,16 @@ object AppPreferences {
         return getPrefs(context).getInt("DPI_D$displayId", -1)
     }
 
+    // --- PER-DISPLAY ORIENTATION MODE ---
+    // 0 = System Default, 1 = Portrait, 2 = Landscape
+    fun saveOrientationMode(context: Context, displayId: Int, mode: Int) {
+        getPrefs(context).edit().putInt("ORIENT_D$displayId", mode).apply()
+    }
+
+    fun getOrientationMode(context: Context, displayId: Int): Int {
+        return getPrefs(context).getInt("ORIENT_D$displayId", 0)
+    }
+
     // --- PROFILES ---
     fun getProfileNames(context: Context): MutableSet<String> {
         return getPrefs(context).getStringSet(KEY_PROFILES, mutableSetOf()) ?: mutableSetOf()
