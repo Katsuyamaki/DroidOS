@@ -103,6 +103,12 @@ object AppPreferences {
         return isAdded
     }
     
+    // --- ORIENTATION SUFFIX HELPER ---
+    // Returns "_L" for landscape, "_P" for portrait based on screen dimensions
+    fun orientSuffix(screenW: Int, screenH: Int): String {
+        return if (screenW > screenH) "_L" else "_P"
+    }
+
     // --- GLOBAL LAYOUT PREFS ---
     
     private fun getLayoutKey(displayId: Int): String {
@@ -127,6 +133,57 @@ object AppPreferences {
 
     fun getLastCustomLayoutName(context: Context, displayId: Int): String? {
         return getPrefs(context).getString(getCustomLayoutNameKey(displayId), null)
+    }
+
+    // --- ORIENTATION-AWARE OVERLOADS ---
+    // These persist per-display AND per-orientation (landscape/portrait)
+
+    fun saveLastLayout(context: Context, layoutId: Int, displayId: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt(getLayoutKey(displayId) + oSuffix, layoutId).apply()
+    }
+
+    fun getLastLayout(context: Context, displayId: Int, oSuffix: String): Int? {
+        val key = getLayoutKey(displayId) + oSuffix
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 2) else null
+    }
+
+    fun saveLastCustomLayoutName(context: Context, name: String?, displayId: Int, oSuffix: String) {
+        getPrefs(context).edit().putString(getCustomLayoutNameKey(displayId) + oSuffix, name).apply()
+    }
+
+    fun getLastCustomLayoutName(context: Context, displayId: Int, oSuffix: String): String? {
+        return getPrefs(context).getString(getCustomLayoutNameKey(displayId) + oSuffix, null)
+    }
+
+    fun setTopMarginPercent(context: Context, displayId: Int, percent: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt("MARGIN_TOP_D$displayId$oSuffix", percent).apply()
+    }
+
+    fun getTopMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
+        val key = "MARGIN_TOP_D$displayId$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 0) else null
+    }
+
+    fun setBottomMarginPercent(context: Context, displayId: Int, percent: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt("MARGIN_BOTTOM_D$displayId$oSuffix", percent).apply()
+    }
+
+    fun getBottomMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
+        val key = "MARGIN_BOTTOM_D$displayId$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 0) else null
+    }
+
+    fun setAutoAdjustMarginForIME(context: Context, enable: Boolean, oSuffix: String) {
+        getPrefs(context).edit().putBoolean("auto_adjust_margin_ime$oSuffix", enable).apply()
+    }
+
+    fun getAutoAdjustMarginForIME(context: Context, oSuffix: String): Boolean? {
+        val key = "auto_adjust_margin_ime$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getBoolean(key, false) else null
     }
 
     // --- PER-DISPLAY SETTINGS ---
@@ -330,6 +387,16 @@ object AppPreferences {
         return if (prefs.contains(key)) prefs.getInt(key, 70) else null
     }
 
+    fun setDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt("DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix", percent).apply()
+    }
+
+    fun getDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String, oSuffix: String): Int? {
+        val key = "DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 70) else null
+    }
+
     fun setDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
         getPrefs(context).edit().putInt("DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio", percent).apply()
     }
@@ -340,12 +407,32 @@ object AppPreferences {
         return if (prefs.contains(key)) prefs.getInt(key, 90) else null
     }
 
+    fun setDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt("DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix", percent).apply()
+    }
+
+    fun getDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, oSuffix: String): Int? {
+        val key = "DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 90) else null
+    }
+
     fun setBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
         getPrefs(context).edit().putInt("BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio", percent).apply()
     }
 
     fun getBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
         val key = "BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getInt(key, 100) else null
+    }
+
+    fun setBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int, oSuffix: String) {
+        getPrefs(context).edit().putInt("BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix", percent).apply()
+    }
+
+    fun getBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String, oSuffix: String): Int? {
+        val key = "BUBBLE_SIZE_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
         val prefs = getPrefs(context)
         return if (prefs.contains(key)) prefs.getInt(key, 100) else null
     }

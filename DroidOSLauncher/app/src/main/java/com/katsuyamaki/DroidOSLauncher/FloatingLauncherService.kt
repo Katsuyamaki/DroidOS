@@ -387,8 +387,9 @@ private var isSoftKeyboardSupport = false
                 val w = metrics.widthPixels; val h = metrics.heightPixels
                 if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                     (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                    val oldSuffix = orientSuffix()
                     lastKnownScreenW = w; lastKnownScreenH = h
-                    uiHandler.post { refreshUIForOrientationChange() }
+                    uiHandler.post { refreshUIForOrientationChange(oldSuffix) }
                 } else {
                     lastKnownScreenW = w; lastKnownScreenH = h
                 }
@@ -440,6 +441,8 @@ private var isSoftKeyboardSupport = false
 
     private var lastKnownScreenW = 0
     private var lastKnownScreenH = 0
+
+    private fun orientSuffix(): String = if (lastKnownScreenW > lastKnownScreenH) "_L" else "_P"
 
     private var bubbleView: View? = null
     private var drawerView: View? = null
@@ -737,12 +740,14 @@ private var isSoftKeyboardSupport = false
                 val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
                 autoAdjustMarginForIME = enabled
                 AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled)
+                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled, orientSuffix())
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
                 Log.d("MarginSlider", "SET_MARGIN_BOTTOM received: percent=$percent (current bottomMarginPercent=$bottomMarginPercent)")
                 bottomMarginPercent = percent
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
+                AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent, orientSuffix())
                 setupVisualQueue() // Recalc HUD pos
                 // [FIX] Always retile when margin changes while IME is visible
                 // This ensures slider changes in DockIME take effect immediately
@@ -2316,8 +2321,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val w = metrics.widthPixels; val h = metrics.heightPixels
         if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
             (w != lastKnownScreenW || h != lastKnownScreenH)) {
+            val oldSuffix = orientSuffix()
             lastKnownScreenW = w; lastKnownScreenH = h
-            uiHandler.post { refreshUIForOrientationChange() }
+            uiHandler.post { refreshUIForOrientationChange(oldSuffix) }
         } else {
             lastKnownScreenW = w; lastKnownScreenH = h
         }
@@ -2381,7 +2387,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
-        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, orientSuffix())
+            ?: AppPreferences.getAutoAdjustMarginForIME(this)
         droidOsImeDetected = AppPreferences.getDroidOsImeDetected(this)
         // Margins now loaded in loadDisplaySettings()
 
@@ -2494,17 +2501,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         bubbleSizePercent = AppPreferences.getBubbleSizeForConfig(this, displayId, currentAspectRatio)
             ?: AppPreferences.getBubbleSize(this)
         
-        // 1. Margins (Per Display)
-        topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId)
-        bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId)
-
-
-
+        // 1. Margins (Per Display + Orientation)
+        val os = orientSuffix()
+        topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId, os)
+            ?: AppPreferences.getTopMarginPercent(this, displayId)
+        bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId, os)
+            ?: AppPreferences.getBottomMarginPercent(this, displayId)
 
         
-        // 2. Layout & Custom Rects (Per Display)
-        selectedLayoutType = AppPreferences.getLastLayout(this, displayId)
-        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this, displayId)
+        // 2. Layout & Custom Rects (Per Display + Orientation)
+        selectedLayoutType = AppPreferences.getLastLayout(this, displayId, os)
+            ?: AppPreferences.getLastLayout(this, displayId)
+        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this, displayId, os)
+            ?: AppPreferences.getLastCustomLayoutName(this, displayId)
         
         if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
             val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
@@ -2723,12 +2732,66 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { Log.e(TAG, "Bind Shizuku Failed", e) } }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
 
-    private fun refreshUIForOrientationChange() {
+    private fun saveOrientationState(os: String = orientSuffix()) {
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMarginPercent, os)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, bottomMarginPercent, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoAdjustMarginForIME, os)
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
+        AppPreferences.saveLastCustomLayoutName(this, activeCustomLayoutName, currentDisplayId, os)
+        AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent, os)
+        AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent, os)
+        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, bubbleSizePercent, os)
+    }
+
+    private fun loadOrientationState() {
+        val os = orientSuffix()
+        topMarginPercent = AppPreferences.getTopMarginPercent(this, currentDisplayId, os)
+            ?: AppPreferences.getTopMarginPercent(this, currentDisplayId)
+        bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, currentDisplayId, os)
+            ?: AppPreferences.getBottomMarginPercent(this, currentDisplayId)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, os)
+            ?: AppPreferences.getAutoAdjustMarginForIME(this)
+        selectedLayoutType = AppPreferences.getLastLayout(this, currentDisplayId, os)
+            ?: AppPreferences.getLastLayout(this, currentDisplayId)
+        activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this, currentDisplayId, os)
+            ?: AppPreferences.getLastCustomLayoutName(this, currentDisplayId)
+        currentDrawerHeightPercent = AppPreferences.getDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, os)
+            ?: AppPreferences.getDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio)
+            ?: AppPreferences.getDrawerHeightPercent(this)
+        currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, os)
+            ?: AppPreferences.getDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio)
+            ?: AppPreferences.getDrawerWidthPercent(this)
+        bubbleSizePercent = AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, os)
+            ?: AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio)
+            ?: AppPreferences.getBubbleSize(this)
+        if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
+            val data = AppPreferences.getCustomLayoutData(this, activeCustomLayoutName!!)
+            if (data != null) {
+                try {
+                    val rects = mutableListOf<Rect>()
+                    for (rp in data.split("|")) {
+                        val c = rp.split(",")
+                        if (c.size == 4) rects.add(Rect(c[0].toInt(), c[1].toInt(), c[2].toInt(), c[3].toInt()))
+                    }
+                    activeCustomRects = rects
+                } catch (e: Exception) { Log.e(TAG, "Failed to load orient custom rects", e) }
+            }
+        }
+    }
+
+    private fun refreshUIForOrientationChange(oldSuffix: String) {
         try {
+            // Save state for OLD orientation using the suffix captured before dims updated
+            saveOrientationState(oldSuffix)
+
             val wm = attachedWindowManager ?: windowManager
             if (bubbleView != null) { try { wm.removeView(bubbleView) } catch(e: Exception) {} }
             if (drawerView != null && isExpanded) { try { wm.removeView(drawerView) } catch(e: Exception) {} }
             setupDisplayContext(currentDisplayId)
+
+            // lastKnownScreenW/H are now updated by the caller — load NEW orientation state
+            loadOrientationState()
+
             setupBubble()
             setupDrawer()
             updateBubbleIcon()
@@ -5435,16 +5498,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         dismissKeyboardAndRestore()
         selectedLayoutType = opt.type
         activeCustomRects = opt.customRects
+        val os = orientSuffix()
         
         if (opt.type == LAYOUT_CUSTOM_DYNAMIC) { 
             activeCustomLayoutName = opt.name
             AppPreferences.saveLastCustomLayoutName(this, opt.name, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, opt.name, currentDisplayId, os)
         } else { 
             activeCustomLayoutName = null
             AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
         }
         
         AppPreferences.saveLastLayout(this, opt.type, currentDisplayId)
+        AppPreferences.saveLastLayout(this, opt.type, currentDisplayId, os)
         drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
         
         if (isInstantMode) applyLayoutImmediate() 
@@ -5701,14 +5768,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         topMarginPercent = topMar
         bottomMarginPercent = botMar
         autoAdjustMarginForIME = autoMar
+        val os = orientSuffix()
         AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
         AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
         if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
             activeCustomLayoutName = null
             AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
         }
         AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
         AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
@@ -5786,14 +5859,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         topMarginPercent = topMar
         bottomMarginPercent = botMar
         autoAdjustMarginForIME = autoMar
+        val os = orientSuffix()
         AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
         AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
         if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
             activeCustomLayoutName = null
             AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
         }
         AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
         AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
@@ -6517,6 +6596,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     displayList.add(ToggleOption("Auto-Adjust Margin for IME", autoAdjustMarginForIME) {
                         autoAdjustMarginForIME = it
                         AppPreferences.setAutoAdjustMarginForIME(this, it)
+                        AppPreferences.setAutoAdjustMarginForIME(this, it, orientSuffix())
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {
@@ -7493,6 +7573,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 if (type != -1) {
                     selectedLayoutType = type
                     AppPreferences.saveLastLayout(this, type, currentDisplayId)
+                    AppPreferences.saveLastLayout(this, type, currentDisplayId, orientSuffix())
                     refreshQueueAndLayout("Layout: ${getLayoutName(type)}")
                 }
             }
@@ -8118,6 +8199,7 @@ else -> AppHolder(View(parent.context)) } }
                                                         if (activeCustomLayoutName == item.name) { 
                                                             activeCustomLayoutName = newName
                                                             AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId)
+                                                            AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, currentDisplayId, orientSuffix())
                                                         }
                                                         switchMode(MODE_LAYOUTS) 
                                                         changed = true
@@ -8418,10 +8500,12 @@ else -> AppHolder(View(parent.context)) } }
                         if (item.type == 0) {
                             topMarginPercent = progress
                             AppPreferences.setTopMarginPercent(holder.itemView.context, currentDisplayId, progress)
+                            AppPreferences.setTopMarginPercent(holder.itemView.context, currentDisplayId, progress, orientSuffix())
                             safeToast("Top Margin: $progress% (Display $currentDisplayId)")
                         } else {
                             bottomMarginPercent = progress
                             AppPreferences.setBottomMarginPercent(holder.itemView.context, currentDisplayId, progress)
+                            AppPreferences.setBottomMarginPercent(holder.itemView.context, currentDisplayId, progress, orientSuffix())
                             safeToast("Bottom Margin: $progress% (Display $currentDisplayId)")
                             
                             // Broadcast change to Dock/Trackpad

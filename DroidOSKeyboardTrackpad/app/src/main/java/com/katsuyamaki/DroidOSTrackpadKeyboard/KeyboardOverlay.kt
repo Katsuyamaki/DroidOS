@@ -285,11 +285,12 @@ class KeyboardOverlay(
         } else {
             // Even if hidden, save the new bounds so they apply on next show
             val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            val os = orientSuffix()
             prefs.edit()
-                .putInt("keyboard_x_d$currentDisplayId", x)
-                .putInt("keyboard_y_d$currentDisplayId", y)
-                .putInt("keyboard_width_d$currentDisplayId", width)
-                .putInt("keyboard_height_d$currentDisplayId", height)
+                .putInt("keyboard_x_d${currentDisplayId}$os", x)
+                .putInt("keyboard_y_d${currentDisplayId}$os", y)
+                .putInt("keyboard_width_d${currentDisplayId}$os", width)
+                .putInt("keyboard_height_d${currentDisplayId}$os", height)
                 .apply()
         }
     }
@@ -329,12 +330,13 @@ class KeyboardOverlay(
         } else {
             // Save bounds and scale even if hidden
             val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            val os = orientSuffix()
             prefs.edit()
-                .putInt("keyboard_x_d$currentDisplayId", x)
-                .putInt("keyboard_y_d$currentDisplayId", y)
-                .putInt("keyboard_width_d$currentDisplayId", width)
-                .putInt("keyboard_height_d$currentDisplayId", height)
-                .putInt("keyboard_key_scale", (targetScale * 100).toInt())
+                .putInt("keyboard_x_d${currentDisplayId}$os", x)
+                .putInt("keyboard_y_d${currentDisplayId}$os", y)
+                .putInt("keyboard_width_d${currentDisplayId}$os", width)
+                .putInt("keyboard_height_d${currentDisplayId}$os", height)
+                .putInt("keyboard_key_scale$os", (targetScale * 100).toInt())
                 .apply()
         }
         
@@ -356,8 +358,8 @@ class KeyboardOverlay(
         if (keyboardContainer == null || keyboardParams == null) {
             // Save to prefs if hidden
             context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-                .putInt("keyboard_x_d$currentDisplayId", x)
-                .putInt("keyboard_y_d$currentDisplayId", y)
+                .putInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", x)
+                .putInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", y)
                 .apply()
             return
         }
@@ -390,14 +392,14 @@ class KeyboardOverlay(
     fun getViewX(): Int {
         if (keyboardParams != null) return keyboardParams!!.x
         return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .getInt("keyboard_x_d$currentDisplayId", 0)
+            .getInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", 0)
     }
     
 
     fun getViewY(): Int {
         if (keyboardParams != null) return keyboardParams!!.y
         return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .getInt("keyboard_y_d$currentDisplayId", 0)
+            .getInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", 0)
     }
     
     fun getViewWidth(): Int = keyboardWidth
@@ -577,7 +579,8 @@ class KeyboardOverlay(
 
             // [NEW] Initialize internal scale from prefs once on show
             // Default to 69 (0.69f) if missing, to match resetPosition
-            val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f
+            val os = orientSuffix()
+        val savedScale = prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69)) / 100f
             internalScale = savedScale
             dragStartScale = savedScale // Init for safety
 
@@ -1297,7 +1300,8 @@ fun setCustomModKey(keyCode: Int) {
         // 2. Calculate Default Height (300dp * Scale)
         // If no scale is saved, we default to 0.69f (The "Reset" Scale)
         val density = context.resources.displayMetrics.density
-        val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f
+        val os = orientSuffix()
+        val savedScale = prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69)) / 100f
         val baseHeightDp = 300f
         val defaultHeight = (baseHeightDp * savedScale * density).toInt()
         
@@ -1305,10 +1309,10 @@ fun setCustomModKey(keyCode: Int) {
         val defaultY = (screenHeight / 2)
 
         // 3. Load from Prefs (using our calculated defaults as fallback)
-        val savedW = prefs.getInt("keyboard_width_d$currentDisplayId", defaultWidth)
-        val savedH = prefs.getInt("keyboard_height_d$currentDisplayId", defaultHeight)
-        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", defaultX)
-        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", defaultY)
+        val savedW = prefs.getInt("keyboard_width_d${currentDisplayId}$os", prefs.getInt("keyboard_width_d$currentDisplayId", defaultWidth))
+        val savedH = prefs.getInt("keyboard_height_d${currentDisplayId}$os", prefs.getInt("keyboard_height_d$currentDisplayId", defaultHeight))
+        val savedX = prefs.getInt("keyboard_x_d${currentDisplayId}$os", prefs.getInt("keyboard_x_d$currentDisplayId", defaultX))
+        val savedY = prefs.getInt("keyboard_y_d${currentDisplayId}$os", prefs.getInt("keyboard_y_d$currentDisplayId", defaultY))
 
         // 4. Bounds validation — clamp so KB is visible on this display
         val clampedW = savedW.coerceIn(100, screenWidth)
@@ -1557,13 +1561,14 @@ windowManager.addView(keyboardContainer, keyboardParams)
     }
     // [END RESIZE FIX]
 
-    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
+    private fun orientSuffix(): String = if (screenWidth > screenHeight) "_L" else "_P"
+    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d${currentDisplayId}${orientSuffix()}", keyboardWidth).putInt("keyboard_height_d${currentDisplayId}${orientSuffix()}", keyboardHeight).apply() }
     private fun saveKeyboardScale() { 
         context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .edit().putInt("keyboard_key_scale", (internalScale * 100).toInt()).apply() 
+            .edit().putInt("keyboard_key_scale${orientSuffix()}", (internalScale * 100).toInt()).apply() 
     }
-    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
-    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
+    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", keyboardParams?.x ?: 0).putInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", keyboardParams?.y ?: 0).apply() }
+    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); val os = orientSuffix(); keyboardWidth = prefs.getInt("keyboard_width_d${displayId}$os", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d${displayId}$os", keyboardHeight) }
 
 
     // =================================================================================

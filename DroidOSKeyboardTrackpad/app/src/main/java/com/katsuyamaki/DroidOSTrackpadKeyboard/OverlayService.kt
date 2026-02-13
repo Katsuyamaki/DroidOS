@@ -2214,8 +2214,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             val w = metrics.widthPixels; val h = metrics.heightPixels
             if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                 (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                // Save keyboard + trackpad state for the OLD orientation before rebuilding
+                saveLayout()
                 lastKnownScreenW = w; lastKnownScreenH = h
-                handler.post { setupUI(currentDisplayId) }
+                handler.post { setupUI(currentDisplayId); loadLayout() }
             } else {
                 lastKnownScreenW = w; lastKnownScreenH = h
             }
@@ -3384,11 +3386,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     private fun saveKeyboardHeightForDock(height: Int) {
-        val key = "keyboard_height_d${currentDisplayId}"
+        val os = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        val key = "keyboard_height_d${currentDisplayId}$os"
         getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
             .putInt(key, height)
             .apply()
-        android.util.Log.d(TAG, "Saved keyboard height: $height for display $currentDisplayId")
+        android.util.Log.d(TAG, "Saved keyboard height: $height for display $currentDisplayId orient=$os")
     }
     // =================================================================================
     // END BLOCK: applyDockMode
@@ -4379,7 +4382,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 //          We must update this global key whenever we load a profile, otherwise
                 //          the keyboard will use the scale from the previous display/profile.
                 // =================================================================================
-                p.edit().putInt("keyboard_key_scale", prefs.prefKeyScale).apply()
+                val orientKey = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+                p.edit().putInt("keyboard_key_scale$orientKey", prefs.prefKeyScale).apply()
                 // =================================================================================
                 // END BLOCK: SYNC PROFILE SCALE TO GLOBAL SHAREDPREFS
                 // =================================================================================
@@ -5870,8 +5874,10 @@ if (isResize) {
                 val w = metrics.widthPixels; val h = metrics.heightPixels
                 if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                     (w != lastKnownScreenW || h != lastKnownScreenH)) {
+                    // Save keyboard + trackpad state for the OLD orientation before rebuilding
+                    saveLayout()
                     lastKnownScreenW = w; lastKnownScreenH = h
-                    handler.post { setupUI(currentDisplayId) }
+                    handler.post { setupUI(currentDisplayId); loadLayout() }
                 } else {
                     lastKnownScreenW = w; lastKnownScreenH = h
                 }
