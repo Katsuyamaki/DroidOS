@@ -1238,6 +1238,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     if (x >= 0 && y >= 0) setCursorPosition(x, y)
                 }
                 action == "TOGGLE_DEBUG" -> toggleDebugMode()
+                action == "com.katsuyamaki.DroidOSTrackpadKeyboard.LIST_KEYBOARDS" -> {
+                    Thread {
+                        try {
+                            val allImes = shellService?.runCommand("ime list -a -s") ?: ""
+                            val enabledImes = shellService?.runCommand("ime list -s") ?: ""
+                            val result = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.LIST_KEYBOARDS_RESULT")
+                            result.setPackage(packageName)
+                            result.putExtra("ALL_IMES", allImes)
+                            result.putExtra("ENABLED_IMES", enabledImes)
+                            sendBroadcast(result)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }.start()
+                }
                 action == "com.katsuyamaki.DroidOSTrackpadKeyboard.SWITCH_KEYBOARD" -> {
                     val imeId = intent.getStringExtra("IME_ID") ?: return
                     val imeName = intent.getStringExtra("IME_NAME") ?: "keyboard"
@@ -1916,6 +1931,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         addAction("FORCE_KEYBOARD")
                         addAction("TOGGLE_CUSTOM_KEYBOARD")
                         addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.SWITCH_KEYBOARD")
+                        addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.LIST_KEYBOARDS")
                         addAction("DOCK_PREF_CHANGED")
                         addAction("APPLY_DOCK_MODE")
                         addAction("DOCK_POPUP_VISIBLE")

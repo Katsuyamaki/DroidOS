@@ -18,6 +18,9 @@
         <intent>
             <action android:name="android.intent.action.VOICE_COMMAND" />
         </intent>
+        <intent>
+            <action android:name="android.view.InputMethod" />
+        </intent>
         <package android:name="com.google.android.googlequicksearchbox" />
     </queries>
 
