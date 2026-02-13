@@ -39,6 +39,14 @@ class KeyboardPickerActivity : Activity() {
     }
 
     private fun requestKeyboardList() {
+        // Minimize tiled app windows so picker isn't hidden behind them
+        try {
+            val minimizeIntent = Intent("com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER")
+            minimizeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            minimizeIntent.putExtra("COMMAND", "MINIMIZE_ALL")
+            sendBroadcast(minimizeIntent)
+        } catch (_: Exception) {}
+
         // Register receiver for the result from OverlayService
         resultReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -224,16 +232,6 @@ class KeyboardPickerActivity : Activity() {
     }
 
     private fun openKeyboardSettings() {
-        // Send MINIMIZE_ALL to launcher so tiled apps don't block the settings menu
-        try {
-            val minimizeIntent = Intent("com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER")
-            minimizeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-            minimizeIntent.putExtra("COMMAND", "MINIMIZE_ALL")
-            sendBroadcast(minimizeIntent)
-        } catch (e: Exception) {
-            // Launcher may not be running, continue anyway
-        }
-
         try {
             val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
