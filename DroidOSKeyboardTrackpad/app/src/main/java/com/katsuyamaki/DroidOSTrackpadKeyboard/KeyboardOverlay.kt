@@ -1259,9 +1259,10 @@ fun setCustomModKey(keyCode: Int) {
         // =================================================================================
 
         // [FIX] Load saved scale and update Internal State immediately
-        // Use 69 as default to match resetPosition logic (prevent 1.0 mismatch)
-        val scale = prefs.getInt("keyboard_key_scale", 69) / 100f
-        internalScale = scale 
+        // Use orientation-aware key with fallback to base key then 69 default
+        val os0 = orientSuffix()
+        val scale = prefs.getInt("keyboard_key_scale$os0", prefs.getInt("keyboard_key_scale", 69)) / 100f
+        internalScale = scale
         keyboardView?.setScale(scale)
         
         keyboardView?.alpha = currentAlpha / 255f
@@ -1563,9 +1564,10 @@ windowManager.addView(keyboardContainer, keyboardParams)
 
     private fun orientSuffix(): String = if (screenWidth > screenHeight) "_L" else "_P"
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d${currentDisplayId}${orientSuffix()}", keyboardWidth).putInt("keyboard_height_d${currentDisplayId}${orientSuffix()}", keyboardHeight).apply() }
-    private fun saveKeyboardScale() { 
+    private fun saveKeyboardScale() {
+        val scaleVal = (internalScale * 100).toInt()
         context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .edit().putInt("keyboard_key_scale${orientSuffix()}", (internalScale * 100).toInt()).apply() 
+            .edit().putInt("keyboard_key_scale${orientSuffix()}", scaleVal).putInt("keyboard_key_scale", scaleVal).apply()
     }
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", keyboardParams?.x ?: 0).putInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); val os = orientSuffix(); keyboardWidth = prefs.getInt("keyboard_width_d${displayId}$os", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d${displayId}$os", keyboardHeight) }

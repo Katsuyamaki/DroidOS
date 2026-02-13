@@ -82,8 +82,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val targetId = intent.getIntExtra("displayId", 0)
                 Log.d("OverlayService", "Moving to Display: $targetId")
                 handler.post {
+                    saveLayout()
                     removeOldViews()
                     setupUI(targetId)
+                    loadLayout()
                     enforceZOrder()
                 }
             } else if (matches("TOGGLE_MIRROR") || matches("TOGGLE_VIRTUAL_MIRROR")) {
@@ -1417,9 +1419,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     Log.d(TAG, "Received SOFT_RESTART command")
                     val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
                     handler.post {
+                        saveLayout()
                         removeOldViews()
                         handler.postDelayed({
                             setupUI(targetDisplayId)
+                            loadLayout()
                             enforceZOrder()
                             showToast("Trackpad Soft Restarted")
                         }, 200)
@@ -2761,8 +2765,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val targetId = if (currentDisplayId == 0) 1 else 0
                 
                 try {
+                    saveLayout()
                     showToast("Force Switch to $targetId")
                     setupUI(targetId)
+                    loadLayout()
                     resetBubblePosition()
                     menuManager?.show()
                     enforceZOrder()
@@ -2859,7 +2865,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
-    fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; setupUI(displayId) }
+    fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; saveLayout(); setupUI(displayId); loadLayout() }
     fun hideApp() { menuManager?.hide(); if (isTrackpadVisible) toggleTrackpad() }
 
 
@@ -3540,10 +3546,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Physical Keyboard Bounds
         settingsStr.append("$currentKbX;$currentKbY;$currentKbW;$currentKbH;")
 
-        // Dock Mode (per-display)
+        // Dock Mode + All Dock Prefs (per-display, per-orientation)
         val dockSavePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val saveDockMode = dockSavePrefs.getBoolean("dock_mode_d$currentDisplayId", dockSavePrefs.getBoolean("dock_mode", false))
-        settingsStr.append("${if(saveDockMode) 1 else 0}")
+        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        val saveDockMode = dockSavePrefs.getBoolean("dock_mode_d${currentDisplayId}$dockOs", dockSavePrefs.getBoolean("dock_mode_d$currentDisplayId", dockSavePrefs.getBoolean("dock_mode", false)))
+        val saveAutoShow = dockSavePrefs.getBoolean("auto_show_overlay$dockOs", dockSavePrefs.getBoolean("auto_show_overlay", false))
+        val saveAutoResize = dockSavePrefs.getBoolean("auto_resize$dockOs", dockSavePrefs.getBoolean("auto_resize", false))
+        val saveResizeScale = dockSavePrefs.getInt("auto_resize_scale$dockOs", dockSavePrefs.getInt("auto_resize_scale", 0))
+        val saveSyncMargin = dockSavePrefs.getBoolean("sync_margin$dockOs", dockSavePrefs.getBoolean("sync_margin", false))
+        val saveKBAboveDock = dockSavePrefs.getBoolean("show_kb_above_dock$dockOs", dockSavePrefs.getBoolean("show_kb_above_dock", true))
+        settingsStr.append("${if(saveDockMode) 1 else 0};${if(saveAutoShow) 1 else 0};${if(saveAutoResize) 1 else 0};$saveResizeScale;${if(saveSyncMargin) 1 else 0};${if(saveKBAboveDock) 1 else 0}")
 
         p.putString("SETTINGS_$key", settingsStr.toString())
 
@@ -4357,8 +4369,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (settings == null && uiScreenWidth > uiScreenHeight) {
             val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
             dockPrefs.edit()
+                .putBoolean("dock_mode_d${currentDisplayId}_L", true)
                 .putBoolean("dock_mode_d$currentDisplayId", true)
                 .putBoolean("dock_mode", true)
+                .putBoolean("auto_resize_L", true)
                 .putBoolean("auto_resize", true)
                 .apply()
         }
@@ -4441,14 +4455,35 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                      keyboardUpdated = true
                 } catch (e: Exception) { }
 
-                // Load Dock Mode from profile (appended after KB bounds in newest profiles)
+                // Load Dock Mode + all dock prefs from profile
                 if (parts.size > kbIndex + 4) {
                     try {
                         val profileDockMode = parts[kbIndex + 4] == "1"
-                        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+                        val dockEdit = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                            .putBoolean("dock_mode_d${currentDisplayId}$dockOs", profileDockMode)
                             .putBoolean("dock_mode_d$currentDisplayId", profileDockMode)
                             .putBoolean("dock_mode", profileDockMode)
-                            .apply()
+                        // Restore extended dock prefs if present (new profile format)
+                        if (parts.size > kbIndex + 9) {
+                            val pAutoShow = parts[kbIndex + 5] == "1"
+                            val pAutoResize = parts[kbIndex + 6] == "1"
+                            val pResizeScale = parts[kbIndex + 7].toIntOrNull() ?: 0
+                            val pSyncMargin = parts[kbIndex + 8] == "1"
+                            val pKBAboveDock = parts[kbIndex + 9] == "1"
+                            dockEdit.putBoolean("auto_show_overlay$dockOs", pAutoShow)
+                                .putBoolean("auto_show_overlay", pAutoShow)
+                                .putBoolean("auto_resize$dockOs", pAutoResize)
+                                .putBoolean("auto_resize", pAutoResize)
+                                .putInt("auto_resize_scale$dockOs", pResizeScale)
+                                .putInt("auto_resize_scale", pResizeScale)
+                                .putBoolean("sync_margin$dockOs", pSyncMargin)
+                                .putBoolean("sync_margin", pSyncMargin)
+                                .putBoolean("show_kb_above_dock$dockOs", pKBAboveDock)
+                                .putBoolean("show_kb_above_dock", pKBAboveDock)
+                            prefs.prefShowKBAboveDock = pKBAboveDock
+                        }
+                        dockEdit.apply()
                         if (profileDockMode && isCustomKeyboardVisible) {
                             if (lastDockMarginPercent >= 0) applyDockModeWithMargin(lastDockMarginPercent)
                             else applyDockMode()

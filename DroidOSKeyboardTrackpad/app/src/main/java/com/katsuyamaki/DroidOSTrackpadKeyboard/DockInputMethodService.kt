@@ -285,26 +285,41 @@ class DockInputMethodService : InputMethodService() {
         } else { 0 }
     }
 
+    private fun dockOrientSuffix(): String {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val metrics = android.util.DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(metrics)
+        return if (metrics.widthPixels > metrics.heightPixels) "_L" else "_P"
+    }
+
     private fun loadDockPrefs() {
         val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val displayId = getImeDisplayId()
-        prefAutoShowOverlay = prefs.getBoolean("auto_show_overlay", false)
-        prefDockMode = prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false))
-        prefAutoResize = prefs.getBoolean("auto_resize", false)
-        prefResizeScale = prefs.getInt("auto_resize_scale", 0)
-        prefSyncMargin = prefs.getBoolean("sync_margin", false)
-        prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock", true) // Default ON
+        val os = dockOrientSuffix()
+        prefAutoShowOverlay = prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", false))
+        prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
+        prefAutoResize = prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
+        prefResizeScale = prefs.getInt("auto_resize_scale$os", prefs.getInt("auto_resize_scale", 0))
+        prefSyncMargin = prefs.getBoolean("sync_margin$os", prefs.getBoolean("sync_margin", false))
+        prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock$os", prefs.getBoolean("show_kb_above_dock", true))
     }
     
     private fun saveDockPrefs() {
         val displayId = getImeDisplayId()
+        val os = dockOrientSuffix()
         getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("auto_show_overlay$os", prefAutoShowOverlay)
             .putBoolean("auto_show_overlay", prefAutoShowOverlay)
+            .putBoolean("dock_mode_d${displayId}$os", prefDockMode)
             .putBoolean("dock_mode_d$displayId", prefDockMode)
             .putBoolean("dock_mode", prefDockMode)
+            .putBoolean("auto_resize$os", prefAutoResize)
             .putBoolean("auto_resize", prefAutoResize)
+            .putInt("auto_resize_scale$os", prefResizeScale)
             .putInt("auto_resize_scale", prefResizeScale)
+            .putBoolean("sync_margin$os", prefSyncMargin)
             .putBoolean("sync_margin", prefSyncMargin)
+            .putBoolean("show_kb_above_dock$os", prefShowKBAboveDock)
             .putBoolean("show_kb_above_dock", prefShowKBAboveDock)
             .apply()
     }
