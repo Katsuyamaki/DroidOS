@@ -203,7 +203,7 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
 
             action == Intent.ACTION_SCREEN_ON -> {
                 if (service.currentDisplayId == 1 && service.prefs.prefBlockSoftKeyboard) {
-                    service.triggerAggressiveBlocking()
+                    service.imeManager?.triggerAggressiveBlocking()
                 }
             }
 

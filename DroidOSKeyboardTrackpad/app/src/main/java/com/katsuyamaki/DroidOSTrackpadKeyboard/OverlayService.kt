@@ -177,8 +177,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var isBound = false
     internal val handler = Handler(Looper.getMainLooper())
 
-    private var lastBlockTime: Long = 0
-
     // =================================================================================
     // VIRTUAL DISPLAY KEEP-ALIVE SYSTEM
     // SUMMARY: Prevents system from timing out the display when using trackpad on a
@@ -207,6 +205,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal var menuManager: TrackpadMenuManager? = null
     internal var mirrorManager: MirrorModeManager? = null
     internal var btMouseManager: BluetoothMouseManager? = null
+    internal var imeManager: SystemImeManager? = null
     private var savedKbX = 0
     private var savedKbY = 0
     private var savedKbW = 0
@@ -267,396 +266,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 // FILE: Cover-Screen-Trackpad/app/src/main/java/com.katsuyamaki.DroidOSTrackpadKeyboard/OverlayService.kt
 // LOC: Around line 1550 (Search for 'fun triggerAggressiveBlocking')
 
-// =================================================================================
-// FUNCTION: triggerAggressiveBlocking
-// SUMMARY: Enforces Soft Keyboard blocking. ONLY works on Cover Screen (display 1).
-//          Does nothing on main screen (0) or virtual displays (2+).
-// =================================================================================
-    internal fun triggerAggressiveBlocking() {
-        // GUARD: Only block keyboard on Cover Screen (display 1)
-        if (currentDisplayId != 1) {
-            android.util.Log.d(TAG, "triggerAggressiveBlocking: Skipping - not on cover screen (display $currentDisplayId)")
-            return
-        }
-
-        // Rely on standard Android API to suppress keyboard
-        if (Build.VERSION.SDK_INT >= 24) {
-            try {
-                if (softKeyboardController.showMode != AccessibilityService.SHOW_MODE_HIDDEN) {
-                    softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
-                }
-            } catch (e: Exception) {
-                // Controller might not be connected yet
-            }
-        }
-    }
-// =================================================================================
-// END FUNCTION: triggerAggressiveBlocking
-// =================================================================================
-
-
-
-
-
-
-
     // =================================================================================
-    // SYNCHRONIZATION: Prevent multiple keyboard restoration threads
+    // Empty Block after removing IME logic
     // =================================================================================
-    @Volatile private var isKeyboardRestoreInProgress = false
-    // =================================================================================
-    // END BLOCK: Keyboard restoration synchronization flag
-    // =================================================================================
-    
-    private fun setSoftKeyboardBlocking(enabled: Boolean) {
-        if (shellService == null) return
-        
-        // =================================================================================
-        // GUARD: Keyboard blocking ONLY works on Cover Screen (display 1)
-        // On main screen (0) or virtual displays (2+), blocking is disabled/skipped.
-        // =================================================================================
-        if (enabled && currentDisplayId != 1) {
-            android.util.Log.w(TAG, "setSoftKeyboardBlocking: Blocking only works on cover screen (display 1), current=$currentDisplayId - skipping")
-            return
-        }
-        // =================================================================================
-        
-        // GUARD: Prevent concurrent restoration attempts
-        if (!enabled && isKeyboardRestoreInProgress) {
-            android.util.Log.w(TAG, "setSoftKeyboardBlocking: Already restoring, skipping duplicate call")
-            return
-        }
-
-        Thread {
-            try {
-                // 1. Find correct ID for OUR Input Dock
-                val allImes = shellService?.runCommand("ime list -a -s") ?: ""
-                val myImeId = allImes.lines().firstOrNull { 
-                    it.contains(packageName) && (it.contains("DockInputMethodService") || it.contains("NullInputMethodService")) 
-                }?.trim()
-
-                if (myImeId.isNullOrEmpty()) {
-                    handler.post { showToast("Error: DroidOS Keyboard not found.") }
-                    return@Thread
-                }
-
-
-                if (enabled) {
-                    // --- BLOCKING ---
-                    shellService?.runCommand("ime enable $myImeId")
-                    shellService?.runCommand("ime set $myImeId")
-                    shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 0")
-                    
-                    handler.post { showToast("Keyboard Blocked (Cover Screen)") }
-
-
-                    
-                } else {
-                    // =================================================================================
-                    // UNBLOCKING / KEYBOARD RESTORATION - SAMSUNG ONEUI WORKAROUND
-                    // =================================================================================
-                    // PROBLEM: Samsung OneUI aggressively forces HoneyBoard (Samsung Keyboard) back
-                    //          within ~300ms of ANY ime set command during phone unfold.
-                    //          Our commands succeed ("Gboard selected") but Samsung immediately
-                    //          overwrites the setting.
-                    //
-                    // SOLUTION: Temporarily DISABLE Samsung Keyboard, set Gboard, then re-enable.
-                    //           Samsung can't force a disabled keyboard as the default.
-                    // =================================================================================
-                    
-                    // Set synchronization flag
-                    isKeyboardRestoreInProgress = true
-                    
-                    android.util.Log.w(TAG, "┌──────────────────────────────────────────────────────────┐")
-                    android.util.Log.w(TAG, "│ KEYBOARD RESTORATION - SAMSUNG WORKAROUND               │")
-                    android.util.Log.w(TAG, "└──────────────────────────────────────────────────────────┘")
-                    
-                    try {
-                        // STEP 1: Get current state
-                        val initialIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                        android.util.Log.w(TAG, "├─ Initial IME: $initialIme")
-                        
-                        // STEP 2: Get saved preference
-                        val sharedPrefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                        var targetIme = sharedPrefs.getString("user_preferred_ime", null)
-                        android.util.Log.w(TAG, "├─ Saved preference: ${targetIme ?: "NULL"}")
-                        
-                        // =================================================================================
-                        // NULLKEYBOARD PREFERENCE CHECK
-                        // If user's preference IS NullKeyboard, don't restore away from it
-                        // =================================================================================
-                        if (targetIme != null && targetIme.contains("NullInputMethodService")) {
-                            android.util.Log.w(TAG, "├─ User preference is NullKB - not restoring away from it")
-                            isKeyboardRestoreInProgress = false
-                            android.util.Log.w(TAG, "└─ KEYBOARD RESTORATION SKIPPED (NullKB is preference)")
-                            return@Thread
-                        }
-                        // =================================================================================
-                        // END BLOCK: NULLKEYBOARD PREFERENCE CHECK
-                        // =================================================================================
-                        
-                        // STEP 3: Get enabled IMEs and find Gboard
-                        val enabledImes = shellService?.runCommand("ime list -s") ?: ""
-                        val gboardId = enabledImes.lines().find { 
-                            it.contains("com.google.android.inputmethod.latin") 
-                        }?.trim()
-                        val samsungId = enabledImes.lines().find { 
-                            it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
-                        }?.trim()
-                        
-                        android.util.Log.w(TAG, "├─ Gboard ID: ${gboardId ?: "NOT FOUND"}")
-                        android.util.Log.w(TAG, "├─ Samsung ID: ${samsungId ?: "NOT FOUND"}")
-                        
-                        // Prefer Gboard, fallback to saved, then to any non-Samsung
-                        if (targetIme.isNullOrEmpty() || targetIme.contains("honeyboard") || targetIme.contains("com.sec")) {
-                            targetIme = gboardId
-                        }
-                        
-                        if (targetIme.isNullOrEmpty()) {
-                            android.util.Log.e(TAG, "├─ ERROR: No target keyboard found!")
-                            handler.post { showToast("No keyboard to restore") }
-                            isKeyboardRestoreInProgress = false
-                            return@Thread
-                        }
-                        
-                        android.util.Log.w(TAG, "├─ Target IME: $targetIme")
-                        
-                        // STEP 4: THE SAMSUNG WORKAROUND
-                        // Temporarily disable Samsung Keyboard so it CAN'T be forced back
-                        if (!samsungId.isNullOrEmpty() && initialIme.contains("honeyboard")) {
-                            android.util.Log.w(TAG, "├─ WORKAROUND: Temporarily disabling Samsung Keyboard...")
-                            
-                            // 4a. Disable Samsung Keyboard
-                            val disableResult = shellService?.runCommand("ime disable $samsungId")
-                            android.util.Log.w(TAG, "│  ├─ Disable result: ${disableResult ?: "null"}")
-                            
-                            // 4b. Small delay for system to process
-                            Thread.sleep(100)
-                            
-                            // 4c. Now set Gboard (Samsung can't override because it's disabled)
-                            shellService?.runCommand("ime enable $targetIme")
-                            shellService?.runCommand("settings put secure default_input_method $targetIme")
-                            val setResult = shellService?.runCommand("ime set $targetIme")
-                            android.util.Log.w(TAG, "│  ├─ Set Gboard result: ${setResult ?: "null"}")
-                            
-                            // 4d. Wait for it to stick
-                            Thread.sleep(500)
-                            
-                            // 4e. Verify
-                            val afterSet = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                            android.util.Log.w(TAG, "│  ├─ After set: $afterSet")
-                            
-                            // 4f. Re-enable Samsung (user might want to use it later)
-                            android.util.Log.w(TAG, "│  └─ Re-enabling Samsung Keyboard...")
-                            shellService?.runCommand("ime enable $samsungId")
-                            
-                            // 4g. Final verification after re-enable
-                            Thread.sleep(300)
-                            val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                            android.util.Log.w(TAG, "├─ FINAL IME: $finalIme")
-                            
-                            val success = finalIme == targetIme || finalIme.contains("google.android.inputmethod.latin")
-                            android.util.Log.w(TAG, "├─ SUCCESS: $success")
-                            
-                            if (success) {
-                                handler.post { showToast("Keyboard Restored") }
-                            } else {
-                                // NUCLEAR OPTION: Keep Samsung disabled longer
-                                android.util.Log.w(TAG, "├─ First attempt failed, trying nuclear option...")
-                                
-                                // Disable Samsung again
-                                shellService?.runCommand("ime disable $samsungId")
-                                Thread.sleep(200)
-                                
-                                // Force set again
-                                shellService?.runCommand("settings put secure default_input_method $targetIme")
-                                shellService?.runCommand("ime set $targetIme")
-                                
-                                // Keep Samsung disabled for 3 seconds (past Samsung's protection window)
-                                Thread.sleep(3000)
-                                
-                                // Check again
-                                val nuclearCheck = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                android.util.Log.w(TAG, "├─ After nuclear: $nuclearCheck")
-                                
-                                // Re-enable Samsung
-                                shellService?.runCommand("ime enable $samsungId")
-                                
-                                // Final check
-                                Thread.sleep(500)
-                                val nuclearFinal = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                android.util.Log.w(TAG, "├─ Nuclear final: $nuclearFinal")
-                                
-                                if (nuclearFinal.contains("google.android.inputmethod.latin")) {
-                                    handler.post { showToast("Keyboard Restored (retry)") }
-                                } else {
-                                    android.util.Log.e(TAG, "├─ NUCLEAR FAILED")
-                                    handler.post { showToast("Keyboard restore failed") }
-                                }
-                            }
-                            
-                        } else {
-                            // Samsung not active, use simple approach
-                            android.util.Log.w(TAG, "├─ Simple restore (Samsung not active)...")
-                            shellService?.runCommand("ime enable $targetIme")
-                            shellService?.runCommand("settings put secure default_input_method $targetIme")
-                            shellService?.runCommand("ime set $targetIme")
-                            
-                            Thread.sleep(300)
-                            val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                            android.util.Log.w(TAG, "├─ FINAL IME: $finalIme")
-                            
-                            val success = finalIme == targetIme
-                            if (success) {
-                                handler.post { showToast("Keyboard Restored") }
-                            } else {
-                                handler.post { showToast("Keyboard restore failed") }
-                            }
-                        }
-                        
-                    } catch (e: Exception) {
-                        android.util.Log.e(TAG, "├─ EXCEPTION: ${e.message}", e)
-                        handler.post { showToast("Restore error: ${e.message}") }
-                    }
-                    
-                    // Clear synchronization flag
-                    isKeyboardRestoreInProgress = false
-                    android.util.Log.w(TAG, "└─ KEYBOARD RESTORATION COMPLETE")
-                    // =================================================================================
-                    // END BLOCK: KEYBOARD RESTORATION - SAMSUNG WORKAROUND
-                    // =================================================================================
-                }
-            } catch (e: Exception) {
-                handler.post { showToast("Error: ${e.message}") }
-            }
-        }.start()
-    }
-
-
-
-
-
-
-
-
-    // =================================================================================
-    // KEYBOARD RESTORATION HELPERS
-    // =================================================================================
-    private var lastMainCheck = 0L
-    private var lastCoverCheck = 0L
-
-    // =================================================================================
-    // FUNCTION: ensureSystemKeyboardRestored
-    // SUMMARY: Called when on Main Screen with blocking ENABLED. Restores user's
-    //          preferred keyboard FROM NullKeyboard. But if NullKeyboard IS the user's
-    //          saved preference (blocking OFF scenario), we don't restore away from it.
-    // =================================================================================
-    private fun ensureSystemKeyboardRestored() {
-        // Throttle: Check max once every 2 seconds
-        if (System.currentTimeMillis() - lastMainCheck < 2000) return
-        lastMainCheck = System.currentTimeMillis()
-
-        Thread {
-            try {
-                // Check if Null Keyboard is currently active
-                val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
-                if (current.contains(packageName) && current.contains("NullInputMethodService")) {
-                    
-                    // NEW: Check if Input Dock is the user's PREFERRED keyboard
-                    val savedPref = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                        .getString("user_preferred_ime", null)
-                    
-                    if (savedPref != null && (savedPref.contains("DockInputMethodService") || savedPref.contains("NullInputMethodService"))) {
-                        // User wants Dock - don't restore away from it
-                        android.util.Log.d(TAG, "ensureSystemKeyboardRestored: Dock is user preference, keeping it")
-                        return@Thread
-                    }
-
-                    
-                    android.util.Log.i(TAG, "Main Screen Detected: Restoring System Keyboard...")
-                    handler.post { setSoftKeyboardBlocking(false) }
-                }
-            } catch(e: Exception) {}
-        }.start()
-    }
-    // =================================================================================
-    // END BLOCK: ensureSystemKeyboardRestored
-    // =================================================================================
-
-
-
-    private fun ensureKeyboardBlocked() {
-        // =================================================================================
-        // GUARD: Only enforce blocking on Cover Screen (display 1)
-        // =================================================================================
-        if (currentDisplayId != 1) return
-        
-        // Throttle: Check max once every 2 seconds
-        if (System.currentTimeMillis() - lastCoverCheck < 2000) return
-        lastCoverCheck = System.currentTimeMillis()
-
-        Thread {
-            try {
-                // Check if Null Keyboard is NOT active
-                val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
-                if (!current.contains("NullInputMethodService") && !current.contains("DockInputMethodService")) {
-                    android.util.Log.i(TAG, "Cover Screen (D1): Enforcing DroidOS Keyboard...")
-                    handler.post { setSoftKeyboardBlocking(true) }
-                }
-            } catch(e: Exception) {}
-        }.start()
-    }
-
-
-
-    // =================================================================================
-    // FUNCTION: ensureCoverKeyboardEnforced (GBOARD GUARDIAN)
-    // SUMMARY: When DroidOS blocking is OFF, ensure user's preferred keyboard stays active.
-    //          This fights Samsung's forced keyboard takeover.
-    //          FIXED: If NullKeyboard is currently active, do NOT try to change it.
-    //          The user may have intentionally set NullKeyboard as their default.
-    // =================================================================================
-    private fun ensureCoverKeyboardEnforced() {
-        // Throttle: Check max once every 2 seconds to save battery
-        if (System.currentTimeMillis() - lastCoverCheck < 2000) return
-        lastCoverCheck = System.currentTimeMillis()
-
-        Thread {
-            try {
-                // 1. Check what is currently active
-                val current = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                
-                // 2. If Dock is active, DO NOT interfere
-                // User may have intentionally set it as their default keyboard
-                if (current.contains("DockInputMethodService") || current.contains("NullInputMethodService")) {
-                    android.util.Log.d(TAG, "ensureCoverKeyboardEnforced: Dock active, not interfering")
-                    return@Thread
-                }
-                
-                // 3. Get User's Preferred Keyboard
-                val sharedPrefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                val targetIme = sharedPrefs.getString("user_preferred_ime", null) ?: return@Thread
-                
-                // 4. If target is Dock, don't fight - it should already be handled
-                if (targetIme.contains("DockInputMethodService") || targetIme.contains("NullInputMethodService")) {
-                    return@Thread
-                }
-
-                
-                // 5. If current matches target, nothing to do
-                if (current == targetIme) {
-                    return@Thread
-                }
-                
-                // 6. Only fight if Samsung took over (not if user switched to something else)
-                val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
-                if (isSamsung) {
-                    android.util.Log.i(TAG, "ensureCoverKeyboardEnforced: Samsung detected, forcing $targetIme...")
-                    handler.post { setSoftKeyboardBlocking(false) }
-                }
-            } catch(e: Exception) {}
-        }.start()
-    }
     // =================================================================================
     // END BLOCK: ensureCoverKeyboardEnforced
     // =================================================================================
@@ -724,13 +336,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // GUARD: Only run blocking logic on Cover Screen (display 1)
             if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive) {
                  // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
-                 ensureKeyboardBlocked()
-
-                 val currentTime = System.currentTimeMillis()
-                 if (currentTime - lastBlockTime > 500) {
-                     lastBlockTime = currentTime
-                     triggerAggressiveBlocking()
-                 }
+                 imeManager?.ensureKeyboardBlocked()
+                 imeManager?.triggerAggressiveBlockingWithThrottle()
             } else if (currentDisplayId != 1) {
                  // CASE B: Main/Virtual Display -> Ensure keyboard is NOT blocked
                  if (Build.VERSION.SDK_INT >= 24) {
@@ -1056,7 +663,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     }
                     // Only re-enable blocking on cover screen
                     if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
-                        triggerAggressiveBlocking()
+                        imeManager?.triggerAggressiveBlocking()
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -1157,6 +764,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             shellService = IShellService.Stub.asInterface(binder)
             inputHandler = ShizukuInputHandler(this@OverlayService, shellService, currentDisplayId)
             mirrorManager = MirrorModeManager(this@OverlayService, displayManager)
+            imeManager = SystemImeManager(this@OverlayService, shellService)
             isBound = true
             updateBubbleStatus()
             showToast("Shizuku Connected")
@@ -1164,7 +772,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             
             // CRITICAL FIX: Only apply blocking on Cover Screen (display 1) when enabled
             if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
-                triggerAggressiveBlocking()
+                imeManager?.triggerAggressiveBlocking()
                 handler.post(blockingHeartbeat)
             }
 
@@ -1225,222 +833,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // =================================================================================
 
 
-// =================================================================================
-        // CONTENT OBSERVER: Watch for Default Keyboard Changes  
-        // SUMMARY: Detects when Samsung forces its keyboard and fights back IMMEDIATELY.
-        //          Samsung OneUI forces HoneyBoard when text fields get focus on Main Screen.
-        //          We detect this and instantly switch back to Gboard.
-        // =================================================================================
-        contentResolver.registerContentObserver(
-            android.provider.Settings.Secure.getUriFor("default_input_method"),
-            false,
-            object : android.database.ContentObserver(handler) {
-                private var lastObservedIme: String = ""
-                private var lastFightTime: Long = 0
-                
-                override fun onChange(selfChange: Boolean) {
-                    val current = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                    
-                    android.util.Log.d(TAG, "IME Observer: '$lastObservedIme' -> '$current' (display=$currentDisplayId)")
-                    
-                    // =================================================================================
-                    // SKIP EMPTY ONLY - Allow NullKeyboard through so it can be saved as preference
-                    // =================================================================================
-                    if (current.isEmpty()) {
-                        lastObservedIme = current
-                        return
-                    }
-                    
-                    val isDock = current.contains("DockInputMethodService") || current.contains("NullInputMethodService")
-                    val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
-                    val wasGboard = lastObservedIme.contains("com.google.android.inputmethod.latin")
-                    val wasDock = lastObservedIme.contains("DockInputMethodService") || lastObservedIme.contains("NullInputMethodService")
-                    val isOnMainScreen = currentDisplayId == 0
-
-                    // =================================================================================
-                    // END BLOCK: SKIP EMPTY ONLY
-                    // =================================================================================
-                    
-                    // =================================================================================
-                    // SAMSUNG TAKEOVER DETECTION
-                    // If Samsung just took over FROM Gboard while on Main Screen, fight back NOW!
-                    // Skip if we came from Dock (handled separately below)
-                    // =================================================================================
-                    if (isSamsung && wasGboard && isOnMainScreen && !wasDock) {
-
-                        val now = System.currentTimeMillis()
-                        // Throttle: Don't fight more than once per second
-                        if (now - lastFightTime > 1000) {
-                            lastFightTime = now
-                            android.util.Log.w(TAG, "IME Observer: SAMSUNG TAKEOVER DETECTED! Fighting back...")
-                            
-                            // Fight IMMEDIATELY in a new thread
-                            Thread {
-                                try {
-                                    val gboardId = "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"
-                                    val samsungId = current
-                                    
-                                    // NUCLEAR OPTION: Keep Samsung disabled for longer
-                                    android.util.Log.w(TAG, "┌─ IMMEDIATE SAMSUNG FIGHT ─┐")
-                                    
-                                    // 1. Disable Samsung
-                                    shellService?.runCommand("ime disable $samsungId")
-                                    android.util.Log.w(TAG, "├─ Samsung disabled")
-                                    
-                                    // 2. Force Gboard
-                                    shellService?.runCommand("settings put secure default_input_method $gboardId")
-                                    shellService?.runCommand("ime set $gboardId")
-                                    android.util.Log.w(TAG, "├─ Gboard set")
-                                    
-                                    // 3. Wait LONGER before re-enabling (5 seconds)
-                                    Thread.sleep(5000)
-                                    
-                                    // 4. Re-enable Samsung
-                                    shellService?.runCommand("ime enable $samsungId")
-                                    android.util.Log.w(TAG, "├─ Samsung re-enabled")
-                                    
-                                    // 5. Verify
-                                    val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                    val success = finalIme.contains("google.android.inputmethod.latin")
-                                    android.util.Log.w(TAG, "├─ Final: $finalIme")
-                                    android.util.Log.w(TAG, "└─ Success: $success")
-                                    
-                                    if (!success) {
-                                        // Try one more time
-                                        android.util.Log.w(TAG, "┌─ RETRY FIGHT ─┐")
-                                        shellService?.runCommand("ime disable $samsungId")
-                                        Thread.sleep(500)
-                                        shellService?.runCommand("settings put secure default_input_method $gboardId")
-                                        shellService?.runCommand("ime set $gboardId")
-                                        Thread.sleep(3000)
-                                        shellService?.runCommand("ime enable $samsungId")
-                                        
-                                        val retryFinal = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                        android.util.Log.w(TAG, "└─ Retry final: $retryFinal")
-                                    }
-                                    
-                                } catch (e: Exception) {
-                                    android.util.Log.e(TAG, "Samsung fight error: ${e.message}")
-                                }
-                            }.start()
-                        }
-                    }
-                    // =================================================================================
-                    // END BLOCK: SAMSUNG TAKEOVER DETECTION
-                    // =================================================================================
-                    
-                    // =================================================================================
-                    // SAMSUNG TAKEOVER FROM DOCK
-                    // If Samsung took over from Dock, restore Dock (not Gboard)
-                    // Only when blocking is OFF (user intentionally wants Dock)
-                    // =================================================================================
-                    if (isSamsung && wasDock && !prefs.prefBlockSoftKeyboard) {
-
-                        val now = System.currentTimeMillis()
-                        if (now - lastFightTime > 1000) {
-                            lastFightTime = now
-                            android.util.Log.w(TAG, "IME Observer: Samsung took over from NullKB! Restoring NullKB...")
-                            
-                            Thread {
-                                try {
-                                    // Try Dock ID first, fallback is handled if we set it as enabled
-                                    val dockId = "$packageName/com.katsuyamaki.DroidOSTrackpadKeyboard.DockInputMethodService"
-                                    val samsungId = current
-
-                                    
-                                    android.util.Log.w(TAG, "┌─ NULLKB RESTORATION ─┐")
-                                    
-                                    // 1. Disable Samsung
-                                    shellService?.runCommand("ime disable $samsungId")
-                                    android.util.Log.w(TAG, "├─ Samsung disabled")
-                                    
-                                    // 2. Enable and set Dock
-                                    shellService?.runCommand("ime enable $dockId")
-                                    shellService?.runCommand("settings put secure default_input_method $dockId")
-                                    shellService?.runCommand("ime set $dockId")
-                                    android.util.Log.w(TAG, "├─ Dock set")
-
-                                    
-                                    // 3. Wait for stability (past Samsung protection window)
-                                    Thread.sleep(3000)
-                                    
-                                    // 4. Re-enable Samsung
-                                    shellService?.runCommand("ime enable $samsungId")
-                                    android.util.Log.w(TAG, "├─ Samsung re-enabled")
-                                    
-                                    // 5. Verify
-                                    Thread.sleep(500)
-                                    val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                                    val success = finalIme.contains("DockInputMethodService")
-                                    android.util.Log.w(TAG, "├─ Final: $finalIme")
-
-                                    android.util.Log.w(TAG, "└─ Success: $success")
-                                    
-                                } catch (e: Exception) {
-                                    android.util.Log.e(TAG, "NullKB restore error: ${e.message}")
-                                }
-                            }.start()
-                        }
-                    }
-                    // =================================================================================
-                    // END BLOCK: SAMSUNG TAKEOVER FROM NULLKEYBOARD
-                    // =================================================================================
-                    
-                    // =================================================================================
-                    // SAVE PREFERENCE LOGIC
-                    // Save user's keyboard choice. Allow NullKeyboard when blocking is OFF.
-                    //          Skip Samsung (auto-fallback). Skip if not on main screen.
-                    // =================================================================================
-                    val shouldSave = when {
-                        isSamsung -> {
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING Samsung save")
-                            false
-                        }
-                        isDock && prefs.prefBlockSoftKeyboard -> {
-                            // Blocking is ON - Dock was set by our blocking, not user choice
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING Dock save (blocking ON)")
-                            false
-                        }
-                        isDock && !prefs.prefBlockSoftKeyboard -> {
-                            // Blocking is OFF - User intentionally selected Dock
-                            android.util.Log.i(TAG, "IME Observer: SAVING Dock as user preference (blocking OFF)")
-                            true
-                        }
-                        !isOnMainScreen -> {
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING save (not on main screen)")
-                            false
-                        }
-                        else -> true
-                    }
-                    // =================================================================================
-                    // END BLOCK: SAVE PREFERENCE LOGIC
-                    // =================================================================================
-                    
-                    if (shouldSave) {
-                        getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .putString("user_preferred_ime", current)
-                            .apply()
-                            
-                        android.util.Log.i(TAG, "IME Observer: SAVED preference: $current")
-                        
-                        val name = when {
-                            current.contains("google.android.inputmethod.latin") -> "Gboard"
-                            current.contains("DockInputMethodService") -> "DroidOS Dock"
-                            current.contains("NullInputMethodService") -> "DroidOS Dock"
-                            current.contains("honeyboard") -> "Samsung"
-
-                            current.contains("juloo.keyboard2") -> "Unexpected KB"
-                            else -> "Custom Keyboard"
-                        }
-                        handler.post { showToast("Saved: $name") }
-                        handler.post { menuManager?.refresh() }
-                    }
-                    
-                    lastObservedIme = current
-                }
-            }
-        )
+        imeManager?.startMonitoring()
 
         // =================================================================================
         // END BLOCK: CONTENT OBSERVER for Default Keyboard Changes
@@ -1623,6 +1016,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         // Clear pending states
         pendingDisplayId = -1
+
+        imeManager?.startMonitoring()
 
         showToast("Trackpad Ready")
     }
@@ -1982,7 +1377,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // COVER SCREEN - Apply blocking if enabled
                 if (prefs.prefBlockSoftKeyboard) {
                     android.util.Log.d(TAG, "setupUI: Cover screen (D1) - enabling keyboard blocking")
-                    triggerAggressiveBlocking()
+                    imeManager?.triggerAggressiveBlocking()
                 }
             } else {
                 // MAIN SCREEN (0) or VIRTUAL DISPLAY (2+) - Never block, ensure AUTO mode
@@ -2084,7 +1479,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             try { shellService?.setBrightness(128) } catch (e: Exception) {}
                             try { shellService?.setScreenOff(0, false) } catch (e: Exception) {}
                         }.start()
-                        setSoftKeyboardBlocking(false)
+                        imeManager?.setSoftKeyboardBlocking(false)
                         if (Build.VERSION.SDK_INT >= 24) {
                             try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}
                         }
@@ -2348,7 +1743,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }.start()
 
         // 2. Unblock Keyboard (Force Gboard/System default)
-        setSoftKeyboardBlocking(false)
+        imeManager?.setSoftKeyboardBlocking(false)
         if (Build.VERSION.SDK_INT >= 24) {
             try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}
         }
@@ -2731,7 +2126,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 prefs.prefBlockSoftKeyboard = parseBoolean(value)
                 // Only activate blocking if on cover screen (display 1)
                 if (currentDisplayId == 1) {
-                    setSoftKeyboardBlocking(prefs.prefBlockSoftKeyboard)
+                    imeManager?.setSoftKeyboardBlocking(prefs.prefBlockSoftKeyboard)
                 } else if (prefs.prefBlockSoftKeyboard) {
                     showToast("KB Blocker saved - will activate on cover screen")
                 }
@@ -4311,6 +3706,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try { unregisterReceiver(switchReceiver) } catch(e: Exception){};
         try { val im = getSystemService(Context.INPUT_SERVICE) as InputManager; im.unregisterInputDeviceListener(this) } catch (e: Exception) {}
         if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection)
+        imeManager?.stopMonitoring()
     }
 
     fun forceSystemKeyboardVisible() {
