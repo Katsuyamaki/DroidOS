@@ -2792,6 +2792,26 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // lastKnownScreenW/H are now updated by the caller — load NEW orientation state
             loadOrientationState()
 
+            // [FIX] Minimize apps that exceed the new orientation's layout slot count
+            // This prevents extra apps from appearing in front of tiled apps due to z-order
+            val newSlotCount = getLayoutRects().size
+            val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+            if (activeApps.size > newSlotCount) {
+                val appsToMinimize = activeApps.drop(newSlotCount)
+                for (app in appsToMinimize) {
+                    app.isMinimized = true
+                }
+                Thread {
+                    for (app in appsToMinimize) {
+                        try {
+                            val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
+                            if (tid != -1) shellService?.moveTaskToBack(tid)
+                        } catch (e: Exception) {}
+                    }
+                }.start()
+                Log.d(TAG, "refreshUIForOrientationChange: Minimized ${appsToMinimize.size} apps exceeding new slot count ($newSlotCount)")
+            }
+
             setupBubble()
             setupDrawer()
             updateBubbleIcon()
