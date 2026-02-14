@@ -107,55 +107,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     fun enforceZOrder() {
         try {
-            if (windowManager != null) {
-                // LAYER 1: TRACKPAD (Base Layer)
-                // Remove and Re-add to ensure it is on top of OTHER apps (like Launcher),
-                // but we will stack our own Keyboard on top of this shortly.
-                if (trackpadLayout != null && trackpadLayout?.isAttachedToWindow == true) {
-                    try {
-                        windowManager?.removeView(trackpadLayout)
-                        windowManager?.addView(trackpadLayout, trackpadParams)
-                    } catch(e: Exception) {
-                        try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(z: Exception) {}
-                    }
-                }
+            // Delegate trackpad/bubble/cursor z-order to layoutManager
+            layoutManager?.enforceZOrder()
 
-                // LAYER 2: KEYBOARD (Middle Layer)
-                // [FIX] Explicitly bring Keyboard to front so it sits ON TOP of the Trackpad
-                if (keyboardOverlay != null && keyboardOverlay?.isShowing() == true) {
-                     keyboardOverlay?.bringToFront()
-                }
-
-                // LAYER 3: MENU
-                if (menuManager != null) {
-                    try { menuManager?.bringToFront() } catch(e: Exception) {}
-                }
-
-                // LAYER 4: BUBBLE
-                if (bubbleView != null && bubbleView?.isAttachedToWindow == true) {
-                    try {
-                        windowManager?.removeView(bubbleView)
-                        windowManager?.addView(bubbleView, bubbleParams)
-                    } catch (e: Exception) {
-                         try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(z: Exception) {}
-                    }
-                }
-
-                // LAYER 5: CURSOR (Visual Layer)
-                if (cursorLayout != null && cursorLayout?.isAttachedToWindow == true) {
-                    try {
-                        windowManager?.removeView(cursorLayout)
-                        windowManager?.addView(cursorLayout, cursorParams)
-                    } catch (e: Exception) {
-                        try { windowManager?.addView(cursorLayout, cursorParams) } catch(z: Exception) {}
-                    }
-                }
-
-                // LAYER 6: BT MOUSE CAPTURE (Input Interception Layer)
-                btMouseManager?.bringToFront()
-                
-                Log.d("OverlayService", "Z-Order Enforced: Trackpad -> Keyboard -> Cursor -> BT Capture")
+            // Handle keyboard and menu (not managed by layoutManager)
+            if (keyboardOverlay != null && keyboardOverlay?.isShowing() == true) {
+                 keyboardOverlay?.bringToFront()
             }
+            if (menuManager != null) {
+                try { menuManager?.bringToFront() } catch(e: Exception) {}
+            }
+            btMouseManager?.bringToFront()
+
+            Log.d("OverlayService", "Z-Order Enforced via layoutManager")
         } catch (e: Exception) {
             Log.e("OverlayService", "Z-Order failed", e)
         }
@@ -206,6 +170,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal var mirrorManager: MirrorModeManager? = null
     internal var btMouseManager: BluetoothMouseManager? = null
     internal var imeManager: SystemImeManager? = null
+    internal var layoutManager: OverlayLayoutManager? = null
     private var savedKbX = 0
     private var savedKbY = 0
     private var savedKbW = 0
@@ -903,7 +868,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          If so, exits extended mode.
     // NOTE: This is called from the root trackpad touch handler or accessibility event.
     // =================================================================================
-    private fun handleSpacebarExtendedModeCheck(x: Float, y: Float, action: Int) {
+    internal fun handleSpacebarExtendedModeCheck(x: Float, y: Float, action: Int) {
         if (!prefs.prefSpacebarMouseExtended) return
         if (action != MotionEvent.ACTION_DOWN) return
         
@@ -1332,12 +1297,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             updateUiMetrics()
 
             // 4. Rebuild the UI components
-            setupTrackpad(accessContext)
+            layoutManager = OverlayLayoutManager(this, accessContext, windowManager!!)
+            layoutManager!!.setupAll()
+            trackpadLayout = layoutManager!!.trackpadLayout
+            trackpadParams = layoutManager!!.trackpadParams
+            bubbleView = layoutManager!!.bubbleView
+            bubbleParams = layoutManager!!.bubbleParams
+            cursorLayout = layoutManager!!.cursorLayout
+            cursorView = layoutManager!!.cursorView
+            cursorParams = layoutManager!!.cursorParams
             if (shellService != null) initCustomKeyboard()
             menuManager = TrackpadMenuManager(displayContext, windowManager!!, this)
             btMouseManager = BluetoothMouseManager(this, windowManager!!)
-            setupBubble(accessContext)
-            setupCursor(accessContext)
 
 
             enforceZOrder()
@@ -1402,208 +1373,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             Log.e(TAG, "Failed to setup UI on display $displayId", e)
             showToast("Failed to launch on display $displayId")
         }
-    }
-
-    private fun setupBubble(context: Context) {
-        bubbleView = LayoutInflater.from(context).inflate(R.layout.layout_trackpad_bubble, null)
-        bubbleParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-             bubbleParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        bubbleParams.gravity = Gravity.TOP or Gravity.START
-        if (prefs.prefBubbleX == -1 || prefs.prefBubbleY == -1) {
-            prefs.prefBubbleX = (uiScreenWidth / 2) + 80
-            prefs.prefBubbleY = uiScreenHeight / 2
-        }
-        bubbleParams.x = prefs.prefBubbleX.coerceIn(0, (uiScreenWidth - 60).coerceAtLeast(0))
-        bubbleParams.y = prefs.prefBubbleY.coerceIn(0, (uiScreenHeight - 60).coerceAtLeast(0))
-        
-        var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
-        var isLongPressHandled = false
-        var velocityTracker: VelocityTracker? = null
-        val bubbleLongPressRunnable = Runnable {
-            if (!isDrag) {
-                vibrate()
-                menuManager?.toggle()
-                isLongPressHandled = true
-                handler.post { enforceZOrder() }
-            }
-        }
-
-        bubbleView?.setOnTouchListener { _, event ->
-            if (velocityTracker == null) velocityTracker = VelocityTracker.obtain()
-            velocityTracker?.addMovement(event)
-
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = bubbleParams.x; initialY = bubbleParams.y
-                    initialTouchX = event.rawX; initialTouchY = event.rawY
-                    isDrag = false
-                    isLongPressHandled = false
-                    handler.postDelayed(bubbleLongPressRunnable, 600)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (abs(event.rawX - initialTouchX) > 10 || abs(event.rawY - initialTouchY) > 10) {
-                        isDrag = true
-                        handler.removeCallbacks(bubbleLongPressRunnable)
-                        bubbleParams.x = initialX + (event.rawX - initialTouchX).toInt()
-                        bubbleParams.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager?.updateViewLayout(bubbleView, bubbleParams)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(bubbleLongPressRunnable)
-                    velocityTracker?.computeCurrentVelocity(1000)
-                    val vX = velocityTracker?.xVelocity ?: 0f
-                    val vY = velocityTracker?.yVelocity ?: 0f
-                    val totalVel = kotlin.math.hypot(vX.toDouble(), vY.toDouble())
-
-                    // [SAFETY] FLING RESET: Harder threshold (4000) to prevent accidental flings
-                    if (isDrag && totalVel > 4000) {
-
-                        showToast("Force Closing Trackpad...")
-
-                        // 1. Force Screen ON & Unblock Keyboard
-                        isScreenOff = false
-                        Thread {
-                            try { shellService?.setBrightness(128) } catch (e: Exception) {}
-                            try { shellService?.setScreenOff(0, false) } catch (e: Exception) {}
-                        }.start()
-                        imeManager?.setSoftKeyboardBlocking(false)
-                        if (Build.VERSION.SDK_INT >= 24) {
-                            try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch(e: Exception){}
-                        }
-
-                        // 2. Kill Process
-                        forceExit() // This handles cleanup and kill
-
-                        velocityTracker?.recycle()
-                        velocityTracker = null
-                        return@setOnTouchListener true
-                    }
-
-                    if (!isDrag && !isLongPressHandled) {
-                        handleBubbleTap()
-                    } else if (isDrag) {
-                        prefs.prefBubbleX = bubbleParams.x
-                        prefs.prefBubbleY = bubbleParams.y
-                        prefs.save(this)
-                    }
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-                    handler.post { enforceZOrder() }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    handler.removeCallbacks(bubbleLongPressRunnable)
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-                    false
-                }
-                else -> false
-            }
-        }
-        windowManager?.addView(bubbleView, bubbleParams); updateBubbleStatus()
-        applyBubbleAppearance()
-    }
-    
-    private fun setupTrackpad(context: Context) {
-        trackpadLayout = FrameLayout(context)
-        val bg = GradientDrawable(); bg.cornerRadius = 30f; bg.setColor(Color.TRANSPARENT); trackpadLayout?.background = bg
-        val handleColor = 0x15FFFFFF.toInt(); handleContainers.clear(); handleVisuals.clear()
-        addHandle(context, Gravity.TOP or Gravity.RIGHT, handleColor) { _, e -> moveWindow(e) }
-        addHandle(context, Gravity.BOTTOM or Gravity.RIGHT, handleColor) { _, e -> resizeWindow(e) }
-        addHandle(context, Gravity.TOP or Gravity.LEFT, handleColor) { _, e -> keyboardHandle(e) }
-        addHandle(context, Gravity.BOTTOM or Gravity.LEFT, handleColor) { _, e -> openMenuHandle(e) }
-        addScrollBars(context)
-        debugTextView = TextView(context); debugTextView?.text = "DEBUG"; debugTextView?.setTextColor(Color.YELLOW); debugTextView?.setBackgroundColor(0xAA000000.toInt()); debugTextView?.textSize = 9f; debugTextView?.visibility = View.GONE; val debugParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT); debugParams.gravity = Gravity.CENTER; trackpadLayout?.addView(debugTextView, debugParams)
-        
-        trackpadParams = WindowManager.LayoutParams(
-            400, 300, 
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or 
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH, 
-            PixelFormat.TRANSLUCENT
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-             trackpadParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-
-        trackpadParams.gravity = Gravity.TOP or Gravity.LEFT; loadLayout()
-        val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() { 
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { return false }
-        })
-        
-        // =================================================================================
-        // TRACKPAD TOUCH LISTENER
-        // SUMMARY: Handles all touch events on the trackpad area. Filters for finger-only
-        //          input, passes to gesture detector, and calls handleTrackpadTouch for
-        //          cursor movement. Also checks for spacebar extended mode exit.
-        // =================================================================================
-        trackpadLayout?.setOnTouchListener { _, event ->
-            val devId = event.deviceId
-            val tool = event.getToolType(0)
-            
-            // Only accept finger touches (not mouse, stylus, etc.)
-            if (tool != MotionEvent.TOOL_TYPE_FINGER) return@setOnTouchListener false
-            
-            // Track active finger to prevent ghost touches
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> activeFingerDeviceId = devId
-                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
-                    if (activeFingerDeviceId > 0 && devId != activeFingerDeviceId) {
-                        return@setOnTouchListener false
-                    }
-                }
-            }
-            
-            // Check for spacebar mouse extended mode exit (on tap outside keyboard)
-            handleSpacebarExtendedModeCheck(event.rawX, event.rawY, event.action)
-            
-            // Pass to gesture detector for tap detection
-            gestureDetector.onTouchEvent(event)
-            
-            // CRITICAL: Handle trackpad touch for cursor movement
-            handleTrackpadTouch(event)
-            
-            true
-        }
-        // =================================================================================
-        // END BLOCK: TRACKPAD TOUCH LISTENER
-        // =================================================================================
-        trackpadLayout?.visibility = if (isTrackpadVisible) View.VISIBLE else View.GONE
-        windowManager?.addView(trackpadLayout, trackpadParams)
-        updateBorderColor(currentBorderColor)
-    }
-    
-    private fun setupCursor(context: Context) {
-        cursorLayout = FrameLayout(context); cursorView = ImageView(context); cursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorLayout?.addView(cursorView, FrameLayout.LayoutParams(size, size))
-        cursorParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, 
-            WindowManager.LayoutParams.WRAP_CONTENT, 
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, 
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-             cursorParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        cursorParams.gravity = Gravity.TOP or Gravity.LEFT; cursorParams.x = uiScreenWidth / 2; cursorParams.y = uiScreenHeight / 2; windowManager?.addView(cursorLayout, cursorParams)
     }
 
     fun toggleTrackpad() { 
@@ -1777,7 +1546,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     fun updateBubbleStatus() { val dot = bubbleView?.findViewById<ImageView>(R.id.status_dot); if (shellService != null) dot?.visibility = View.GONE else dot?.visibility = View.VISIBLE }
 
-    private val bubbleIcons = arrayOf(R.mipmap.ic_trackpad_adaptive, R.drawable.ic_cursor, R.drawable.ic_tab_main, R.drawable.ic_tab_keyboard, android.R.drawable.ic_menu_compass, android.R.drawable.ic_menu_myplaces)
+    internal val bubbleIcons = arrayOf(R.mipmap.ic_trackpad_adaptive, R.drawable.ic_cursor, R.drawable.ic_tab_main, R.drawable.ic_tab_keyboard, android.R.drawable.ic_menu_compass, android.R.drawable.ic_menu_myplaces)
     
     fun updateBubbleSize(sizePercent: Int) { prefs.prefBubbleSize = sizePercent.coerceIn(50, 200); applyBubbleAppearance(); prefs.save(this) }
     fun updateBubbleIcon(index: Int) { prefs.prefBubbleIconIndex = index.coerceIn(0, bubbleIcons.size - 1); applyBubbleAppearance(); prefs.save(this) }
@@ -2708,16 +2477,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
     }
 
-    private fun updateScrollPosition() { val margin = prefs.prefHandleTouchSize + 10; vScrollContainer?.let { c -> val p = c.layoutParams as FrameLayout.LayoutParams; p.gravity = if (prefs.prefVPosLeft) Gravity.LEFT else Gravity.RIGHT; p.setMargins(0, margin, 0, margin); c.layoutParams = p }; hScrollContainer?.let { c -> val p = c.layoutParams as FrameLayout.LayoutParams; p.gravity = if (prefs.prefHPosTop) Gravity.TOP else Gravity.BOTTOM; p.setMargins(margin, 0, margin, 0); c.layoutParams = p } }
-    private fun updateHandleSize() { for (v in handleVisuals) { val p = v.layoutParams; p.width = prefs.prefHandleSize; p.height = prefs.prefHandleSize; v.layoutParams = p } }
+    private fun updateScrollPosition() { layoutManager?.updateScrollPosition() }
+    private fun updateHandleSize() { layoutManager?.updateHandleSize() }
     private fun updateScrollSize() {
         prefs.prefScrollTouchSize = prefs.prefScrollTouchSize.coerceIn(40, 180); prefs.prefScrollVisualSize = prefs.prefScrollVisualSize.coerceIn(4, 20); scrollZoneThickness = prefs.prefScrollTouchSize
         vScrollContainer?.let { it.layoutParams.width = prefs.prefScrollTouchSize; it.requestLayout() }; vScrollVisual?.let { it.layoutParams.width = prefs.prefScrollVisualSize; it.requestLayout() }
         hScrollContainer?.let { it.layoutParams.height = prefs.prefScrollTouchSize; it.requestLayout() }; hScrollVisual?.let { it.layoutParams.height = prefs.prefScrollVisualSize; it.requestLayout() }
     }
     private fun updateLayoutSizes() { for (c in handleContainers) { val p = c.layoutParams; p.width = prefs.prefHandleTouchSize; p.height = prefs.prefHandleTouchSize; c.layoutParams = p } }
-    private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
-    private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor((prefs.prefBgAlpha shl 24) or 0x000000); bg.setStroke(4, (prefs.prefAlpha shl 24) or 0xFFFFFF); trackpadLayout?.invalidate() }
+    private fun updateCursorSize() { layoutManager?.updateCursorSize() }
+    private fun updateBorderColor(strokeColor: Int) { layoutManager?.updateBorderColor(strokeColor) }
     
 
 
@@ -3336,7 +3105,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         displayWakeLock = null
     }
 
-    private fun pingUserActivity() {
+    internal fun pingUserActivity() {
         val now = SystemClock.uptimeMillis()
         if (now - lastUserActivityPing < USER_ACTIVITY_PING_INTERVAL_MS) return
         lastUserActivityPing = now
