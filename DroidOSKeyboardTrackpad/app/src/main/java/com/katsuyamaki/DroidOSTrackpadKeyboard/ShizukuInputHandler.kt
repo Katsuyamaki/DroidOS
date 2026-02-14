@@ -3,7 +3,9 @@ package com.katsuyamaki.DroidOSTrackpadKeyboard
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import java.util.concurrent.Executors
 
 /**
@@ -165,6 +167,68 @@ class ShizukuInputHandler(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
+            }
+        }
+    }
+
+    /**
+     * Injects a mouse event (move, hover, down, up) at specified coordinates.
+     * @param action MotionEvent action (ACTION_MOVE, ACTION_DOWN, ACTION_UP, ACTION_HOVER_MOVE)
+     * @param x Cursor X position
+     * @param y Cursor Y position
+     * @param targetDisplayId Display to inject to
+     * @param source InputDevice source (SOURCE_MOUSE, SOURCE_TOUCHSCREEN)
+     * @param button Button state (BUTTON_PRIMARY, BUTTON_SECONDARY, etc.)
+     * @param time Event timestamp
+     */
+    fun injectMouse(action: Int, x: Float, y: Float, targetDisplayId: Int, source: Int, button: Int, time: Long) {
+        if (shellService == null) return
+        executor.execute {
+            try {
+                shellService?.injectMouse(action, x, y, targetDisplayId, source, button, time)
+            } catch (e: Exception) {
+                Log.e(TAG, "Mouse injection failed", e)
+            }
+        }
+    }
+
+    /**
+     * Injects a scroll event at specified coordinates.
+     * @param x Cursor X position
+     * @param y Cursor Y position
+     * @param hScroll Horizontal scroll amount
+     * @param vScroll Vertical scroll amount
+     * @param targetDisplayId Display to inject to
+     */
+    fun injectScroll(x: Float, y: Float, hScroll: Float, vScroll: Float, targetDisplayId: Int) {
+        if (shellService == null) return
+        executor.execute {
+            try {
+                shellService?.injectScroll(x, y, vScroll / 10f, hScroll / 10f, targetDisplayId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Scroll injection failed", e)
+            }
+        }
+    }
+
+    /**
+     * Performs a click at specified coordinates.
+     * @param x Cursor X position
+     * @param y Cursor Y position
+     * @param targetDisplayId Display to inject to
+     * @param isRightClick True for right click, false for left click
+     */
+    fun performClick(x: Float, y: Float, targetDisplayId: Int, isRightClick: Boolean) {
+        if (shellService == null) return
+        executor.execute {
+            try {
+                if (isRightClick) {
+                    shellService?.execRightClick(x, y, targetDisplayId)
+                } else {
+                    shellService?.execClick(x, y, targetDisplayId)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Click injection failed", e)
             }
         }
     }

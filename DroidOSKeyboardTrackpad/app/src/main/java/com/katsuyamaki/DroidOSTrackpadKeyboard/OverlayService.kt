@@ -2628,7 +2628,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     if (!volUpDragActive) { volUpDragActive = true; startKeyDrag(MotionEvent.BUTTON_PRIMARY) }
                 } else {
                     if (volUpDragActive) { volUpDragActive = false; stopKeyDrag(MotionEvent.BUTTON_PRIMARY) } 
-                    else performClick(false)
+                    else inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, false)
                 }
             }
             "right_click" -> {
@@ -2636,7 +2636,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     if (!volDownDragActive) { volDownDragActive = true; startKeyDrag(MotionEvent.BUTTON_SECONDARY) }
                 } else {
                     if (volDownDragActive) { volDownDragActive = false; stopKeyDrag(MotionEvent.BUTTON_SECONDARY) } 
-                    else performClick(true)
+                    else inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, true)
                 }
             }
             "action_back" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
@@ -3746,14 +3746,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {} } 
                 else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {} }
                 showCursorAndResetFade()
-                if (isTouchDragging || isKeyDragging) injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()) else injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
+                if (isTouchDragging || isKeyDragging) inputHandler.injectMouse(MotionEvent.ACTION_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()) else inputHandler.injectMouse(MotionEvent.ACTION_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                 lastTouchX = event.x; lastTouchY = event.y
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 handler.removeCallbacks(longPressRunnable)
                 if (!ignoreTouchSequence) {
-                    if (isTouchDragging) { injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()); isTouchDragging = false }
-                    else if (!isKeyDragging && SystemClock.uptimeMillis() - touchDownTime < TAP_TIMEOUT_MS && kotlin.math.sqrt((event.x - touchDownX) * (event.x - touchDownX) + (event.y - touchDownY) * (event.y - touchDownY)) < TAP_SLOP_PX) performClick(false)
+                    if (isTouchDragging) { inputHandler.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()); isTouchDragging = false }
+                    else if (!isKeyDragging && SystemClock.uptimeMillis() - touchDownTime < TAP_TIMEOUT_MS && kotlin.math.sqrt((event.x - touchDownX) * (event.x - touchDownX) + (event.y - touchDownY) * (event.y - touchDownY)) < TAP_SLOP_PX) inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, false)
                 }
                 isReleaseDebouncing = true; handler.postDelayed(releaseDebounceRunnable, RELEASE_DEBOUNCE_MS)
                 if (!isKeyDragging) { isVScrolling = false; isHScrolling = false; updateBorderColor(currentBorderColor) }
@@ -3805,20 +3805,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         return true 
     }
     private fun openMenuHandle(event: MotionEvent): Boolean { if (event.action == MotionEvent.ACTION_DOWN) menuManager?.toggle(); return true }
-    // [EFFICIENCY] Use Executor instead of spawning new Threads for every event
-    private fun injectAction(action: Int, source: Int, button: Int, time: Long) {
-        if (shellService == null) return
-        inputExecutor.execute {
-            // Log.d("EFFICIENCY_TEST", "Worker Thread ID: ${Thread.currentThread().id}")
-            try { shellService?.injectMouse(action, cursorX, cursorY, inputTargetDisplayId, source, button, time) } catch(e: Exception){}
-        }
-    }
 
     fun injectScroll(hScroll: Float, vScroll: Float) {
-        if (shellService == null) return
-        inputExecutor.execute {
-            try { shellService?.injectScroll(cursorX, cursorY, vScroll / 10f, hScroll / 10f, inputTargetDisplayId) } catch(e: Exception){}
-        }
+        inputHandler.injectScroll(cursorX, cursorY, hScroll, vScroll, inputTargetDisplayId)
     }
 
     // Helper to allow external components (like Keyboard) to control the cursor
@@ -3905,12 +3894,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (isDragging) {
             // TOUCH DRAG: SOURCE_TOUCHSCREEN + ACTION_MOVE
             // Always inject drag events - user explicitly initiated drag
-            injectAction(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
+            inputHandler.injectMouse(MotionEvent.ACTION_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
         } else {
             // MOUSE HOVER: SOURCE_MOUSE + ACTION_HOVER_MOVE
             // Skip hover injection when over keyboard to prevent feedback loop
             if (!isOverKeyboard) {
-                injectAction(MotionEvent.ACTION_HOVER_MOVE, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
+                inputHandler.injectMouse(MotionEvent.ACTION_HOVER_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
             }
         }
     }
@@ -3949,13 +3938,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     // Explicit Touch Down (Start Drag/Hold)
     fun handleExternalTouchDown() {
-        injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
+        inputHandler.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
         android.util.Log.d("TouchInjection", "Touch DOWN at ($cursorX, $cursorY)")
     }
 
     // Explicit Touch Up (End Drag/Hold)
     fun handleExternalTouchUp() {
-        injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
+        inputHandler.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
         android.util.Log.d("TouchInjection", "Touch UP at ($cursorX, $cursorY)")
     }
 
@@ -3977,10 +3966,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     // Keep Right Click for the predictive bar if needed
     fun handleExternalMouseClick(isRight: Boolean) {
-        performClick(isRight)
+        inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, isRight)
     }
 
-    fun performClick(right: Boolean) { if (shellService == null) return; Thread { try { if (right) shellService?.execRightClick(cursorX, cursorY, inputTargetDisplayId) else shellService?.execClick(cursorX, cursorY, inputTargetDisplayId) } catch(e: Exception){} }.start() }
+    fun performClick(right: Boolean) { inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, right) }
     fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} }; showCursorAndResetFade() }
     
     private fun setCursorPosition(x: Float, y: Float) {
@@ -4837,7 +4826,7 @@ if (isResize) {
                     MotionEvent.ACTION_UP -> {
                         if (isRightButton) {
                              // Log.d(BT_TAG, "MOUSE RIGHT UP: Performing Right Click")
-                             performClick(true)
+                             inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, true)
                         } else {
                              // Log.d(BT_TAG, "MOUSE LEFT UP: Ending Touch Stream")
                              handleExternalTouchUp()
@@ -5620,11 +5609,11 @@ if (isResize) {
     // END BLOCK: VIRTUAL MIRROR MODE FUNCTIONS
     // =================================================================================
 
-    private fun startTouchDrag() { if (ignoreTouchSequence || isTouchDragging) return; isTouchDragging = true; activeDragButton = MotionEvent.BUTTON_PRIMARY; dragDownTime = SystemClock.uptimeMillis(); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, dragDownTime); hasSentTouchDown = true; if (prefs.prefVibrate) vibrate(); updateBorderColor(0xFFFF9900.toInt()) }
+    private fun startTouchDrag() { if (ignoreTouchSequence || isTouchDragging) return; isTouchDragging = true; activeDragButton = MotionEvent.BUTTON_PRIMARY; dragDownTime = SystemClock.uptimeMillis(); inputHandler.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, dragDownTime); hasSentTouchDown = true; if (prefs.prefVibrate) vibrate(); updateBorderColor(0xFFFF9900.toInt()) }
     private fun startResize() {}
     private fun startMove() {}
-    private fun startKeyDrag(button: Int) { vibrate(); updateBorderColor(0xFF00FF00.toInt()); isKeyDragging = true; activeDragButton = button; dragDownTime = SystemClock.uptimeMillis(); injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime); hasSentMouseDown = true }
-    private fun stopKeyDrag(button: Int) { if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt()); isKeyDragging = false; if (hasSentMouseDown) { injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime) }; hasSentMouseDown = false }
+    private fun startKeyDrag(button: Int) { vibrate(); updateBorderColor(0xFF00FF00.toInt()); isKeyDragging = true; activeDragButton = button; dragDownTime = SystemClock.uptimeMillis(); inputHandler.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime); hasSentMouseDown = true }
+    private fun stopKeyDrag(button: Int) { if (inputTargetDisplayId != currentDisplayId) updateBorderColor(0xFFFF00FF.toInt()) else updateBorderColor(0x55FFFFFF.toInt()); isKeyDragging = false; if (hasSentMouseDown) { inputHandler.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, button, dragDownTime) }; hasSentMouseDown = false }
     private fun handleManualAdjust(intent: Intent) {
         val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
         val isResize = intent.hasExtra("DW")
