@@ -215,6 +215,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private lateinit var cursorParams: WindowManager.LayoutParams
 
     internal var menuManager: TrackpadMenuManager? = null
+    internal var mirrorManager: MirrorModeManager? = null
     private var savedKbX = 0
     private var savedKbY = 0
     private var savedKbW = 0
@@ -241,18 +242,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var pendingRestoreKeyboard = false
     private var hasPendingRestore = false
 
-    // =================================================================================
-    // VIRTUAL MIRROR MODE STATE
-    // SUMMARY: Tracks component visibility before entering mirror mode so we can
-    //          restore to previous state when exiting. Also stores the display ID
-    //          we were targeting before mirror mode was enabled.
-    // =================================================================================
-    private var preMirrorTrackpadVisible = false
-    private var preMirrorKeyboardVisible = false
-    private var preMirrorTargetDisplayId = 0
-    // =================================================================================
-    // END BLOCK: VIRTUAL MIRROR MODE STATE
-    // =================================================================================
+    // NOTE: preMirror state variables moved to helper methods section
 
     private var isVoiceActive = false
     
@@ -847,154 +837,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // END BLOCK: BT MOUSE CAPTURE OVERLAY VARIABLES
     // =================================================================================
 
-    // =================================================================================
-    // VIRTUAL MIRROR MODE VARIABLES
-    // =================================================================================
-    private var mirrorWindowManager: WindowManager? = null
-    private var mirrorKeyboardContainer: FrameLayout? = null
-    private var mirrorKeyboardView: KeyboardView? = null
-    private var mirrorTrailView: SwipeTrailView? = null
-    private var mirrorKeyboardParams: WindowManager.LayoutParams? = null
-
-    // Dimensions for coordinate scaling between physical and mirror keyboards
-    private var physicalKbWidth = 0f
-    private var physicalKbHeight = 0f
-    private var mirrorKbWidth = 0f
-    private var mirrorKbHeight = 0f
-
-    private var isInOrientationMode = false
-    private var isMirrorDragActive = false
-    private var isHoveringBackspace = false // [FIX] Add this variable
-    private var draggedPredictionIndex = -1 // [FIX] Add this missing variable
-    private var lastOrientX = 0f
-    private var lastOrientY = 0f
-    private val MOVEMENT_THRESHOLD = 15f  // Pixels - ignore movement smaller than this
-    private var orientationModeHandler = Handler(Looper.getMainLooper())
-    private var lastOrientationTouchTime = 0L
-
-    // =================================================================================
-    // MIRROR MODE KEY REPEAT VARIABLES
-    // SUMMARY: Variables for repeating backspace/arrow keys when held during orange
-    //          trail orientation mode. Only active in mirror mode, doesn't affect
-    //          normal blue trail swipe typing.
-    // =================================================================================
-    private val mirrorRepeatHandler = Handler(Looper.getMainLooper())
-    private var mirrorRepeatKey: String? = null
-    private var isMirrorRepeating = false
-    private val MIRROR_REPEAT_INITIAL_DELAY = 400L
-    private val MIRROR_REPEAT_INTERVAL = 50L
-    
-    // Keys that can repeat in mirror orientation mode (backspace + arrows)
-    private val mirrorRepeatableKeys = setOf("BKSP", "⌫", "←", "→", "↑", "↓", "◄", "▲", "▼", "►")
-    
-
-    private val mirrorRepeatRunnable = object : Runnable {
-        override fun run() {
-            mirrorRepeatKey?.let { key ->
-                // FIXED: Removed '&& isInOrientationMode' check.
-                // This allows repeat to work in Blue Mode (where isInOrientationMode is false).
-                if (isMirrorRepeating) {
-                    Log.d(TAG, "Mirror repeat: $key")
-                    keyboardOverlay?.triggerKeyPress(key)
-                    mirrorRepeatHandler.postDelayed(this, MIRROR_REPEAT_INTERVAL)
-                }
-            }
-        }
-    }
-
-    // =================================================================================
-    // END BLOCK: MIRROR MODE KEY REPEAT VARIABLES
-    // =================================================================================    // =================================================================================
-    // RUNNABLE: orientationModeTimeout
-    // SUMMARY: Fires when finger has been still for delay period.
-    //          Switches from orange trail to blue trail.
-    //          Initializes swipe tracking so path collection starts NOW.
-    // =================================================================================
-
-
-
-
-    private val orientationModeTimeout = Runnable {
-        // Get actual suggestion strip height from the physical keyboard
-        val stripHeight = keyboardOverlay?.getKeyboardView()?.getSuggestionStripHeight()?.toFloat() ?: 0f
-
-        // Check if finger is currently holding on the Prediction Bar
-        if (lastOrientY < stripHeight) {
-
-             // START DRAG MODE (Blue Trail)
-             isInOrientationMode = false
-             keyboardOverlay?.setOrientationMode(false)
-             mirrorTrailView?.clear()
-             keyboardOverlay?.clearOrientationTrail()
-             
-             isMirrorDragActive = true
-             
-             // Calculate index
-             val width = if (physicalKbWidth > 0) physicalKbWidth else 1080f
-             val slotWidth = width / 3f
-             draggedPredictionIndex = (lastOrientX / slotWidth).toInt().coerceIn(0, 2)
-
-             // START BLUE TRAIL IMMEDIATELY
-             mirrorTrailView?.setTrailColor(0xFF4488FF.toInt())
-             mirrorTrailView?.addPoint(lastOrientX, lastOrientY)
-             
-             val now = SystemClock.uptimeMillis()
-             val scaleX = if (physicalKbWidth > 0) mirrorKbWidth / physicalKbWidth else 1f
-             val scaleY = if (physicalKbHeight > 0) mirrorKbHeight / physicalKbHeight else 1f
-             val mx = lastOrientX * scaleX
-             val my = lastOrientY * scaleY
-             
-             val event = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, mx, my, 0)
-             mirrorKeyboardView?.dispatchTouchEvent(event)
-             event.recycle()
-             
-             return@Runnable
-        }
-
-        // CASE B: Holding on Keys -> START BLUE TRAIL
-        isInOrientationMode = false
-        mirrorTrailView?.clear()
-        keyboardOverlay?.clearOrientationTrail()
-        keyboardOverlay?.setOrientationMode(false)
-        mirrorTrailView?.setTrailColor(0xFF4488FF.toInt()) 
-        keyboardOverlay?.startSwipeFromCurrentPosition(lastOrientX, lastOrientY)
-
-        val scaleX = if (physicalKbWidth > 0) mirrorKbWidth / physicalKbWidth else 1f
-        val scaleY = if (physicalKbHeight > 0) mirrorKbHeight / physicalKbHeight else 1f
-        mirrorTrailView?.addPoint(lastOrientX * scaleX, lastOrientY * scaleY)
-        mirrorKeyboardView?.alpha = 0.7f
-
-        // Immediate Repeat Check
-        val currentKey = keyboardOverlay?.getKeyAtPosition(lastOrientX, lastOrientY)
-        if (currentKey != null && mirrorRepeatableKeys.contains(currentKey)) {
-            mirrorRepeatKey = currentKey
-            isMirrorRepeating = true
-            keyboardOverlay?.triggerKeyPress(currentKey)
-            mirrorRepeatHandler.postDelayed(mirrorRepeatRunnable, MIRROR_REPEAT_INTERVAL)
-        }
-    }
-
-
-
-    // =================================================================================
-    // END BLOCK: orientationModeTimeout
-    // =================================================================================
-
-    // =================================================================================
-    // MIRROR FADE OUT HANDLER
-    // SUMMARY: Fades the mirror keyboard to fully transparent after inactivity.
-    // =================================================================================
-    private val mirrorFadeHandler = Handler(Looper.getMainLooper())
-    private val mirrorFadeRunnable = Runnable {
-        mirrorKeyboardView?.animate()?.alpha(0f)?.setDuration(300)?.start()
-        mirrorKeyboardContainer?.animate()?.alpha(0f)?.setDuration(300)?.start()
-    }
-    // =================================================================================
-    // END BLOCK: MIRROR FADE OUT HANDLER
-    // =================================================================================
-    // =================================================================================
-    // END BLOCK: VIRTUAL MIRROR MODE VARIABLES
-    // =================================================================================
+    // NOTE: Virtual Mirror Mode variables moved to MirrorModeManager.kt
 
     private val longPressRunnable = Runnable { startTouchDrag() }
     private val clearHighlightsRunnable = Runnable { updateBorderColor(currentBorderColor); updateLayoutSizes() }
@@ -2630,7 +2473,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             if (!isCustomKeyboardVisible) toggleCustomKeyboard()
             
             // Create mirror keyboard on virtual display
-            createMirrorKeyboard(virtualDisplayId)
+            mirrorManager?.update()
             createRemoteCursor(virtualDisplayId)
             
             // Update visual indicators
@@ -2661,7 +2504,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             
             // Remove remote cursor and mirror keyboard
             removeRemoteCursor()
-            removeMirrorKeyboard()
+            mirrorManager?.removeMirrorKeyboard()
             
             // Move UI to physical display
             setupUI(physicalDisplayId)
@@ -2861,19 +2704,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     // FUNCTION: syncMirrorWithPhysicalKeyboard
     // SUMMARY: Updates mirror keyboard dimensions to match physical keyboard.
-    //          Called when physical keyboard is resized/moved.
     // =================================================================================
     fun syncMirrorWithPhysicalKeyboard() {
-        if (!prefs.prefVirtualMirrorMode || mirrorKeyboardView == null) return
-        
-        // Update coordinate scaling variables
-        physicalKbWidth = keyboardOverlay?.getViewWidth()?.toFloat() ?: 600f
-        physicalKbHeight = keyboardOverlay?.getViewHeight()?.toFloat() ?: 400f
-        
-        Log.d(TAG, "Mirror sync: Physical KB now ${physicalKbWidth}x${physicalKbHeight}")
-        
-        // If mirror has custom size, keep it. Otherwise, could auto-scale here.
-        // For now, just update the scaling ratios used for touch coordinate mapping.
+        mirrorManager?.syncWithPhysicalKeyboard()
     }
     // =================================================================================
     // END BLOCK: syncMirrorWithPhysicalKeyboard
@@ -2883,7 +2716,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (isKeyboard) { 
             if (isResize) keyboardOverlay?.resizeWindow(dx, dy) else keyboardOverlay?.moveWindow(dx, dy)
             // Sync mirror keyboard with physical keyboard changes
-            syncMirrorWithPhysicalKeyboard()
+            mirrorManager?.syncWithPhysicalKeyboard()
         } 
         else { 
             if (trackpadLayout == null) return
@@ -2982,10 +2815,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "mirror_alpha" -> {
                 val v = value as Int
                 prefs.prefMirrorAlpha = v
-                // Apply to BOTH container and keyboard view
                 val alpha = v / 255f
-                mirrorKeyboardContainer?.alpha = alpha
-                mirrorKeyboardView?.alpha = alpha
+                mirrorManager?.setAlpha(alpha)
             }
             "mirror_orient_delay" -> {
                 prefs.prefMirrorOrientDelayMs = value as Long
@@ -3208,10 +3039,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // [FIX] SAVE MIRROR KEYBOARD PARAMS (If in Mirror Mode)
         if (prefs.prefVirtualMirrorMode) {
             // Get live values from window params if available, otherwise use prefs
-            val mX = mirrorKeyboardParams?.x ?: prefs.prefMirrorX
-            val mY = mirrorKeyboardParams?.y ?: prefs.prefMirrorY
-            val mW = mirrorKeyboardParams?.width ?: prefs.prefMirrorWidth
-            val mH = mirrorKeyboardParams?.height ?: prefs.prefMirrorHeight
+            val mirrorParams = mirrorManager?.getParams()
+            val mX = mirrorParams?.x ?: prefs.prefMirrorX
+            val mY = mirrorParams?.y ?: prefs.prefMirrorY
+            val mW = mirrorParams?.width ?: prefs.prefMirrorWidth
+            val mH = mirrorParams?.height ?: prefs.prefMirrorHeight
             val mAlpha = prefs.prefMirrorAlpha
 
             p.putInt("MIRROR_X_$key", mX)
@@ -3331,7 +3163,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         //          Returns true if the touch should be consumed (orientation mode active).
         // =================================================================================
         keyboardOverlay?.onMirrorTouch = { x, y, action ->
-            onMirrorKeyboardTouch(x, y, action)
+            mirrorManager?.onTouch(x, y, action) ?: false
         }
         // =================================================================================
         // END BLOCK: VIRTUAL MIRROR TOUCH CALLBACK
@@ -3339,7 +3171,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         // Wire up layer change callback for mirror keyboard sync
         keyboardOverlay?.onLayerChanged = { state ->
-            syncMirrorKeyboardLayer(state)
+            mirrorManager?.syncKeyboardLayer(state)
         }
 
         // =================================================================================
@@ -3348,7 +3180,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         //          This keeps the prediction bar in sync on both displays.
         // =================================================================================
         keyboardOverlay?.onSuggestionsChanged = { suggestions ->
-            mirrorKeyboardView?.setSuggestions(suggestions)
+            mirrorManager?.setSuggestions(suggestions as List<KeyboardView.Candidate>)
         }
         // =================================================================================
         // END BLOCK: MIRROR SUGGESTIONS SYNC CALLBACK
@@ -3359,7 +3191,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // SUMMARY: When physical keyboard is moved/resized, sync mirror keyboard.
         // =================================================================================
         keyboardOverlay?.onSizeChanged = {
-            syncMirrorWithPhysicalKeyboard()
+            mirrorManager?.syncWithPhysicalKeyboard()
         }
         // =================================================================================
         // END BLOCK: PHYSICAL KEYBOARD SIZE/POSITION CHANGE CALLBACK
@@ -3467,7 +3299,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private fun toggleScreen() { if (isScreenOff) turnScreenOn() else turnScreenOff() }
     
     private fun updateUiMetrics() { val display = displayManager?.getDisplay(currentDisplayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); uiScreenWidth = metrics.widthPixels; uiScreenHeight = metrics.heightPixels }
-    private fun createTrackpadDisplayContext(display: Display): Context { return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) createDisplayContext(display).createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null) else createDisplayContext(display) }
+    // NOTE: createTrackpadDisplayContext moved to helper methods section as internal
     private fun addHandle(context: Context, gravity: Int, color: Int, onTouch: (View, MotionEvent) -> Boolean) { val container = FrameLayout(context); val p = FrameLayout.LayoutParams(prefs.prefHandleTouchSize, prefs.prefHandleTouchSize); p.gravity = gravity; val visual = View(context); val bg = GradientDrawable(); bg.setColor(color); bg.cornerRadius = 15f; visual.background = bg; val vp = FrameLayout.LayoutParams(prefs.prefHandleSize, prefs.prefHandleSize); vp.gravity = Gravity.CENTER; container.addView(visual, vp); handleContainers.add(container); handleVisuals.add(visual); trackpadLayout?.addView(container, p); container.setOnTouchListener { v, e -> onTouch(v, e) } }
     
     private fun addScrollBars(context: Context) {
@@ -3845,50 +3677,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // END BLOCK: VIRTUAL MIRROR MODE LAYOUT LOAD
     // =================================================================================
 
-    // =================================================================================
-    // FUNCTION: applyMirrorKeyboardSettings
-    // SUMMARY: Applies saved mirror keyboard position/size/alpha to the live mirror
-    //          keyboard. Called after loading a mirror mode profile.
-    // =================================================================================
+    // NOTE: applyMirrorKeyboardSettings moved to MirrorModeManager.kt
     private fun applyMirrorKeyboardSettings() {
-        if (mirrorKeyboardParams == null || mirrorKeyboardContainer == null) return
-
-        // Apply saved position if valid
-        if (prefs.prefMirrorX != -1) {
-            mirrorKeyboardParams?.x = prefs.prefMirrorX
-            mirrorKeyboardParams?.gravity = Gravity.TOP or Gravity.START
-        }
-        if (prefs.prefMirrorY != 0 || prefs.prefMirrorX != -1) {
-            mirrorKeyboardParams?.y = prefs.prefMirrorY
-        }
-        if (prefs.prefMirrorWidth != -1 && prefs.prefMirrorWidth > 0) {
-            mirrorKeyboardParams?.width = prefs.prefMirrorWidth
-        }
-        if (prefs.prefMirrorHeight != -1 && prefs.prefMirrorHeight > 0) {
-            mirrorKeyboardParams?.height = prefs.prefMirrorHeight
-        }
-
-        // Apply alpha
-        val alpha = prefs.prefMirrorAlpha / 255f
-        mirrorKeyboardContainer?.alpha = alpha
-
-        // Update the window
-        try {
-            mirrorWindowManager?.updateViewLayout(mirrorKeyboardContainer, mirrorKeyboardParams)
-
-            // Update sync dimensions after layout change
-            handler.postDelayed({
-                updateMirrorSyncDimensions()
-            }, 100)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to apply mirror keyboard settings", e)
-        }
-
-        Log.d(TAG, "Mirror keyboard settings applied")
+        mirrorManager?.applySettings()
     }
-    // =================================================================================
-    // END BLOCK: applyMirrorKeyboardSettings
-    // =================================================================================
 
 
 
@@ -4066,7 +3858,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 prefs.prefMirrorAlpha = p.getInt("MIRROR_ALPHA_$key", 200)
                 
                 // Update live window if it exists
-                applyMirrorKeyboardSettings()
+                mirrorManager?.applySettings()
             }
         }
 
@@ -4095,28 +3887,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun resetTrackpadPosition() { trackpadParams.x = 100; trackpadParams.y = 100; trackpadParams.width = 400; trackpadParams.height = 300; windowManager?.updateViewLayout(trackpadLayout, trackpadParams) }    // =================================================================================
-// =================================================================================
-    // FUNCTION: showMirrorTemporarily
-    // SUMMARY: Makes mirror keyboard visible temporarily, like when touched.
-    //          Used during D-pad adjustments so user can see changes.
-    // =================================================================================
-    private fun showMirrorTemporarily() {
-        if (mirrorKeyboardContainer == null || mirrorKeyboardView == null) return
-        
-        // Cancel any pending fade
-        mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
-        
-        // Show mirror - only adjust alpha, container is transparent
-        val alpha = prefs.prefMirrorAlpha / 255f
-        mirrorKeyboardContainer?.alpha = 1f
-        mirrorKeyboardView?.alpha = alpha.coerceAtLeast(0.7f)
-        
-        // Schedule fade out after 2 seconds
-        mirrorFadeHandler.postDelayed(mirrorFadeRunnable, 2000)
-    }
-    // =================================================================================
-    // END BLOCK: showMirrorTemporarily
-    // =================================================================================
+    // NOTE: showMirrorTemporarily moved to MirrorModeManager.kt
     // =================================================================================
 // =================================================================================
     // FUNCTION: adjustMirrorKeyboard
@@ -4125,140 +3896,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          FIXED: Handle WRAP_CONTENT properly for resize.
     // =================================================================================
     fun adjustMirrorKeyboard(isResize: Boolean, deltaX: Int, deltaY: Int) {
-        // DEBUG: Show toast so we know function is called
-        showToast("adjust: resize=$isResize dX=$deltaX dY=$deltaY")
-        
-        if (mirrorKeyboardParams == null || mirrorKeyboardContainer == null) {
-            showToast("ERROR: params null")
-            return
-        }
-        
-        // Show mirror during adjustment
-        showMirrorTemporarily()
-        
-if (isResize) {
-            // =================================================================================
-            // RESIZE MODE - adjust width/height AND scale the keyboard keys
-            // SUMMARY: Changes container size and scales the inner KeyboardView to match.
-            //          Also updates sync dimensions so touch coordinates map correctly.
-            // =================================================================================
-            
-            // Get current dimensions from params
-            var currentWidth = mirrorKeyboardParams?.width ?: 600
-            var currentHeight = mirrorKeyboardParams?.height ?: 350
-            
-            // Handle WRAP_CONTENT (-2) - must get actual measured size from view
-            if (currentWidth == WindowManager.LayoutParams.WRAP_CONTENT || currentWidth <= 0) {
-                currentWidth = mirrorKeyboardContainer?.width ?: mirrorKeyboardView?.width ?: 600
-                if (currentWidth <= 0) {
-                    val display = displayManager?.getDisplay(inputTargetDisplayId)
-                    if (display != null) {
-                        val metrics = android.util.DisplayMetrics()
-                        display.getRealMetrics(metrics)
-                        currentWidth = (metrics.widthPixels * 0.9f).toInt()
-                    } else {
-                        currentWidth = 600
-                    }
-                }
-                mirrorKeyboardParams?.width = currentWidth
-            }
-            
-            if (currentHeight == WindowManager.LayoutParams.WRAP_CONTENT || currentHeight <= 0) {
-                currentHeight = mirrorKeyboardContainer?.height ?: mirrorKeyboardView?.height ?: 350
-                if (currentHeight <= 0) {
-                    currentHeight = 350
-                }
-                mirrorKeyboardParams?.height = currentHeight
-            }
-            
-            // Apply deltas: positive = grow, negative = shrink
-            val newWidth = (currentWidth + deltaX).coerceIn(250, 1500)
-            val newHeight = (currentHeight + deltaY).coerceIn(150, 1200)
-            
-            android.util.Log.d("MirrorResize", "Resize: ${currentWidth}x${currentHeight} -> ${newWidth}x${newHeight}")
-            
-            // Update container window params
-            mirrorKeyboardParams?.width = newWidth
-            mirrorKeyboardParams?.height = newHeight
-            
-            // Calculate new scale based on height ratio
-            // Use physical keyboard as reference - mirror should scale proportionally
-            val physicalHeight = keyboardOverlay?.getViewHeight()?.toFloat() ?: 350f
-            val physicalScale = keyboardOverlay?.getScale() ?: 1.0f
-            
-            // Calculate what scale the mirror needs to fit in newHeight
-            // Scale is proportional to height ratio
-            val heightRatio = newHeight.toFloat() / physicalHeight
-            val newScale = (physicalScale * heightRatio).coerceIn(0.5f, 2.0f)
-            
-            android.util.Log.d("MirrorResize", "Scale: physH=$physicalHeight, physScale=$physicalScale, ratio=$heightRatio, newScale=$newScale")
-            
-            // Apply scale to mirror keyboard - this resizes the actual keys
-            mirrorKeyboardView?.setScale(newScale)
-            
-            // Update inner view layout params to match container
-            mirrorKeyboardView?.layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT  // Let it size naturally with new scale
-            )
-            
-            // Save to prefs
-            prefs.prefMirrorWidth = newWidth
-            prefs.prefMirrorHeight = newHeight
-            
-            getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-                .putInt("mirror_width", newWidth)
-                .putInt("mirror_height", newHeight)
-                .apply()
-        } else {
-            // =================================================================================
-            // MOVE MODE - adjust x/y position
-            // For move: we want UP button to move keyboard UP on screen
-            // UP sends deltaY = -20
-            // With Gravity.BOTTOM: to move UP visually, Y offset must INCREASE
-            // With Gravity.TOP: to move UP visually, Y offset must DECREASE
-            // =================================================================================
-            val currentX = mirrorKeyboardParams?.x ?: 0
-            val currentY = mirrorKeyboardParams?.y ?: 0
-            val gravity = mirrorKeyboardParams?.gravity ?: 0
-            val isBottomGravity = (gravity and Gravity.BOTTOM) == Gravity.BOTTOM
-            
-            val newX = currentX + deltaX
-            
-            // CRITICAL FIX: Correct Y handling based on gravity
-            val newY = if (isBottomGravity) {
-                // Gravity.BOTTOM: positive Y = UP from bottom
-                // UP button sends -20, we want to move UP, so negate: currentY - (-20) = currentY + 20
-                currentY - deltaY
-            } else {
-                // Gravity.TOP: positive Y = DOWN from top  
-                // UP button sends -20, we want to move UP, so add directly: currentY + (-20)
-                currentY + deltaY
-            }
-            
-            showToast("Move: ($currentX,$currentY)->($newX,$newY) btm=$isBottomGravity")
-            
-            mirrorKeyboardParams?.x = newX
-            mirrorKeyboardParams?.y = newY
-            
-            // Switch to TOP gravity after first move for consistent behavior
-            mirrorKeyboardParams?.gravity = Gravity.TOP or Gravity.START
-            
-            getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-                .putInt("mirror_x", newX)
-                .putInt("mirror_y", newY)
-                .apply()
-        }
-        
-        try {
-            mirrorWindowManager?.updateViewLayout(mirrorKeyboardContainer, mirrorKeyboardParams)
-            
-            if (isResize) {
-                handler.postDelayed({ updateMirrorSyncDimensions() }, 100)
-            }
-        } catch (e: Exception) {
-            showToast("Layout update failed: ${e.message}")
-        }
+        mirrorManager?.adjust(isResize, deltaX, deltaY)
     }
     // =================================================================================
     // END BLOCK: adjustMirrorKeyboard
@@ -4273,45 +3911,7 @@ if (isResize) {
     //          Uses WRAP_CONTENT height and triggers sync dimension update.
     // =================================================================================
     fun resetMirrorKeyboardPosition() {
-        if (mirrorKeyboardParams == null || mirrorKeyboardContainer == null) return
-        
-        // Show during reset
-        showMirrorTemporarily()
-        
-        // Get display metrics for auto-sizing
-        val display = displayManager?.getDisplay(inputTargetDisplayId) ?: return
-        val metrics = android.util.DisplayMetrics()
-        display.getRealMetrics(metrics)
-        
-        val mirrorWidth = (metrics.widthPixels * 0.95f).toInt()
-        
-        // Reset to defaults
-        mirrorKeyboardParams?.x = 0
-        mirrorKeyboardParams?.y = 0
-        mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        mirrorKeyboardParams?.width = mirrorWidth
-        mirrorKeyboardParams?.height = WindowManager.LayoutParams.WRAP_CONTENT
-        
-        // Clear saved prefs
-        getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-            .remove("mirror_x")
-            .remove("mirror_y")
-            .remove("mirror_width")
-            .remove("mirror_height")
-            .apply()
-        
-        try {
-            mirrorWindowManager?.updateViewLayout(mirrorKeyboardContainer, mirrorKeyboardParams)
-            
-            // FIX: Update sync dimensions after layout
-            handler.postDelayed({
-                updateMirrorSyncDimensions()
-            }, 100)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to reset mirror keyboard layout", e)
-        }
-        
-        Log.d(TAG, "Mirror keyboard reset to defaults")
+        mirrorManager?.resetPosition()
     }
     // =================================================================================
     // END BLOCK: resetMirrorKeyboardPosition
@@ -4324,7 +3924,7 @@ if (isResize) {
         
         if (nextId == -1) { 
             Log.w(BT_TAG, "Cycle -> Switching to LOCAL ($currentDisplayId). Removing BT Capture.")
-            inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); removeMirrorKeyboard(); removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
+            inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); mirrorManager?.removeMirrorKeyboard(); removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
         } else { 
             Log.w(BT_TAG, "Cycle -> Switching to REMOTE ($nextId). Creating BT Capture.")
             inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
@@ -4466,7 +4066,7 @@ if (isResize) {
     // BT MOUSE CAPTURE OVERLAY - CREATE    // SUMMARY: Creates a full-screen transparent overlay on the physical display that
     //          intercepts all Bluetooth mouse input when targeting a virtual display.
     // =================================================================================
-    private fun createBtMouseCaptureOverlay() {
+    internal fun createBtMouseCaptureOverlay() {
         Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
         Log.w(BT_TAG, "│ CREATE REQUESTED: createBtMouseCaptureOverlay()         │")
         Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
@@ -4696,7 +4296,7 @@ if (isResize) {
     // =================================================================================
     // BT MOUSE CAPTURE OVERLAY - REMOVE
     // =================================================================================
-    private fun removeBtMouseCaptureOverlay() {
+    internal fun removeBtMouseCaptureOverlay() {
         Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
         Log.w(BT_TAG, "│ REMOVE REQUESTED: removeBtMouseCaptureOverlay()         │")
         Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
@@ -4859,443 +4459,22 @@ if (isResize) {
      * Called when the preference changes or when switching displays.
      */
     private fun updateVirtualMirrorMode() {
-        if (prefs.prefVirtualMirrorMode && inputTargetDisplayId != currentDisplayId) {
-            createMirrorKeyboard(inputTargetDisplayId)
-        } else {
-            removeMirrorKeyboard()
-        }
+        mirrorManager?.update()
     }
 
-// =================================================================================
-    // FUNCTION: createMirrorKeyboard
-    // SUMMARY: Creates a transparent keyboard mirror on the remote display.
-    //          Stores dimensions for coordinate scaling between physical and mirror.
-    //          FIX: Container has NO background - KeyboardView's own #1A1A1A background
-    //          ensures tight wrapping. Uses OnLayoutChangeListener to track actual
-    //          KeyboardView dimensions for accurate touch sync.
-    // =================================================================================
-    private fun createMirrorKeyboard(displayId: Int) {
-        try {
-            removeMirrorKeyboard()
-
-            val display = displayManager?.getDisplay(displayId) ?: return
-            val mirrorContext = createTrackpadDisplayContext(display)
-
-            mirrorWindowManager = mirrorContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            mirrorKeyboardContainer = FrameLayout(mirrorContext)
-            // FIX: NO background on container - let KeyboardView's own background show
-            mirrorKeyboardContainer?.setBackgroundColor(Color.TRANSPARENT)
-            mirrorKeyboardContainer?.alpha = 0f // Start fully invisible
-
-
-            // Create KeyboardView for the mirror
-            mirrorKeyboardView = KeyboardView(mirrorContext, null, 0)
-            mirrorKeyboardView?.setMirrorMode(true) // Disable internal logic
-            mirrorKeyboardView?.alpha = 0f // Start fully invisible
-
-
-            // Apply same scale as physical keyboard
-            val scale = prefs.prefKeyScale / 100f
-            mirrorKeyboardView?.setScale(scale)
-
-            // Create SwipeTrailView for orientation trail - ORANGE
-            mirrorTrailView = SwipeTrailView(mirrorContext)
-            mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())
-
-            // Layout params for views - KeyboardView uses WRAP_CONTENT to size naturally
-            val kbParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-            val trailParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-
-            mirrorKeyboardContainer?.addView(mirrorKeyboardView, kbParams)
-            mirrorKeyboardContainer?.addView(mirrorTrailView, trailParams)
-
-            // Get display metrics
-            val metrics = android.util.DisplayMetrics()
-            display.getRealMetrics(metrics)
-
-            // Calculate mirror keyboard size - use saved or default width
-            val savedWidth = prefs.prefMirrorWidth
-            val mirrorWidth = if (savedWidth != -1 && savedWidth > 0) savedWidth else (metrics.widthPixels * 0.95f).toInt()
-
-            // Initialize with placeholder dimensions (will be updated by OnLayoutChangeListener)
-            mirrorKbWidth = mirrorWidth.toFloat()
-            mirrorKbHeight = 400f
-
-            // Get physical keyboard dimensions
-            physicalKbWidth = keyboardOverlay?.getKeyboardView()?.width?.toFloat() ?: 600f
-            physicalKbHeight = keyboardOverlay?.getKeyboardView()?.height?.toFloat() ?: 400f
-
-            Log.d(TAG, "Mirror KB init: ${mirrorKbWidth}x${mirrorKbHeight}, Physical KB: ${physicalKbWidth}x${physicalKbHeight}")
-// Window params - use saved height or WRAP_CONTENT
-            val savedHeight = prefs.prefMirrorHeight
-            val mirrorHeight = if (savedHeight != -1 && savedHeight > 0) savedHeight else WindowManager.LayoutParams.WRAP_CONTENT
-            
-            mirrorKeyboardParams = WindowManager.LayoutParams(
-                mirrorWidth,
-                mirrorHeight,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT
-            )
-            mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            mirrorKeyboardParams?.y = 0
-            
-            // Apply saved position if available
-            val savedX = prefs.prefMirrorX
-            val savedY = prefs.prefMirrorY
-            
-            if (savedX != -1) {
-                mirrorKeyboardParams?.x = savedX
-                mirrorKeyboardParams?.gravity = Gravity.TOP or Gravity.START
-            }
-            if (savedY != -1) {
-                mirrorKeyboardParams?.y = savedY
-            }
-            
-            // Apply saved alpha
-            val savedAlpha = prefs.prefMirrorAlpha / 255f
-            mirrorKeyboardContainer?.alpha = savedAlpha
-
-            mirrorWindowManager?.addView(mirrorKeyboardContainer, mirrorKeyboardParams)
-
-            // FIX: Track actual KeyboardView dimensions for accurate touch sync
-            // This listener fires after layout, giving us the real measured dimensions
-            mirrorKeyboardView?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                updateMirrorSyncDimensions()
-            }
-
-            Log.d(TAG, "Mirror keyboard created on display $displayId")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create mirror keyboard", e)
-        }
-    }
-    // =================================================================================
-    // END BLOCK: createMirrorKeyboard
-    // =================================================================================
-
-    /**
-     * Removes the mirror keyboard overlay.
-     */
-    private fun removeMirrorKeyboard() {
-        try {
-            if (mirrorKeyboardContainer != null && mirrorWindowManager != null) {
-                mirrorWindowManager?.removeView(mirrorKeyboardContainer)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        mirrorKeyboardContainer = null
-        mirrorKeyboardView = null
-        mirrorTrailView = null
-        mirrorKeyboardParams = null
-        mirrorWindowManager = null
-
-        // Cancel any pending orientation mode timeout
-        orientationModeHandler.removeCallbacks(orientationModeTimeout)
-        mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
-        isInOrientationMode = false
-    }
-
-    // =================================================================================
-    // FUNCTION: updateMirrorSyncDimensions
-    // SUMMARY: Updates the scaling dimensions used for touch coordinate sync.
-    //          Gets actual measured dimensions from both KeyboardViews to ensure
-    //          accurate mapping regardless of container sizes or aspect ratios.
-    //          Should be called after any layout change on either keyboard.
-    // =================================================================================
-    private fun updateMirrorSyncDimensions() {
-        // Get physical keyboard's actual KeyboardView dimensions
-        // Note: These are the dimensions where touch events are reported
-        val physicalView = keyboardOverlay?.getKeyboardView()
-        if (physicalView != null && physicalView.width > 0 && physicalView.height > 0) {
-            physicalKbWidth = physicalView.width.toFloat()
-            physicalKbHeight = physicalView.height.toFloat()
-        }
-        
-        // Get mirror keyboard's actual KeyboardView dimensions
-        val mirrorView = mirrorKeyboardView
-        if (mirrorView != null && mirrorView.width > 0 && mirrorView.height > 0) {
-            mirrorKbWidth = mirrorView.width.toFloat()
-            mirrorKbHeight = mirrorView.height.toFloat()
-        }
-        
-        Log.d(TAG, "Mirror sync updated: Physical=${physicalKbWidth}x${physicalKbHeight}, Mirror=${mirrorKbWidth}x${mirrorKbHeight}")
-    }
-    // =================================================================================
-    // END BLOCK: updateMirrorSyncDimensions
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: syncMirrorKeyboardLayer
-    // SUMMARY: Syncs keyboard layer (state) from physical to mirror keyboard.
-    //          Called when layer changes (shift, symbols, etc.)
-    // =================================================================================
-    private fun syncMirrorKeyboardLayer(state: KeyboardView.KeyboardState) {
-        mirrorKeyboardView?.setKeyboardState(state)
-
-        // Also sync Ctrl/Alt state
-        keyboardOverlay?.getCtrlAltState()?.let { (ctrl, alt) ->
-            mirrorKeyboardView?.setCtrlAltState(ctrl, alt)
-        }
-    }
-    // =================================================================================
-    // END BLOCK: syncMirrorKeyboardLayer
-    // =================================================================================
-
-// =================================================================================
-    // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Virtual Mirror Mode touch handling.
-    //          - Every new touch: Show mirror + orange trail
-    //          - After timeout: Switch to blue trail, allow typing
-    //          - Single taps (quick touch) should also type after orientation
-    //          - HOLD REPEAT: If finger stays on backspace/arrow key during orange
-    //            trail, the key will repeat. The orientation timeout is CANCELLED
-    //            when on a repeatable key so it stays orange and keeps repeating.
-    // @return true to block input, false to allow input
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Virtual Mirror Mode touch handling.
-    // OPTIMIZED: Detects Prediction Bar touches on DOWN to start drag.
-    // separates Drag logic from Orientation logic to prevent lag.
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Virtual Mirror Mode touch handling.
-    // FIXED: Restored 'handleDeferredTap' so typing works.
-    // ADDED: Safe 'Prediction Bar Drag' detection that bypasses Orange logic.
-    // =================================================================================
-
-
-    // =================================================================================
-    // FUNCTION: onMirrorKeyboardTouch
-    // SUMMARY: Virtual Mirror Mode touch handling.
-    // UPDATED: Added 400ms delay to Blue Mode key repeats to prevent mis-swipes.
-    // =================================================================================
-
-
-    fun onMirrorKeyboardTouch(x: Float, y: Float, action: Int): Boolean {
-        if (!isVirtualMirrorModeActive()) return false
-
-        val scaleX = if (physicalKbWidth > 0) mirrorKbWidth / physicalKbWidth else 1f
-        val scaleY = if (physicalKbHeight > 0) mirrorKbHeight / physicalKbHeight else 1f
-        val mirrorX = x * scaleX
-        val mirrorY = y * scaleY
-
-        when (action) {
-            MotionEvent.ACTION_DOWN -> {
-                // ALWAYS START ORANGE
-                isMirrorDragActive = false
-                isInOrientationMode = true
-                lastOrientX = x; lastOrientY = y
-
-                // FIX: STOP PREVIOUS ANIMATIONS IMMEDIATELY
-                // Prevents transparency fighting when typing fast
-                mirrorKeyboardView?.animate()?.cancel()
-                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
-                
-                // Force full visibility
-                mirrorKeyboardView?.alpha = 0.9f
-
-                mirrorKeyboardContainer?.alpha = 1f
-
-                keyboardOverlay?.setOrientationMode(true)
-                mirrorTrailView?.setTrailColor(0xFFFF9900.toInt())
-                keyboardOverlay?.setOrientationTrailColor(0xFFFF9900.toInt())
-
-                mirrorTrailView?.clear()
-                keyboardOverlay?.clearOrientationTrail()
-                keyboardOverlay?.startOrientationTrail(x, y)
-                mirrorTrailView?.addPoint(mirrorX, mirrorY)
-
-                orientationModeHandler.removeCallbacks(orientationModeTimeout)
-                orientationModeHandler.postDelayed(orientationModeTimeout, prefs.prefMirrorOrientDelayMs)
-
-                stopMirrorKeyRepeat()
-                return true
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                // 1. DRAG MODE (Blue Trail + Red Backspace)
-                if (isMirrorDragActive) {
-                     mirrorTrailView?.setTrailColor(0xFF4488FF.toInt())
-                     mirrorTrailView?.addPoint(mirrorX, mirrorY)
-
-                     val currentKey = keyboardOverlay?.getKeyAtPosition(x, y)
-                     val isBackspace = (currentKey == "BKSP" || currentKey == "⌫" || currentKey == "BACKSPACE")
-                     
-                     if (isBackspace) isHoveringBackspace = true // Latch
-
-                     if (isBackspace) {
-                         mirrorKeyboardView?.highlightKey("BKSP", true, Color.RED)
-                     } else {
-                         mirrorKeyboardView?.highlightKey("BKSP", false, 0)
-                     }
-
-                     val now = SystemClock.uptimeMillis()
-                     val event = MotionEvent.obtain(now, now, MotionEvent.ACTION_MOVE, mirrorX, mirrorY, 0)
-                     mirrorKeyboardView?.dispatchTouchEvent(event)
-                     event.recycle()
-                     return true
-                }
-
-                // 2. ORANGE MODE
-                if (isInOrientationMode) {
-                    val dx = x - lastOrientX; val dy = y - lastOrientY
-                    if (kotlin.math.sqrt(dx*dx + dy*dy) > MOVEMENT_THRESHOLD) {
-                        lastOrientX = x; lastOrientY = y
-                        orientationModeHandler.removeCallbacks(orientationModeTimeout)
-                        orientationModeHandler.postDelayed(orientationModeTimeout, prefs.prefMirrorOrientDelayMs)
-                    }
-                    keyboardOverlay?.addOrientationTrailPoint(x, y)
-                    mirrorTrailView?.addPoint(mirrorX, mirrorY)
-                    return true
-                } 
-                
-                // 3. BLUE MODE
-                else {
-                    mirrorTrailView?.addPoint(mirrorX, mirrorY)
-                    val currentKey = keyboardOverlay?.getKeyAtPosition(x, y)
-                    
-                    if (currentKey != null && mirrorRepeatableKeys.contains(currentKey)) {
-                         if (mirrorRepeatKey == currentKey) return false
-                         stopMirrorKeyRepeat()
-                         mirrorRepeatKey = currentKey
-                         
-                         mirrorRepeatHandler.postDelayed({
-                             if (mirrorRepeatKey == currentKey && !isInOrientationMode) {
-                                 isMirrorRepeating = true
-                                 keyboardOverlay?.triggerKeyPress(currentKey)
-                                 mirrorRepeatHandler.postDelayed(mirrorRepeatRunnable, MIRROR_REPEAT_INTERVAL)
-                             }
-                         }, 150) 
-                    } else {
-                        stopMirrorKeyRepeat()
-                    }
-                    return false
-                }
-            }
-
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                // 1. END DRAG (Robust Delete)
-                if (isMirrorDragActive) {
-                     mirrorKeyboardView?.highlightKey("BKSP", false, 0)
-
-                     val upKey = keyboardOverlay?.getKeyAtPosition(x, y)
-                     val isDroppedOnBksp = (upKey == "BKSP" || upKey == "⌫" || upKey == "BACKSPACE")
-                     
-
-                     if (isHoveringBackspace || isDroppedOnBksp) {
-                         // 1. Update Main Logic
-                         keyboardOverlay?.blockPrediction(draggedPredictionIndex)
-                         
-                         // 2. Update Mirror UI Instantly (Make word disappear)
-                         mirrorKeyboardView?.removeCandidateAtIndex(draggedPredictionIndex)
-                         
-                         showToast("Blocked Prediction")
-                     } else {
-
-                         val now = SystemClock.uptimeMillis()
-                         val event = MotionEvent.obtain(now, now, action, mirrorX, mirrorY, 0)
-                         mirrorKeyboardView?.dispatchTouchEvent(event)
-                         event.recycle()
-                     }
-                     
-                     mirrorTrailView?.clear()
-                     isMirrorDragActive = false
-                     isHoveringBackspace = false
-                     return true
-                }
-
-                // 2. END TOUCH
-                orientationModeHandler.removeCallbacks(orientationModeTimeout)
-                val wasRepeating = isMirrorRepeating
-                stopMirrorKeyRepeat()
-
-                if (isInOrientationMode) {
-                    isInOrientationMode = false
-                    keyboardOverlay?.setOrientationMode(false)
-                    mirrorTrailView?.clear()
-                    keyboardOverlay?.clearOrientationTrail()
-
-                    if (!wasRepeating) {
-                        keyboardOverlay?.handleDeferredTap(x, y)
-                    }
-                } else {
-                    mirrorTrailView?.clear()
-                }
-
-                // Smoothly fade to dim state
-                mirrorKeyboardView?.animate()?.alpha(0.3f)?.setDuration(200)?.start()
-                mirrorFadeHandler.removeCallbacks(mirrorFadeRunnable)
-                mirrorFadeHandler.postDelayed(mirrorFadeRunnable, 2000)
-
-
-                return false
-            }
-        }
-        return isInOrientationMode
-    }
-
-
-
-
-
-
-    // =================================================================================
-    // END BLOCK: onMirrorKeyboardTouch
-    // =================================================================================
-
-    // =================================================================================
-    // FUNCTION: stopMirrorKeyRepeat
-    // SUMMARY: Stops any active mirror mode key repeat. Called on touch up or when
-    //          finger moves off the repeatable key.
-    // =================================================================================
-    private fun stopMirrorKeyRepeat() {
-        mirrorRepeatHandler.removeCallbacks(mirrorRepeatRunnable)
-        mirrorRepeatKey = null
-        isMirrorRepeating = false
-    }
-    // =================================================================================
-    // END BLOCK: stopMirrorKeyRepeat
-    // =================================================================================    // =================================================================================
-    // FUNCTION: clearMirrorTrail
-    // SUMMARY: Clears the orange orientation trail from the mirror keyboard display.
-    // =================================================================================
-    private fun clearMirrorTrail() {
-        mirrorTrailView?.clear()
-    }
-    // =================================================================================
-    // END BLOCK: clearMirrorTrail
-    // =================================================================================
-
-    /**
-     * Returns true if Virtual Mirror Mode is currently active.
-     */
-    private fun isVirtualMirrorModeActive(): Boolean {
-        return prefs.prefVirtualMirrorMode &&
-               inputTargetDisplayId != currentDisplayId &&
-               mirrorKeyboardView != null
-    }
+    // NOTE: createMirrorKeyboard, removeMirrorKeyboard, updateMirrorSyncDimensions, 
+    //       syncMirrorKeyboardLayer, onMirrorKeyboardTouch, stopMirrorKeyRepeat,
+    //       clearMirrorTrail, isVirtualMirrorModeActive moved to MirrorModeManager.kt
 
     /**
      * Returns true if currently in orientation mode (showing orange trail, blocking input).
      */
     fun isCurrentlyInOrientationMode(): Boolean {
-        return isInOrientationMode
+        return mirrorManager?.isInOrientationMode() ?: false
     }
+
+
+
 
     // =================================================================================
     // FUNCTION: toggleVirtualMirrorMode
@@ -5308,95 +4487,7 @@ if (isResize) {
 
 
     fun toggleVirtualMirrorMode() {
-        // 1. Save CURRENT state (before switching)
-        // This correctly saves to the OLD profile (VM or STD) before we flip the switch.
-        saveLayout() 
-
-        val wasEnabled = prefs.prefVirtualMirrorMode
-        prefs.prefVirtualMirrorMode = !wasEnabled
-
-        if (prefs.prefVirtualMirrorMode) {
-            // === ENTERING MIRROR MODE ===
-            android.util.Log.d(TAG, "Entering Virtual Mirror Mode")
-
-            // Store state for smart-toggle
-            preMirrorTrackpadVisible = isTrackpadVisible
-            preMirrorKeyboardVisible = isCustomKeyboardVisible
-            preMirrorTargetDisplayId = inputTargetDisplayId
-
-            // Switch to virtual display
-            val displays = displayManager?.displays ?: emptyArray()
-            var targetDisplay: Display? = null
-            for (d in displays) { if (d.displayId != currentDisplayId && d.displayId >= 2) { targetDisplay = d; break } }
-            if (targetDisplay == null) { for (d in displays) { if (d.displayId != currentDisplayId) { targetDisplay = d; break } } }
-
-            if (targetDisplay != null) {
-                inputTargetDisplayId = targetDisplay.displayId
-                updateTargetMetrics(inputTargetDisplayId)
-                createRemoteCursor(inputTargetDisplayId)
-                cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f
-                remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt()
-                try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
-                cursorView?.visibility = View.GONE
-                updateBorderColor(0xFFFF00FF.toInt())
-
-                // Ensure visibility
-                if (!isTrackpadVisible) toggleTrackpad()
-                if (!isCustomKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
-
-                // 2. Load MIRROR Profile (Pref is now true, so this loads VM profile)
-                loadLayout()
-                updateVirtualMirrorMode()
-
-                showToast("Mirror Mode ON")
-
-                // Create BT Mouse Capture overlay to intercept mouse on physical screen
-                createBtMouseCaptureOverlay()
-
-                val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-                intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
-                sendBroadcast(intentCycle)
-            } else {
-                prefs.prefVirtualMirrorMode = false
-                showToast("No virtual display found.")
-            }
-
-        } else {
-            // === EXITING MIRROR MODE ===
-            android.util.Log.d(TAG, "Exiting Virtual Mirror Mode")
-
-            // [FIX] REMOVED the redundant saveLayout() here.
-            // It was overwriting the Standard Profile with the active VM layout
-            // because prefVirtualMirrorMode was already set to false above.
-
-            removeMirrorKeyboard()
-            // Remove BT Mouse Capture overlay
-            removeBtMouseCaptureOverlay()
-            inputTargetDisplayId = currentDisplayId
-            targetScreenWidth = uiScreenWidth
-            targetScreenHeight = uiScreenHeight
-            removeRemoteCursor()
-            cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f
-            cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt()
-            try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {}
-            cursorView?.visibility = View.VISIBLE
-            updateBorderColor(0x55FFFFFF.toInt())
-            
-            // 3. Load STANDARD Profile (Pref is now false, so this loads STD profile)
-            loadLayout()
-
-            // 4. Restore trackpad/keyboard visibility to pre-mirror state
-            if (isTrackpadVisible != preMirrorTrackpadVisible) toggleTrackpad()
-            if (isCustomKeyboardVisible != preMirrorKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
-
-            showToast("Mirror Mode OFF")
-            
-            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
-            sendBroadcast(intentCycle)
-        }
-        
-        prefs.save(this)
+        mirrorManager?.toggle()
     }
 
 
@@ -5435,6 +4526,63 @@ if (isResize) {
     }
     internal fun setTrackpadVisibility(visible: Boolean) { isTrackpadVisible = visible; if (trackpadLayout != null) trackpadLayout?.visibility = if (visible) View.VISIBLE else View.GONE }
     internal fun setPreviewMode(preview: Boolean) { isPreviewMode = preview; trackpadLayout?.alpha = if (preview) 0.5f else 1.0f }
+
+    // =================================================================================
+    // MIRROR MODE HELPER METHODS
+    // These methods expose internal state/functionality to MirrorModeManager
+    // =================================================================================
+    internal var preMirrorTrackpadVisible = false
+    internal var preMirrorKeyboardVisible = false
+    internal var preMirrorTargetDisplayId = 0
+
+    internal fun storePreMirrorState() {
+        preMirrorTrackpadVisible = isTrackpadVisible
+        preMirrorKeyboardVisible = isCustomKeyboardVisible
+        preMirrorTargetDisplayId = inputTargetDisplayId
+    }
+
+    internal fun restorePreMirrorVisibility() {
+        if (isTrackpadVisible != preMirrorTrackpadVisible) toggleTrackpad()
+        if (isCustomKeyboardVisible != preMirrorKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
+    }
+
+    internal fun switchToRemoteDisplay(displayId: Int) {
+        inputTargetDisplayId = displayId
+        updateTargetMetrics(inputTargetDisplayId)
+        createRemoteCursor(inputTargetDisplayId)
+        cursorX = targetScreenWidth / 2f
+        cursorY = targetScreenHeight / 2f
+        remoteCursorParams.x = cursorX.toInt()
+        remoteCursorParams.y = cursorY.toInt()
+        try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+        cursorView?.visibility = View.GONE
+        updateBorderColor(0xFFFF00FF.toInt())
+    }
+
+    internal fun switchToLocalDisplay() {
+        inputTargetDisplayId = currentDisplayId
+        targetScreenWidth = uiScreenWidth
+        targetScreenHeight = uiScreenHeight
+        removeRemoteCursor()
+        cursorX = uiScreenWidth / 2f
+        cursorY = uiScreenHeight / 2f
+        cursorParams.x = cursorX.toInt()
+        cursorParams.y = cursorY.toInt()
+        try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {}
+        cursorView?.visibility = View.VISIBLE
+        updateBorderColor(0x55FFFFFF.toInt())
+    }
+
+    internal fun createTrackpadDisplayContext(display: Display): Context {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            createDisplayContext(display).createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
+        } else {
+            createDisplayContext(display)
+        }
+    }
+    // =================================================================================
+    // END BLOCK: MIRROR MODE HELPER METHODS
+    // =================================================================================
     override fun onDisplayAdded(displayId: Int) {}
     override fun onDisplayRemoved(displayId: Int) {}
     override fun onDisplayChanged(displayId: Int) {
