@@ -1183,6 +1183,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     override fun onCreate() {
         super.onCreate()
 
+        // Initialize command dispatcher FIRST (before registering receivers)
+        commandDispatcher = OverlayCommandDispatcher(this)
+
         // Register BOTH new and old prefixes to support all scripts/buttons
         val commandFilter = IntentFilter().apply {
             val cmds = listOf("SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", "TOGGLE_MIRROR", "TOGGLE_VIRTUAL_MIRROR", "OPEN_DRAWER", "STOP_SERVICE", "SET_INPUT_CAPTURE", "SET_CUSTOM_MOD", "UPDATE_KEYBINDS", "SET_NUM_LAYER")
@@ -1537,9 +1540,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         super.onServiceConnected()
         Log.d(TAG, "Accessibility Service Connected")
         isAccessibilityReady = true
-
-        // Initialize command dispatcher
-        commandDispatcher = OverlayCommandDispatcher(this)
 
         // =================================================================================
         // CRITICAL: Initialize PredictionEngine Dictionary
