@@ -240,6 +240,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var windowManager: WindowManager? = null
     var displayManager: DisplayManager? = null
     var shellService: IShellService? = null
+    private lateinit var inputHandler: ShizukuInputHandler
     private var appWindowManager: WindowManager? = null
     private var isBound = false
     private val handler = Handler(Looper.getMainLooper())
@@ -338,17 +339,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     // END BLOCK: LAUNCHER BLOCKED SHORTCUTS SET
     // =================================================================================
-
-    // =========================
-    // KEY INJECTION
-    // =========================
-    private fun injectKey(keyCode: Int, action: Int = KeyEvent.ACTION_DOWN, metaState: Int = 0) {
-        // Dynamic Device ID:
-        // Blocking ON: Use 1 (Physical) to maintain "Hardware Keyboard" state.
-        // Blocking OFF: Use -1 (Virtual). ID 0 is often ignored by Gboard. -1 is standard software injection.
-        val deviceId = if (prefs.prefBlockSoftKeyboard) 1 else -1
-        shellService?.injectKey(keyCode, action, metaState, inputTargetDisplayId, deviceId)
-    }
 
     // =========================
     // BLOCKING TRIGGER (Global)
@@ -1437,9 +1427,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 try {
                     val success = performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     if (!success) {
-                        injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN)
+                        inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard)
                         Thread.sleep(50)
-                        injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP)
+                        inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard)
                     }
                     // Only re-enable blocking on cover screen
                     if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
@@ -1542,9 +1532,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
+            inputHandler = ShizukuInputHandler(this@OverlayService, shellService, currentDisplayId)
             isBound = true
             updateBubbleStatus()
-            showToast("Shizuku Connected") 
+            showToast("Shizuku Connected")
             initCustomKeyboard()
             
             // CRITICAL FIX: Only apply blocking on Cover Screen (display 1) when enabled
@@ -2314,6 +2305,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
             currentDisplayId = displayId
             inputTargetDisplayId = displayId
+            if (::inputHandler.isInitialized) inputHandler.updateDisplay(displayId)
 
             updateUiMetrics()
 
@@ -2647,11 +2639,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     else performClick(true)
                 }
             }
-            "action_back" -> if (isUp) Thread { try { injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN); Thread.sleep(20); injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP) } catch(e: Exception){} }.start()
-            "action_home" -> if (isUp) Thread { try { injectKey(KeyEvent.KEYCODE_HOME, KeyEvent.ACTION_DOWN); Thread.sleep(20); injectKey(KeyEvent.KEYCODE_HOME, KeyEvent.ACTION_UP) } catch(e: Exception){} }.start()
-            "action_forward" -> if (isUp) Thread { try { injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_DOWN); Thread.sleep(20); injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_UP) } catch(e: Exception){} }.start()
-            "action_vol_up" -> if (isUp) Thread { try { injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_DOWN); Thread.sleep(20); injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_UP) } catch(e: Exception){} }.start()
-            "action_vol_down" -> if (isUp) Thread { try { injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_DOWN); Thread.sleep(20); injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_UP) } catch(e: Exception){} }.start()
+            "action_back" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
+            "action_home" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_HOME, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_HOME, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
+            "action_forward" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
+            "action_vol_up" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
+            "action_vol_down" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
             "scroll_up" -> if (isUp) performSwipe(0f, -(BASE_SWIPE_DISTANCE * prefs.scrollSpeed))
             "scroll_down" -> if (isUp) performSwipe(0f, BASE_SWIPE_DISTANCE * prefs.scrollSpeed)
             "display_toggle" -> if (isUp) {
@@ -5809,149 +5801,22 @@ if (isResize) {
 
     // =================================================================================
     // FUNCTION: injectKeyFromKeyboard
-    // SUMMARY: Injects key events from the overlay keyboard. Routes keys appropriately:
-    //          - System/Navigation keys (BACK, FORWARD, VOLUME, etc.) -> ALWAYS shell injection
-    //          - Text input keys -> InputConnection if Null KB active, else shell injection
-    //
-    //          This separation is necessary because InputConnection.sendKeyEvent() only
-    //          delivers events to the focused text editor, not to system navigation.
-    //          BACK, FORWARD, HOME, VOLUME keys must bypass InputConnection entirely.
+    // Delegates to ShizukuInputHandler - dismiss voice first then inject
     // =================================================================================
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
-        // Update timestamp so we ignore the resulting AccessibilityEvent
         lastInjectionTime = System.currentTimeMillis()
-
-        // NEW: dismiss Voice if active
         checkAndDismissVoice()
-
-        // Define keys that MUST use shell injection (system-level, not text input)
-        // These keys don't go through InputConnection because they're navigation/system keys
-        val systemKeys = setOf(
-            KeyEvent.KEYCODE_BACK,           // Android back navigation
-            KeyEvent.KEYCODE_FORWARD,        // Android forward navigation  
-            KeyEvent.KEYCODE_HOME,           // Home button
-            KeyEvent.KEYCODE_APP_SWITCH,     // Recent apps
-            KeyEvent.KEYCODE_VOLUME_UP,      // Volume control
-            KeyEvent.KEYCODE_VOLUME_DOWN,    // Volume control
-            KeyEvent.KEYCODE_VOLUME_MUTE,    // Volume mute
-            KeyEvent.KEYCODE_POWER,          // Power button
-            KeyEvent.KEYCODE_SLEEP,          // Sleep
-            KeyEvent.KEYCODE_WAKEUP,         // Wake
-            KeyEvent.KEYCODE_MEDIA_PLAY,     // Media controls
-            KeyEvent.KEYCODE_MEDIA_PAUSE,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-            KeyEvent.KEYCODE_MEDIA_STOP,
-            KeyEvent.KEYCODE_MEDIA_NEXT,
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-            KeyEvent.KEYCODE_BRIGHTNESS_UP,  // Brightness
-            KeyEvent.KEYCODE_BRIGHTNESS_DOWN
-        )
-
-        // Submit to the sequential queue instead of spinning a random thread
-        inputExecutor.execute {
-            try {
-                // SYSTEM KEYS: Always use shell injection (bypasses InputConnection)
-                if (keyCode in systemKeys) {
-                    Log.d(TAG, "System key detected ($keyCode), using shell injection")
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
-                    Thread.sleep(10)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
-                    return@execute
-                }
-
-                // TEXT INPUT KEYS: Route based on active IME
-                val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-
-                if (isDockActive) {
-                    // STRATEGY A: NATIVE via InputConnection (for text input keys only)
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY")
-
-                    intent.setPackage(packageName)
-                    intent.putExtra("keyCode", keyCode)
-                    intent.putExtra("metaState", metaState)
-                    sendBroadcast(intent)
-                } else {
-                    // STRATEGY B: SHELL INJECTION (Fallback for non-Null keyboards)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
-                    Thread.sleep(10)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Key injection failed", e)
-            }
-        }
+        inputHandler.injectKeyFromKeyboard(keyCode, metaState)
     }
-    // =================================================================================
-    // END BLOCK: injectKeyFromKeyboard
-    // System keys are now always routed through shell injection to ensure they work
-    // regardless of which IME is active. Text input keys still use the appropriate
-    // method based on the active IME (InputConnection for Null KB, shell for others).
-    // =================================================================================
-
 
     fun injectBulkDelete(length: Int) {
-        if (length <= 0) return
-        
-        // Update timestamp
         lastInjectionTime = System.currentTimeMillis()
-
-        inputExecutor.execute {
-            try {
-                // 1. CHECK ACTUAL SYSTEM STATE
-                val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-
-                if (isDockActive) {
-                    // STRATEGY A: NATIVE (Clean & Fast)
-
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE")
-                    intent.setPackage(packageName)
-                    intent.putExtra("length", length)
-                    sendBroadcast(intent)
-                } else {
-                    // STRATEGY B: SHELL INJECTION (Fallback Loop)
-                    // Shell is slower, but robust enough if we aren't using the Broadcast method
-                    for (i in 0 until length) {
-                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, inputTargetDisplayId, 1)
-                        Thread.sleep(5) // Tiny delay for stability
-                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, inputTargetDisplayId, 1)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Bulk delete failed", e)
-            }
-        }
+        inputHandler.injectBulkDelete(length)
     }
 
     fun injectText(text: String) {
-        // Update timestamp so we ignore the resulting AccessibilityEvent
         lastInjectionTime = System.currentTimeMillis()
-
-        inputExecutor.execute {
-            try {
-
-                // 1. CHECK ACTUAL SYSTEM STATE
-                val currentIme = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(packageName) && (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-
-                if (isDockActive) {
-                    // STRATEGY A: NATIVE (Cleanest)
-
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT")
-                    intent.setPackage(packageName)
-                    intent.putExtra("text", text)
-                    sendBroadcast(intent)
-                } else {
-                    // STRATEGY B: SHELL INJECTION (Fallback)
-                    val escapedText = text.replace("\"", "\\\"")
-                    val cmd = "input -d $inputTargetDisplayId text \"$escapedText\""
-                    shellService?.runCommand(cmd)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Text injection failed", e)
-            }
-        }
+        inputHandler.injectText(text)
     }
 
     // =================================================================================

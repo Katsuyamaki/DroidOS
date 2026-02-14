@@ -4993,6 +4993,29 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     // === LAUNCH VIA SHELL - END ===
 
+    // === FOCUS VIA TASK - START ===
+    // Focuses an already-visible freeform window using ATM.moveTaskToFront().
+    // Unlike launchViaShell (am start -n component), this does NOT re-launch the activity,
+    // so in-app navigation state is preserved (WhatsApp stays in chat, Google keeps search).
+    private fun focusViaTask(pkg: String, bounds: Rect?) {
+        Thread {
+            try {
+                val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+                val tid = shellService?.getTaskId(basePkg, null) ?: -1
+                if (tid != -1) {
+                    shellService?.moveTaskToFront(tid)
+                    Log.d(TAG, "focusViaTask: SUCCESS tid=$tid pkg=$basePkg")
+                } else {
+                    Log.w(TAG, "focusViaTask: task not found for $basePkg, falling back to launchViaShell")
+                    launchViaShell(basePkg, null, bounds)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "focusViaTask FAILED: $pkg", e)
+            }
+        }.start()
+    }
+    // === FOCUS VIA TASK - END ===
+
     // [CURSOR] Send cursor to center of app bounds when focusing via DroidOS
     // Bounds from getLayoutRects() are in layout-relative coordinates (top margin = y:0),
     // so we add the top margin offset to get actual screen coordinates.
@@ -7635,14 +7658,20 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 updateAllUIs()
                             }
                         } else {
-                            // Drawer Closed: Perform Actual Launch
+                            // Drawer Closed: Focus or Launch
                             val rects = getLayoutRects()
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = selectedAppsQueue.take(index).count { !it.isMinimized }
                             val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
-                            Thread {
-                                 launchViaShell(app.getBasePackage(), app.className, bounds)
-                            }.start()
+                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
+                            // instead of re-launching activity (preserves chat/search state)
+                            if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), bounds)
+                            } else {
+                                Thread {
+                                     launchViaShell(app.getBasePackage(), app.className, bounds)
+                                }.start()
+                            }
                             sendCursorToAppCenter(bounds)
                             safeToast("Focused: ${app.label}")
                         }
@@ -7667,15 +7696,21 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 updateAllUIs()
                             }
                         } else {
-                            // Drawer Closed: Perform Actual Launch
+                            // Drawer Closed: Focus or Launch
                             val idx = selectedAppsQueue.indexOf(app)
                             val rects = getLayoutRects()
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
-                            Thread {
-                                 launchViaShell(app.getBasePackage(), app.className, bounds)
-                            }.start()
+                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
+                            // instead of re-launching activity (preserves chat/search state)
+                            if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), bounds)
+                            } else {
+                                Thread {
+                                     launchViaShell(app.getBasePackage(), app.className, bounds)
+                                }.start()
+                            }
                             sendCursorToAppCenter(bounds)
                             safeToast("Focused: ${app.label}")
                         }

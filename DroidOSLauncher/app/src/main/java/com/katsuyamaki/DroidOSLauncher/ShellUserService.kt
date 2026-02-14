@@ -788,6 +788,52 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     }
     // === MOVE TASK TO BACK / MINIMIZE TASK - END ===
 
+    // === MOVE TASK TO FRONT / FOCUS TASK - START ===
+    // Brings a task to front using ActivityTaskManager.moveTaskToFront() via reflection.
+    // This focuses the window WITHOUT re-launching any activity, preserving in-app nav state.
+    override fun moveTaskToFront(taskId: Int) {
+        val token = Binder.clearCallingIdentity()
+        try {
+            Log.d(TAG, "moveTaskToFront: Focusing taskId=$taskId via ATM")
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getServiceMethod = atmClass.getMethod("getService")
+            val atm = getServiceMethod.invoke(null)
+            // moveTaskToFront(int taskId, int flags, Bundle options)
+            val moveMethod = atm.javaClass.getMethod(
+                "moveTaskToFront",
+                String::class.java,  // callingPackage (Android 12+)
+                String::class.java,  // callingFeatureId
+                Int::class.javaPrimitiveType,  // taskId
+                Int::class.javaPrimitiveType,  // flags
+                android.os.Bundle::class.java  // options
+            )
+            moveMethod.invoke(atm, "com.katsuyamaki.DroidOSLauncher", null, taskId, 0, null)
+            Log.d(TAG, "moveTaskToFront: SUCCESS taskId=$taskId (5-param)")
+        } catch (e: NoSuchMethodException) {
+            // Fallback: Try 3-param signature (older Android)
+            try {
+                val atmClass = Class.forName("android.app.ActivityTaskManager")
+                val getServiceMethod = atmClass.getMethod("getService")
+                val atm = getServiceMethod.invoke(null)
+                val moveMethod = atm.javaClass.getMethod(
+                    "moveTaskToFront",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                    android.os.Bundle::class.java
+                )
+                moveMethod.invoke(atm, taskId, 0, null)
+                Log.d(TAG, "moveTaskToFront: SUCCESS taskId=$taskId (3-param fallback)")
+            } catch (e2: Exception) {
+                Log.e(TAG, "moveTaskToFront: Both signatures failed", e2)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "moveTaskToFront: FAILED", e)
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+    // === MOVE TASK TO FRONT / FOCUS TASK - END ===
+
     private fun isUserApp(pkg: String): Boolean {
         if (pkg == "com.android.systemui") return false
         if (pkg == "com.android.launcher3") return false 
