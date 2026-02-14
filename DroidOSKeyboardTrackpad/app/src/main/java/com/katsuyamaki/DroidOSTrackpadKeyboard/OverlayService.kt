@@ -1180,6 +1180,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
             inputHandler = ShizukuInputHandler(this@OverlayService, shellService, currentDisplayId)
+            mirrorManager = MirrorModeManager(this@OverlayService, displayManager)
             isBound = true
             updateBubbleStatus()
             showToast("Shizuku Connected")
