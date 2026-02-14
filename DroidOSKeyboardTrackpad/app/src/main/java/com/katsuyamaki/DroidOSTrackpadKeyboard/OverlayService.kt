@@ -65,74 +65,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // === RECEIVER & ACTIONS - START ===
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val action = intent?.action ?: return
-            
-            // Helper to match both OLD and NEW package names
-            fun matches(cmd: String): Boolean {
-                return action.endsWith(cmd)
-            }
-
-            if (matches("SOFT_RESTART")) {
-                Log.d("OverlayService", "Received SOFT_RESTART")
-                performSoftRestart()
-            } else if (matches("ENFORCE_ZORDER")) {
-                Log.d("OverlayService", "Received ENFORCE_ZORDER")
-                enforceZOrder()
-            } else if (matches("MOVE_TO_DISPLAY")) {
-                val targetId = intent.getIntExtra("displayId", 0)
-                Log.d("OverlayService", "Moving to Display: $targetId")
-                handler.post {
-                    saveLayout()
-                    removeOldViews()
-                    setupUI(targetId)
-                    loadLayout()
-                    enforceZOrder()
-                }
-            } else if (matches("TOGGLE_MIRROR") || matches("TOGGLE_VIRTUAL_MIRROR")) {
-                Log.d("OverlayService", "Toggling Mirror Mode")
-                handler.post { toggleVirtualMirrorMode() }
-            } else if (matches("OPEN_DRAWER")) {
-                Log.d("OverlayService", "Opening Drawer")
-                handler.post { toggleDrawer() }
-            } else if (matches("STOP_SERVICE")) {
-                Log.d("OverlayService", "Stopping Service")
-                forceExit()
-            } else if (matches("SET_INPUT_CAPTURE")) {
-                val capture = intent.getBooleanExtra("CAPTURE", false)
-                Log.d("OverlayService", "Input Capture Set: $capture")
-                keyboardOverlay?.setInputCaptureMode(capture)
-} else if (matches("SET_CUSTOM_MOD")) {
-                val keyCode = intent.getIntExtra("KEYCODE", 0)
-                Log.d("OverlayService", "Custom Mod Key Set: $keyCode")
-                prefs.customModKey = keyCode // Save to prefs
-                keyboardOverlay?.setCustomModKey(keyCode)
-            } else if (matches("SET_NUM_LAYER")) {
-                val active = intent.getBooleanExtra("ACTIVE", false)
-                keyboardOverlay?.setNumberLayerOverride(active)
-            // =================================================================================
-            // HANDLER: UPDATE_KEYBINDS
-            // SUMMARY: Receives the list of registered keybinds from DroidOS Launcher.
-            //          Updates launcherBlockedShortcuts set and syncs to KeyboardOverlay.
-            //          Format: ArrayList of "modifier|keyCode" strings
-            // =================================================================================
-            } else if (matches("UPDATE_KEYBINDS")) {
-                val keybinds = intent.getStringArrayListExtra("KEYBINDS")
-                Log.d("OverlayService", "Received UPDATE_KEYBINDS: ${keybinds?.size ?: 0} keybinds")
-                if (keybinds != null) {
-                    launcherBlockedShortcuts.clear()
-                    launcherBlockedShortcuts.addAll(keybinds)
-                    // Sync to KeyboardOverlay/KeyboardView (now parses "modifier|keyCode|argCount")
-                    keyboardOverlay?.setLauncherBlockedShortcuts(launcherBlockedShortcuts)
-                    Log.d("OverlayService", "Blocked shortcuts updated: $launcherBlockedShortcuts")
-                }
-            // =================================================================================
-            // END HANDLER: UPDATE_KEYBINDS
-            // =================================================================================
+            if (::commandDispatcher.isInitialized) {
+                commandDispatcher.handleCommand(intent)
             }
         }
     }
 
-    private fun performSoftRestart() {
+    internal fun performSoftRestart() {
         // [FIX] HARD RESET (Process Kill)
         // This is the ONLY method that fixes Z-order relative to the Launcher.
         // We rely on the updated scheduleRestart() (Activity Launch) to bring the app back alive.
@@ -237,13 +176,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private val TAG = "OverlayService"
 
+    // Command dispatcher for broadcast receiver logic
+    internal lateinit var commandDispatcher: OverlayCommandDispatcher
+
     var windowManager: WindowManager? = null
     var displayManager: DisplayManager? = null
     var shellService: IShellService? = null
     private lateinit var inputHandler: ShizukuInputHandler
     private var appWindowManager: WindowManager? = null
     private var isBound = false
-    private val handler = Handler(Looper.getMainLooper())
+    internal val handler = Handler(Looper.getMainLooper())
 
     private var lastBlockTime: Long = 0
 
@@ -272,12 +214,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private lateinit var trackpadParams: WindowManager.LayoutParams
     private lateinit var cursorParams: WindowManager.LayoutParams
 
-    private var menuManager: TrackpadMenuManager? = null
+    internal var menuManager: TrackpadMenuManager? = null
     private var savedKbX = 0
     private var savedKbY = 0
     private var savedKbW = 0
     private var savedKbH = 0
-    private var keyboardOverlay: KeyboardOverlay? = null
+    internal var keyboardOverlay: KeyboardOverlay? = null
 
     var currentDisplayId = 0
     var inputTargetDisplayId = 0
@@ -332,7 +274,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          Only shortcuts in this set should be blocked when overrideSystemShortcuts is true.
     //          Received via UPDATE_KEYBINDS broadcast from Launcher.
     // =================================================================================
-    private val launcherBlockedShortcuts = mutableSetOf<String>()
+    internal val launcherBlockedShortcuts = mutableSetOf<String>()
     // =================================================================================
     // END BLOCK: LAUNCHER BLOCKED SHORTCUTS SET
     // =================================================================================
@@ -349,7 +291,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 // SUMMARY: Enforces Soft Keyboard blocking. ONLY works on Cover Screen (display 1).
 //          Does nothing on main screen (0) or virtual displays (2+).
 // =================================================================================
-    private fun triggerAggressiveBlocking() {
+    internal fun triggerAggressiveBlocking() {
         // GUARD: Only block keyboard on Cover Screen (display 1)
         if (currentDisplayId != 1) {
             android.util.Log.d(TAG, "triggerAggressiveBlocking: Skipping - not on cover screen (display $currentDisplayId)")
@@ -1118,265 +1060,130 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     private val switchReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val action = intent?.action ?: return
-            
-            // Helper to match both old (example) and new (katsuyamaki) package actions
-            fun matches(suffix: String): Boolean = action.endsWith(suffix)
-
-            when {
-                // Internal Actions (Exact Match)
-                action == "SWITCH_DISPLAY" -> switchDisplay()
-                action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
-                action == "RESET_CURSOR" -> resetCursorCenter()
-                action == "SET_CURSOR_POS" -> {
-                    val x = intent.getFloatExtra("X", -1f)
-                    val y = intent.getFloatExtra("Y", -1f)
-                    if (x >= 0 && y >= 0) setCursorPosition(x, y)
-                }
-                action == "TOGGLE_DEBUG" -> toggleDebugMode()
-                action == "com.katsuyamaki.DroidOSTrackpadKeyboard.LIST_KEYBOARDS" -> {
-                    Thread {
-                        try {
-                            val allImes = shellService?.runCommand("ime list -a -s") ?: ""
-                            val enabledImes = shellService?.runCommand("ime list -s") ?: ""
-                            val result = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.LIST_KEYBOARDS_RESULT")
-                            result.setPackage(packageName)
-                            result.putExtra("ALL_IMES", allImes)
-                            result.putExtra("ENABLED_IMES", enabledImes)
-                            sendBroadcast(result)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }.start()
-                }
-                action == "com.katsuyamaki.DroidOSTrackpadKeyboard.SWITCH_KEYBOARD" -> {
-                    val imeId = intent.getStringExtra("IME_ID") ?: return
-                    val imeName = intent.getStringExtra("IME_NAME") ?: "keyboard"
-                    Thread {
-                        try {
-                            shellService?.runCommand("settings put secure default_input_method $imeId")
-                            shellService?.runCommand("ime set $imeId")
-                            handler.post { showToast("Switched to $imeName") }
-                        } catch (e: Exception) {
-                            handler.post { showToast("Failed to switch keyboard") }
-                        }
-                    }.start()
-                }
-                action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> {
-                    val forceShow = intent.getBooleanExtra("FORCE_SHOW", false)
-                    val forceHide = intent.getBooleanExtra("FORCE_HIDE", false)
-                    
-                    // Track DockIME visibility based on FORCE commands
-                    if (forceShow) isDockIMEVisible = true
-                    if (forceHide) isDockIMEVisible = false
-                    
-                    if (forceHide) {
-                        // Force hide from Dock IME auto-sync
-                        // Debounce: ignore FORCE_HIDE within 1s of FORCE_SHOW (IME flicker)
-                        val inSpacebarMouse = keyboardOverlay?.getKeyboardView()?.isInSpacebarMouseMode() == true
-                        if (inSpacebarMouse) {
-                            // Spacebar mouse mode is active — keep overlay alive.
-                            // DockIME already sent IME_VISIBILITY(false) to launcher,
-                            // so re-send true to preserve the auto-adjust margin.
-                            val fixIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
-                            fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-                            fixIntent.putExtra("VISIBLE", true)
-                            sendBroadcast(fixIntent)
-                            android.util.Log.d("OverlayService", "FORCE_HIDE blocked — spacebar mouse active")
-                        } else if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
-                            keyboardOverlay?.hide()
-                            isCustomKeyboardVisible = false
-                            // Save state so bubble tap can restore
-                            pendingRestoreKeyboard = true
-                            hasPendingRestore = true
-                        }
-                    } else if (forceShow) {
-                        // FORCE RESET LOGIC - DockIME is showing
-                        lastForceShowTime = System.currentTimeMillis()
-                        isDockIMEVisible = true
-                        if (keyboardOverlay == null) initCustomKeyboard()
-
-                        keyboardOverlay?.hide()
-                        keyboardOverlay?.show()
-                        isCustomKeyboardVisible = true
-                        // Don't call applyDockMode() here - it can interfere with DockIME's
-                        // inset timing for fullscreen apps. The keyboard position is already
-                        // restored from saved prefs by show(). Position adjustment for dock
-                        // toolbar happens via DOCK_PREF_CHANGED broadcast.
-                        enforceZOrder()
-                    } else {
-                        // Manual toggle - DockIME may not be visible
-                        toggleCustomKeyboard()
-                    }
-                }
-                
-                action == "DOCK_PREF_CHANGED" -> {
-                    // Handle preference changes from Dock IME popup
-                    if (intent.hasExtra("dock_mode")) {
-                        val dockMode = intent.getBooleanExtra("dock_mode", false)
-                        if (dockMode) {
-                            applyDockMode()
-                        } else {
-                            // Could restore previous position here
-                            showToast("Dock mode disabled")
-                        }
-                    }
-                    if (intent.hasExtra("show_kb_above_dock")) {
-                        val showAbove = intent.getBooleanExtra("show_kb_above_dock", true)
-                        prefs.prefShowKBAboveDock = showAbove
-                        prefs.save(this@OverlayService)
-                        // Reposition keyboard if dock mode is active
-                        if (isCustomKeyboardVisible) {
-                            val margin = intent.getIntExtra("resize_to_margin", -1)
-                            if (margin >= 0) {
-                                applyDockModeWithMargin(margin)
-                            } else {
-                                applyDockMode()
-                            }
-                        }
-                    }
-                    if (intent.hasExtra("resize_to_margin")) {
-                        val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-                        if (marginPercent >= 0 && isCustomKeyboardVisible) {
-                            applyDockModeWithMargin(marginPercent)
-                        }
-                    }
-                    if (intent.hasExtra("auto_resize")) {
-                        val autoResize = intent.getBooleanExtra("auto_resize", false)
-                        if (!autoResize) {
-                            // Auto resize turned OFF - stop using margin-based sizing
-                            lastDockMarginPercent = -1
-                            if (isCustomKeyboardVisible) {
-                                // Restore manual keyboard scale and reposition
-                                val restoreScale = if (manualKeyScaleBeforeMargin > 0) manualKeyScaleBeforeMargin else prefs.prefKeyScale
-                                manualKeyScaleBeforeMargin = -1
-                                prefs.prefKeyScale = restoreScale
-                                val density = resources.displayMetrics.density
-                                val navBarHeight = getNavBarHeight()
-                                val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
-                                val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
-                                val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
-                                keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
-                                saveKeyboardHeightForDock(kbHeight)
-                            } else {
-                                manualKeyScaleBeforeMargin = -1
-                            }
-                        }
-                    }
-                }
-                
-                action == "APPLY_DOCK_MODE" -> {
-                    dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
-                    if (intent.getBooleanExtra("enabled", false)) {
-                        val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-                        if (marginPercent >= 0) {
-                            lastDockMarginPercent = marginPercent
-                            applyDockModeWithMargin(marginPercent)
-                        } else {
-                            applyDockMode()
-                        }
-                    }
-                }
-                
-                action == "DOCK_POPUP_VISIBLE" -> {
-                    val popupVisible = intent.getBooleanExtra("VISIBLE", false)
-                    if (popupVisible) {
-                        // Temporarily hide overlay KB so DockIME popup is visible
-                        if (isCustomKeyboardVisible) {
-                            keyboardOverlay?.hide()
-                        }
-                    } else {
-                        // Popup dismissed - restore overlay KB
-                        if (isCustomKeyboardVisible) {
-                            keyboardOverlay?.show()
-                            enforceZOrder()
-                        }
-                    }
-                }
-
-
-                action == "OPEN_MENU" -> { menuManager?.show(); enforceZOrder() }
-                action == "SET_TRACKPAD_VISIBILITY" -> {
-
-                    val visible = intent.getBooleanExtra("VISIBLE", true)
-                    val menuDisplayId = intent.getIntExtra("MENU_DISPLAY_ID", -1)
-                    if (visible) setTrackpadVisibility(true) 
-                    else { if (menuDisplayId == -1 || menuDisplayId == currentDisplayId) setTrackpadVisibility(false) }
-                }
-                action == "SET_PREVIEW_MODE" -> setPreviewMode(intent.getBooleanExtra("PREVIEW_MODE", false))
-                // Just UI update (sent by triggerVoiceTyping)
-                action == "VOICE_TYPE_TRIGGERED" -> {
-                    isVoiceActive = true
-                    keyboardOverlay?.setVoiceActive(true)
-                    setOverlayFocusable(false)
-                    handler.postDelayed({ attemptRefocusInput() }, 300)
-                }
-                // Full Action Trigger (sent by Dock)
-                action == "REQUEST_VOICE_INPUT" -> {
-                    handler.post { Toast.makeText(context, "Voice Requested...", Toast.LENGTH_SHORT).show() }
-                    triggerVoiceTyping()
-                }
-                action == Intent.ACTION_SCREEN_ON -> {
-                    // Only trigger blocking on Cover Screen (display 1) when enabled
-                    if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard) {
-                        triggerAggressiveBlocking()
-                    }
-                }
-
-
-
-                // Universal ADB/External Commands (Suffix Match)
-                matches("SOFT_RESTART") -> {
-                    Log.d(TAG, "Received SOFT_RESTART command")
-                    val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
-                    handler.post {
-                        saveLayout()
-                        removeOldViews()
-                        handler.postDelayed({
-                            setupUI(targetDisplayId)
-                            loadLayout()
-                            enforceZOrder()
-                            showToast("Trackpad Soft Restarted")
-                        }, 200)
-                    }
-                }
-                matches("MOVE_TO_VIRTUAL") -> {
-                    Log.d(TAG, "Received MOVE_TO_VIRTUAL command")
-                    val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
-                    handler.post { moveToVirtualDisplayAndEnableMirror(virtualDisplayId) }
-                }
-                matches("RETURN_TO_PHYSICAL") -> {
-                    Log.d(TAG, "Received RETURN_TO_PHYSICAL command")
-                    val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
-                    handler.post { returnToPhysicalDisplay(physicalDisplayId) }
-                }
-                matches("ENFORCE_ZORDER") -> {
-                    Log.d(TAG, "Received ENFORCE_ZORDER command")
-                    handler.post { enforceZOrder() }
-                }
-                matches("TOGGLE_VIRTUAL_MIRROR") -> {
-                    Log.d(TAG, "Received TOGGLE_VIRTUAL_MIRROR command")
-                    handler.post { toggleVirtualMirrorMode() }
-                }
-                matches("GET_STATUS") -> {
-                    Log.d(TAG, "Received GET_STATUS command")
-                    showToast("D:$currentDisplayId T:$inputTargetDisplayId M:${if(prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
-                }
+            if (::commandDispatcher.isInitialized) {
+                commandDispatcher.handleCommand(intent)
             }
         }
     }
 
     // Helper to dynamically update window flags
-    private fun setOverlayFocusable(focusable: Boolean) {
+    internal fun setOverlayFocusable(focusable: Boolean) {
         try {
             keyboardOverlay?.setFocusable(focusable)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
+
+    // === DISPATCHER HELPER METHODS ===
+    internal fun handleKeyboardToggle(intent: Intent) {
+        val forceShow = intent.getBooleanExtra("FORCE_SHOW", false)
+        val forceHide = intent.getBooleanExtra("FORCE_HIDE", false)
+
+        if (forceShow) isDockIMEVisible = true
+        if (forceHide) isDockIMEVisible = false
+
+        if (forceHide) {
+            val inSpacebarMouse = keyboardOverlay?.getKeyboardView()?.isInSpacebarMouseMode() == true
+            if (inSpacebarMouse) {
+                val fixIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+                fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                fixIntent.putExtra("VISIBLE", true)
+                sendBroadcast(fixIntent)
+                android.util.Log.d("OverlayService", "FORCE_HIDE blocked — spacebar mouse active")
+            } else if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
+                keyboardOverlay?.hide()
+                isCustomKeyboardVisible = false
+                pendingRestoreKeyboard = true
+                hasPendingRestore = true
+            }
+        } else if (forceShow) {
+            lastForceShowTime = System.currentTimeMillis()
+            isDockIMEVisible = true
+            if (keyboardOverlay == null) initCustomKeyboard()
+            keyboardOverlay?.hide()
+            keyboardOverlay?.show()
+            isCustomKeyboardVisible = true
+            enforceZOrder()
+        } else {
+            toggleCustomKeyboard()
+        }
+    }
+
+    internal fun handleDockPrefChanged(intent: Intent) {
+        if (intent.hasExtra("dock_mode")) {
+            val dockMode = intent.getBooleanExtra("dock_mode", false)
+            if (dockMode) applyDockMode() else showToast("Dock mode disabled")
+        }
+        if (intent.hasExtra("show_kb_above_dock")) {
+            val showAbove = intent.getBooleanExtra("show_kb_above_dock", true)
+            prefs.prefShowKBAboveDock = showAbove
+            prefs.save(this)
+            if (isCustomKeyboardVisible) {
+                val margin = intent.getIntExtra("resize_to_margin", -1)
+                if (margin >= 0) applyDockModeWithMargin(margin) else applyDockMode()
+            }
+        }
+        if (intent.hasExtra("resize_to_margin")) {
+            val marginPercent = intent.getIntExtra("resize_to_margin", -1)
+            if (marginPercent >= 0 && isCustomKeyboardVisible) applyDockModeWithMargin(marginPercent)
+        }
+        if (intent.hasExtra("auto_resize")) {
+            val autoResize = intent.getBooleanExtra("auto_resize", false)
+            if (!autoResize) {
+                lastDockMarginPercent = -1
+                if (isCustomKeyboardVisible) {
+                    val restoreScale = if (manualKeyScaleBeforeMargin > 0) manualKeyScaleBeforeMargin else prefs.prefKeyScale
+                    manualKeyScaleBeforeMargin = -1
+                    prefs.prefKeyScale = restoreScale
+                    val density = resources.displayMetrics.density
+                    val navBarHeight = getNavBarHeight()
+                    val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
+                    val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
+                    val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
+                    keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
+                    saveKeyboardHeightForDock(kbHeight)
+                } else {
+                    manualKeyScaleBeforeMargin = -1
+                }
+            }
+        }
+    }
+
+    internal fun handleApplyDockMode(intent: Intent) {
+        dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
+        if (intent.getBooleanExtra("enabled", false)) {
+            val marginPercent = intent.getIntExtra("resize_to_margin", -1)
+            if (marginPercent >= 0) {
+                lastDockMarginPercent = marginPercent
+                applyDockModeWithMargin(marginPercent)
+            } else {
+                applyDockMode()
+            }
+        }
+    }
+
+    internal fun handleDockPopupVisibility(popupVisible: Boolean) {
+        if (popupVisible) {
+            if (isCustomKeyboardVisible) keyboardOverlay?.hide()
+        } else {
+            if (isCustomKeyboardVisible) {
+                keyboardOverlay?.show()
+                enforceZOrder()
+            }
+        }
+    }
+
+    internal fun handleVoiceTypeTriggered() {
+        isVoiceActive = true
+        keyboardOverlay?.setVoiceActive(true)
+        setOverlayFocusable(false)
+        handler.postDelayed({ attemptRefocusInput() }, 300)
+    }
+    // === END DISPATCHER HELPER METHODS ===
     
     // NEW FUNCTION: Finds the focused input field and performs a click
-    private fun attemptRefocusInput() {
+    internal fun attemptRefocusInput() {
         try {
             // Requires canRetrieveWindowContent="true" in accessibility xml
             val root = rootInActiveWindow ?: return
@@ -1471,7 +1278,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
     }
 
-    private fun triggerVoiceTyping() {
+    internal fun triggerVoiceTyping() {
         if (shellService == null) return
 
         // 1. UI: Turn Button Green Immediately
@@ -1911,6 +1718,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         Log.d(TAG, "Accessibility Service Connected")
         isAccessibilityReady = true
 
+        // Initialize command dispatcher
+        commandDispatcher = OverlayCommandDispatcher(this)
+
         // =================================================================================
         // CRITICAL: Initialize PredictionEngine Dictionary
         // SUMMARY: Load the dictionary at service start. Without this, swipe typing fails
@@ -2245,7 +2055,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         return super.onKeyEvent(event)
     }
 
-    private fun removeOldViews() {
+    internal fun removeOldViews() {
         Log.i(BT_TAG, "removeOldViews() called - Attempting to clean up all overlays")
         
         val viewsToRemove = listOf(trackpadLayout, bubbleView, cursorLayout)
@@ -2277,7 +2087,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         cursorView = null
     }
 
-    private fun setupUI(displayId: Int) {
+    internal fun setupUI(displayId: Int) {
         android.util.Log.d("OverlayService", "setupUI starting for Display $displayId")
 
         // 1. Force complete removal of all views using the current WindowManager
@@ -2596,7 +2406,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
     
     // NEW FUNCTION: Toggles the visibility of the trackpad menu drawer
-    private fun toggleDrawer() {
+    internal fun toggleDrawer() {
         menuManager?.toggle()
         enforceZOrder() // Ensure drawer is on top
     }
@@ -2793,7 +2603,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      * Moves overlay to virtual display and enables Virtual Mirror Mode.
      * Called by MOVE_TO_VIRTUAL broadcast from Launcher or ADB.
      */
-    private fun moveToVirtualDisplayAndEnableMirror(virtualDisplayId: Int) {
+    internal fun moveToVirtualDisplayAndEnableMirror(virtualDisplayId: Int) {
         try {
             Log.d(TAG, "Moving to virtual display $virtualDisplayId and enabling mirror mode")
             
@@ -2839,7 +2649,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      * Returns overlay to physical display and disables Virtual Mirror Mode.
      * Called by RETURN_TO_PHYSICAL broadcast from Launcher or ADB.
      */
-    private fun returnToPhysicalDisplay(physicalDisplayId: Int) {
+    internal fun returnToPhysicalDisplay(physicalDisplayId: Int) {
         try {
             Log.d(TAG, "Returning to physical display $physicalDisplayId")
             
@@ -3206,7 +3016,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // SUMMARY: Snaps the overlay keyboard to the bottom of the screen, full width.
     //          Used when "Dock KB to Bottom" is enabled in Dock IME popup.
     // =================================================================================
-    private fun applyDockMode() {
+    internal fun applyDockMode() {
         if (keyboardOverlay == null) initCustomKeyboard()
         if (!isCustomKeyboardVisible) {
             keyboardOverlay?.show()
@@ -3249,7 +3059,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          Uses setWindowBoundsWithScale() to atomically set window size AND key scale
     //          so they stay perfectly in sync.
     // =================================================================================
-    private fun applyDockModeWithMargin(marginPercent: Int) {
+    internal fun applyDockModeWithMargin(marginPercent: Int) {
         if (keyboardOverlay == null) initCustomKeyboard()
         if (!isCustomKeyboardVisible) {
             keyboardOverlay?.show()
@@ -3299,7 +3109,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // FUNCTION: saveKeyboardHeightForDock
     // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
     // =================================================================================
-    private fun getNavBarHeight(): Int {
+    internal fun getNavBarHeight(): Int {
         if (dockNavBarHeight >= 0) return dockNavBarHeight
         val navResId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
         return if (navResId > 0) resources.getDimensionPixelSize(navResId) else 0
@@ -3466,7 +3276,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
 
-    private fun initCustomKeyboard() { 
+    internal fun initCustomKeyboard() { 
         if (appWindowManager == null || shellService == null) return
         
         // Defensive cleanup — prevent orphaned windows
@@ -3961,7 +3771,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     fun performClick(right: Boolean) { inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, right) }
     fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} }; showCursorAndResetFade() }
     
-    private fun setCursorPosition(x: Float, y: Float) {
+    internal fun setCursorPosition(x: Float, y: Float) {
         cursorX = x; cursorY = y
         if (inputTargetDisplayId == currentDisplayId) {
             cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt()
@@ -5623,8 +5433,8 @@ if (isResize) {
             "keyboard_scale" -> { prefs.prefKeyScale = value; keyboardOverlay?.updateScale(value / 100f) }
         }
     }
-    private fun setTrackpadVisibility(visible: Boolean) { isTrackpadVisible = visible; if (trackpadLayout != null) trackpadLayout?.visibility = if (visible) View.VISIBLE else View.GONE }
-    private fun setPreviewMode(preview: Boolean) { isPreviewMode = preview; trackpadLayout?.alpha = if (preview) 0.5f else 1.0f }
+    internal fun setTrackpadVisibility(visible: Boolean) { isTrackpadVisible = visible; if (trackpadLayout != null) trackpadLayout?.visibility = if (visible) View.VISIBLE else View.GONE }
+    internal fun setPreviewMode(preview: Boolean) { isPreviewMode = preview; trackpadLayout?.alpha = if (preview) 0.5f else 1.0f }
     override fun onDisplayAdded(displayId: Int) {}
     override fun onDisplayRemoved(displayId: Int) {}
     override fun onDisplayChanged(displayId: Int) {
@@ -5772,7 +5582,7 @@ if (isResize) {
         }.start()
     }
 
-    private fun showToast(msg: String) { handler.post { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() } }
+    internal fun showToast(msg: String) { handler.post { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() } }
     private fun updateTargetMetrics(displayId: Int) { val display = displayManager?.getDisplay(displayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); targetScreenWidth = metrics.widthPixels; targetScreenHeight = metrics.heightPixels }
     
 
