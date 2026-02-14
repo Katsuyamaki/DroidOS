@@ -245,9 +245,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var isBound = false
     private val handler = Handler(Looper.getMainLooper())
 
-    // Create a single worker queue for all input events to prevent race conditions
-    private val inputExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-
     private var lastBlockTime: Long = 0
 
     // =================================================================================
@@ -2644,8 +2641,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "action_forward" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_FORWARD, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
             "action_vol_up" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
             "action_vol_down" -> if (isUp) Thread { try { inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_DOWN, 0, prefs.prefBlockSoftKeyboard); Thread.sleep(20); inputHandler.injectKey(KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.ACTION_UP, 0, prefs.prefBlockSoftKeyboard) } catch(e: Exception){} }.start()
-            "scroll_up" -> if (isUp) performSwipe(0f, -(BASE_SWIPE_DISTANCE * prefs.scrollSpeed))
-            "scroll_down" -> if (isUp) performSwipe(0f, BASE_SWIPE_DISTANCE * prefs.scrollSpeed)
+            "scroll_up" -> if (isUp) inputHandler.performSwipe(cursorX, cursorY, 0f, -(BASE_SWIPE_DISTANCE * prefs.scrollSpeed), inputTargetDisplayId)
+            "scroll_down" -> if (isUp) inputHandler.performSwipe(cursorX, cursorY, 0f, BASE_SWIPE_DISTANCE * prefs.scrollSpeed, inputTargetDisplayId)
             "display_toggle" -> if (isUp) {
                 if (prefs.displayOffMode == "standard") {
                     isScreenOff = !isScreenOff
@@ -3502,7 +3499,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // =================================================================================
         keyboardOverlay?.onArrowSwipe = { dx, dy ->
             val distance = BASE_SWIPE_DISTANCE * prefs.scrollSpeed
-            performSwipe(dx * distance, dy * distance)
+            inputHandler.performSwipe(cursorX, cursorY, dx * distance, dy * distance, inputTargetDisplayId)
         }
 
         // =================================================================================
@@ -3682,16 +3679,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private fun handleVScrollTouch(event: MotionEvent) {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { isVScrolling = true; lastTouchY = event.y; scrollAccumulatorY = 0f; vScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt()); if (prefs.prefTapScroll) { val h = vScrollContainer?.height ?: return; val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed; performSwipe(0f, if (event.y < h/2) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist)) } }
-            MotionEvent.ACTION_MOVE -> { if (isVScrolling && !prefs.prefTapScroll) { val dy = event.y - lastTouchY; scrollAccumulatorY += dy * prefs.scrollSpeed; if (abs(scrollAccumulatorY) > 30f) { performSwipe(0f, if (prefs.prefReverseScroll) -scrollAccumulatorY * 2 else scrollAccumulatorY * 2); scrollAccumulatorY = 0f }; lastTouchY = event.y } }
+            MotionEvent.ACTION_DOWN -> { isVScrolling = true; lastTouchY = event.y; scrollAccumulatorY = 0f; vScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt()); if (prefs.prefTapScroll) { val h = vScrollContainer?.height ?: return; val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed; inputHandler.performSwipe(cursorX, cursorY, 0f, if (event.y < h/2) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist), inputTargetDisplayId) } }
+            MotionEvent.ACTION_MOVE -> { if (isVScrolling && !prefs.prefTapScroll) { val dy = event.y - lastTouchY; scrollAccumulatorY += dy * prefs.scrollSpeed; if (abs(scrollAccumulatorY) > 30f) { inputHandler.performSwipe(cursorX, cursorY, 0f, if (prefs.prefReverseScroll) -scrollAccumulatorY * 2 else scrollAccumulatorY * 2, inputTargetDisplayId); scrollAccumulatorY = 0f }; lastTouchY = event.y } }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { isVScrolling = false; scrollAccumulatorY = 0f; vScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt()) }
         }
     }
     
     private fun handleHScrollTouch(event: MotionEvent) {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { isHScrolling = true; lastTouchX = event.x; scrollAccumulatorX = 0f; hScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt()); if (prefs.prefTapScroll) { val w = hScrollContainer?.width ?: return; val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed; performSwipe(if (event.x < w/2) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist), 0f) } }
-            MotionEvent.ACTION_MOVE -> { if (isHScrolling && !prefs.prefTapScroll) { val dx = event.x - lastTouchX; scrollAccumulatorX += dx * prefs.scrollSpeed; if (abs(scrollAccumulatorX) > 30f) { performSwipe(if (prefs.prefReverseScroll) -scrollAccumulatorX * 2 else scrollAccumulatorX * 2, 0f); scrollAccumulatorX = 0f }; lastTouchX = event.x } }
+            MotionEvent.ACTION_DOWN -> { isHScrolling = true; lastTouchX = event.x; scrollAccumulatorX = 0f; hScrollVisual?.setBackgroundColor(0x80FFFFFF.toInt()); if (prefs.prefTapScroll) { val w = hScrollContainer?.width ?: return; val dist = BASE_SWIPE_DISTANCE * prefs.scrollSpeed; inputHandler.performSwipe(cursorX, cursorY, if (event.x < w/2) (if (prefs.prefReverseScroll) -dist else dist) else (if (prefs.prefReverseScroll) dist else -dist), 0f, inputTargetDisplayId) } }
+            MotionEvent.ACTION_MOVE -> { if (isHScrolling && !prefs.prefTapScroll) { val dx = event.x - lastTouchX; scrollAccumulatorX += dx * prefs.scrollSpeed; if (abs(scrollAccumulatorX) > 30f) { inputHandler.performSwipe(cursorX, cursorY, if (prefs.prefReverseScroll) -scrollAccumulatorX * 2 else scrollAccumulatorX * 2, 0f, inputTargetDisplayId); scrollAccumulatorX = 0f }; lastTouchX = event.x } }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { isHScrolling = false; scrollAccumulatorX = 0f; hScrollVisual?.setBackgroundColor(0x30FFFFFF.toInt()) }
         }
     }
@@ -3707,15 +3704,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private fun updateCursorSize() { val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; cursorView?.layoutParams?.let { it.width = size; it.height = size; cursorView?.layoutParams = it } }
     private fun updateBorderColor(strokeColor: Int) { currentBorderColor = strokeColor; val bg = trackpadLayout?.background as? GradientDrawable ?: return; bg.setColor((prefs.prefBgAlpha shl 24) or 0x000000); bg.setStroke(4, (prefs.prefAlpha shl 24) or 0xFFFFFF); trackpadLayout?.invalidate() }
     
-    private fun performSwipe(dx: Float, dy: Float) {
-        Thread {
-            val dId = if (inputTargetDisplayId != -1) inputTargetDisplayId else (cursorLayout?.display?.displayId ?: Display.DEFAULT_DISPLAY)
-            val now = SystemClock.uptimeMillis(); val startX = cursorX; val startY = cursorY; val endX = startX + dx; val endY = startY + dy
-            try { shellService?.injectMouse(MotionEvent.ACTION_DOWN, startX, startY, dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now) } catch(e: Exception) {}
-            for (i in 1..5) { val t = i / 5f; try { shellService?.injectMouse(MotionEvent.ACTION_MOVE, startX + (dx*t), startY + (dy*t), dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + (i*10)); Thread.sleep(10) } catch(e: Exception) {} }
-            try { shellService?.injectMouse(MotionEvent.ACTION_UP, endX, endY, dId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + 100) } catch(e: Exception) {}
-        }.start()
-    }
+
 
     private fun handleTrackpadTouch(event: MotionEvent) {
         val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
@@ -5766,7 +5755,7 @@ if (isResize) {
         // =================================================================================
         // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE onDestroy cleanup
         // =================================================================================
-        inputExecutor.shutdownNow() // Stop the worker thread
+        if (::inputHandler.isInitialized) inputHandler.shutdown() // Stop the input handler executor
         if (Build.VERSION.SDK_INT >= 24) { try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {} }
         Thread { shellService?.runCommand("settings put secure show_ime_with_hard_keyboard 1") }.start()
         try { unregisterReceiver(switchReceiver) } catch(e: Exception){};

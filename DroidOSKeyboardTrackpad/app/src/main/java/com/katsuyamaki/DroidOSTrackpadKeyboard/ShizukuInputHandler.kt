@@ -2,6 +2,7 @@ package com.katsuyamaki.DroidOSTrackpadKeyboard
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -229,6 +230,34 @@ class ShizukuInputHandler(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Click injection failed", e)
+            }
+        }
+    }
+
+    /**
+     * Performs a swipe gesture from current position.
+     * @param startX Starting X position
+     * @param startY Starting Y position
+     * @param dx Delta X (swipe distance)
+     * @param dy Delta Y (swipe distance)
+     * @param targetDisplayId Display to inject to
+     */
+    fun performSwipe(startX: Float, startY: Float, dx: Float, dy: Float, targetDisplayId: Int) {
+        if (shellService == null) return
+        executor.execute {
+            try {
+                val now = SystemClock.uptimeMillis()
+                val endX = startX + dx
+                val endY = startY + dy
+                shellService?.injectMouse(MotionEvent.ACTION_DOWN, startX, startY, targetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now)
+                for (i in 1..5) {
+                    val t = i / 5f
+                    shellService?.injectMouse(MotionEvent.ACTION_MOVE, startX + (dx * t), startY + (dy * t), targetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + (i * 10))
+                    Thread.sleep(10)
+                }
+                shellService?.injectMouse(MotionEvent.ACTION_UP, endX, endY, targetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + 100)
+            } catch (e: Exception) {
+                Log.e(TAG, "Swipe injection failed", e)
             }
         }
     }
