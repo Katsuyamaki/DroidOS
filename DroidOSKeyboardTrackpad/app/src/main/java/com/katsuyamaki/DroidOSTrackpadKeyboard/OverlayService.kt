@@ -378,10 +378,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var hScrollVisual: View? = null
     private var debugTextView: TextView? = null
 
-    private var remoteWindowManager: WindowManager? = null
-    private var remoteCursorLayout: FrameLayout? = null
+    internal var remoteWindowManager: WindowManager? = null
+    internal var remoteCursorLayout: FrameLayout? = null
     private var remoteCursorView: ImageView? = null
-    private lateinit var remoteCursorParams: WindowManager.LayoutParams
+    internal var remoteCursorParams: WindowManager.LayoutParams? = null
 
     private val BT_TAG = "BT_MOUSE_CAPTURE"
 
@@ -2517,7 +2517,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 when (rotationAngle) { 90 -> { fDx = -dy; fDy = dx }; 180 -> { fDx = -dx; fDy = -dy }; 270 -> { fDx = dy; fDy = -dx } }
                 cursorX = (cursorX + fDx).coerceIn(0f, safeW); cursorY = (cursorY + fDy).coerceIn(0f, safeH)
                 if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {} } 
-                else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {} }
+                else { remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch(e: Exception) {} } }
                 showCursorAndResetFade()
                 if (isTouchDragging || isKeyDragging) inputHandler.injectMouse(MotionEvent.ACTION_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()) else inputHandler.injectMouse(MotionEvent.ACTION_MOVE, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                 lastTouchX = event.x; lastTouchY = event.y
@@ -2627,9 +2627,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             cursorParams.y = cursorY.toInt()
             try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch (e: Exception) {}
         } else {
-            remoteCursorParams.x = cursorX.toInt()
-            remoteCursorParams.y = cursorY.toInt()
-            try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) {}
+            remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch (e: Exception) {} }
         }
         showCursorAndResetFade()
 
@@ -2743,7 +2741,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun performClick(right: Boolean) { inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, right) }
-    fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){} }; showCursorAndResetFade() }
+    fun resetCursorCenter() { cursorX = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth/2f else uiScreenWidth/2f; cursorY = if (inputTargetDisplayId != currentDisplayId) targetScreenHeight/2f else uiScreenHeight/2f; if (inputTargetDisplayId == currentDisplayId) { cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); windowManager?.updateViewLayout(cursorLayout, cursorParams) } else { remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch(e: Exception){} } }; showCursorAndResetFade() }
     
     internal fun setCursorPosition(x: Float, y: Float) {
         cursorX = x; cursorY = y
@@ -2751,8 +2749,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt()
             try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {}
         } else {
-            remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt()
-            try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+            remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch(e: Exception) {} }
         }
         showCursorAndResetFade()
     }
@@ -3069,7 +3066,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); mirrorManager?.removeMirrorKeyboard(); btMouseManager?.removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
         } else { 
             Log.w(BT_TAG, "Cycle -> Switching to REMOTE ($nextId). Creating BT Capture.")
-            inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); btMouseManager?.createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
+            inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); btMouseManager?.createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch(e: Exception){} }; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
         }
     }
 
@@ -3135,7 +3132,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // END BLOCK: VIRTUAL DISPLAY KEEP-ALIVE Wake Lock Management
     // =================================================================================
 
-    private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
+    private fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = displayManager?.getDisplay(displayId) ?: return; val remoteContext = createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (prefs.prefCursorSize > 0) prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); params.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); params.x = metrics.widthPixels / 2; params.y = metrics.heightPixels / 2; remoteCursorParams = params; remoteWindowManager?.addView(remoteCursorLayout, params) } catch (e: Exception) { e.printStackTrace() } }
     private fun removeRemoteCursor() { try { if (remoteCursorLayout != null && remoteWindowManager != null) { remoteWindowManager?.removeView(remoteCursorLayout) } } catch (e: Exception) {}; remoteCursorLayout = null; remoteCursorView = null; remoteWindowManager = null }
 
     // =================================================================================
@@ -3308,9 +3305,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         createRemoteCursor(inputTargetDisplayId)
         cursorX = targetScreenWidth / 2f
         cursorY = targetScreenHeight / 2f
-        remoteCursorParams.x = cursorX.toInt()
-        remoteCursorParams.y = cursorY.toInt()
-        try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {}
+        remoteCursorParams?.let { it.x = cursorX.toInt(); it.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, it) } catch(e: Exception) {} }
         cursorView?.visibility = View.GONE
         updateBorderColor(0xFFFF00FF.toInt())
     }

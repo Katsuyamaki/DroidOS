@@ -38,7 +38,7 @@ class OverlayLayoutManager(
     lateinit var trackpadParams: WindowManager.LayoutParams
     lateinit var bubbleParams: WindowManager.LayoutParams
     lateinit var cursorParams: WindowManager.LayoutParams
-    lateinit var remoteCursorParams: WindowManager.LayoutParams
+    var remoteCursorParams: WindowManager.LayoutParams? = null
     internal var remoteWindowManager: WindowManager? = null
 
     // Touch & UI State
@@ -186,7 +186,11 @@ class OverlayLayoutManager(
             gestureDetector.onTouchEvent(event)
             
             // CRITICAL: Handle trackpad touch for cursor movement
-            handleTrackpadTouch(event)
+            try {
+                handleTrackpadTouch(event)
+            } catch (e: Exception) {
+                android.util.Log.e("TrackpadDebug", "handleTrackpadTouch CRASHED", e)
+            }
             
             true
         }
@@ -346,6 +350,7 @@ class OverlayLayoutManager(
     }
 
     private fun handleTrackpadTouch(event: MotionEvent) {
+        android.util.Log.d("TrackpadDebug", "handleTrackpadTouch: action=${event.action}")
         val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
         if (isReleaseDebouncing && event.actionMasked != MotionEvent.ACTION_DOWN) return
         
@@ -372,7 +377,7 @@ class OverlayLayoutManager(
                 when (rotationAngle) { 90 -> { fDx = -dy; fDy = dx }; 180 -> { fDx = -dx; fDy = -dy }; 270 -> { fDx = dy; fDy = -dx } }
                 service.cursorX = (service.cursorX + fDx).coerceIn(0f, safeW); service.cursorY = (service.cursorY + fDy).coerceIn(0f, safeH)
                 if (service.inputTargetDisplayId == service.currentDisplayId) { cursorParams.x = service.cursorX.toInt(); cursorParams.y = service.cursorY.toInt(); try { windowManager.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception) {} } 
-                else { remoteCursorParams.x = service.cursorX.toInt(); remoteCursorParams.y = service.cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception) {} }
+                else { service.remoteCursorParams?.let { it.x = service.cursorX.toInt(); it.y = service.cursorY.toInt(); try { service.remoteWindowManager?.updateViewLayout(service.remoteCursorLayout, it) } catch(e: Exception) {} } }
                 showCursorAndResetFade()
                 if (isTouchDragging || isKeyDragging) service.inputHandler.injectMouse(MotionEvent.ACTION_MOVE, service.cursorX, service.cursorY, service.inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, activeDragButton, SystemClock.uptimeMillis()) else service.inputHandler.injectMouse(MotionEvent.ACTION_MOVE, service.cursorX, service.cursorY, service.inputTargetDisplayId, InputDevice.SOURCE_MOUSE, 0, SystemClock.uptimeMillis())
                 lastTouchX = event.x; lastTouchY = event.y
@@ -493,5 +498,5 @@ class OverlayLayoutManager(
         service.handler.postDelayed(cursorFadeRunnable!!, CURSOR_FADE_TIMEOUT)
     }
 
-    fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = service.displayManager?.getDisplay(displayId) ?: return; val remoteContext = service.createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (service.prefs.prefCursorSize > 0) service.prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); remoteCursorParams = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); remoteCursorParams.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); remoteCursorParams.x = metrics.widthPixels / 2; remoteCursorParams.y = metrics.heightPixels / 2; remoteWindowManager?.addView(remoteCursorLayout, remoteCursorParams) } catch (e: Exception) { e.printStackTrace() } }
+    fun createRemoteCursor(displayId: Int) { try { removeRemoteCursor(); val display = service.displayManager?.getDisplay(displayId) ?: return; val remoteContext = service.createTrackpadDisplayContext(display); remoteWindowManager = remoteContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager; remoteCursorLayout = FrameLayout(remoteContext); remoteCursorView = ImageView(remoteContext); remoteCursorView?.setImageResource(R.drawable.ic_cursor); val size = if (service.prefs.prefCursorSize > 0) service.prefs.prefCursorSize else 50; remoteCursorLayout?.addView(remoteCursorView, FrameLayout.LayoutParams(size, size)); val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT); params.gravity = Gravity.TOP or Gravity.LEFT; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); params.x = metrics.widthPixels / 2; params.y = metrics.heightPixels / 2; remoteCursorParams = params; remoteWindowManager?.addView(remoteCursorLayout, params) } catch (e: Exception) { e.printStackTrace() } }
 }
