@@ -152,17 +152,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }
 
                 // LAYER 6: BT MOUSE CAPTURE (Input Interception Layer)
-                // [FIX] Must be ABSOLUTE TOP to intercept mouse events before any other window.
-                // We forward finger touches down to siblings via forwardTouchToSiblings().
-                if (isBtMouseCaptureActive && btMouseCaptureLayout != null && btMouseCaptureLayout?.isAttachedToWindow == true) {
-                    try {
-                        windowManager?.removeView(btMouseCaptureLayout)
-                        windowManager?.addView(btMouseCaptureLayout, btMouseCaptureParams)
-                        Log.d(BT_TAG, "Z-Order: BT Capture Overlay moved to TOP")
-                    } catch (e: Exception) {
-                        Log.e(BT_TAG, "Z-Order: Failed to move BT Capture", e)
-                    }
-                }
+                btMouseManager?.bringToFront()
                 
                 Log.d("OverlayService", "Z-Order Enforced: Trackpad -> Keyboard -> Cursor -> BT Capture")
             }
@@ -182,7 +172,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var windowManager: WindowManager? = null
     var displayManager: DisplayManager? = null
     var shellService: IShellService? = null
-    private lateinit var inputHandler: ShizukuInputHandler
+    internal lateinit var inputHandler: ShizukuInputHandler
     private var appWindowManager: WindowManager? = null
     private var isBound = false
     internal val handler = Handler(Looper.getMainLooper())
@@ -216,6 +206,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     internal var menuManager: TrackpadMenuManager? = null
     internal var mirrorManager: MirrorModeManager? = null
+    internal var btMouseManager: BluetoothMouseManager? = null
     private var savedKbX = 0
     private var savedKbY = 0
     private var savedKbW = 0
@@ -763,14 +754,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =========================
     // STANDARD OVERRIDES
     // =========================
-    private var uiScreenWidth = 1080
-    private var uiScreenHeight = 2640
+    internal var uiScreenWidth = 1080
+    internal var uiScreenHeight = 2640
     private var lastKnownScreenW = 0
     private var lastKnownScreenH = 0
-    private var targetScreenWidth = 1920
-    private var targetScreenHeight = 1080
-    private var cursorX = 300f
-    private var cursorY = 300f
+    internal var targetScreenWidth = 1920
+    internal var targetScreenHeight = 1080
+    internal var cursorX = 300f
+    internal var cursorY = 300f
     private var cursorFadeRunnable: Runnable? = null
     private val CURSOR_FADE_TIMEOUT = 5000L // 5 seconds
     private var rotationAngle = 0
@@ -820,22 +811,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var remoteCursorView: ImageView? = null
     private lateinit var remoteCursorParams: WindowManager.LayoutParams
 
-    // =================================================================================
-    // BT MOUSE CAPTURE OVERLAY VARIABLES
-    // SUMMARY: Full-screen transparent overlay that captures all Bluetooth mouse input
-    //          when targeting a virtual display. Prevents BT mouse from interacting
-    //          with physical screen content and enables proper coordinate scaling.
-    // =================================================================================
-    private var btMouseCaptureLayout: FrameLayout? = null
-    private var btMouseCaptureParams: WindowManager.LayoutParams? = null
-    private var isBtMouseCaptureActive = false
-    private var lastBtMouseX = 0f
-    private var lastBtMouseY = 0f
-    private var isBtMouseDragging = false
     private val BT_TAG = "BT_MOUSE_CAPTURE"
-    // =================================================================================
-    // END BLOCK: BT MOUSE CAPTURE OVERLAY VARIABLES
-    // =================================================================================
 
     // NOTE: Virtual Mirror Mode variables moved to MirrorModeManager.kt
 
@@ -1923,7 +1899,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
         menuManager = null
         // Clean up BT mouse capture overlay
-        removeBtMouseCaptureOverlay()
+        btMouseManager?.removeBtMouseCaptureOverlay()
         // Nullify references to ensure setup functions create fresh instances
         trackpadLayout = null
         bubbleView = null
@@ -1964,6 +1940,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             setupTrackpad(accessContext)
             if (shellService != null) initCustomKeyboard()
             menuManager = TrackpadMenuManager(displayContext, windowManager!!, this)
+            btMouseManager = BluetoothMouseManager(this, windowManager!!)
             setupBubble(accessContext)
             setupCursor(accessContext)
 
@@ -3925,10 +3902,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         if (nextId == -1) { 
             Log.w(BT_TAG, "Cycle -> Switching to LOCAL ($currentDisplayId). Removing BT Capture.")
-            inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); mirrorManager?.removeMirrorKeyboard(); removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
+            inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); mirrorManager?.removeMirrorKeyboard(); btMouseManager?.removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
         } else { 
             Log.w(BT_TAG, "Cycle -> Switching to REMOTE ($nextId). Creating BT Capture.")
-            inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
+            inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); btMouseManager?.createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; remoteCursorParams.x = cursorX.toInt(); remoteCursorParams.y = cursorY.toInt(); try { remoteWindowManager?.updateViewLayout(remoteCursorLayout, remoteCursorParams) } catch(e: Exception){}; cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
         }
     }
 
@@ -4001,7 +3978,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // HELPER: Forward Touch to Sibling Windows
     // Used by BT Mouse Capture Overlay to let finger touches reach Trackpad/Keyboard
     // =================================================================================
-    private fun forwardTouchToSiblings(event: MotionEvent): Boolean {
+    internal fun forwardTouchToSiblings(event: MotionEvent): Boolean {
         var handled = false
         val rawX = event.rawX
         val rawY = event.rawY
@@ -4063,393 +4040,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         return handled
     }
 
-    // =================================================================================
-    // BT MOUSE CAPTURE OVERLAY - CREATE    // SUMMARY: Creates a full-screen transparent overlay on the physical display that
-    //          intercepts all Bluetooth mouse input when targeting a virtual display.
-    // =================================================================================
-    internal fun createBtMouseCaptureOverlay() {
-        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.w(BT_TAG, "│ CREATE REQUESTED: createBtMouseCaptureOverlay()         │")
-        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
-        // Log stack trace to see WHO requested creation
-        Log.d(BT_TAG, "├─ Trigger Source:", Exception("Creation Stack Trace"))
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
-        Log.d(BT_TAG, "├─ windowManager null?: ${windowManager == null}")
-        Log.d(BT_TAG, "├─ inputTargetDisplayId: $inputTargetDisplayId")
-        Log.d(BT_TAG, "├─ currentDisplayId: $currentDisplayId")
 
-        if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Already active")
-            return
-        }
-        if (windowManager == null) {
-            Log.e(BT_TAG, "├─ ERROR: windowManager is null!")
-            return
-        }
-
-        // Reset tracking state
-        lastBtMouseX = 0f
-        lastBtMouseY = 0f
-        isBtMouseDragging = false
-
-        btMouseCaptureLayout = object : FrameLayout(this@OverlayService) {
-            
-            // [FIX] View-Level Cursor Hiding (Works without Shizuku on API 24+)
-            init {
-                if (Build.VERSION.SDK_INT >= 24) {
-                    try {
-                        this.pointerIcon = android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
-                    } catch(e: Exception) {}
-                }
-            }
-
-            override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-                val isMouseSource = event.isFromSource(InputDevice.SOURCE_MOUSE) ||
-                                    event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)
-
-                // Log.v(BT_TAG, "dispatchGenericMotionEvent: action=${event.actionMasked}, isMouse=$isMouseSource, x=${event.x}, y=${event.y}")
-
-                if (!isMouseSource) {
-                    // Log.v(BT_TAG, "├─ Not mouse source, passing to super")
-                    return super.dispatchGenericMotionEvent(event)
-                }
-
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_HOVER_MOVE -> {
-                        // Log.d(BT_TAG, "ACTION_HOVER_MOVE: x=${event.x}, y=${event.y}")
-
-                        if (lastBtMouseX == 0f && lastBtMouseY == 0f) {
-                            lastBtMouseX = event.x
-                            lastBtMouseY = event.y
-                            // Log.d(BT_TAG, "├─ First event, recording position")
-                            return true
-                        }
-
-                        val rawDx = event.x - lastBtMouseX
-                        val rawDy = event.y - lastBtMouseY
-                        lastBtMouseX = event.x
-                        lastBtMouseY = event.y
-
-                        // Log.d(BT_TAG, "├─ Raw delta: dx=$rawDx, dy=$rawDy")
-
-                        val (scaledDx, scaledDy) = scaleBtMouseMovement(rawDx, rawDy)
-                        // Log.d(BT_TAG, "├─ Scaled delta: dx=$scaledDx, dy=$scaledDy")
-
-                        handleExternalMouseMove(scaledDx, scaledDy, false)
-                        // Log.d(BT_TAG, "├─ Forwarded to handleExternalMouseMove (hover)")
-                        return true
-                    }
-
-                    MotionEvent.ACTION_SCROLL -> {
-                        val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                        val hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
-                        // Log.d(BT_TAG, "ACTION_SCROLL: v=$vScroll, h=$hScroll")
-                        injectScroll(hScroll * 10f, vScroll * 10f)
-                        return true
-                    }
-
-                    MotionEvent.ACTION_HOVER_ENTER -> {
-                        // Log.d(BT_TAG, "ACTION_HOVER_ENTER: Mouse entered capture area")
-                        return true
-                    }
-
-                    MotionEvent.ACTION_HOVER_EXIT -> {
-                        // Log.d(BT_TAG, "ACTION_HOVER_EXIT: Mouse exited capture area")
-                        return true
-                    }
-                }
-
-                // Log.v(BT_TAG, "├─ Consuming other mouse generic event: ${event.actionMasked}")
-                return true
-            }
-
-            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                val toolType = event.getToolType(0)
-                val isMouse = toolType == MotionEvent.TOOL_TYPE_MOUSE || 
-                              event.isFromSource(InputDevice.SOURCE_MOUSE)
-                
-                // Log.v(BT_TAG, "dispatchTouchEvent: action=${event.actionMasked}, toolType=$toolType, isMouse=$isMouse, deviceId=${event.deviceId}")
-                
-                // =======================================================================
-                // FINGER TOUCH FORWARDING
-                // Forward finger touches to sibling windows (Trackpad, Keyboard, Menu)
-                // because this overlay blocks them.
-                // =======================================================================
-                if (!isMouse) {
-                    // Try to dispatch to siblings
-                    if (forwardTouchToSiblings(event)) {
-                        return true // Handled by a sibling
-                    }
-                    
-                    // If no sibling handled it, we allow it to "pass through" (return false).
-                    // Since we are full-screen, this usually drops the event, but it's safe fallback.
-                    return false
-                }
-                // =======================================================================
-                // END: FINGER TOUCH PASSTHROUGH
-                // =======================================================================
-                
-                // Mouse events - we handle and consume these
-                // CHECK BUTTON: Use actionButton to distinguish Left vs Right clicks
-                val isRightButton = (event.actionButton == MotionEvent.BUTTON_SECONDARY)
-
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        if (isRightButton) {
-                             // Log.d(BT_TAG, "MOUSE RIGHT DOWN: Ignored (waiting for UP)")
-                        } else {
-                             // Log.d(BT_TAG, "MOUSE LEFT DOWN: Starting Touch Stream")
-                             lastBtMouseX = event.x
-                             lastBtMouseY = event.y
-                             isBtMouseDragging = false
-                             handleExternalTouchDown()
-                        }
-                    }
-                    
-                    MotionEvent.ACTION_MOVE -> {
-                        // Only process drag for Left Button
-                        // (Right drag is usually not a standard Android touch gesture)
-                        val rawDx = event.x - lastBtMouseX
-                        val rawDy = event.y - lastBtMouseY
-                        
-                        if (kotlin.math.abs(rawDx) > 0 || kotlin.math.abs(rawDy) > 0) {
-                            isBtMouseDragging = true
-                        }
-                        
-                        lastBtMouseX = event.x
-                        lastBtMouseY = event.y
-                        
-                        val (scaledDx, scaledDy) = scaleBtMouseMovement(rawDx, rawDy)
-                        handleExternalMouseMove(scaledDx, scaledDy, true)
-                    }
-                    
-                    MotionEvent.ACTION_UP -> {
-                        if (isRightButton) {
-                             // Log.d(BT_TAG, "MOUSE RIGHT UP: Performing Right Click")
-                             inputHandler.performClick(cursorX, cursorY, inputTargetDisplayId, true)
-                        } else {
-                             // Log.d(BT_TAG, "MOUSE LEFT UP: Ending Touch Stream")
-                             handleExternalTouchUp()
-                             // REMOVED: performClick(false)
-                             // The handleExternalTouchDown() + handleExternalTouchUp() sequence 
-                             // already constitutes a complete click/tap.
-                        }
-                        isBtMouseDragging = false
-                    }
-                }
-                
-                return true // Consume mouse events
-            }
-        }
-
-        btMouseCaptureLayout?.setBackgroundColor(0x00000000) // Fully transparent
-
-        btMouseCaptureParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            // FLAG_NOT_TOUCH_MODAL: Allow touches outside to go to other windows
-            // FLAG_WATCH_OUTSIDE_TOUCH: Get notified of outside touches (for debugging)
-            // NO FLAG_NOT_TOUCHABLE: We need to receive touch events to filter them
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-        
-        Log.d(BT_TAG, "├─ Flags: NOT_FOCUSABLE | NOT_TOUCH_MODAL | LAYOUT_IN_SCREEN | LAYOUT_NO_LIMITS")
-        btMouseCaptureParams?.gravity = Gravity.TOP or Gravity.LEFT
-
-        // Ensure overlay covers entire screen including system bars and cutouts
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            btMouseCaptureParams?.layoutInDisplayCutoutMode = 
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        
-        // Log the actual screen dimensions for debugging
-        val metrics = resources.displayMetrics
-        Log.d(BT_TAG, "├─ Screen metrics: ${metrics.widthPixels}x${metrics.heightPixels}")
-        Log.d(BT_TAG, "├─ uiScreenWidth=$uiScreenWidth, uiScreenHeight=$uiScreenHeight")
-
-        Log.d(BT_TAG, "├─ Created LayoutParams (MATCH_PARENT x MATCH_PARENT)")
-        Log.d(BT_TAG, "├─ Flags: NOT_FOCUSABLE | LAYOUT_IN_SCREEN | LAYOUT_NO_LIMITS")
-
-        try {
-            windowManager?.addView(btMouseCaptureLayout, btMouseCaptureParams)
-            isBtMouseCaptureActive = true
-            Log.d(BT_TAG, "├─ ★ SUCCESS: BT Mouse Capture Overlay ADDED ★")
-            
-            // Hide the system cursor
-            hideSystemCursor()
-            
-            Log.d(BT_TAG, "└─ Overlay active, system cursor hidden")
-            showToast("BT Mouse Capture: ON")
-        } catch (e: Exception) {
-            Log.e(BT_TAG, "├─ ✗ FAILED to add overlay: ${e.message}", e)
-            btMouseCaptureLayout = null
-        }
-    }
-    // =================================================================================
-    // END BLOCK: BT MOUSE CAPTURE OVERLAY - CREATE
-    // =================================================================================
-
-    // =================================================================================
-    // BT MOUSE CAPTURE OVERLAY - REMOVE
-    // =================================================================================
-    internal fun removeBtMouseCaptureOverlay() {
-        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.w(BT_TAG, "│ REMOVE REQUESTED: removeBtMouseCaptureOverlay()         │")
-        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
-        
-        // CRITICAL: Log the stack trace to identify the culprit
-        Log.w(BT_TAG, ">>> REMOVAL TRIGGER TRACE <<<", Exception("Who called remove?"))
-        
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
-
-        if (!isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Not active (Logical state was already false)")
-            return
-        }
-
-        try {
-            btMouseCaptureLayout?.let {
-                val attached = it.isAttachedToWindow
-                Log.d(BT_TAG, "├─ isAttachedToWindow: $attached")
-                if (attached) {
-                    windowManager?.removeView(it)
-                    Log.d(BT_TAG, "├─ ★ SUCCESS: Overlay REMOVED ★")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ Error removing overlay: ${e.message}")
-        }
-
-        btMouseCaptureLayout = null
-        isBtMouseCaptureActive = false
-        lastBtMouseX = 0f
-        lastBtMouseY = 0f
-        
-        // Restore the system cursor
-        showSystemCursor()
-        
-        Log.d(BT_TAG, "└─ Cleanup complete, system cursor restored")
-        showToast("BT Mouse Capture: OFF")
-    }
-    // =================================================================================
-    // END BLOCK: BT MOUSE CAPTURE OVERLAY - REMOVE
-    // =================================================================================
-
-    // =================================================================================
-    // BT MOUSE MOVEMENT SCALING
-    // =================================================================================
-    private fun scaleBtMouseMovement(rawDx: Float, rawDy: Float): Pair<Float, Float> {
-        if (inputTargetDisplayId == currentDisplayId) {
-            return Pair(rawDx * prefs.cursorSpeed, rawDy * prefs.cursorSpeed)
-        }
-
-        val scaleX = targetScreenWidth.toFloat() / uiScreenWidth.toFloat()
-        val scaleY = targetScreenHeight.toFloat() / uiScreenHeight.toFloat()
-
-        val scaledDx = rawDx * scaleX * prefs.cursorSpeed
-        val scaledDy = rawDy * scaleY * prefs.cursorSpeed
-
-        // Log.v(BT_TAG, "scaleBtMouseMovement: physical=${uiScreenWidth}x${uiScreenHeight}, " +
-        //               "virtual=${targetScreenWidth}x${targetScreenHeight}, " +
-        //               "scale=($scaleX, $scaleY), " +
-        //               "raw=($rawDx, @rawDy) -> scaled=($scaledDx, $scaledDy)")
-
-        return Pair(scaledDx, scaledDy)
-    }
-    // =================================================================================
-    // END BLOCK: BT MOUSE MOVEMENT SCALING
-    // =================================================================================
-
-    // =================================================================================
-    // SYSTEM CURSOR VISIBILITY CONTROL
-    // SUMMARY: Hides/shows the Android system mouse cursor using reflection.
-    //          When BT mouse capture is active, we hide the system cursor so only
-    //          our software cursor (remoteCursorLayout) is visible on the virtual display.
-    // =================================================================================
-    private var systemCursorHidden = false
-    
-    private fun hideSystemCursor() {
-        Log.d(BT_TAG, "hideSystemCursor() called")
-        
-        // 1. Try Shizuku (System Level)
-        if (shellService != null) {
-            try {
-                shellService?.setSystemCursorVisibility(false)
-                systemCursorHidden = true
-                Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Shizuku")
-                return
-            } catch (e: Exception) {
-                Log.e(BT_TAG, "├─ Shizuku cursor hide failed", e)
-            }
-        }
-        
-        // 2. Try Local Reflection (Legacy)
-        try {
-            val imClass = Class.forName("android.hardware.input.InputManager")
-            val getInstance = imClass.getMethod("getInstance")
-            val inputManager = getInstance.invoke(null)
-            val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
-            setCursorVisibility.invoke(inputManager, false)
-            systemCursorHidden = true
-            Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Local Reflection")
-        } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
-            // Fallback: Set pointer speed to minimum (doesn't actually hide but reduces visibility)
-            try {
-                shellService?.runCommand("settings put system pointer_speed -7")
-                systemCursorHidden = true
-                Log.d(BT_TAG, "├─ Set pointer_speed to -7 (fallback)")
-            } catch (e2: Exception) {
-                Log.e(BT_TAG, "├─ Failed to hide cursor: ${e2.message}")
-            }
-        }
-    }
-    
-    private fun showSystemCursor() {
-        Log.d(BT_TAG, "showSystemCursor() called")
-        if (!systemCursorHidden) {
-            Log.d(BT_TAG, "├─ Cursor wasn't hidden, skipping")
-            return
-        }
-        
-        // 1. Try Shizuku
-        if (shellService != null) {
-            try {
-                shellService?.setSystemCursorVisibility(true)
-                systemCursorHidden = false
-                Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Shizuku")
-                return
-            } catch (e: Exception) {}
-        }
-        
-        // 2. Try Local Reflection
-        try {
-            val imClass = Class.forName("android.hardware.input.InputManager")
-            val getInstance = imClass.getMethod("getInstance")
-            val inputManager = getInstance.invoke(null)
-            val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
-            setCursorVisibility.invoke(inputManager, true)
-            systemCursorHidden = false
-            Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Local Reflection")
-        } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
-            try {
-                shellService?.runCommand("settings put system pointer_speed 0")
-                systemCursorHidden = false
-                Log.d(BT_TAG, "├─ Reset pointer_speed to 0 (fallback)")
-            } catch (e2: Exception) {
-                Log.e(BT_TAG, "├─ Failed to show cursor: ${e2.message}")
-            }
-        }
-    }
-    // =================================================================================
-    // END BLOCK: SYSTEM CURSOR VISIBILITY CONTROL
-    // =================================================================================
 
     // =================================================================================
     // VIRTUAL MIRROR MODE FUNCTIONS
@@ -4766,11 +4357,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     override fun onInputDeviceChanged(deviceId: Int) { handleInputDeviceChange() }
 
     private fun handleInputDeviceChange() {
-        if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "Input device change detected - Refreshing Cursor Visibility")
-            // Re-hide cursor as connection events often reset it to visible
-            hideSystemCursor()
-        }
+        btMouseManager?.handleInputDeviceChange()
     }
 
     fun switchDisplay() {

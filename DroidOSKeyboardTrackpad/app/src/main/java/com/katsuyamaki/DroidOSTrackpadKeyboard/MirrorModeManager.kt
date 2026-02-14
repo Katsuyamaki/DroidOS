@@ -411,7 +411,7 @@ class MirrorModeManager(
 
             service.showToast("Mirror Mode ON")
 
-            service.createBtMouseCaptureOverlay()
+            service.btMouseManager?.createBtMouseCaptureOverlay()
 
             val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
             intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
@@ -426,7 +426,7 @@ class MirrorModeManager(
         Log.d(TAG, "Exiting Virtual Mirror Mode")
 
         removeMirrorKeyboard()
-        service.removeBtMouseCaptureOverlay()
+        service.btMouseManager?.removeBtMouseCaptureOverlay()
         service.switchToLocalDisplay()
 
         service.loadLayout()
