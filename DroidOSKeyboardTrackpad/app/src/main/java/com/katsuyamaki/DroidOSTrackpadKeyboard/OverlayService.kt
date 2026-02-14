@@ -325,98 +325,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
     }
     
-    class Prefs {
-        var cursorSpeed = 2.5f
-        var scrollSpeed = 1.0f 
-        var prefTapScroll = true 
-        var prefVibrate = false
-        var prefReverseScroll = true
-        var prefAlpha = 200
-        var prefBgAlpha = 0
-        var prefKeyboardAlpha = 200
-        var prefHandleSize = 60 
-        var prefVPosLeft = false
-        var prefHPosTop = false
-        var prefLocked = false
-        var prefHandleTouchSize = 80
-        var prefScrollTouchSize = 80 
-        var prefScrollVisualSize = 4
-        var prefCursorSize = 50 
-        var prefKeyScale = 69 // Default to 69% to match Reset Position (0.55 ratio)
-        var prefUseAltScreenOff = true
-        var prefAutomationEnabled = true
-        var prefBubbleX = 50
-        var prefBubbleY = 300
-        var prefAnchored = false 
-        var prefBubbleSize = 100        
-        var prefBubbleIconIndex = 0     
-        var prefBubbleAlpha = 255       
-        var prefPersistentService = false 
-        var prefBubbleIncludeTrackpad = true
-        var prefBubbleIncludeKeyboard = true
-        var prefShowKBAboveDock = true // Default ON - position overlay KB above DockIME toolbar
-
-        var prefBlockSoftKeyboard = false
-
-
-        // =================================================================================
-        // PREDICTION AGGRESSION (Precision vs Shape)
-        // 0.3 (Sloppy/Fast) to 2.0 (Neat/Precise). Default 0.8.
-        // =================================================================================
-        var prefPredictionAggression = 1.1f
-
-    
-    // =================================================================================
-    // SPACEBAR MOUSE EXTENDED MODE PREFERENCE
-    // SUMMARY: When enabled, spacebar mouse mode stays active indefinitely (no 1-second
-    //          timeout). Mode only deactivates when user taps outside the keyboard overlay.
-    //          This allows continuous cursor control without repeatedly activating.
-    // =================================================================================
-    var prefSpacebarMouseExtended = false
-    // =================================================================================
-    // END BLOCK: SPACEBAR MOUSE EXTENDED MODE PREFERENCE
-    // =================================================================================
-        var prefAlwaysPreferGboard = true  // NEW: Fight Samsung's keyboard takeover
-        
-        // Defaults set to "none" (System Default)
-
-        var hardkeyVolUpTap = "none"
-        var hardkeyVolUpDouble = "none"
-        var hardkeyVolUpHold = "none"
-        var hardkeyVolDownTap = "none"
-        var hardkeyVolDownDouble = "none"
-        var hardkeyVolDownHold = "none"
-        var hardkeyPowerDouble = "none"
-        var doubleTapMs = 300
-        var holdDurationMs = 400
-        var displayOffMode = "alternate"
-
-        // =================================================================================
-        // VIRTUAL MIRROR MODE PREFERENCES
-        // SUMMARY: Settings for displaying a mirror keyboard on remote/AR display.
-        //          When enabled, touching the physical keyboard shows an orange orientation
-        //          trail on both displays. After finger stops for orientDelayMs, normal
-        //          keyboard input resumes.
-        // =================================================================================
-        var prefVirtualMirrorMode = false
-        var prefMirrorOrientDelayMs = 1000L  // Default 1 second orientation delay
-        
-        // Mirror Keyboard Prefs
-        var prefMirrorAlpha = 200
-        var prefMirrorX = -1      // -1 = auto center
-        var prefMirrorY = 0
-        var prefMirrorWidth = -1  // -1 = auto
-        var prefMirrorHeight = -1 // -1 = auto
-
-        // NEW: Toggle to block system meta shortcuts (e.g. Meta+S -> Messages)
-        var prefOverrideSystemShortcuts = true
-        var customModKey = 0 // To persist across view rebuilds
-
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE PREFERENCES
-        // =================================================================================
-    }
-    val prefs = Prefs()
+    val prefs = TrackpadPrefs()
 
     // =================================================================================
     // LAUNCHER BLOCKED SHORTCUTS SET
@@ -1328,7 +1237,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     if (intent.hasExtra("show_kb_above_dock")) {
                         val showAbove = intent.getBooleanExtra("show_kb_above_dock", true)
                         prefs.prefShowKBAboveDock = showAbove
-                        savePrefs()
+                        prefs.save(this@OverlayService)
                         // Reposition keyboard if dock mode is active
                         if (isCustomKeyboardVisible) {
                             val margin = intent.getIntExtra("resize_to_margin", -1)
@@ -1919,7 +1828,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // END BLOCK: CONTENT OBSERVER for Default Keyboard Changes
         // =================================================================================
         
-        loadPrefs()
+        prefs.load(this)
         val filter = IntentFilter().apply { 
             // Internal short commands
             addAction("SWITCH_DISPLAY")
@@ -2049,7 +1958,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         checkAndBindShizuku()
 
         // Load preferences
-        loadPrefs() 
+        prefs.load(this) 
         
         // [FIX] READ TARGET DISPLAY (Fixes "Wrong Display" on Race Condition)
         val globalTarget = try {
@@ -2166,7 +2075,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     action == "DELETE_PROFILE" -> deleteCurrentProfile()
                     action == "MANUAL_ADJUST" -> handleManualAdjust(intent)
                     action == "RELOAD_PREFS" -> {
-                        loadPrefs()
+                        prefs.load(this)
                         updateBorderColor(currentBorderColor)
                         updateLayoutSizes()
                         updateScrollPosition()
@@ -2573,7 +2482,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     } else if (isDrag) {
                         prefs.prefBubbleX = bubbleParams.x
                         prefs.prefBubbleY = bubbleParams.y
-                        savePrefs()
+                        prefs.save(this)
                     }
                     velocityTracker?.recycle()
                     velocityTracker = null
@@ -2855,10 +2764,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private val bubbleIcons = arrayOf(R.mipmap.ic_trackpad_adaptive, R.drawable.ic_cursor, R.drawable.ic_tab_main, R.drawable.ic_tab_keyboard, android.R.drawable.ic_menu_compass, android.R.drawable.ic_menu_myplaces)
     
-    fun updateBubbleSize(sizePercent: Int) { prefs.prefBubbleSize = sizePercent.coerceIn(50, 200); applyBubbleAppearance(); savePrefs() }
-    fun updateBubbleIcon(index: Int) { prefs.prefBubbleIconIndex = index.coerceIn(0, bubbleIcons.size - 1); applyBubbleAppearance(); savePrefs() }
+    fun updateBubbleSize(sizePercent: Int) { prefs.prefBubbleSize = sizePercent.coerceIn(50, 200); applyBubbleAppearance(); prefs.save(this) }
+    fun updateBubbleIcon(index: Int) { prefs.prefBubbleIconIndex = index.coerceIn(0, bubbleIcons.size - 1); applyBubbleAppearance(); prefs.save(this) }
     fun cycleBubbleIcon() { updateBubbleIcon((prefs.prefBubbleIconIndex + 1) % bubbleIcons.size) }
-    fun updateBubbleAlpha(alpha: Int) { prefs.prefBubbleAlpha = alpha.coerceIn(50, 255); applyBubbleAppearance(); savePrefs() }
+    fun updateBubbleAlpha(alpha: Int) { prefs.prefBubbleAlpha = alpha.coerceIn(50, 255); applyBubbleAppearance(); prefs.save(this) }
     
     private fun applyBubbleAppearance() {
         if (bubbleView == null) return
@@ -2910,7 +2819,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // Enable Virtual Mirror Mode
             if (!prefs.prefVirtualMirrorMode) {
                 prefs.prefVirtualMirrorMode = true
-                savePrefs()
+                prefs.save(this)
             }
             
             // Set input target to virtual display
@@ -2948,7 +2857,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // Disable Virtual Mirror Mode
             if (prefs.prefVirtualMirrorMode) {
                 prefs.prefVirtualMirrorMode = false
-                savePrefs()
+                prefs.save(this)
             }
             
             // Remove remote cursor and mirror keyboard
@@ -3230,7 +3139,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "spacebar_mouse_extended" -> { 
                 prefs.prefSpacebarMouseExtended = parseBoolean(value)
                 keyboardOverlay?.getKeyboardView()?.setSpacebarExtendedMode(prefs.prefSpacebarMouseExtended)
-                savePrefs()
+                prefs.save(this)
             }
             // =================================================================================
             // END BLOCK: SPACEBAR MOUSE EXTENDED MODE UPDATE
@@ -3242,7 +3151,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (newDockMode) {
                     if (!dockPrefs.contains("show_kb_above_dock")) {
                         prefs.prefShowKBAboveDock = true
-                        savePrefs()
+                        prefs.save(this)
                     }
                     dockPrefs.edit()
                         .putBoolean("dock_mode_d$currentDisplayId", true)
@@ -3300,7 +3209,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 keyboardOverlay?.setLauncherBlockedShortcuts(launcherBlockedShortcuts)
             }
         }
-        savePrefs() 
+        prefs.save(this) 
     }
     
 // =================================================================================
@@ -3437,92 +3346,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             2 -> { trackpadParams.width = targetW; trackpadParams.height = tpHeight; trackpadParams.x = marginX; trackpadParams.y = 0; keyboardOverlay?.setWindowBounds(marginX, tpHeight, targetW, kbHeight) }
         }
         try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch(e: Exception){}
-        updateScrollSize(); updateScrollPosition(); updateHandleSize(); updateLayoutSizes(); savePrefs(); showToast("Preset Applied")
+        updateScrollSize(); updateScrollPosition(); updateHandleSize(); updateLayoutSizes(); prefs.save(this); showToast("Preset Applied")
     }
     
-    fun resetBubblePosition() { bubbleParams.x = (uiScreenWidth / 2) + 80; bubbleParams.y = uiScreenHeight / 2; try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}; prefs.prefBubbleX = bubbleParams.x; prefs.prefBubbleY = bubbleParams.y; savePrefs(); showToast("Bubble Reset") }
+    fun resetBubblePosition() { bubbleParams.x = (uiScreenWidth / 2) + 80; bubbleParams.y = uiScreenHeight / 2; try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}; prefs.prefBubbleX = bubbleParams.x; prefs.prefBubbleY = bubbleParams.y; prefs.save(this); showToast("Bubble Reset") }
 
 
 
-    private fun loadPrefs() { 
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        prefs.cursorSpeed = p.getFloat("cursor_speed", 2.5f)
-        prefs.scrollSpeed = p.getFloat("scroll_speed", 0.6f) // CHANGED: Default 0.6f (Slider 6)
-        prefs.prefTapScroll = p.getBoolean("tap_scroll", true)
-        prefs.prefVibrate = p.getBoolean("vibrate", true)
-        prefs.prefReverseScroll = p.getBoolean("reverse_scroll", false) // CHANGED: Default false
-        prefs.prefAlpha = p.getInt("alpha", 50) // CHANGED: Default 50
-        prefs.prefBgAlpha = p.getInt("bg_alpha", 220) // CHANGED: Default 220
-        prefs.prefKeyboardAlpha = p.getInt("keyboard_alpha", 255) // CHANGED: Default 255
-        prefs.prefHandleSize = p.getInt("handle_size", 14) // CHANGED: Default 14
-        prefs.prefVPosLeft = p.getBoolean("v_pos_left", false)
-        prefs.prefHPosTop = p.getBoolean("h_pos_top", false)
-        prefs.prefAnchored = p.getBoolean("anchored", false)
-        prefs.prefHandleTouchSize = p.getInt("handle_touch_size", 80)
-        prefs.prefShowKBAboveDock = p.getBoolean("show_kb_above_dock", true)
-        prefs.prefScrollTouchSize = p.getInt("scroll_touch_size", 80)
-        prefs.prefScrollVisualSize = p.getInt("scroll_visual_size", 4)
-                prefs.prefCursorSize = p.getInt("cursor_size", 50)
-                prefs.prefKeyScale = p.getInt("keyboard_key_scale", 69) // Default 69 to match resetPosition
-                prefs.prefUseAltScreenOff = p.getBoolean("use_alt_screen_off", true)
-                prefs.prefAutomationEnabled = p.getBoolean("automation_enabled", false) 
-                prefs.prefBubbleX = p.getInt("bubble_x", -1)
-                prefs.prefBubbleY = p.getInt("bubble_y", -1)
-                prefs.prefBubbleSize = p.getInt("bubble_size", 100)
-                prefs.prefBubbleIconIndex = p.getInt("bubble_icon_index", 0)
-                prefs.prefBubbleAlpha = p.getInt("bubble_alpha", 255)
-                prefs.prefPersistentService = p.getBoolean("persistent_service", false)
-                prefs.prefBubbleIncludeTrackpad = p.getBoolean("bubble_include_trackpad", true)
-                prefs.prefBubbleIncludeKeyboard = p.getBoolean("bubble_include_keyboard", true)
-                prefs.prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
 
-                
-                prefs.prefPredictionAggression = p.getFloat("prediction_aggression", 1.1f)
-
-
-                // Apply to Engine on startup
-                PredictionEngine.instance.speedThreshold = prefs.prefPredictionAggression
-
-                // =================================================================================
-                // SPACEBAR MOUSE EXTENDED MODE LOAD
-                // =================================================================================
-                prefs.prefSpacebarMouseExtended = p.getBoolean("spacebar_mouse_extended", false)
-                // =================================================================================
-                // END BLOCK: SPACEBAR MOUSE EXTENDED MODE LOAD
-                // =================================================================================
-                // Hardkey Defaults: Set to "none"
-                prefs.hardkeyVolUpTap = p.getString("hardkey_vol_up_tap", "none") ?: "none"
-                prefs.hardkeyVolUpDouble = p.getString("hardkey_vol_up_double", "none") ?: "none"
-                prefs.hardkeyVolUpHold = p.getString("hardkey_vol_up_hold", "none") ?: "none"
-                prefs.hardkeyVolDownTap = p.getString("hardkey_vol_down_tap", "none") ?: "none"
-                prefs.hardkeyVolDownDouble = p.getString("hardkey_vol_down_double", "none") ?: "none"
-                prefs.hardkeyVolDownHold = p.getString("hardkey_vol_down_hold", "none") ?: "none"
-        prefs.hardkeyPowerDouble = p.getString("hardkey_power_double", "none") ?: "none"
-        
-        prefs.doubleTapMs = p.getInt("double_tap_ms", 300)
-        prefs.holdDurationMs = p.getInt("hold_duration_ms", 400)
-
-        // =================================================================================
-        // VIRTUAL MIRROR MODE LOAD
-        // =================================================================================
-        // [Fixed] Always FORCE OFF on app restart/reload. Do not load saved state.
-        prefs.prefVirtualMirrorMode = false
-
-        prefs.prefOverrideSystemShortcuts = p.getBoolean("override_system_shortcuts", true)
-        prefs.customModKey = p.getInt("custom_mod_key", 0)
-        prefs.prefMirrorOrientDelayMs = p.getLong("mirror_orient_delay_ms", 1000L)
-
-        // Load Mirror Keyboard Prefs
-        prefs.prefMirrorAlpha = p.getInt("mirror_alpha", 200)
-        prefs.prefMirrorX = p.getInt("mirror_x", -1)
-        prefs.prefMirrorY = p.getInt("mirror_y", 0)
-        prefs.prefMirrorWidth = p.getInt("mirror_width", -1)
-        prefs.prefMirrorHeight = p.getInt("mirror_height", -1)
-        // Note: No height pref, it's wrap_content
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE LOAD
-        // =================================================================================
-    }
     
 
 
@@ -3596,82 +3427,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
 
-    private fun savePrefs() { 
-        val e = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-        
-        e.putFloat("cursor_speed", prefs.cursorSpeed)
-        e.putFloat("scroll_speed", prefs.scrollSpeed)
-        e.putBoolean("tap_scroll", prefs.prefTapScroll)
-        e.putBoolean("vibrate", prefs.prefVibrate)
-        e.putBoolean("reverse_scroll", prefs.prefReverseScroll)
-        e.putInt("alpha", prefs.prefAlpha)
-        e.putInt("bg_alpha", prefs.prefBgAlpha)
-        e.putInt("keyboard_alpha", prefs.prefKeyboardAlpha)
-        e.putInt("handle_size", prefs.prefHandleSize)
-        e.putBoolean("v_pos_left", prefs.prefVPosLeft)
-        e.putBoolean("h_pos_top", prefs.prefHPosTop)
-        e.putBoolean("anchored", prefs.prefAnchored)
-        e.putInt("handle_touch_size", prefs.prefHandleTouchSize)
-        e.putInt("scroll_touch_size", prefs.prefScrollTouchSize)
-        e.putInt("scroll_visual_size", prefs.prefScrollVisualSize)
-        e.putInt("cursor_size", prefs.prefCursorSize)
-        e.putInt("keyboard_key_scale", prefs.prefKeyScale)
-        e.putBoolean("use_alt_screen_off", prefs.prefUseAltScreenOff)
-        e.putBoolean("automation_enabled", prefs.prefAutomationEnabled)
-        e.putInt("bubble_x", prefs.prefBubbleX)
-        e.putInt("bubble_y", prefs.prefBubbleY)
-        e.putInt("bubble_size", prefs.prefBubbleSize)
-        e.putInt("bubble_icon_index", prefs.prefBubbleIconIndex)
-        e.putInt("bubble_alpha", prefs.prefBubbleAlpha)
-        
-        e.putBoolean("persistent_service", prefs.prefPersistentService)
-        e.putBoolean("bubble_include_trackpad", prefs.prefBubbleIncludeTrackpad)
-        e.putBoolean("bubble_include_keyboard", prefs.prefBubbleIncludeKeyboard)
-        e.putBoolean("block_soft_kb", prefs.prefBlockSoftKeyboard)
-        e.putBoolean("show_kb_above_dock", prefs.prefShowKBAboveDock)
 
-        e.putFloat("prediction_aggression", prefs.prefPredictionAggression)
-
-        // =================================================================================
-        // SPACEBAR MOUSE EXTENDED MODE SAVE
-        // =================================================================================
-        e.putBoolean("spacebar_mouse_extended", prefs.prefSpacebarMouseExtended)
-        // =================================================================================
-        // END BLOCK: SPACEBAR MOUSE EXTENDED MODE SAVE
-        // =================================================================================
-        
-        e.putString("hardkey_vol_up_tap", prefs.hardkeyVolUpTap)
-        e.putString("hardkey_vol_up_double", prefs.hardkeyVolUpDouble)
-        e.putString("hardkey_vol_up_hold", prefs.hardkeyVolUpHold)
-        e.putString("hardkey_vol_down_tap", prefs.hardkeyVolDownTap)
-        e.putString("hardkey_vol_down_double", prefs.hardkeyVolDownDouble)
-        e.putString("hardkey_vol_down_hold", prefs.hardkeyVolDownHold)
-        e.putString("hardkey_power_double", prefs.hardkeyPowerDouble)
-        
-        e.putInt("double_tap_ms", prefs.doubleTapMs)
-        e.putInt("hold_duration_ms", prefs.holdDurationMs)
-
-        // =================================================================================
-        // VIRTUAL MIRROR MODE SAVE
-        // =================================================================================
-        e.putBoolean("virtual_mirror_mode", prefs.prefVirtualMirrorMode)
-        e.putLong("mirror_orient_delay_ms", prefs.prefMirrorOrientDelayMs)
-
-        e.putBoolean("override_system_shortcuts", prefs.prefOverrideSystemShortcuts)
-        e.putInt("custom_mod_key", prefs.customModKey)
-
-        // Save Mirror Keyboard Prefs
-        e.putInt("mirror_alpha", prefs.prefMirrorAlpha)
-        e.putInt("mirror_x", prefs.prefMirrorX)
-        e.putInt("mirror_y", prefs.prefMirrorY)
-        e.putInt("mirror_width", prefs.prefMirrorWidth)
-        e.putInt("mirror_height", prefs.prefMirrorHeight)
-        // =================================================================================
-        // END BLOCK: VIRTUAL MIRROR MODE SAVE
-        // =================================================================================
-
-        e.apply() 
-    }
 
     private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) { e.printStackTrace() } }
 
@@ -3908,7 +3664,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private fun turnScreenOn() { isScreenOff = false; Thread { try { shellService?.setBrightness(128); shellService?.setScreenOff(0, false) } catch(e: Exception) {} }.start(); showToast("Screen On") }
     private fun turnScreenOff() { isScreenOff = true; Thread { try { if (prefs.prefUseAltScreenOff) shellService?.setBrightness(-1) else shellService?.setScreenOff(0, true) } catch(e: Exception) {} }.start(); showToast("Screen Off (${if(prefs.prefUseAltScreenOff) "Alt" else "Std"})") }
-    private fun toggleScreenMode() { prefs.prefUseAltScreenOff = !prefs.prefUseAltScreenOff; savePrefs(); showToast("Mode: ${if(prefs.prefUseAltScreenOff) "Alternate" else "Standard"}") }
+    private fun toggleScreenMode() { prefs.prefUseAltScreenOff = !prefs.prefUseAltScreenOff; prefs.save(this); showToast("Mode: ${if(prefs.prefUseAltScreenOff) "Alternate" else "Standard"}") }
     private fun toggleScreen() { if (isScreenOff) turnScreenOn() else turnScreenOff() }
     
     private fun updateUiMetrics() { val display = displayManager?.getDisplay(currentDisplayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); uiScreenWidth = metrics.widthPixels; uiScreenHeight = metrics.heightPixels }
@@ -5860,7 +5616,7 @@ if (isResize) {
             sendBroadcast(intentCycle)
         }
         
-        savePrefs()
+        prefs.save(this)
     }
 
 
