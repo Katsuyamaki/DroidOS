@@ -24,17 +24,7 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
     private val BT_TAG = "BT_MOUSE_CAPTURE"
 
     fun createBtMouseCaptureOverlay() {
-        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.w(BT_TAG, "│ CREATE REQUESTED: createBtMouseCaptureOverlay()         │")
-        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
-        Log.d(BT_TAG, "├─ Trigger Source:", Exception("Creation Stack Trace"))
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
-        Log.d(BT_TAG, "├─ windowManager null?: ${windowManager == null}")
-        Log.d(BT_TAG, "├─ inputTargetDisplayId: ${service.inputTargetDisplayId}")
-        Log.d(BT_TAG, "├─ currentDisplayId: ${service.currentDisplayId}")
-
         if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Already active")
             return
         }
 
@@ -166,25 +156,15 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
         try {
             windowManager.addView(btMouseCaptureLayout, btMouseCaptureParams)
             isBtMouseCaptureActive = true
-            Log.d(BT_TAG, "├─ ★ SUCCESS: BT Mouse Capture Overlay ADDED ★")
             hideSystemCursor()
-            Log.d(BT_TAG, "└─ Overlay active, system cursor hidden")
             service.showToast("BT Mouse Capture: ON")
         } catch (e: Exception) {
-            Log.e(BT_TAG, "├─ ✗ FAILED to add overlay: ${e.message}", e)
             btMouseCaptureLayout = null
         }
     }
 
     fun removeBtMouseCaptureOverlay() {
-        Log.w(BT_TAG, "┌─────────────────────────────────────────────────────────┐")
-        Log.w(BT_TAG, "│ REMOVE REQUESTED: removeBtMouseCaptureOverlay()         │")
-        Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
-        Log.w(BT_TAG, ">>> REMOVAL TRIGGER TRACE <<<", Exception("Who called remove?"))
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
-
         if (!isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Not active (Logical state was already false)")
             return
         }
 
