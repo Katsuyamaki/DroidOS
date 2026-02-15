@@ -2707,13 +2707,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // Explicit Touch Down (Start Drag/Hold)
     fun handleExternalTouchDown() {
         inputHandler.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
-        android.util.Log.d("TouchInjection", "Touch DOWN at ($cursorX, $cursorY)")
     }
 
     // Explicit Touch Up (End Drag/Hold)
     fun handleExternalTouchUp() {
         inputHandler.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
-        android.util.Log.d("TouchInjection", "Touch UP at ($cursorX, $cursorY)")
     }
 
     // Quick Tap (Down + Up)
@@ -2725,7 +2723,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 shellService?.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, now)
                 Thread.sleep(50)
                 shellService?.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, now + 50)
-                android.util.Log.d("TouchInjection", "Touch TAP at ($cursorX, $cursorY)")
             } catch (e: Exception) {
                 android.util.Log.e("TouchInjection", "TAP failed", e)
             }
@@ -3404,10 +3401,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                     }
                                 }
                                 
-                                android.util.Log.w(TAG, "├─ Calling setupUI(0)...")
                                 setupUI(0)
                                 resetBubblePosition()
-                                android.util.Log.w(TAG, "└─ Phone opened handling complete")
                             }
                         } catch(e: Exception) {
                             android.util.Log.e(TAG, "└─ EXCEPTION: ${e.message}", e)
