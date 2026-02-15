@@ -55,7 +55,7 @@ import kotlin.math.min
 import kotlin.math.max
 import android.os.PowerManager
 
-class FloatingLauncherService : AccessibilityService() {
+class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
 
     // [NEW] Debug Mode State
     private var isDebugMode = false
@@ -1776,7 +1776,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
     }
 
-    private fun handleCommandInput(number: Int) {
+    override fun handleCommandInput(number: Int) {
         // Convert input 1-based to 0-based
         if (number == 0) return // 0 is invalid for 1-based slot
         val slotIndex = number - 1
@@ -2655,7 +2655,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     
     // === SAFE TOAST FUNCTION - START ===
     // Displays toast message and updates debug status view
-    private fun safeToast(msg: String) { 
+    override fun safeToast(msg: String) { 
         uiHandler.post { 
             try { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() } catch(e: Exception) { }
             if (debugStatusView != null) debugStatusView?.text = msg 
@@ -2941,7 +2941,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         if (bubbleSizePercent != 100) applyBubbleSize()
     }
     
-    private fun changeBubbleSize(delta: Int) {
+    override fun changeBubbleSize(delta: Int) {
         bubbleSizePercent = (bubbleSizePercent + delta).coerceIn(50, 200)
         AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, bubbleSizePercent)
         AppPreferences.saveBubbleSize(this, bubbleSizePercent) // Global fallback
@@ -2969,7 +2969,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     private fun updateBubbleIcon() { val iconView = bubbleView?.findViewById<ImageView>(R.id.bubble_icon) ?: return; if (!isBound && showShizukuWarning) { uiHandler.post { iconView.setImageResource(android.R.drawable.ic_dialog_alert); iconView.setColorFilter(Color.RED); iconView.imageTintList = null }; return }; uiHandler.post { try { val uriStr = AppPreferences.getIconUri(this); if (uriStr != null) { val uri = Uri.parse(uriStr); val input = contentResolver.openInputStream(uri); val bitmap = BitmapFactory.decodeStream(input); input?.close(); if (bitmap != null) { iconView.setImageBitmap(bitmap); iconView.imageTintList = null; iconView.clearColorFilter() } else { iconView.setImageResource(R.drawable.ic_launcher_bubble); iconView.imageTintList = null; iconView.clearColorFilter() } } else { iconView.setImageResource(R.drawable.ic_launcher_bubble); iconView.imageTintList = null; iconView.clearColorFilter() } } catch (e: Exception) { iconView.setImageResource(R.drawable.ic_launcher_bubble); iconView.imageTintList = null; iconView.clearColorFilter() } } }
-    private fun dismissKeyboardAndRestore() { val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); if (searchBar != null && searchBar.hasFocus()) { searchBar.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(searchBar.windowToken, 0) }; val dpiInput = drawerView?.findViewById<EditText>(R.id.input_dpi_value); if (dpiInput != null && dpiInput.hasFocus()) { dpiInput.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(dpiInput.windowToken, 0) }; updateDrawerHeight(false) }
+    override fun dismissKeyboardAndRestore() { val searchBar = drawerView?.findViewById<EditText>(R.id.rofi_search_bar); if (searchBar != null && searchBar.hasFocus()) { searchBar.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(searchBar.windowToken, 0) }; val dpiInput = drawerView?.findViewById<EditText>(R.id.input_dpi_value); if (dpiInput != null && dpiInput.hasFocus()) { dpiInput.clearFocus(); val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.hideSoftInputFromWindow(dpiInput.windowToken, 0) }; updateDrawerHeight(false) }
 
     // [NEW] Brings the Black Wallpaper to front.
     // This effectively minimizes whatever app is currently top, preventing the "Last App" freeze.
@@ -4297,7 +4297,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun swapReorderItem(targetIndex: Int) { if (reorderSelectionIndex == -1) return; Collections.swap(selectedAppsQueue, reorderSelectionIndex, targetIndex); val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter; adapter?.notifyItemChanged(reorderSelectionIndex); adapter?.notifyItemChanged(targetIndex); endReorderMode(true) }
     private fun endReorderMode(triggerInstantMode: Boolean) { val prevIndex = reorderSelectionIndex; reorderSelectionIndex = -1; val adapter = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler).adapter; if (prevIndex != -1) adapter?.notifyItemChanged(prevIndex); if (triggerInstantMode && isInstantMode) applyLayoutImmediate() }
     
-    private fun updateDrawerHeight(isKeyboardMode: Boolean) {
+    override fun updateDrawerHeight(isKeyboardMode: Boolean) {
         val container = drawerView?.findViewById<LinearLayout>(R.id.drawer_container) ?: return
         val dm = DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm); val screenH = dm.heightPixels; val screenW = dm.widthPixels
         val lp = container.layoutParams as? FrameLayout.LayoutParams; val topMargin = lp?.topMargin ?: 100
@@ -4726,7 +4726,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     recycler?.adapter?.notifyDataSetChanged()
                 }
             }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
-    private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
+    override fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
     
     // Helper to get searchable text from any option type
     private fun getOptionSearchText(item: Any): String {
@@ -4805,7 +4805,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === ADD TO SELECTION - START ===
     // Adds app to the selection queue, handles removal if already selected
     // Uses proper package name extraction for force-stop and launch operations
-    private fun addToSelection(app: MainActivity.AppInfo) {
+    override fun addToSelection(app: MainActivity.AppInfo) {
         dismissKeyboardAndRestore()
         val et = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar)
         
@@ -4904,7 +4904,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     // === ADD TO SELECTION - END ===
 
-    private fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
+    override fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
 
 
     // === LAUNCH VIA API - START ===
@@ -5537,7 +5537,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === FIND APP BY IDENTIFIER - END ===
 
 
-    private fun selectLayout(opt: LayoutOption) { 
+    override fun selectLayout(opt: LayoutOption) { 
         dismissKeyboardAndRestore()
         selectedLayoutType = opt.type
         activeCustomRects = opt.customRects
@@ -5569,7 +5569,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     //          For displays with only 120Hz (like XReal), uses frame rate throttling
     //          via SurfaceFlinger which limits app rendering (frames duplicate on HW).
     // =================================================================================
-    private fun applyRefreshRate(targetRate: Float) {
+    override fun applyRefreshRate(targetRate: Float) {
         manualRefreshRateSet = true 
         safeToast("Applying ${targetRate.toInt()}Hz...")
         
@@ -5709,13 +5709,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
 
     private fun applyOrientation() { Thread { try { when (currentOrientationMode) { 1 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 0") }; 2 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 1") }; else -> { shellService?.runCommand("settings put system accelerometer_rotation 1") } } } catch (e: Exception) { e.printStackTrace() } }.start() }
-    private fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread {     if (currentOrientationMode != 0) { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" }) }; val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
-    private fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
-    private fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
-    private fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
-    private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
-    private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
-    private fun saveProfile() { 
+    override fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread {     if (currentOrientationMode != 0) { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" }) }; val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
+    override fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
+    override fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
+    override fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
+    override fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
+    override fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
+    override fun saveProfile() { 
         var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim()
         if (name.isNullOrEmpty()) { 
             val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
@@ -5753,7 +5753,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
         switchMode(MODE_PROFILES) 
     }
-    private fun loadProfile(name: String) { 
+    override fun loadProfile(name: String) { 
         val data = AppPreferences.getProfileData(this, name) ?: return
         try { 
             val parts = data.split("|")
@@ -6341,7 +6341,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === SWITCH MODE - START ===
     // Switches between different drawer tabs/modes
     // Handles UI updates for search bar, icons, and list content
-    private fun switchMode(mode: Int) {
+    override fun switchMode(mode: Int) {
         currentMode = mode
         selectedListIndex = 0 // Reset selection on tab switch
         
@@ -6879,7 +6879,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // SUMMARY: Handles headless commands with 1-BASED INDEXING.
     //          Supports Active Window swapping and Blank Space hiding.
     // =================================================================================
-    private fun handleWindowManagerCommand(intent: Intent) {
+    override fun handleWindowManagerCommand(intent: Intent) {
         val cmd = intent.getStringExtra("COMMAND")?.uppercase(Locale.ROOT) ?: return
 
         if (!isBound || shellService == null) {
@@ -8718,5 +8718,39 @@ sendCustomModToTrackpad() // Sync immediately
     // Helper extension function to set scaled text size
     private fun TextView.setScaledTextSize(baseFontSize: Float, scaleFactor: Float = 1.0f) {
         this.textSize = baseFontSize * scaleFactor
+    }
+    
+    // === LauncherActionHandler INTERFACE IMPLEMENTATION ===
+    override fun getContext(): Context = this
+    override fun getPackageManagerRef(): android.content.pm.PackageManager = packageManager
+    override fun getSelectedAppsQueue(): List<MainActivity.AppInfo> = selectedAppsQueue
+    override fun getDisplayList(): List<Any> = displayList
+    override fun getCurrentFocusArea(): Int = currentFocusArea
+    override fun getQueueSelectedIndex(): Int = queueSelectedIndex
+    override fun getQueueCommandPending(): CommandDef? = queueCommandPending
+    override fun getQueueCommandSourceIndex(): Int = queueCommandSourceIndex
+    override fun getPendingArg1(): Int = pendingArg1
+    override fun getActivePackageName(): String? = activePackageName
+    override fun isShowSlotNumbersInQueue(): Boolean = showSlotNumbersInQueue
+    override fun getReorderSelectionIndex(): Int = reorderSelectionIndex
+    override fun getSelectedListIndex(): Int = selectedListIndex
+    override fun isLayoutNameEditMode(): Boolean = isLayoutNameEditMode
+    override fun isProfileNameEditMode(): Boolean = isProfileNameEditMode
+    override fun getActiveProfileName(): String? = activeProfileName
+    override fun getSelectedLayoutType(): Int = selectedLayoutType
+    override fun getActiveCustomLayoutName(): String? = activeCustomLayoutName
+    override fun getSelectedResolutionIndex(): Int = selectedResolutionIndex
+    override fun getCurrentDisplayId(): Int = currentDisplayId
+    override fun getCurrentFontSize(): Float = currentFontSize
+    override fun isAutoResizeEnabled(): Boolean = autoResizeEnabled
+    override fun changeTopMargin(percent: Int) { 
+        topMarginPercent = percent
+        val os = orientSuffix()
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, percent, os)
+    }
+    override fun changeBottomMargin(percent: Int) { 
+        bottomMarginPercent = percent
+        val os = orientSuffix()
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent, os)
     }
 }
