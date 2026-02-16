@@ -33,11 +33,7 @@ class WindowTilingManager(
     private val activeEnforcements = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val recentlyRemovedPackages = mutableMapOf<String, Long>()
     
-    // State
-    var tiledAppsAutoMinimized = false
-        private set
-    var lastExplicitTiledLaunchAt = 0L
-        private set
+
     
     // Config (set via updateConfig)
     private var currentDisplayId = 0
@@ -72,6 +68,24 @@ class WindowTilingManager(
         fun getPackageTrackpad(): String
         fun getPackageName(): String
         fun isBound(): Boolean
+        fun clearSearchBar()
+        fun invalidateVisibleCache()
+        // State management
+        fun getIsExecuting(): Boolean
+        fun setIsExecuting(value: Boolean)
+        fun getPendingExecutionNeeded(): Boolean
+        fun setPendingExecutionNeeded(value: Boolean)
+        fun getPendingFocusPackage(): String?
+        fun setPendingFocusPackage(value: String?)
+        fun getPendingLaunchRunnable(): Runnable?
+        fun setPendingLaunchRunnable(value: Runnable?)
+        fun removePendingLaunchRunnable()
+        fun getTiledAppsAutoMinimized(): Boolean
+        fun setTiledAppsAutoMinimized(value: Boolean)
+        fun getLastExplicitTiledLaunchAt(): Long
+        fun setLastExplicitTiledLaunchAt(value: Long)
+        fun markPackageRemoved(pkg: String)
+        fun cleanupRemovedPackages(): Set<String>
     }
     
     private var callback: TilingCallback? = null
@@ -106,18 +120,7 @@ class WindowTilingManager(
         activeCustomRects = customRects
     }
     
-    fun markPackageRemoved(pkg: String) {
-        recentlyRemovedPackages[pkg] = System.currentTimeMillis()
-    }
-    
-    fun resetAutoMinimizedState() {
-        tiledAppsAutoMinimized = false
-        lastExplicitTiledLaunchAt = System.currentTimeMillis()
-    }
-    
-    fun setAutoMinimized(value: Boolean) {
-        tiledAppsAutoMinimized = value
-    }
+
     
     fun getCachedRect(pkg: String): Rect? = packageRectCache[pkg]
     fun getCachedTaskId(pkg: String): Int? = packageTaskIdCache[pkg]
@@ -363,6 +366,259 @@ class WindowTilingManager(
         }.start()
     }
     
+    // === EXECUTE LAUNCH ===
+    fun executeLaunch(layoutType: Int, closeDrawer: Boolean, focusPackage: String? = null) {
+        val cb = callback ?: return
+        
+        // Cancel any pending runnable
+        val pendingRunnable = cb.getPendingLaunchRunnable()
+        if (pendingRunnable != null) {
+            uiHandler.removeCallbacks(pendingRunnable)
+            cb.setPendingLaunchRunnable(null)
+        }
+
+        // If already executing, queue this request
+        if (cb.getIsExecuting()) {
+            Log.d(TAG, "executeLaunch: Already running. Queueing next run.")
+            cb.setPendingExecutionNeeded(true)
+            if (focusPackage != null) cb.setPendingFocusPackage(focusPackage)
+            return
+        }
+
+        // Reset auto-minimize state
+        cb.setTiledAppsAutoMinimized(false)
+        cb.setLastExplicitTiledLaunchAt(System.currentTimeMillis())
+
+        cb.setIsExecuting(true)
+        cb.setPendingExecutionNeeded(false)
+
+        val selectedAppsQueue = cb.getSelectedAppsQueue()
+        val allAppsList = cb.getAllAppsList()
+        val PACKAGE_BLANK = cb.getPackageBlank()
+        val PACKAGE_TRACKPAD = cb.getPackageTrackpad()
+        val packageName = cb.getPackageName()
+
+        // Get currently visible apps on this display
+        val activeApps = shellService?.getVisiblePackages(currentDisplayId)
+            ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+            ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+            ?: emptyList()
+
+        // Fullscreen app detection
+        val queuePackages = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+        val recentlyRemoved = cb.cleanupRemovedPackages()
+        val fullscreenApps = activeApps.filter {
+            val basePkg = it.getBasePackage()
+            basePkg !in queuePackages && !it.isMinimized && !recentlyRemoved.contains(basePkg)
+        }
+        if (fullscreenApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized }) {
+            for (fsApp in fullscreenApps) {
+                selectedAppsQueue.add(fsApp.copy())
+                Log.d(TAG, "executeLaunch: Added fullscreen app ${fsApp.packageName} to queue")
+            }
+            uiHandler.post { cb.onUpdateAllUIs() }
+        }
+
+        if (closeDrawer) cb.toggleDrawer()
+        cb.refreshDisplayId()
+
+        // Save queue
+        val identifiers = selectedAppsQueue.map { it.getIdentifier() }
+        cb.saveQueueToPrefs(identifiers)
+
+        Thread {
+            try {
+                var configChanged = false
+
+                // Apply orientation if not System Default
+                if (currentOrientationMode != 0) {
+                    shellService?.runCommand("settings put system accelerometer_rotation 0")
+                    shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" })
+                    configChanged = true
+                }
+
+                // Apply resolution only if changed
+                if (selectedResolutionIndex != lastAppliedResIndex) {
+                    val resCmd = cb.getResolutionCommand(selectedResolutionIndex)
+                    shellService?.runCommand(resCmd)
+                    lastAppliedResIndex = selectedResolutionIndex
+                    configChanged = true
+                }
+
+                // Apply DPI only if changed
+                if (currentDpiSetting != lastAppliedDpi) {
+                    if (currentDpiSetting > 0) {
+                        shellService?.runCommand("wm density $currentDpiSetting -d $currentDisplayId")
+                    } else if (currentDpiSetting == -1) {
+                        shellService?.runCommand("wm density reset -d $currentDisplayId")
+                    }
+                    lastAppliedDpi = currentDpiSetting
+                    configChanged = true
+                }
+
+                if (configChanged) Thread.sleep(800)
+
+                val rects = getLayoutRects()
+                Log.d(TAG, "executeLaunch: Generated ${rects.size} tiles with Margin $bottomMarginPercent%")
+
+                if (selectedAppsQueue.isEmpty()) {
+                    uiHandler.post { cb.onToast("No apps in queue") }
+                    return@Thread
+                }
+
+                // Handle minimized apps
+                val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
+                val activeAppsFiltered = selectedAppsQueue.filter { !it.isMinimized }
+
+                // Show Desktop mode
+                if (currentDisplayId >= 2 && activeAppsFiltered.isEmpty() && minimizedApps.isNotEmpty()) {
+                    showWallpaper()
+                } else {
+                    for (app in minimizedApps) {
+                        if (app.packageName != PACKAGE_BLANK) {
+                            try {
+                                val basePkg = app.getBasePackage()
+                                val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                                if (tid != -1) shellService?.moveTaskToBack(tid)
+                            } catch (e: Exception) {}
+                        }
+                    }
+                }
+
+                // Kill/Prep Logic
+                if (activeAppsFiltered.isNotEmpty()) {
+                    Thread.sleep(100)
+                }
+
+                // Launch and tile apps
+                for (i in 0 until minOf(activeAppsFiltered.size, rects.size)) {
+                    val app = activeAppsFiltered[i]
+                    val bounds = rects[i]
+
+                    if (app.packageName == PACKAGE_BLANK) continue
+
+                    val basePkg = app.getBasePackage()
+                    val cls = app.className
+
+                    uiHandler.post { cb.debugShowAppIdentification("TILE[$i]", basePkg, cls) }
+                    packageRectCache[basePkg] = bounds
+
+                    val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                    val cmd = if (component != null) {
+                        "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                    } else {
+                        "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                    }
+
+                    try { shellService?.runCommand(cmd) } catch (e: Exception) {}
+
+                    val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
+
+                    try {
+                        var tid = -1
+                        val maxWait = if (isGeminiApp) 8000L else 3000L
+                        val startPoll = System.currentTimeMillis()
+
+                        while (System.currentTimeMillis() - startPoll < maxWait) {
+                            tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                            if (tid != -1) break
+                            Thread.sleep(50)
+                        }
+
+                        val wasInstant = (System.currentTimeMillis() - startPoll < 150)
+                        if (!wasInstant) Thread.sleep(200)
+
+                        shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+
+                        if (!wasInstant) Thread.sleep(200)
+
+                        val finalTid = shellService?.getTaskId(basePkg, cls) ?: -1
+                        if (finalTid != -1) {
+                            shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                            packageTaskIdCache[basePkg] = finalTid
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tile[$i]: Reposition failed", e)
+                    }
+
+                    Thread.sleep(150)
+                }
+
+                // Auto-minimize apps exceeding slot count
+                if (activeAppsFiltered.size > rects.size) {
+                    val packagesToMinimize = mutableListOf<String>()
+                    for (i in rects.size until activeAppsFiltered.size) {
+                        val app = activeAppsFiltered[i]
+                        if (app.packageName == PACKAGE_BLANK) continue
+                        val basePkg = app.getBasePackage()
+                        packagesToMinimize.add(basePkg)
+                        try {
+                            val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                            if (tid != -1) shellService?.moveTaskToBack(tid)
+                        } catch (e: Exception) {}
+                        val queueIndex = selectedAppsQueue.indexOfFirst {
+                            it.packageName == app.packageName && it.className == app.className
+                        }
+                        if (queueIndex != -1) selectedAppsQueue[queueIndex].isMinimized = true
+                    }
+                    uiHandler.post {
+                        for (pkg in packagesToMinimize) {
+                            val isGemini = pkg == "com.google.android.apps.bard"
+                            val activeIsGoogle = cb.getActivePackageName() == "com.google.android.googlequicksearchbox"
+                            if (cb.getActivePackageName() == pkg || (isGemini && activeIsGoogle)) {
+                                cb.setActivePackageName(null)
+                            }
+                            cb.removeFromFocusHistory(pkg)
+                        }
+                        cb.onUpdateAllUIs()
+                    }
+                    Log.d(TAG, "executeLaunch: Auto-minimized ${activeAppsFiltered.size - rects.size} apps")
+                }
+
+                // Refocus logic
+                if (focusPackage != null) {
+                    val focusIndex = activeAppsFiltered.indexOfFirst {
+                        it.packageName == focusPackage ||
+                        (it.packageName == "com.google.android.apps.bard" && focusPackage == "com.google.android.googlequicksearchbox")
+                    }
+
+                    if (focusIndex != -1 && focusIndex < rects.size) {
+                        val app = activeAppsFiltered[focusIndex]
+                        val bounds = rects[focusIndex]
+                        Thread.sleep(200)
+                        Log.d(TAG, "Refocusing Active Window: ${app.label}")
+                        launchViaShell(app.getBasePackage(), app.className, bounds)
+                    }
+                }
+
+                if (closeDrawer) {
+                    uiHandler.post {
+                        selectedAppsQueue.clear()
+                        cb.updateSelectedAppsDock()
+                    }
+                }
+
+                uiHandler.post { cb.onToast("Tiling Sequence Complete") }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Execute Failed", e)
+                uiHandler.post { cb.onToast("Execute Failed: ${e.message}") }
+            } finally {
+                cb.invalidateVisibleCache()
+                cb.setIsExecuting(false)
+
+                if (cb.getPendingExecutionNeeded()) {
+                    Log.d(TAG, "executeLaunch: Triggering pending execution")
+                    val nextFocus = cb.getPendingFocusPackage()
+                    cb.setPendingFocusPackage(null)
+                    uiHandler.post { executeLaunch(selectedLayoutType, false, nextFocus) }
+                }
+            }
+        }.start()
+
+        cb.clearSearchBar()
+    }
+
     // === SHOW WALLPAPER ===
     fun showWallpaper() {
         Thread {

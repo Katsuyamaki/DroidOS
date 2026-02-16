@@ -475,6 +475,27 @@ private var isSoftKeyboardSupport = false
         override fun getPackageTrackpad() = PACKAGE_TRACKPAD
         override fun getPackageName() = this@FloatingLauncherService.packageName
         override fun isBound() = this@FloatingLauncherService.isBound
+        override fun clearSearchBar() { drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") }
+        override fun invalidateVisibleCache() { (shellService as? ShellUserService)?.invalidateVisibleCache() }
+        override fun getIsExecuting() = isExecuting
+        override fun setIsExecuting(value: Boolean) { isExecuting = value }
+        override fun getPendingExecutionNeeded() = pendingExecutionNeeded
+        override fun setPendingExecutionNeeded(value: Boolean) { pendingExecutionNeeded = value }
+        override fun getPendingFocusPackage() = pendingFocusPackage
+        override fun setPendingFocusPackage(value: String?) { pendingFocusPackage = value }
+        override fun getPendingLaunchRunnable() = pendingLaunchRunnable
+        override fun setPendingLaunchRunnable(value: Runnable?) { pendingLaunchRunnable = value }
+        override fun removePendingLaunchRunnable() { pendingLaunchRunnable?.let { uiHandler.removeCallbacks(it) }; pendingLaunchRunnable = null }
+        override fun getTiledAppsAutoMinimized() = tiledAppsAutoMinimized
+        override fun setTiledAppsAutoMinimized(value: Boolean) { tiledAppsAutoMinimized = value }
+        override fun getLastExplicitTiledLaunchAt() = lastExplicitTiledLaunchAt
+        override fun setLastExplicitTiledLaunchAt(value: Long) { lastExplicitTiledLaunchAt = value }
+        override fun markPackageRemoved(pkg: String) { recentlyRemovedPackages[pkg] = System.currentTimeMillis() }
+        override fun cleanupRemovedPackages(): Set<String> {
+            val now = System.currentTimeMillis()
+            recentlyRemovedPackages.entries.removeIf { now - it.value > REMOVED_PACKAGE_COOLDOWN_MS }
+            return recentlyRemovedPackages.keys.toSet()
+        }
     }
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
@@ -5743,9 +5764,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     
 
     // === EXECUTE LAUNCH - START ===
-    // Main execution function that launches and tiles all selected apps
-    // Uses a locking mechanism to prevent parallel shell commands causing race conditions.
+    // Delegated to WindowTilingManager
     private fun executeLaunch(layoutType: Int, closeDrawer: Boolean, focusPackage: String? = null) {
+        tilingManager.executeLaunch(layoutType, closeDrawer, focusPackage)
+    }
+    
+    // Original implementation preserved - TO BE DELETED after validation
+    private fun executeLaunchOld(layoutType: Int, closeDrawer: Boolean, focusPackage: String? = null) {
         // Cancel any pending runnable
         if (pendingLaunchRunnable != null) {
             uiHandler.removeCallbacks(pendingLaunchRunnable!!)
