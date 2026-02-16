@@ -130,6 +130,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private val TAG = "OverlayService"
 
+    private fun logOverlayKbDiag(event: String, extra: String = "") {
+        val tp = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val dock = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        val os = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        val scaleD = tp.getInt("keyboard_key_scale_d${currentDisplayId}$os", -1)
+        val scaleO = tp.getInt("keyboard_key_scale$os", -1)
+        val scaleG = tp.getInt("keyboard_key_scale", -1)
+        val w = tp.getInt("keyboard_width_d${currentDisplayId}$os", -1)
+        val h = tp.getInt("keyboard_height_d${currentDisplayId}$os", -1)
+        val x = tp.getInt("keyboard_x_d${currentDisplayId}$os", -1)
+        val y = tp.getInt("keyboard_y_d${currentDisplayId}$os", -1)
+        val dockMode = dock.getBoolean("dock_mode_d${currentDisplayId}$os", dock.getBoolean("dock_mode_d$currentDisplayId", dock.getBoolean("dock_mode", false)))
+        Log.w(
+            TAG,
+            "KB_DIAG[$event] currentDisplay=$currentDisplayId inputTarget=$inputTargetDisplayId ui=${uiScreenWidth}x${uiScreenHeight} " +
+                "visible=$isCustomKeyboardVisible prefScale=${prefs.prefKeyScale} savedScale[d/o/g]=$scaleD/$scaleO/$scaleG " +
+                "savedBounds=${w}x${h}@(${x},${y}) dockMode=$dockMode dockMargin=$lastDockMarginPercent " +
+                "dockImeVisible=$isDockIMEVisible aboveDock=${prefs.prefShowKBAboveDock} $extra"
+        )
+    }
+
     // Command dispatcher for broadcast receiver logic
     internal lateinit var commandDispatcher: OverlayCommandDispatcher
 
@@ -1266,6 +1287,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     internal fun setupUI(displayId: Int) {
         android.util.Log.d("OverlayService", "setupUI starting for Display $displayId")
+        logOverlayKbDiag("setupUI_start", "targetDisplay=$displayId")
 
         // 1. Force complete removal of all views using the current WindowManager
         removeOldViews()
@@ -1364,6 +1386,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // =================================================================================
 
             android.util.Log.d("OverlayService", "setupUI completed successfully on Display $displayId")
+            logOverlayKbDiag("setupUI_end", "targetDisplay=$displayId")
 
 
         } catch (e: Exception) {
@@ -2030,6 +2053,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          so they stay perfectly in sync.
     // =================================================================================
     internal fun applyDockModeWithMargin(marginPercent: Int) {
+        logOverlayKbDiag("applyDockModeWithMargin_start", "marginPercent=$marginPercent")
         if (keyboardOverlay == null) initCustomKeyboard()
         if (!isCustomKeyboardVisible) {
             keyboardOverlay?.show()
@@ -2070,6 +2094,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         saveKeyboardHeightForDock(kbHeight)
         
         android.util.Log.w(TAG, ">>> applyDockModeWithMargin: screenH=$screenHeight, density=$density, margin%=$marginPercent, marginPx=$marginHeight, navToolbar=$dockToolbarHeight, kbH=$kbHeight, y=$targetY, aboveDock=${prefs.prefShowKBAboveDock}, dockIMEVisible=$isDockIMEVisible")
+        logOverlayKbDiag("applyDockModeWithMargin_end", "marginPercent=$marginPercent targetW=$targetW kbHeight=$kbHeight targetY=$targetY")
     }
     // =================================================================================
     // END BLOCK: applyDockModeWithMargin
@@ -2372,6 +2397,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
     fun toggleCustomKeyboard(suppressAutomation: Boolean = false) {
+        logOverlayKbDiag("toggleCustomKeyboard_start", "suppressAutomation=$suppressAutomation currentlyVisible=${keyboardOverlay?.isShowing() == true}")
         if (keyboardOverlay == null) initCustomKeyboard()
         
         val isNowVisible = if (keyboardOverlay?.isShowing() == true) { 
@@ -2396,13 +2422,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false))
         if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
             if (lastDockMarginPercent >= 0) {
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$lastDockMarginPercent")
                 applyDockModeWithMargin(lastDockMarginPercent)
             } else {
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock")
                 applyDockMode()
             }
+        } else {
+            logOverlayKbDiag(
+                "toggleCustomKeyboard_dockDecision",
+                "skipped isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled"
+            )
         }
         
         enforceZOrder()
+        logOverlayKbDiag("toggleCustomKeyboard_end", "isNowVisible=$isNowVisible")
 
         // Notify launcher so auto-adjust margin retiles apps when KB is toggled
         // IS_TILED=false triggers 100ms delay for fullscreen apps to let Android handle insets first
@@ -2828,6 +2862,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     fun loadLayout() {
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         val key = getProfileKey()
+        logOverlayKbDiag("loadLayout_start", "profileKey=$key")
         
         // 1. Load Trackpad Window
         trackpadParams.x = p.getInt("X_$key", 100)
@@ -2878,6 +2913,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     .putInt("keyboard_key_scale$orientKey", prefs.prefKeyScale)
                     .putInt("keyboard_key_scale", prefs.prefKeyScale)
                     .apply()
+                logOverlayKbDiag("loadLayout_scaleSync", "prefKeyScale=${prefs.prefKeyScale} orientKey=$orientKey")
                 // =================================================================================
                 // END BLOCK: SYNC PROFILE SCALE TO SHAREDPREFS
                 // =================================================================================
@@ -3334,6 +3370,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     override fun onDisplayAdded(displayId: Int) {}
     override fun onDisplayRemoved(displayId: Int) {}
     override fun onDisplayChanged(displayId: Int) {
+        logOverlayKbDiag("onDisplayChanged_enter", "eventDisplay=$displayId")
         // =================================================================================
         // VIRTUAL DISPLAY PROTECTION
         // SUMMARY: Skip auto-switch logic when targeting a virtual display (ID >= 2).
@@ -3358,6 +3395,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                     (w != lastKnownScreenW || h != lastKnownScreenH)) {
                     // Save keyboard + trackpad state for the OLD orientation before rebuilding
+                    logOverlayKbDiag("onDisplayChanged_orientationRebuild", "old=${lastKnownScreenW}x${lastKnownScreenH} new=${w}x${h}")
                     saveLayout()
                     lastKnownScreenW = w; lastKnownScreenH = h
                     handler.post { setupUI(currentDisplayId); loadLayout() }

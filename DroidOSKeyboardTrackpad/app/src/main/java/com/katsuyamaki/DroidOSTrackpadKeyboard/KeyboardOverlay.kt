@@ -190,6 +190,11 @@ class KeyboardOverlay(
 
 
     fun setScreenDimensions(width: Int, height: Int, displayId: Int) {
+        val prevW = keyboardParams?.width ?: keyboardWidth
+        val prevH = keyboardParams?.height ?: keyboardHeight
+        val prevX = keyboardParams?.x ?: -1
+        val prevY = keyboardParams?.y ?: -1
+
         // 1. Update Class-Level Screen Dimensions
         this.screenWidth = width
         this.screenHeight = height
@@ -221,6 +226,10 @@ class KeyboardOverlay(
             try {
                 windowManager.updateViewLayout(keyboardContainer, it)
                 syncMirrorRatio(newWidth, newHeight)
+                logKeyboardDiag(
+                    "setScreenDimensions_applied",
+                    "prevWin=${prevW}x${prevH}@(${prevX},${prevY}) newWin=${newWidth}x${newHeight}@(${it.x},${it.y})"
+                )
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -345,6 +354,10 @@ class KeyboardOverlay(
         }
         
         Log.d(TAG, "setWindowBoundsWithScale: h=$height, scale=$targetScale")
+        logKeyboardDiag(
+            "setWindowBoundsWithScale",
+            "target=${width}x${height}@(${x},${y}) targetScale=$targetScale visible=$isVisible"
+        )
     }
     // =================================================================================
     // END BLOCK: setWindowBoundsWithScale
@@ -562,6 +575,7 @@ class KeyboardOverlay(
         
         // 6. Sync Mirror
         syncMirrorRatio(defaultWidth, defaultHeight)
+        logKeyboardDiag("resetPosition", "default=${defaultWidth}x${defaultHeight}@(${defaultX},${defaultY})")
     }
 
 
@@ -586,6 +600,7 @@ class KeyboardOverlay(
             val savedScale = getSavedScalePercent(prefs, os) / 100f
             internalScale = savedScale
             dragStartScale = savedScale // Init for safety
+            logKeyboardDiag("show", "savedScale=$savedScale")
 
 
 
@@ -1567,10 +1582,27 @@ windowManager.addView(keyboardContainer, keyboardParams)
 
     private fun orientSuffix(): String = if (screenWidth > screenHeight) "_L" else "_P"
     private fun getSavedScalePercent(prefs: SharedPreferences, os: String = orientSuffix()): Int {
-        return prefs.getInt(
-            "keyboard_key_scale_d${currentDisplayId}$os",
-            prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69))
-        )
+        val displayKey = "keyboard_key_scale_d${currentDisplayId}$os"
+        val orientKey = "keyboard_key_scale$os"
+        val globalKey = "keyboard_key_scale"
+        val defaultScale = 69
+        return when {
+            prefs.contains(displayKey) -> {
+                val v = prefs.getInt(displayKey, defaultScale)
+                Log.d(TAG, "KB_DIAG[getSavedScalePercent]: source=$displayKey value=$v")
+                v
+            }
+            prefs.contains(orientKey) -> {
+                val v = prefs.getInt(orientKey, defaultScale)
+                Log.d(TAG, "KB_DIAG[getSavedScalePercent]: source=$orientKey value=$v")
+                v
+            }
+            else -> {
+                val v = prefs.getInt(globalKey, defaultScale)
+                Log.d(TAG, "KB_DIAG[getSavedScalePercent]: source=$globalKey value=$v")
+                v
+            }
+        }
     }
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d${currentDisplayId}${orientSuffix()}", keyboardWidth).putInt("keyboard_height_d${currentDisplayId}${orientSuffix()}", keyboardHeight).apply() }
     private fun saveKeyboardScale() {
@@ -1582,9 +1614,33 @@ windowManager.addView(keyboardContainer, keyboardParams)
             .putInt("keyboard_key_scale$os", scaleVal)
             .putInt("keyboard_key_scale", scaleVal)
             .apply()
+        logKeyboardDiag("saveKeyboardScale", "savedScale=$scaleVal")
     }
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", keyboardParams?.x ?: 0).putInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); val os = orientSuffix(); keyboardWidth = prefs.getInt("keyboard_width_d${displayId}$os", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d${displayId}$os", keyboardHeight) }
+
+    private fun logKeyboardDiag(event: String, extra: String = "") {
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        val winW = keyboardParams?.width ?: -1
+        val winH = keyboardParams?.height ?: -1
+        val winX = keyboardParams?.x ?: -1
+        val winY = keyboardParams?.y ?: -1
+        val savedScaleDisplay = prefs.getInt("keyboard_key_scale_d${currentDisplayId}$os", -1)
+        val savedScaleOrient = prefs.getInt("keyboard_key_scale$os", -1)
+        val savedScaleGlobal = prefs.getInt("keyboard_key_scale", -1)
+        val savedW = prefs.getInt("keyboard_width_d${currentDisplayId}$os", -1)
+        val savedH = prefs.getInt("keyboard_height_d${currentDisplayId}$os", -1)
+        val savedX = prefs.getInt("keyboard_x_d${currentDisplayId}$os", -1)
+        val savedY = prefs.getInt("keyboard_y_d${currentDisplayId}$os", -1)
+        Log.w(
+            TAG,
+            "KB_DIAG[$event] d=$currentDisplayId os=$os visible=$isVisible screen=${screenWidth}x${screenHeight} " +
+                "field=${keyboardWidth}x${keyboardHeight} win=${winW}x${winH}@(${winX},${winY}) " +
+                "scaleInternal=$internalScale savedScale[d/o/g]=$savedScaleDisplay/$savedScaleOrient/$savedScaleGlobal " +
+                "savedBounds=${savedW}x${savedH}@(${savedX},${savedY}) $extra"
+        )
+    }
 
 
     // =================================================================================
