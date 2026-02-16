@@ -433,6 +433,7 @@ private var isSoftKeyboardSupport = false
     private lateinit var inputHandler: LauncherInputHandler
     private lateinit var drawerManager: DrawerManager
     private lateinit var profileManager: ProfileManager
+    private lateinit var commandProcessor: LauncherCommandProcessor
     
     // Check visibility from manager
     private val isVQVisible: Boolean
@@ -463,6 +464,8 @@ private var isSoftKeyboardSupport = false
         drawerManager.setCallback(drawerCallback)
         profileManager = ProfileManager(this)
         profileManager.setCallback(profileCallback)
+        commandProcessor = LauncherCommandProcessor()
+        commandProcessor.setCallback(commandProcessorCallback)
     }
     
     // DrawerCallback implementation for DrawerManager
@@ -564,6 +567,52 @@ private var isSoftKeyboardSupport = false
         override fun onSwitchMode(mode: Int) = switchMode(mode)
         override fun onSwitchToProfilesMode() = switchMode(MODE_PROFILES)
         override fun onGetLayoutRects() = getLayoutRects()
+    }
+
+    // CommandProcessorCallback implementation for LauncherCommandProcessor
+    private val commandProcessorCallback = object : LauncherCommandProcessor.Callback {
+        override fun getSelectedAppsQueue() = selectedAppsQueue
+        override fun getAllAppsList() = allAppsList
+        override fun getActivePackageName() = activePackageName
+        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
+        override fun getLastValidPackageName() = lastValidPackageName
+        override fun setLastValidPackageName(pkg: String?) { lastValidPackageName = pkg }
+        override fun getSecondLastValidPackageName() = secondLastValidPackageName
+        override fun setSecondLastValidPackageName(pkg: String?) { secondLastValidPackageName = pkg }
+        override fun getCurrentDisplayId() = currentDisplayId
+        override fun getShellService() = shellService
+        override fun getPackageName() = this@FloatingLauncherService.packageName
+        override fun getPackageBlank() = PACKAGE_BLANK
+        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
+        override fun isBound() = isBound
+        override fun isExpanded() = this@FloatingLauncherService.isExpanded
+        override fun getReorderSelectionIndex() = reorderSelectionIndex
+        override fun setReorderSelectionIndex(index: Int) { reorderSelectionIndex = index }
+        override fun getManualStateOverrides() = manualStateOverrides
+        override fun getMinimizedAtTimestamps() = minimizedAtTimestamps
+        override fun getRecentlyRemovedPackages() = recentlyRemovedPackages
+        override fun isTiledAppsAutoMinimized() = tiledAppsAutoMinimized
+        override fun setTiledAppsAutoMinimized(value: Boolean) { tiledAppsAutoMinimized = value }
+        override fun getLastExplicitTiledLaunchAt() = lastExplicitTiledLaunchAt
+        override fun setLastExplicitTiledLaunchAt(value: Long) { lastExplicitTiledLaunchAt = value }
+        override fun getAvailableCommands() = AVAILABLE_COMMANDS
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onTryBindShizukuIfPermitted() = tryBindShizukuIfPermitted()
+        override fun onQueueWindowManagerCommand(intent: Intent, cmd: String) = queueWindowManagerCommand(intent, cmd)
+        override fun onRefreshDisplayId() = refreshDisplayId()
+        override fun onEnsureQueueLoadedForCommands() = ensureQueueLoadedForCommands()
+        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
+        override fun onGetLayoutRects() = getLayoutRects()
+        override fun onSetLayoutType(type: Int) { selectedLayoutType = type; AppPreferences.saveLastLayout(this@FloatingLauncherService, type, currentDisplayId); AppPreferences.saveLastLayout(this@FloatingLauncherService, type, currentDisplayId, orientSuffix()) }
+        override fun onGetLayoutName(type: Int) = getLayoutName(type)
+        override fun onRefreshQueueAndLayout(msg: String, focusPackage: String?, skipTiling: Boolean, forceRetile: Boolean, retileDelayMs: Long) = refreshQueueAndLayout(msg, focusPackage, skipTiling, forceRetile, retileDelayMs)
+        override fun onShowWallpaper() = showWallpaper()
+        override fun onToggleDrawer() = toggleDrawer()
+        override fun onUpdateAllUIs() = updateAllUIs()
+        override fun onRemoveFromFocusHistory(pkg: String) = removeFromFocusHistory(pkg)
+        override fun onFocusViaTask(pkg: String, bounds: Rect?) = focusViaTask(pkg, bounds)
+        override fun onLaunchViaShell(pkg: String, cls: String?, bounds: Rect?) = launchViaShell(pkg, cls, bounds)
+        override fun onSendCursorToAppCenter(bounds: Rect?) = sendCursorToAppCenter(bounds)
     }
 
     // InputCallback implementation for LauncherInputHandler
@@ -5274,10 +5323,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // =================================================================================
     // WINDOW MANAGER COMMAND PROCESSOR (v2)
-    // SUMMARY: Handles headless commands with 1-BASED INDEXING.
-    //          Supports Active Window swapping and Blank Space hiding.
+    // Delegated to LauncherCommandProcessor
     // =================================================================================
     private fun handleWindowManagerCommand(intent: Intent) {
+        commandProcessor.handleWindowManagerCommand(intent)
+    }
+
+    // OLD handleWindowManagerCommand - kept for reference during migration
+    private fun handleWindowManagerCommandOLD(intent: Intent) {
         val cmd = intent.getStringExtra("COMMAND")?.uppercase(Locale.ROOT) ?: return
 
         if (!isBound || shellService == null) {
