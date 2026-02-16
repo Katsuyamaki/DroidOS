@@ -432,6 +432,7 @@ private var isSoftKeyboardSupport = false
     private var visualQueueManager: VisualQueueManager? = null
     private lateinit var inputHandler: LauncherInputHandler
     private lateinit var drawerManager: DrawerManager
+    private lateinit var profileManager: ProfileManager
     
     // Check visibility from manager
     private val isVQVisible: Boolean
@@ -460,6 +461,8 @@ private var isSoftKeyboardSupport = false
         inputHandler = LauncherInputHandler(this, inputCallback)
         drawerManager = DrawerManager(this, uiHandler)
         drawerManager.setCallback(drawerCallback)
+        profileManager = ProfileManager(this)
+        profileManager.setCallback(profileCallback)
     }
     
     // DrawerCallback implementation for DrawerManager
@@ -522,6 +525,45 @@ private var isSoftKeyboardSupport = false
         override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
         override fun getLastQueueNavTime() = lastQueueNavTime
         override fun setLastQueueNavTime(time: Long) { lastQueueNavTime = time }
+    }
+
+    // ProfileCallback implementation for ProfileManager
+    private val profileCallback = object : ProfileManager.Callback {
+        override fun getSelectedAppsQueue() = selectedAppsQueue
+        override fun getAllAppsList() = allAppsList
+        override fun getDrawerView() = drawerView
+        override fun getSelectedLayoutType() = selectedLayoutType
+        override fun setSelectedLayoutType(type: Int) { selectedLayoutType = type }
+        override fun getSelectedResolutionIndex() = selectedResolutionIndex
+        override fun setSelectedResolutionIndex(index: Int) { selectedResolutionIndex = index }
+        override fun getCurrentDpiSetting() = currentDpiSetting
+        override fun setCurrentDpiSetting(dpi: Int) { currentDpiSetting = dpi }
+        override fun getTopMarginPercent() = topMarginPercent
+        override fun setTopMarginPercent(value: Int) { topMarginPercent = value }
+        override fun getBottomMarginPercent() = bottomMarginPercent
+        override fun setBottomMarginPercent(value: Int) { bottomMarginPercent = value }
+        override fun getAutoAdjustMarginForIME() = autoAdjustMarginForIME
+        override fun setAutoAdjustMarginForIME(value: Boolean) { autoAdjustMarginForIME = value }
+        override fun getCurrentOrientationMode() = currentOrientationMode
+        override fun setCurrentOrientationMode(mode: Int) { currentOrientationMode = mode }
+        override fun getCurrentDisplayId() = currentDisplayId
+        override fun getActiveCustomLayoutName() = activeCustomLayoutName
+        override fun setActiveCustomLayoutName(name: String?) { activeCustomLayoutName = name }
+        override fun getActiveProfileName() = activeProfileName
+        override fun setActiveProfileName(name: String?) { activeProfileName = name }
+        override fun getCurrentProfileSaveMode() = currentProfileSaveMode
+        override fun getPackageBlank() = PACKAGE_BLANK
+        override fun isInstantMode() = isInstantMode
+        override fun getShellService() = shellService
+        override fun getLayoutCustomDynamic() = LAYOUT_CUSTOM_DYNAMIC
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onOrientSuffix() = orientSuffix()
+        override fun onApplyOrientation() = applyOrientation()
+        override fun onApplyLayoutImmediate() = applyLayoutImmediate()
+        override fun onUpdateSelectedAppsDock() = updateSelectedAppsDock()
+        override fun onSwitchMode(mode: Int) = switchMode(mode)
+        override fun onSwitchToProfilesMode() = switchMode(MODE_PROFILES)
+        override fun onGetLayoutRects() = getLayoutRects()
     }
 
     // InputCallback implementation for LauncherInputHandler
@@ -4704,298 +4746,11 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { 
-        var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim()
-        if (name.isNullOrEmpty()) { 
-            val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-            val modePrefix = when (currentProfileSaveMode) {
-                1 -> "Layout_"
-                2 -> "Queue_"
-                else -> "Profile_"
-            }
-            name = "$modePrefix$timestamp" 
-        }
-        
-        when (currentProfileSaveMode) {
-            0 -> {
-                // Layout + Apps: Save everything including margins + orientation
-                val pkgs = selectedAppsQueue.map { it.packageName }
-                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs, 0, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
-            }
-            1 -> {
-                // Layout Only: Save settings including margins + orientation, no apps
-                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, emptyList(), 1, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
-            }
-            2 -> {
-                // App Queue Only: Save apps, use -1 for layout settings to indicate "don't change"
-                val pkgs = selectedAppsQueue.map { it.packageName }
-                AppPreferences.saveProfile(this, name, -1, -1, -1, pkgs, 2, -1, -1, false, 0)
-            }
-        }
-        
-        val modeLabel = when (currentProfileSaveMode) {
-            1 -> "Layout"
-            2 -> "Queue"
-            else -> "Profile"
-        }
-        safeToast("Saved $modeLabel: $name")
-        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
-        switchMode(MODE_PROFILES) 
+        profileManager.saveProfile()
     }
     private fun loadProfile(name: String) { 
-        val data = AppPreferences.getProfileData(this, name) ?: return
-        try { 
-            val parts = data.split("|")
-            val profileType = parts[0].toInt()
-            val layoutType = parts[1].toInt()
-            val resIndex = parts[2].toInt()
-            val dpiSetting = parts[3].toInt()
-            
-            // Parse margin settings if available (new format has 8+ parts)
-            val topMar = if (parts.size >= 8) parts[4].toInt() else 0
-            val botMar = if (parts.size >= 8) parts[5].toInt() else 0
-            val autoMar = if (parts.size >= 8) parts[6] == "1" else false
-            val pkgList = if (parts.size >= 8) {
-                parts[7].split(",").filter { it.isNotEmpty() }
-            } else if (parts.size > 4) {
-                parts[4].split(",").filter { it.isNotEmpty() }
-            } else emptyList()
-            // Parse orientation mode (index 8 in newest format: 9+ parts)
-            val orientMode = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
-            
-            when (profileType) {
-                0 -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
-                1 -> loadProfileLayoutOnly(name, layoutType, resIndex, dpiSetting, topMar, botMar, autoMar, orientMode)
-                2 -> loadProfileQueueOnly(name, pkgList)
-                else -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
-            }
-        } catch (e: Exception) { 
-            // Fallback for old profile format (no type prefix)
-            try {
-                val parts = data.split("|")
-                val layoutType = parts[0].toInt()
-                val resIndex = parts[1].toInt()
-                val dpiSetting = parts[2].toInt()
-                val pkgList = parts[3].split(",").filter { it.isNotEmpty() }
-                loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, 0, 0, false)
-            } catch (e2: Exception) {
-                Log.e(TAG, "Failed to load profile", e2) 
-            }
-        } 
+        profileManager.loadProfile(name)
     }
-    
-    // Profile Type 0: Layout + Apps - Opens apps from profile, minimizes others
-    private fun loadProfileLayoutAndApps(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, pkgList: List<String>, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
-        // Apply layout settings
-        selectedLayoutType = layoutType
-        selectedResolutionIndex = resIndex
-        currentDpiSetting = dpiSetting
-        
-        // Apply orientation from profile
-        currentOrientationMode = orientMode
-        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
-        applyOrientation()
-        
-        // Apply margin settings
-        topMarginPercent = topMar
-        bottomMarginPercent = botMar
-        autoAdjustMarginForIME = autoMar
-        val os = orientSuffix()
-        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
-        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
-        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
-        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
-        
-        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
-        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
-        if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
-            activeCustomLayoutName = null
-            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
-            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
-        }
-        AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
-        AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
-        
-        // Get current queue packages for comparison
-        val currentPkgs = selectedAppsQueue.map { it.packageName }.toSet()
-        val profilePkgs = pkgList.toSet()
-        
-        // Minimize apps not in profile (don't kill - preserve user work)
-        val appsToMinimize = selectedAppsQueue.filter { 
-            !it.isMinimized && it.packageName != PACKAGE_BLANK && it.packageName !in profilePkgs 
-        }
-        for (app in appsToMinimize) {
-            app.isMinimized = true
-        }
-        if (appsToMinimize.isNotEmpty()) {
-            Thread {
-                for (app in appsToMinimize) {
-                    try {
-                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                        if (tid != -1) shellService?.moveTaskToBack(tid)
-                    } catch (e: Exception) {}
-                }
-            }.start()
-        }
-        
-        // Build new queue from profile
-        val newQueue = mutableListOf<MainActivity.AppInfo>()
-        for (pkg in pkgList) {
-            if (pkg == PACKAGE_BLANK) {
-                newQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
-            } else {
-                // Check if app is already in queue
-                val existingApp = selectedAppsQueue.find { it.packageName == pkg }
-                if (existingApp != null) {
-                    existingApp.isMinimized = false
-                    newQueue.add(existingApp)
-                } else {
-                    // App not in queue - find in app list and add
-                    val app = allAppsList.find { it.packageName == pkg }
-                    if (app != null) {
-                        app.isMinimized = false
-                        newQueue.add(app)
-                    }
-                }
-            }
-        }
-        
-        selectedAppsQueue.clear()
-        selectedAppsQueue.addAll(newQueue)
-        
-        activeProfileName = name
-        updateSelectedAppsDock()
-        // Force refresh both recyclers to prevent visual duplicates
-        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
-        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
-        safeToast("Loaded: $name")
-        
-        if (isInstantMode) applyLayoutImmediate()
-    }
-    
-    // Profile Type 1: Layout Only - Applies layout settings, keeps current apps
-    private fun loadProfileLayoutOnly(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
-        // Apply layout settings
-        selectedLayoutType = layoutType
-        selectedResolutionIndex = resIndex
-        currentDpiSetting = dpiSetting
-        
-        // Apply orientation from profile
-        currentOrientationMode = orientMode
-        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
-        applyOrientation()
-        
-        // Apply margin settings
-        topMarginPercent = topMar
-        bottomMarginPercent = botMar
-        autoAdjustMarginForIME = autoMar
-        val os = orientSuffix()
-        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
-        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
-        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
-        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
-        
-        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
-        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
-        if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
-            activeCustomLayoutName = null
-            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
-            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
-        }
-        AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
-        AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
-        
-        // Get layout slot count
-        val layoutRects = getLayoutRects()
-        val maxSlots = layoutRects.size
-        
-        // If more active apps than slots, minimize excess
-        val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
-        if (activeApps.size > maxSlots) {
-            val appsToMinimize = activeApps.drop(maxSlots)
-            for (app in appsToMinimize) {
-                app.isMinimized = true
-            }
-            Thread {
-                for (app in appsToMinimize) {
-                    try {
-                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                        if (tid != -1) shellService?.moveTaskToBack(tid)
-                    } catch (e: Exception) {}
-                }
-            }.start()
-        }
-        
-        activeProfileName = name
-        updateSelectedAppsDock()
-        // Force refresh both recyclers
-        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
-        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
-        safeToast("Loaded Layout: $name")
-        
-        if (isInstantMode) applyLayoutImmediate()
-    }
-    
-    // Profile Type 2: App Queue Only - Applies app queue, keeps current layout settings
-    private fun loadProfileQueueOnly(name: String, pkgList: List<String>) {
-        val profilePkgs = pkgList.toSet()
-        
-        // Minimize apps not in profile (don't kill - preserve user work)
-        val appsToMinimize = selectedAppsQueue.filter { 
-            !it.isMinimized && it.packageName != PACKAGE_BLANK && it.packageName !in profilePkgs 
-        }
-        for (app in appsToMinimize) {
-            app.isMinimized = true
-        }
-        if (appsToMinimize.isNotEmpty()) {
-            Thread {
-                for (app in appsToMinimize) {
-                    try {
-                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
-                        if (tid != -1) shellService?.moveTaskToBack(tid)
-                    } catch (e: Exception) {}
-                }
-            }.start()
-        }
-        
-        // Build new queue from profile
-        val newQueue = mutableListOf<MainActivity.AppInfo>()
-        for (pkg in pkgList) {
-            if (pkg == PACKAGE_BLANK) {
-                newQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
-            } else {
-                // Check if app is already in queue
-                val existingApp = selectedAppsQueue.find { it.packageName == pkg }
-                if (existingApp != null) {
-                    existingApp.isMinimized = false
-                    newQueue.add(existingApp)
-                } else {
-                    // App not in queue - find in app list and add
-                    val app = allAppsList.find { it.packageName == pkg }
-                    if (app != null) {
-                        app.isMinimized = false
-                        newQueue.add(app)
-                    }
-                }
-            }
-        }
-        
-        selectedAppsQueue.clear()
-        selectedAppsQueue.addAll(newQueue)
-        
-        activeProfileName = name
-        updateSelectedAppsDock()
-        // Force refresh both recyclers to prevent visual duplicates
-        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
-        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
-        safeToast("Loaded Queue: $name")
-        
-        if (isInstantMode) applyLayoutImmediate()
-    }
-    
 
     // === EXECUTE LAUNCH - START ===
     // Delegated to WindowTilingManager
