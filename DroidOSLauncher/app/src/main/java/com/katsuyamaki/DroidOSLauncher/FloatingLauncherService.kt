@@ -122,10 +122,6 @@ class FloatingLauncherService : AccessibilityService() {
     private var secondLastValidPackageName: String? = null
 
     // === KEYBIND SYSTEM ===
-    private var visualQueueView: View? = null
-    private var visualQueueParams: WindowManager.LayoutParams? = null
-    private var visualQueueWindowManager: WindowManager? = null  // Track WM used to add view
-    private var isVisualQueueVisible = false
 
     // Command State Machine
     private var pendingCommandId: String? = null
@@ -251,7 +247,7 @@ private var isSoftKeyboardSupport = false
                     // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
                     if (display.state == Display.STATE_ON && currentDisplayId != 0) {
                         // [FIX] Dismiss visual queue before display change to prevent stuck state
-                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
+                        if (isVQVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable { 
                             try { performDisplayChange(0) } catch(e: Exception) {} 
                         }
@@ -260,7 +256,7 @@ private var isSoftKeyboardSupport = false
                     // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                     else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
                         // [FIX] Dismiss visual queue before display change to prevent stuck state
-                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
+                        if (isVQVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable {
                             try { 
                                 val d0 = displayManager?.getDisplay(0)
@@ -433,6 +429,12 @@ private var isSoftKeyboardSupport = false
     private var shellService: IShellService? = null
     private var isBound = false
     private lateinit var tilingManager: WindowTilingManager
+    private var visualQueueManager: VisualQueueManager? = null
+    
+    // Check visibility from manager
+    private val isVQVisible: Boolean
+        get() = visualQueueManager?.isVisualQueueVisible ?: false
+    
     lateinit var uiHandler: Handler // Declare uiHandler here
     override fun onCreate() {
         super.onCreate()
@@ -505,6 +507,26 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+    // VisualQueueCallback implementation for VisualQueueManager
+    private val visualQueueCallback = object : VisualQueueManager.Callback {
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onSendBroadcast(intent: Intent) = sendBroadcast(intent)
+        override fun onFetchRunningApps() = fetchRunningApps()
+        override fun onSortAppQueue() = sortAppQueue()
+        override fun getSelectedAppsQueue() = selectedAppsQueue
+        override fun getActivePackageName() = activePackageName
+        override fun getCurrentDisplayId() = currentDisplayId
+        override fun getDisplayContext() = displayContext
+        override fun getShellService() = shellService
+        override fun getPackageBlank() = PACKAGE_BLANK
+        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
+        override fun getTopMarginPercent() = topMarginPercent
+        override fun getEffectiveBottomMarginPercent() = effectiveBottomMarginPercent()
+        override fun getCurrentFontSize() = currentFontSize
+        override fun getPendingArg1() = pendingArg1
+        override fun getBaseWindowManager() = windowManager
+    }
+
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult -> if (grantResult == PackageManager.PERMISSION_GRANTED) bindShizuku() }
 
@@ -525,7 +547,7 @@ private var isSoftKeyboardSupport = false
                     wakeUp()
                 }
                 // [FIX] Dismiss visual queue on screen on if stuck from screen off
-                if (isVisualQueueVisible) {
+                if (isVQVisible) {
                     hideVisualQueue()
                     pendingCommandId = null
                 }
@@ -589,7 +611,6 @@ private var isSoftKeyboardSupport = false
                             if (newEffective != lastAppliedEffectiveMargin) {
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = System.currentTimeMillis() + 500
-                                setupVisualQueue()
                                 retileExistingWindows()
                             }
                             pendingImeRetileRunnable = null
@@ -614,7 +635,6 @@ private var isSoftKeyboardSupport = false
                             if (now >= imeRetileCooldownUntil) {
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = now + 500
-                                setupVisualQueue()
                                 retileExistingWindows()
                             }
                         }
@@ -645,7 +665,6 @@ private var isSoftKeyboardSupport = false
                 bottomMarginPercent = percent
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent, orientSuffix())
-                setupVisualQueue() // Recalc HUD pos
                 // [FIX] Always retile when margin changes while IME is visible
                 // This ensures slider changes in DockIME take effect immediately
                 if (autoAdjustMarginForIME && imeMarginOverrideActive) {
@@ -1078,14 +1097,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
                 if (vqCursorIndex > 0) {
                     vqCursorIndex--
-                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
                 }
                 return true
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (vqCursorIndex < selectedAppsQueue.size - 1) {
                     vqCursorIndex++
-                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
                 }
                 return true
             }
@@ -1517,14 +1536,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
                 if (vqCursorIndex > 0) {
                     vqCursorIndex--
-                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                    uiHandler.post { showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex) }
                 }
                 return
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (vqCursorIndex < selectedAppsQueue.size - 1) {
                     vqCursorIndex++
-                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                    uiHandler.post { showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex) }
                 }
                 return
             }
@@ -2550,14 +2569,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (isExpanded) windowManager.removeView(drawerView) 
         } catch (e: Exception) {}
         
-        // [FIX] Clean up visual queue on destroy to prevent orphaned views
-        if (visualQueueView != null) {
-            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
-            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
-            visualQueueView = null
-            isVisualQueueVisible = false
-            visualQueueWindowManager = null
-        }
+        // [FIX] Clean up visual queue on destroy
+        visualQueueManager?.cleanup()
 
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
     setKeepScreenOn(false)
@@ -2919,6 +2932,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         drawerParams.gravity = Gravity.TOP or Gravity.START; drawerParams.x = 0; drawerParams.y = 0
         drawerParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
         
+        // Lazy init VisualQueueManager
+        try {
+            if (visualQueueManager == null) {
+                visualQueueManager = VisualQueueManager(this, uiHandler)
+                visualQueueManager?.setCallback(visualQueueCallback)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to init VisualQueueManager", e)
+        }
+
         // FIXED: Ensure container is defined and logical
         val container = drawerView?.findViewById<LinearLayout>(R.id.drawer_container)
         if (container != null) {
@@ -3504,206 +3527,17 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // === VISUAL QUEUE (HUD) ===
 
-    private fun setupVisualQueue() {
-        // [FIX] Remove existing visual queue view BEFORE creating new one to prevent orphaned views
-        if (isVisualQueueVisible && visualQueueView != null) {
-            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
-            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
-            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
-            isVisualQueueVisible = false
-            visualQueueWindowManager = null
-        }
-        val themeContext = ContextThemeWrapper(displayContext ?: this, R.style.Theme_QuadrantLauncher)
-        visualQueueView = LayoutInflater.from(themeContext).inflate(R.layout.layout_visual_queue, null)
-
-        // CRITICAL: Ensure we use the WindowManager for the CURRENT display context
-        val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
-
-        // Use Type 2032 (Accessibility) or Phone, consistent with other views
-        val targetType = if (Build.VERSION.SDK_INT >= 26) 2032 else WindowManager.LayoutParams.TYPE_PHONE
-
-        visualQueueParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            targetType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        )
-        
-        // MARGIN ADJUSTMENT: Center in the effective safe area
-        val display = (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay 
-                      ?: windowManager.defaultDisplay
-        val h = display.height
-        
-        val topPx = (h * topMarginPercent / 100f).toInt()
-        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
-        
-        // Standard CENTER is at h/2.
-
-
-        // Effective Center is at (topPx + (h - topPx - bottomPx)/2) = topPx + h/2 - topPx/2 - bottomPx/2
-        // = h/2 + (topPx - bottomPx)/2
-        // Offset from standard center = (topPx - bottomPx) / 2
-        
-        val yShift = (topPx - bottomPx) / 2
-        
-        visualQueueParams?.gravity = Gravity.CENTER
-        visualQueueParams?.y = yShift 
-
-        val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-        recycler?.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-
-        // DUMMY INPUT to keep Gboard alive
-        val dummyInput = visualQueueView?.findViewById<EditText>(R.id.vq_dummy_input)
-        dummyInput?.showSoftInputOnFocus = true
-    }
-
     private fun showVisualQueue(prompt: String, highlightSlot0Based: Int = -1) {
-        // FAST PATH: If already visible, just update adapter & prompt without removing/re-adding the window.
-        // This prevents the blink caused by the remove+add cycle during arrow key navigation.
-        if (isVisualQueueVisible && visualQueueView != null) {
-            val promptView = visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)
-            promptView?.text = prompt
-            val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-            recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
-            // Background thread to sync visible packages (same as full path)
-            Thread {
-                val visible = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
-                uiHandler.post {
-                    (recycler?.adapter as? VisualQueueAdapter)?.updateVisibility(visible)
-                }
-            }.start()
-            return
+        visualQueueManager?.let { mgr ->
+            mgr.showVisualQueue(prompt, highlightSlot0Based) { slotNum -> handleCommandInput(slotNum) }
+            uiHandler.removeCallbacks(commandTimeoutRunnable)
+            uiHandler.postDelayed(commandTimeoutRunnable, 30000L)
         }
-
-        // DEFENSIVE CLEANUP: Force-remove orphaned views that are flagged invisible but still attached
-        if (visualQueueView != null) {
-            Log.w(TAG, "Visual Queue cleanup: removing stale view before showing new one")
-            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
-            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
-            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
-            isVisualQueueVisible = false
-            visualQueueWindowManager = null
-        }
-        
-        if (visualQueueView == null) setupVisualQueue()
-
-        // [FIX] Use same queue sync logic as drawer (fetchRunningApps) instead of separate detection.
-        // This ensures visual queue and drawer queue always show the same data.
-        if (shellService != null) {
-            fetchRunningApps()  // Syncs queue with actual visible apps, adds new visible apps, etc.
-        } else {
-            sortAppQueue()  // Fallback: just sort existing queue
-        }
-
-        // Background thread to update adapter with visibility info
-        Thread {
-            val visible = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
-            uiHandler.post {
-                val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-                recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
-                (recycler?.adapter as? VisualQueueAdapter)?.updateVisibility(visible)
-            }
-        }.start()
-
-        val promptView = visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)
-        promptView?.text = prompt
-
-        // Set placeholder adapter immediately (will be replaced by thread above)
-        val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-        recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
-
-        // Force focus to keep keyboard up
-        val dummy = visualQueueView?.findViewById<EditText>(R.id.vq_dummy_input)
-        dummy?.requestFocus()
-
-        if (!isVisualQueueVisible) {
-            try {
-                // Use display-specific WM and store reference for reliable removal
-                val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
-                visualQueueWindowManager = targetWM
-                targetWM.addView(visualQueueView, visualQueueParams)
-                isVisualQueueVisible = true
-                Log.d(TAG, "Visual Queue Added to Display $currentDisplayId")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to add Visual Queue", e)
-                e.printStackTrace()
-            }
-        } else {
-            // Just update adapter if already visible
-            recycler?.adapter?.notifyDataSetChanged()
-        }
-
-        // [FIX] Safety timeout to prevent visual queue from getting stuck forever
-        uiHandler.removeCallbacks(commandTimeoutRunnable)
-        uiHandler.postDelayed(commandTimeoutRunnable, 30000L) // 30 second safety net
-
-        // Tell Trackpad to redirect input to us
-        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
-        captureIntent.setPackage(PACKAGE_TRACKPAD)
-        captureIntent.putExtra("CAPTURE", true)
-        sendBroadcast(captureIntent)
-
-        // NEW: Auto-switch keyboard to Number Layer
-        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
-        layerIntent.setPackage(PACKAGE_TRACKPAD)
-        layerIntent.putExtra("ACTIVE", true)
-        sendBroadcast(layerIntent)
     }
 
     private fun hideVisualQueue() {
-        if (isVisualQueueVisible && visualQueueView != null) {
-            var removed = false
-            // Try stored WM first (most reliable)
-            visualQueueWindowManager?.let { wm ->
-                try {
-                    wm.removeView(visualQueueView)
-                    removed = true
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to remove VQ from stored WM: ${e.message}")
-                }
-            }
-            // Fallback: try displayContext WM
-            if (!removed) {
-                try {
-                    val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-                    targetWM?.removeView(visualQueueView)
-                    removed = true
-                } catch (e: Exception) {}
-            }
-            // Last resort: try base windowManager
-            if (!removed) {
-                try {
-                    windowManager.removeView(visualQueueView)
-                    removed = true
-                } catch (e: Exception) {}
-            }
-            if (removed) {
-                isVisualQueueVisible = false
-                visualQueueWindowManager = null
-            } else {
-                Log.e(TAG, "CRITICAL: Failed to remove Visual Queue from ALL WindowManagers!")
-                // Force cleanup to prevent stuck state
-                visualQueueView = null
-                isVisualQueueVisible = false
-                visualQueueWindowManager = null
-            }
-        }
+        visualQueueManager?.hideVisualQueue()
         uiHandler.removeCallbacks(commandTimeoutRunnable)
-
-        // Release Trackpad input
-        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
-        captureIntent.setPackage(PACKAGE_TRACKPAD)
-        captureIntent.putExtra("CAPTURE", false)
-        sendBroadcast(captureIntent)
-
-        // NEW: Restore previous keyboard layer
-        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
-        layerIntent.setPackage(PACKAGE_TRACKPAD)
-        layerIntent.putExtra("ACTIVE", false)
-        sendBroadcast(layerIntent)
     }
 
     private fun abortCommandMode() {
@@ -4002,102 +3836,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // Add ON TOP of everything
             windowManager.addView(keyPickerView, keyPickerParams)
         } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    // ADAPTER for the HUD
-    inner class VisualQueueAdapter(private val highlightIndex: Int) : RecyclerView.Adapter<VisualQueueAdapter.Holder>() {
-        
-        private var visiblePackages: List<String> = emptyList()
-        
-        fun updateVisibility(visible: List<String>) {
-            visiblePackages = visible
-            notifyDataSetChanged()
-        }
-        inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
-            val icon: ImageView = v.findViewById(R.id.vq_app_icon)
-            val badge: TextView = v.findViewById(R.id.vq_slot_number)
-            val highlight: View = v.findViewById(R.id.vq_highlight)
-            val underline: View = v.findViewById(R.id.focus_underline)
-        }
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-            return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_visual_queue_app, parent, false))
-        }
-        override fun onBindViewHolder(holder: Holder, position: Int) {
-            val app = selectedAppsQueue[position]
-            val slotNum = position + 1 // 1-Based Display
-
-            // Show Focus Underline if matches activePackageName
-            // Handle Gemini/Google alias logic
-            val isFocused = (app.packageName == activePackageName) ||
-                            (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-
-            holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE
-            holder.badge.text = slotNum.toString()
-            holder.badge.setScaledTextSize(currentFontSize, 0.625f) // Corresponds to 10sp for slot number
-
-            if (app.packageName == PACKAGE_BLANK) {
-                holder.icon.setImageResource(R.drawable.ic_box_outline)
-                holder.icon.alpha = 0.5f
-            } else {
-                try {
-                    val basePkg = if (app.packageName.contains(":")) app.packageName.substringBefore(":") else app.packageName
-                    holder.icon.setImageDrawable(packageManager.getApplicationIcon(basePkg))
-                } catch (e: Exception) {
-                    holder.icon.setImageResource(R.drawable.ic_launcher_bubble)
-                }
-                
-                // VISIBILITY LOGIC:
-                // 1. Is it explicitly minimized by user? -> Inactive
-                // 2. Is it visible on THIS screen? -> Active
-                // 3. Otherwise -> Inactive (e.g. open on other screen)
-                
-                val isVisibleOnScreen = visiblePackages.contains(app.getBasePackage()) || 
-                                      (app.getBasePackage() == "com.google.android.apps.bard" && visiblePackages.contains("com.google.android.googlequicksearchbox"))
-
-                // If visible packages list is empty (loading), fall back to stored state
-                val isActuallyActive = if (visiblePackages.isNotEmpty()) {
-                    isVisibleOnScreen
-                } else {
-                    !app.isMinimized
-                }
-                
-                holder.icon.alpha = if (isActuallyActive) 1.0f else 0.4f
-            }
-
-            // Highlight logic - matches drawer queue style
-            // 1. Current selection = solid white border
-            // 2. Command source (pendingArg1) = dashed green border
-            val isCurrentSelection = (position == highlightIndex)
-            val isCommandSource = (pendingArg1 >= 0 && position == pendingArg1)
-            
-            if (isCurrentSelection) {
-                // Solid white border for current selection
-                holder.highlight.visibility = View.VISIBLE
-                val bg = GradientDrawable()
-                bg.setStroke(4, Color.WHITE)
-                bg.cornerRadius = 8f
-                bg.setColor(Color.parseColor("#44FFFFFF")) // Semi-transparent fill
-                holder.highlight.background = bg
-            } else if (isCommandSource) {
-                // Dashed green border for source
-                holder.highlight.visibility = View.VISIBLE
-                val bg = GradientDrawable()
-                bg.setStroke(4, Color.GREEN, 10f, 5f) // Dashed
-                bg.cornerRadius = 8f
-                bg.setColor(Color.TRANSPARENT)
-                holder.highlight.background = bg
-            } else {
-                holder.highlight.visibility = View.GONE
-            }
-
-            // [FIX] Tap-to-select: Directly handle touch input in Launcher process.
-            // This bypasses the overlay keyboard entirely, avoiding the cross-process
-            // SET_INPUT_CAPTURE broadcast race that causes key leakage.
-            holder.itemView.setOnClickListener {
-                handleCommandInput(slotNum) // slotNum is 1-based
-            }
-        }
-        override fun getItemCount() = selectedAppsQueue.size
     }
 
     /**
@@ -4544,10 +4282,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 updateSelectedAppsDock()
                 drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
                 
-                // 2. Update Visual Queue HUD (if exists)
-                if (visualQueueView != null) {
-                    val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-                    recycler?.adapter?.notifyDataSetChanged()
+                // 2. Update Visual Queue HUD (if visible)
+                if (isVQVisible) {
+                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
                 }
             }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
@@ -4877,15 +4614,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         } catch (e: Exception) { Log.e(TAG, "Cleanup failed", e) }
 
         // Clear cached auxiliary views using CURRENT (Old) WM before switching context
-        if (visualQueueView != null) {
-            // Try stored WM first, then fallback
-            try { visualQueueWindowManager?.removeView(visualQueueView) } catch(e: Exception){
-                try { windowManager.removeView(visualQueueView) } catch(e2: Exception){}
-            }
-            visualQueueView = null
-            isVisualQueueVisible = false
-            visualQueueWindowManager = null
-        }
+        visualQueueManager?.cleanup()
         if (keyPickerView != null) {
             try { windowManager.removeView(keyPickerView) } catch(e: Exception){}
             keyPickerView = null
@@ -4952,7 +4681,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         vibrate()
         isScreenOffState = true
         // [FIX] Dismiss visual queue on screen off to prevent it getting stuck
-        if (isVisualQueueVisible) {
+        if (isVQVisible) {
             hideVisualQueue()
             pendingCommandId = null
         }
@@ -7848,9 +7577,6 @@ else -> AppHolder(View(parent.context)) } }
                             intent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard") // Explicit target
                             sendBroadcast(intent)
                         }
-                        
-                        // Recalculate visual queue pos
-                        setupVisualQueue()
                         
                         // Apply layout
                         if (isInstantMode) {
