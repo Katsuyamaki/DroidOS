@@ -1,6 +1,7 @@
 package com.katsuyamaki.DroidOSTrackpadKeyboard
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -331,12 +332,15 @@ class KeyboardOverlay(
             // Save bounds and scale even if hidden
             val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
             val os = orientSuffix()
+            val targetScaleInt = (targetScale * 100).toInt()
             prefs.edit()
                 .putInt("keyboard_x_d${currentDisplayId}$os", x)
                 .putInt("keyboard_y_d${currentDisplayId}$os", y)
                 .putInt("keyboard_width_d${currentDisplayId}$os", width)
                 .putInt("keyboard_height_d${currentDisplayId}$os", height)
-                .putInt("keyboard_key_scale$os", (targetScale * 100).toInt())
+                .putInt("keyboard_key_scale_d${currentDisplayId}$os", targetScaleInt)
+                .putInt("keyboard_key_scale$os", targetScaleInt)
+                .putInt("keyboard_key_scale", targetScaleInt)
                 .apply()
         }
         
@@ -502,8 +506,7 @@ class KeyboardOverlay(
         keyboardView?.setScale(defaultScale)
         
         // Save preference
-        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-             .edit().putInt("keyboard_key_scale", 69).apply()
+        saveKeyboardScale()
 
         // 2. Reset Rotation state
         currentRotation = 0
@@ -580,7 +583,7 @@ class KeyboardOverlay(
             // [NEW] Initialize internal scale from prefs once on show
             // Default to 69 (0.69f) if missing, to match resetPosition
             val os = orientSuffix()
-        val savedScale = prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69)) / 100f
+            val savedScale = getSavedScalePercent(prefs, os) / 100f
             internalScale = savedScale
             dragStartScale = savedScale // Init for safety
 
@@ -1259,9 +1262,9 @@ fun setCustomModKey(keyCode: Int) {
         // =================================================================================
 
         // [FIX] Load saved scale and update Internal State immediately
-        // Use orientation-aware key with fallback to base key then 69 default
+        // Use display+orientation key with fallback to legacy orientation/global keys.
         val os0 = orientSuffix()
-        val scale = prefs.getInt("keyboard_key_scale$os0", prefs.getInt("keyboard_key_scale", 69)) / 100f
+        val scale = getSavedScalePercent(prefs, os0) / 100f
         internalScale = scale
         keyboardView?.setScale(scale)
         
@@ -1302,7 +1305,7 @@ fun setCustomModKey(keyCode: Int) {
         // If no scale is saved, we default to 0.69f (The "Reset" Scale)
         val density = context.resources.displayMetrics.density
         val os = orientSuffix()
-        val savedScale = prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69)) / 100f
+        val savedScale = getSavedScalePercent(prefs, os) / 100f
         val baseHeightDp = 300f
         val defaultHeight = (baseHeightDp * savedScale * density).toInt()
         
@@ -1563,11 +1566,22 @@ windowManager.addView(keyboardContainer, keyboardParams)
     // [END RESIZE FIX]
 
     private fun orientSuffix(): String = if (screenWidth > screenHeight) "_L" else "_P"
+    private fun getSavedScalePercent(prefs: SharedPreferences, os: String = orientSuffix()): Int {
+        return prefs.getInt(
+            "keyboard_key_scale_d${currentDisplayId}$os",
+            prefs.getInt("keyboard_key_scale$os", prefs.getInt("keyboard_key_scale", 69))
+        )
+    }
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d${currentDisplayId}${orientSuffix()}", keyboardWidth).putInt("keyboard_height_d${currentDisplayId}${orientSuffix()}", keyboardHeight).apply() }
     private fun saveKeyboardScale() {
         val scaleVal = (internalScale * 100).toInt()
+        val os = orientSuffix()
         context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-            .edit().putInt("keyboard_key_scale${orientSuffix()}", scaleVal).putInt("keyboard_key_scale", scaleVal).apply()
+            .edit()
+            .putInt("keyboard_key_scale_d${currentDisplayId}$os", scaleVal)
+            .putInt("keyboard_key_scale$os", scaleVal)
+            .putInt("keyboard_key_scale", scaleVal)
+            .apply()
     }
     private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d${currentDisplayId}${orientSuffix()}", keyboardParams?.x ?: 0).putInt("keyboard_y_d${currentDisplayId}${orientSuffix()}", keyboardParams?.y ?: 0).apply() }
     private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); val os = orientSuffix(); keyboardWidth = prefs.getInt("keyboard_width_d${displayId}$os", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d${displayId}$os", keyboardHeight) }

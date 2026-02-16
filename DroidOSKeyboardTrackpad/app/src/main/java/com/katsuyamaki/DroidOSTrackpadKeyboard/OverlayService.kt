@@ -2868,15 +2868,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 prefs.prefAutomationEnabled = parts[13] == "1"; prefs.prefAnchored = parts[14] == "1"
                 
                 // =================================================================================
-                // FIX: SYNC PROFILE SCALE TO GLOBAL SHAREDPREFS
-                // SUMMARY: KeyboardOverlay.show() reads "keyboard_key_scale" from SharedPrefs directly.
-                //          We must update this global key whenever we load a profile, otherwise
-                //          the keyboard will use the scale from the previous display/profile.
+                // FIX: SYNC PROFILE SCALE TO SHAREDPREFS
+                // SUMMARY: KeyboardOverlay.show() now prefers display+orientation scale keys.
+                //          Write both display-aware and legacy keys for compatibility.
                 // =================================================================================
                 val orientKey = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-                p.edit().putInt("keyboard_key_scale$orientKey", prefs.prefKeyScale).apply()
+                p.edit()
+                    .putInt("keyboard_key_scale_d${currentDisplayId}$orientKey", prefs.prefKeyScale)
+                    .putInt("keyboard_key_scale$orientKey", prefs.prefKeyScale)
+                    .putInt("keyboard_key_scale", prefs.prefKeyScale)
+                    .apply()
                 // =================================================================================
-                // END BLOCK: SYNC PROFILE SCALE TO GLOBAL SHAREDPREFS
+                // END BLOCK: SYNC PROFILE SCALE TO SHAREDPREFS
                 // =================================================================================
                 
                 if (parts.size >= 27) {
