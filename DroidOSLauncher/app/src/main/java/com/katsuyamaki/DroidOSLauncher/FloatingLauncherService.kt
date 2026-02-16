@@ -2431,6 +2431,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // [REMOVED] Auto-force disabled to prevent getting stuck on 120Hz
         // checkAndForceHighRefreshRate(displayId)
+        
+        // Update WindowTilingManager config
+        tilingManager.updateConfig(
+            displayId = currentDisplayId,
+            topMargin = topMarginPercent,
+            bottomMargin = bottomMarginPercent,
+            effectiveBottomMargin = effectiveBottomMarginPercent(),
+            layoutType = selectedLayoutType,
+            resIndex = selectedResolutionIndex,
+            orientMode = currentOrientationMode,
+            dpi = currentDpiSetting,
+            customRects = activeCustomRects
+        )
     }
 
 
@@ -3881,97 +3894,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
     private fun forceAppToDisplay(pkg: String, targetDisplayId: Int) {
-        // [LOCK] Prevent duplicate threads
-        if (activeEnforcements.contains(pkg)) {
-            Log.d("DROIDOS_WATCHDOG", "SKIP: Enforcement already active for $pkg")
-            return
-        }
-        activeEnforcements.add(pkg)
-
-        Thread {
-            try {
-                // 1. Get Task ID & Class Name
-                var tid = shellService?.getTaskId(pkg, null) ?: -1
-                if (tid == -1) {
-                    Thread.sleep(200) 
-                    tid = shellService?.getTaskId(pkg, null) ?: -1
-                }
-
-                if (tid != -1) {
-                    Log.w("DROIDOS_WATCHDOG", "Targeting Task $tid for $pkg. Starting Locked Loop...")
-
-                    // 2. Lookup Cache / AppInfo
-                    var bounds: Rect? = packageRectCache[pkg]
-                    var className: String? = null
-                    
-                    // Fallback to queue + get Class Name
-                    val appEntry = selectedAppsQueue.find { it.packageName == pkg || it.getBasePackage() == pkg }
-                    if (appEntry != null) {
-                         className = appEntry.className
-                         if (bounds == null) {
-                             val appIndex = selectedAppsQueue.indexOf(appEntry)
-                             val rects = getLayoutRects()
-                             if (appIndex >= 0 && appIndex < rects.size) bounds = rects[appIndex]
-                         }
-                    }
-
-                    // 3. AGGRESSIVE Loop (10 attempts)
-                    for (i in 1..10) {
-                        // A. Try Task Move (Standard)
-                        shellService?.runCommand("am task move-task-to-display $tid $targetDisplayId")
-                        shellService?.runCommand("am task set-windowing-mode $tid 5")
-                        
-                        // B. Escalation Levels
-                        // Level 1 (Attempts 3-6): Force Relaunch with NEW_TASK flag
-                        if (i > 3 && i <= 6 && className != null) {
-                             val cmd = "am start -n $pkg/$className --display $targetDisplayId --windowingMode 5 -f 0x10000000 --user 0"
-                             Log.w("DROIDOS_WATCHDOG", "Escalating L1 (Relaunch): $cmd")
-                             shellService?.runCommand(cmd)
-                        }
-                        
-                        // Level 2 (Attempts 7+): NUCLEAR OPTION (Kill & Restart)
-                        // If it refuses to move after 6 tries, the process is likely stuck with bad display affinity.
-                        if (i > 6 && className != null) {
-                             Log.e("DROIDOS_WATCHDOG", "Escalating L2 (Nuclear): Killing $pkg to break display affinity")
-                             shellService?.forceStop(pkg)
-                             Thread.sleep(300) // Wait for death
-                             
-                             val cmd = "am start -n $pkg/$className --display $targetDisplayId --windowingMode 5 -f 0x10000000 --user 0"
-                             shellService?.runCommand(cmd)
-                        }
-                        
-                        // Apply Bounds
-                        if (bounds != null) {
-                            shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId @ $bounds")
-                        } else {
-                            shellService?.runCommand("am task resize $tid 0 0 1000 1000")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId (Default)")
-                        }
-
-                        // Check success
-                        // We check BOTH display ID and visibility
-                        val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)?.contains(pkg) == true
-                        if (visibleOnTarget) {
-                            Log.w("DROIDOS_WATCHDOG", "SUCCESS: App moved on attempt $i")
-                            // One final resize to ensure it stuck
-                            if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            break
-                        }
-                        
-                        Thread.sleep(300) // Slightly slower retry to let system process
-                    }
-                } else {
-                    Log.e("DROIDOS_WATCHDOG", "Could not find Task ID for $pkg")
-                }
-            } catch (e: Exception) {
-                Log.e("DROIDOS_WATCHDOG", "Force move failed", e)
-            } finally {
-                // [UNLOCK] Release lock
-                activeEnforcements.remove(pkg)
-            }
-        }.start()
+        // Delegate to WindowTilingManager
+        tilingManager.forceAppToDisplay(pkg, targetDisplayId)
     }
+
 
     // === KEY PICKER (POPUP) ===
     private fun showKeyPicker(cmdId: String, currentMod: Int) {
@@ -4828,38 +4754,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === LAUNCH VIA SHELL - START ===
     // Launches app via shell with freeform windowing mode
     private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
-        try {
-            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-
-            debugShowAppIdentification("LAUNCH_SHELL", basePkg, className)
-
-            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$basePkg/$className"
-            } else {
-                null
-            }
-
-            // Build launch command with freeform mode (--windowingMode 5)
-            val cmd = if (component != null) {
-                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-            } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-            }
-
-            Log.d(TAG, "launchViaShell: $cmd")
-
-            Thread {
-                try {
-                    shellService?.runCommand(cmd)
-                    Log.d(TAG, "launchViaShell: SUCCESS")
-                } catch (e: Exception) {
-                    Log.e(TAG, "launchViaShell: FAILED", e)
-                }
-            }.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "launchViaShell FAILED: $pkg", e)
-        }
+        // Delegate to WindowTilingManager
+        tilingManager.launchViaShell(pkg, className, bounds)
     }
     // === LAUNCH VIA SHELL - END ===
 
@@ -4868,21 +4764,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Unlike launchViaShell (am start -n component), this does NOT re-launch the activity,
     // so in-app navigation state is preserved (WhatsApp stays in chat, Google keeps search).
     private fun focusViaTask(pkg: String, bounds: Rect?) {
-        Thread {
-            try {
-                val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-                val tid = shellService?.getTaskId(basePkg, null) ?: -1
-                if (tid != -1) {
-                    shellService?.moveTaskToFront(tid)
-                    Log.d(TAG, "focusViaTask: SUCCESS tid=$tid pkg=$basePkg")
-                } else {
-                    Log.w(TAG, "focusViaTask: task not found for $basePkg, falling back to launchViaShell")
-                    launchViaShell(basePkg, null, bounds)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "focusViaTask FAILED: $pkg", e)
-            }
-        }.start()
+        // Delegate to WindowTilingManager
+        tilingManager.focusViaTask(pkg, bounds)
     }
     // === FOCUS VIA TASK - END ===
 
@@ -5121,30 +5004,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun applyLayoutImmediate(focusPackage: String? = null) { executeLaunch(selectedLayoutType, closeDrawer = false, focusPackage = focusPackage) }
 
     private fun retileExistingWindows() {
-        if (!isBound || shellService == null) return
-        Thread {
-            try {
-                val rects = getLayoutRects()
-                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
-                val packages = mutableListOf<String>()
-                val boundsList = mutableListOf<Int>()
-                for (i in 0 until minOf(activeApps.size, rects.size)) {
-                    val app = activeApps[i]
-                    if (app.packageName == PACKAGE_BLANK) continue
-                    val basePkg = app.getBasePackage()
-                    val bounds = rects[i]
-                    packageRectCache[basePkg] = bounds
-                    packages.add(basePkg)
-                    boundsList.addAll(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
-                }
-                if (packages.isNotEmpty()) {
-                    shellService?.batchResize(packages, boundsList.toIntArray())
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "retileExistingWindows failed", e)
-            }
-        }.start()
+        // Delegate to WindowTilingManager
+        tilingManager.retileExistingWindows()
     }
+
 
     private fun ensureQueueLoadedForCommands() {
         if (selectedAppsQueue.isNotEmpty()) return
@@ -7568,120 +7431,23 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     // Helper to calculate current layout rectangles without executing launch
+    // Now delegates to WindowTilingManager for the calculation
     private fun getLayoutRects(): List<Rect> {
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        val display = dm.getDisplay(currentDisplayId) ?: return emptyList()
-        val metrics = DisplayMetrics()
-        display.getRealMetrics(metrics)
-        var w = metrics.widthPixels
-        var h = metrics.heightPixels
-
-        // Apply Resolution Override (if any)
-        val targetDim = getTargetDimensions(selectedResolutionIndex)
-        if (targetDim != null) {
-             w = targetDim.first
-             h = targetDim.second
-        }
-
-        // === MARGIN LOGIC ===
-        // Calculate effective height based on Top and Bottom margins
-        val topPx = (h * topMarginPercent / 100f).toInt()
-        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
-        val effectiveH = max(100, h - topPx - bottomPx) // Safety floor
-
-
-        // ====================
-
-        val rects = mutableListOf<Rect>()
-        when (selectedLayoutType) {
-            LAYOUT_FULL -> rects.add(Rect(0, 0, w, effectiveH))
-            LAYOUT_SIDE_BY_SIDE -> {
-                rects.add(Rect(0, 0, w/2, effectiveH))
-                rects.add(Rect(w/2, 0, w, effectiveH))
-            }
-            LAYOUT_TOP_BOTTOM -> {
-                // Split effective space in half
-                val mid = effectiveH / 2
-                rects.add(Rect(0, 0, w, mid))
-                rects.add(Rect(0, mid, w, effectiveH))
-            }
-            LAYOUT_TRI_EVEN -> {
-                val third = w / 3
-                rects.add(Rect(0, 0, third, effectiveH))
-                rects.add(Rect(third, 0, third * 2, effectiveH))
-                rects.add(Rect(third * 2, 0, w, effectiveH))
-            }
-            LAYOUT_CORNERS -> {
-                val midH = effectiveH / 2
-                val midW = w / 2
-                rects.add(Rect(0, 0, midW, midH))
-                rects.add(Rect(midW, 0, w, midH))
-                rects.add(Rect(0, midH, midW, effectiveH))
-                rects.add(Rect(midW, midH, w, effectiveH))
-            }
-            LAYOUT_TRI_SIDE_MAIN_SIDE -> {
-                val quarter = w / 4
-                rects.add(Rect(0, 0, quarter, effectiveH))
-                rects.add(Rect(quarter, 0, quarter * 3, effectiveH))
-                rects.add(Rect(quarter * 3, 0, w, effectiveH))
-            }
-            LAYOUT_QUAD_ROW_EVEN -> {
-                val quarter = w / 4
-                rects.add(Rect(0, 0, quarter, effectiveH))
-                rects.add(Rect(quarter, 0, quarter * 2, effectiveH))
-                rects.add(Rect(quarter * 2, 0, quarter * 3, effectiveH))
-                rects.add(Rect(quarter * 3, 0, w, effectiveH))
-            }
-            LAYOUT_QUAD_TALL_SHORT -> {
-                // Top Row: 75% H, 2 Apps (50% W each)
-                // Bottom Row: 25% H, 2 Apps (50% W each)
-                val splitY = (effectiveH * 0.75f).toInt()
-                val midW = w / 2
-                
-                rects.add(Rect(0, 0, midW, splitY))
-                rects.add(Rect(midW, 0, w, splitY))
-                rects.add(Rect(0, splitY, midW, effectiveH))
-                rects.add(Rect(midW, splitY, w, effectiveH))
-            }
-            LAYOUT_HEX_TALL_SHORT -> {
-                // Top Row: 75% H, 3 Apps (Side/Main/Side 25/50/25)
-                // Bottom Row: 25% H, 3 Apps (Same widths)
-                val splitY = (effectiveH * 0.75f).toInt()
-                val q = w / 4
-                
-                rects.add(Rect(0, 0, q, splitY))
-                rects.add(Rect(q, 0, q * 3, splitY))
-                rects.add(Rect(q * 3, 0, w, splitY))
-                
-                rects.add(Rect(0, splitY, q, effectiveH))
-                rects.add(Rect(q, splitY, q * 3, effectiveH))
-                rects.add(Rect(q * 3, splitY, w, effectiveH))
-            }
-            LAYOUT_CUSTOM_DYNAMIC -> {
-                if (activeCustomRects != null) {
-                    // For custom layouts, we assume they were saved WITH the desired geometry.
-                    // However, if the user turns on margin, we should probably clamp them?
-                    // For now, let's respect the saved rects exactly as they define absolute pixels.
-                    rects.addAll(activeCustomRects!!)
-                } else {
-                    // Fallback if custom data missing
-                    rects.add(Rect(0, 0, w/2, effectiveH))
-                    rects.add(Rect(w/2, 0, w, effectiveH))
-                }
-            }
-        }
-        
-        // SHIFT ALL RECTS DOWN BY TOP MARGIN
-        // [FIX] Skip offset for Custom Dynamic layouts (they are absolute snapshots)
-        // This prevents double-margin application when loading saved profiles.
-        if (topPx > 0 && selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
-            for (r in rects) {
-                r.offset(0, topPx)
-            }
-        }
-        
-        return rects
+        // Ensure config is up to date before getting rects
+        tilingManager.updateConfig(
+            displayId = currentDisplayId,
+            topMargin = topMarginPercent,
+            bottomMargin = bottomMarginPercent,
+            effectiveBottomMargin = effectiveBottomMarginPercent(),
+            layoutType = selectedLayoutType,
+            resIndex = selectedResolutionIndex,
+            orientMode = currentOrientationMode,
+            dpi = currentDpiSetting,
+            customRects = activeCustomRects
+        )
+        return tilingManager.getLayoutRects()
     }
+
 
     private fun refreshQueueAndLayout(
         msg: String,
