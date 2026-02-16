@@ -432,6 +432,7 @@ private var isSoftKeyboardSupport = false
     
     private var shellService: IShellService? = null
     private var isBound = false
+    private lateinit var tilingManager: WindowTilingManager
     lateinit var uiHandler: Handler // Declare uiHandler here
     override fun onCreate() {
         super.onCreate()
@@ -447,6 +448,33 @@ private var isSoftKeyboardSupport = false
         }
 
         uiHandler = Handler(Looper.getMainLooper())
+        
+        // Initialize WindowTilingManager
+        displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        tilingManager = WindowTilingManager(this, displayManager!!, uiHandler)
+        tilingManager.setCallback(tilingCallback)
+    }
+    
+    // TilingCallback implementation for WindowTilingManager
+    private val tilingCallback = object : WindowTilingManager.TilingCallback {
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onUpdateAllUIs() = updateAllUIs()
+        override fun getSelectedAppsQueue() = selectedAppsQueue
+        override fun getAllAppsList() = allAppsList
+        override fun getTargetDimensions(resIndex: Int) = this@FloatingLauncherService.getTargetDimensions(resIndex)
+        override fun getResolutionCommand(resIndex: Int) = this@FloatingLauncherService.getResolutionCommand(resIndex)
+        override fun toggleDrawer() = this@FloatingLauncherService.toggleDrawer()
+        override fun refreshDisplayId() = this@FloatingLauncherService.refreshDisplayId()
+        override fun saveQueueToPrefs(identifiers: List<String>) = AppPreferences.saveLastQueue(this@FloatingLauncherService, identifiers)
+        override fun updateSelectedAppsDock() = this@FloatingLauncherService.updateSelectedAppsDock()
+        override fun debugShowAppIdentification(tag: String, pkg: String, cls: String?) = this@FloatingLauncherService.debugShowAppIdentification(tag, pkg, cls)
+        override fun removeFromFocusHistory(pkg: String) = this@FloatingLauncherService.removeFromFocusHistory(pkg)
+        override fun getActivePackageName() = activePackageName
+        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
+        override fun getPackageBlank() = PACKAGE_BLANK
+        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
+        override fun getPackageName() = this@FloatingLauncherService.packageName
+        override fun isBound() = this@FloatingLauncherService.isBound
     }
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
@@ -752,6 +780,7 @@ private var isSoftKeyboardSupport = false
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
+            tilingManager.setShellService(shellService)
             isBound = true
             updateExecuteButtonColor(true)
             updateBubbleIcon()
@@ -769,7 +798,7 @@ private var isSoftKeyboardSupport = false
                 uiHandler.postDelayed({ restartTrackpad() }, 1000) // Delay to ensure stability
             }
         }
-        override fun onServiceDisconnected(name: ComponentName?) { shellService = null; isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
+        override fun onServiceDisconnected(name: ComponentName?) { shellService = null; tilingManager.setShellService(null); isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
     }
 
 
