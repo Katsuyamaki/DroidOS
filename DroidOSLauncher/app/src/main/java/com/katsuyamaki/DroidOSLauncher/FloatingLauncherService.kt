@@ -431,6 +431,7 @@ private var isSoftKeyboardSupport = false
     private lateinit var tilingManager: WindowTilingManager
     private var visualQueueManager: VisualQueueManager? = null
     private lateinit var inputHandler: LauncherInputHandler
+    private lateinit var drawerManager: DrawerManager
     
     // Check visibility from manager
     private val isVQVisible: Boolean
@@ -457,8 +458,72 @@ private var isSoftKeyboardSupport = false
         tilingManager = WindowTilingManager(this, displayManager!!, uiHandler)
         tilingManager.setCallback(tilingCallback)
         inputHandler = LauncherInputHandler(this, inputCallback)
+        drawerManager = DrawerManager(this, uiHandler)
+        drawerManager.setCallback(drawerCallback)
     }
     
+    // DrawerCallback implementation for DrawerManager
+    private val drawerCallback = object : DrawerManager.Callback {
+        override fun getWindowManager() = windowManager
+        override fun getDisplayContext() = displayContext
+        override fun getAttachedWindowManager() = attachedWindowManager
+        override fun isExpanded() = this@FloatingLauncherService.isExpanded
+        override fun setExpanded(value: Boolean) { this@FloatingLauncherService.isExpanded = value }
+        override fun getSelectedAppsQueue() = selectedAppsQueue
+        override fun getAllAppsList() = allAppsList
+        override fun getDisplayList() = displayList
+        override fun getActivePackageName() = activePackageName
+        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
+        override fun getLastValidPackageName() = lastValidPackageName
+        override fun setLastValidPackageName(pkg: String?) { lastValidPackageName = pkg }
+        override fun getPackageBlank() = PACKAGE_BLANK
+        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
+        override fun isOpenMoveToMode() = this@FloatingLauncherService.isOpenMoveToMode
+        override fun setOpenMoveToMode(value: Boolean) { this@FloatingLauncherService.isOpenMoveToMode = value }
+        override fun isOpenSwapMode() = this@FloatingLauncherService.isOpenSwapMode
+        override fun setOpenSwapMode(value: Boolean) { this@FloatingLauncherService.isOpenSwapMode = value }
+        override fun getOpenMoveToApp() = openMoveToApp
+        override fun setOpenMoveToApp(app: MainActivity.AppInfo?) { openMoveToApp = app }
+        override fun isShowSlotNumbersInQueue() = showSlotNumbersInQueue
+        override fun setShowSlotNumbersInQueue(value: Boolean) { showSlotNumbersInQueue = value }
+        override fun isProfileNameEditMode() = isProfileNameEditMode
+        override fun isLayoutNameEditMode() = isLayoutNameEditMode
+        override fun getQueueCommandPending() = queueCommandPending
+        override fun setQueueCommandPending(cmd: CommandDef?) { queueCommandPending = cmd }
+        override fun getQueueCommandSourceIndex() = queueCommandSourceIndex
+        override fun setQueueCommandSourceIndex(index: Int) { queueCommandSourceIndex = index }
+        override fun getPendingCommandId() = pendingCommandId
+        override fun getVqCursorIndex() = vqCursorIndex
+        override fun setVqCursorIndex(index: Int) { vqCursorIndex = index }
+        override fun getCustomModKey() = customModKey
+        override fun isCustomModLatched() = isCustomModLatched
+        override fun setCustomModLatched(value: Boolean) { isCustomModLatched = value }
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onSendBroadcast(intent: Intent) = sendBroadcast(intent)
+        override fun onAddToSelection(app: MainActivity.AppInfo) = addToSelection(app)
+        override fun onSelectLayout(layout: LayoutOption) = selectLayout(layout)
+        override fun onDismissKeyboardAndRestore() = dismissKeyboardAndRestore()
+        override fun onApplyRefreshRate(rate: Float) = applyRefreshRate(rate)
+        override fun onLoadProfile(name: String) = loadProfile(name)
+        override fun onExecuteOpenMoveTo(slotNum: Int) = executeOpenMoveTo(slotNum)
+        override fun onExecuteOpenSwap(slotNum: Int) = executeOpenSwap(slotNum)
+        override fun onCancelOpenMoveToMode() = cancelOpenMoveToMode()
+        override fun onQueueWindowManagerCommand(intent: Intent) = queueWindowManagerCommand(intent)
+        override fun onAbortCommandMode() = abortCommandMode()
+        override fun onShowVisualQueue(prompt: String, highlightIndex: Int) = showVisualQueue(prompt, highlightIndex)
+        override fun onHandleCommandInput(num: Int) = handleCommandInput(num)
+        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
+        override fun onUpdateAllUIs() = updateAllUIs()
+        override fun onRunShellCommand(command: String) { Thread { try { shellService?.runCommand(command) } catch(e: Exception){} }.start() }
+        override fun keyEventToNumber(keyCode: Int) = inputHandler.keyEventToNumber(keyCode)
+        override fun checkModifiers(meta: Int, required: Int, latched: Boolean) = inputHandler.checkModifiers(meta, required, latched)
+        override fun getAvailableCommands() = AVAILABLE_COMMANDS
+        override fun getKeybind(cmdId: String) = AppPreferences.getKeybind(this@FloatingLauncherService, cmdId)
+        override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
+        override fun getLastQueueNavTime() = lastQueueNavTime
+        override fun setLastQueueNavTime(time: Long) { lastQueueNavTime = time }
+    }
+
     // InputCallback implementation for LauncherInputHandler
     private val inputCallback = object : LauncherInputHandler.InputCallback {
         override fun getCustomModKey() = customModKey
@@ -1093,6 +1158,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // Shared logic for both Hardware Keys (onKeyEvent) and Virtual Remote Keys (Broadcast)
     private fun handleRemoteKeyEvent(keyCode: Int, metaState: Int) {
+        // Delegate to DrawerManager
+        drawerManager.handleRemoteKeyEvent(keyCode, metaState)
+    }
+
+    // OLD handleRemoteKeyEvent - kept for reference during migration
+    private fun handleRemoteKeyEventOLD(keyCode: Int, metaState: Int) {
         val keyName = KeyEvent.keyCodeToString(keyCode)
         Log.d("DroidOS_Keys", "RECEIVER: handleRemoteKeyEvent called with $keyCode (Meta: $metaState)")
 
