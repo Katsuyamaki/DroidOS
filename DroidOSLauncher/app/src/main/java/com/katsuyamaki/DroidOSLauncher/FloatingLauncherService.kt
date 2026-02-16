@@ -430,6 +430,7 @@ private var isSoftKeyboardSupport = false
     private var isBound = false
     private lateinit var tilingManager: WindowTilingManager
     private var visualQueueManager: VisualQueueManager? = null
+    private lateinit var inputHandler: LauncherInputHandler
     
     // Check visibility from manager
     private val isVQVisible: Boolean
@@ -455,8 +456,29 @@ private var isSoftKeyboardSupport = false
         displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         tilingManager = WindowTilingManager(this, displayManager!!, uiHandler)
         tilingManager.setCallback(tilingCallback)
+        inputHandler = LauncherInputHandler(this, inputCallback)
     }
     
+    // InputCallback implementation for LauncherInputHandler
+    private val inputCallback = object : LauncherInputHandler.InputCallback {
+        override fun getCustomModKey() = customModKey
+        override fun isCustomModLatched() = isCustomModLatched
+        override fun setCustomModLatched(value: Boolean) { isCustomModLatched = value }
+        override fun getPendingCommandId() = pendingCommandId
+        override fun getVqCursorIndex() = vqCursorIndex
+        override fun setVqCursorIndex(value: Int) { vqCursorIndex = value }
+        override fun getSelectedAppsQueueSize() = selectedAppsQueue.size
+        override fun getAvailableCommands() = AVAILABLE_COMMANDS
+        override fun getKeybind(cmdId: String) = AppPreferences.getKeybind(this@FloatingLauncherService, cmdId)
+        override fun onToast(msg: String) = safeToast(msg)
+        override fun onAbortCommandMode() = abortCommandMode()
+        override fun onShowVisualQueue(prompt: String, highlightIndex: Int) = showVisualQueue(prompt, highlightIndex)
+        override fun onHandleCommandInput(num: Int) = handleCommandInput(num)
+        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
+        override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
+        override fun onUnhandledKeyEvent(event: KeyEvent) = super@FloatingLauncherService.onKeyEvent(event)
+    }
+
     // TilingCallback implementation for WindowTilingManager
     private val tilingCallback = object : WindowTilingManager.TilingCallback {
         override fun onToast(msg: String) = safeToast(msg)
@@ -1066,99 +1088,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != KeyEvent.ACTION_DOWN) return false
-
-        val keyCode = event.keyCode
-        val metaState = event.metaState
-
-        // CHECK CUSTOM MODIFIER
-        if (customModKey != 0 && keyCode == customModKey) {
-            isCustomModLatched = true
-            // No timer - stays latched until next key press // 5 second latch
-            safeToast("Custom Mod Active...")
-            return true // Consume the key
-        }
-
-        // DEBUG: Log every key press
-        val keyName = KeyEvent.keyCodeToString(keyCode)
-        // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
-        // Using toString() directly on the integer for debug output.
-        val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
-        Log.d("DroidOS_Keys", "INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
-
-        // 1. INPUT MODE (Entering Numbers or Arrow Navigation)
-        if (pendingCommandId != null) {
-            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-                abortCommandMode()
-                return true
-            }
-
-            // Arrow key navigation in visual queue (left/up = prev, right/down = next)
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-                if (vqCursorIndex > 0) {
-                    vqCursorIndex--
-                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
-                }
-                return true
-            }
-            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                if (vqCursorIndex < selectedAppsQueue.size - 1) {
-                    vqCursorIndex++
-                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
-                }
-                return true
-            }
-            // Space or Enter confirms the arrow-key selection
-            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                handleCommandInput(vqCursorIndex + 1) // +1 because handleCommandInput expects 1-based
-                return true
-            }
-
-            // Handle Numbers (Row 0-9 and Numpad 0-9)
-            val num = keyEventToNumber(keyCode)
-            if (num != -1) {
-                handleCommandInput(num)
-                return true
-            }
-
-            // If any other key is pressed while HUD is open, CANCEL IT.
-            abortCommandMode()
-            return true
-        }
-
-        // 2. TRIGGER MODE (Detecting Hotkeys)
-        // Check if this key matches any stored bind
-        var commandTriggered = false
-
-        for (cmd in AVAILABLE_COMMANDS) {
-            val bind = AppPreferences.getKeybind(this, cmd.id)
-
-            // Check if key code matches
-            if (bind.second != 0 && bind.second == keyCode) {
-                Log.d("DroidOS_Keys", " -> Key Match for '${cmd.label}'. Checking modifiers...")
-                Log.d("DroidOS_Keys", "    Required: ${bind.first} | Current: $metaState")
-
-                if (checkModifiers(metaState, bind.first)) {
-                    Log.d("DroidOS_Keys", "    MATCH! Triggering...")
-                    triggerCommand(cmd)
-                    commandTriggered = true
-                    break
-                } else {
-                    Log.d("DroidOS_Keys", "    Modifier Mismatch.")
-                }
-            }
-        }
-
-        // AUTO-RESET LATCH: If we were latched, any key press (valid command or not) consumes the latch.
-        if (isCustomModLatched) {
-            isCustomModLatched = false
-            safeToast(if (commandTriggered) "Command Executed" else "Command Cancelled")
-            return true
-        }
-
-        if (commandTriggered) return true
-
-        return super.onKeyEvent(event)
+        return inputHandler.onKeyEvent(event)
     }
 
     // Shared logic for both Hardware Keys (onKeyEvent) and Virtual Remote Keys (Broadcast)
@@ -1553,7 +1483,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 return
             }
 
-            val num = keyEventToNumber(keyCode)
+            val num = inputHandler.keyEventToNumber(keyCode)
             if (num != -1) {
                 handleCommandInput(num)
                 return
@@ -1571,7 +1501,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             if (bind.second != 0 && bind.second == keyCode) {
                 // Check modifiers
-                if (checkModifiers(metaState, bind.first)) {
+                if (inputHandler.checkModifiers(metaState, bind.first, isCustomModLatched)) {
                     Log.d("DroidOS_Keys", "    MATCH! Triggering via Remote...")
                     triggerCommand(cmd)
                     commandTriggered = true
@@ -1588,40 +1518,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         }
 
         if (commandTriggered) return
-    }
-
-    private fun checkModifiers(currentMeta: Int, requiredMeta: Int): Boolean {
-        if (requiredMeta == 0) return true
-        
-        // Custom Modifier Logic
-        if (requiredMeta == MOD_CUSTOM) {
-            // Log.d(TAG, "Checking CSTM: latched=$isCustomModLatched")
-            return isCustomModLatched
-        }
-        
-        // Standard Android Meta Flags
-        return (currentMeta and requiredMeta) != 0
-    }
-
-    private fun keyEventToNumber(code: Int): Int {
-        return when (code) {
-            in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> code - KeyEvent.KEYCODE_0
-            in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> code - KeyEvent.KEYCODE_NUMPAD_0
-            // [FIX] QWERTY top-row fallback: When the overlay keyboard hasn't switched to the
-            // number layer yet (SET_NUM_LAYER broadcast race), it sends letter keycodes.
-            // Map QWERTY top row to their number equivalents so command input still works.
-            KeyEvent.KEYCODE_Q -> 1
-            KeyEvent.KEYCODE_W -> 2
-            KeyEvent.KEYCODE_E -> 3
-            KeyEvent.KEYCODE_R -> 4
-            KeyEvent.KEYCODE_T -> 5
-            KeyEvent.KEYCODE_Y -> 6
-            KeyEvent.KEYCODE_U -> 7
-            KeyEvent.KEYCODE_I -> 8
-            KeyEvent.KEYCODE_O -> 9
-            KeyEvent.KEYCODE_P -> 0
-            else -> -1
-        }
     }
 
     private fun triggerCommand(cmd: CommandDef) {
