@@ -496,6 +496,13 @@ private var isSoftKeyboardSupport = false
             recentlyRemovedPackages.entries.removeIf { now - it.value > REMOVED_PACKAGE_COOLDOWN_MS }
             return recentlyRemovedPackages.keys.toSet()
         }
+        override fun getLaunchIntentForPackage(pkg: String): Intent? = packageManager.getLaunchIntentForPackage(pkg)
+        override fun startActivityWithOptions(intent: Intent, displayId: Int, bounds: Rect?) {
+            val options = android.app.ActivityOptions.makeBasic()
+            options.setLaunchDisplayId(displayId)
+            if (bounds != null) options.setLaunchBounds(bounds)
+            startActivity(intent, options.toBundle())
+        }
     }
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
@@ -4724,50 +4731,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
 
 
-    // === LAUNCH VIA API - START ===
-    // Launches app using Android API with launch bounds
+    // === LAUNCH VIA API ===
+    // Delegated to WindowTilingManager
     private fun launchViaApi(pkg: String, className: String?, bounds: Rect?) {
-        try {
-            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-
-            debugShowAppIdentification("LAUNCH_API", basePkg, className)
-
-            val intent: Intent?
-
-            if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                intent = Intent()
-                intent.setClassName(basePkg, className)
-                intent.action = Intent.ACTION_MAIN
-                intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                Log.d(TAG, "launchViaApi: explicit component $basePkg/$className")
-            } else {
-                intent = packageManager.getLaunchIntentForPackage(basePkg)
-                Log.d(TAG, "launchViaApi: default intent for $basePkg")
-            }
-
-            if (intent == null) {
-                Log.w(TAG, "launchViaApi: No intent for $basePkg, trying shell")
-                launchViaShell(basePkg, className, bounds)
-                return
-            }
-
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-
-            val options = android.app.ActivityOptions.makeBasic()
-            options.setLaunchDisplayId(currentDisplayId)
-
-            if (bounds != null) {
-                options.setLaunchBounds(bounds)
-                Log.d(TAG, "launchViaApi: bounds=$bounds")
-            }
-
-            startActivity(intent, options.toBundle())
-            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "launchViaApi FAILED, trying shell", e)
-            launchViaShell(pkg, className, bounds)
-        }
+        tilingManager.launchViaApi(pkg, className, bounds)
     }
     // === LAUNCH VIA API - END ===
 

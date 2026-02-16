@@ -86,6 +86,8 @@ class WindowTilingManager(
         fun setLastExplicitTiledLaunchAt(value: Long)
         fun markPackageRemoved(pkg: String)
         fun cleanupRemovedPackages(): Set<String>
+        fun getLaunchIntentForPackage(pkg: String): android.content.Intent?
+        fun startActivityWithOptions(intent: android.content.Intent, displayId: Int, bounds: android.graphics.Rect?)
     }
     
     private var callback: TilingCallback? = null
@@ -219,6 +221,39 @@ class WindowTilingManager(
         return rects
     }
     
+    // === LAUNCH VIA API ===
+    fun launchViaApi(pkg: String, className: String?, bounds: Rect?) {
+        val cb = callback ?: return
+        try {
+            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+            cb.debugShowAppIdentification("LAUNCH_API", basePkg, className)
+
+            val intent: Intent? = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                Intent().apply {
+                    setClassName(basePkg, className)
+                    action = Intent.ACTION_MAIN
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+            } else {
+                cb.getLaunchIntentForPackage(basePkg)
+            }
+
+            if (intent == null) {
+                Log.w(TAG, "launchViaApi: No intent for $basePkg, trying shell")
+                launchViaShell(basePkg, className, bounds)
+                return
+            }
+
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            cb.startActivityWithOptions(intent, currentDisplayId, bounds)
+            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "launchViaApi FAILED, trying shell", e)
+            launchViaShell(pkg, className, bounds)
+        }
+    }
+
     // === LAUNCH VIA SHELL ===
     fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
         try {
