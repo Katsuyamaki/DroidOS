@@ -510,16 +510,32 @@ class KeyboardOverlay(
 
 
 
-    fun resetPosition() {
+    // =================================================================================
+    // FUNCTION: resetPosition
+    // SUMMARY: Resets keyboard position and size to defaults.
+    // @param preserveScale - If true, keeps current scale instead of resetting to 0.69f.
+    //                        Used when loading defaults on display switch to avoid
+    //                        overwriting user's saved scale preference.
+    // =================================================================================
+    fun resetPosition(preserveScale: Boolean = false) {
         if (keyboardParams == null) return
         
-        // 1. Set Scale to 0.69f (Standard Reset Scale)
+        // 1. Scale Handling
+        // If preserveScale is true, keep current scale (don't overwrite user preference)
+        // Otherwise reset to default 0.69f
         val defaultScale = 0.69f
-        internalScale = defaultScale
-        keyboardView?.setScale(defaultScale)
+        val targetScale = if (preserveScale && internalScale > 0f) {
+            internalScale  // Keep existing scale
+        } else {
+            defaultScale
+        }
+        internalScale = targetScale
+        keyboardView?.setScale(targetScale)
         
-        // Save preference
-        saveKeyboardScale()
+        // Only save scale to prefs if we're actually changing it
+        if (!preserveScale) {
+            saveKeyboardScale()
+        }
 
         // 2. Reset Rotation state
         currentRotation = 0

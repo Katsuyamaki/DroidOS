@@ -3035,8 +3035,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
 
         // [FIX] GHOSTING PREVENTION
+        // [FIX] Pass preserveScale=true to avoid overwriting user's saved scale when
+        // no profile exists for this display. The scale is loaded independently via
+        // display-specific keys (keyboard_key_scale_d${displayId}_L/P).
         if (!keyboardUpdated) {
-            keyboardOverlay?.resetPosition()
+            keyboardOverlay?.resetPosition(preserveScale = true)
             showToast("Defaults Loaded")
         } else {
             showToast("Profile Loaded: ${if(prefs.prefVirtualMirrorMode) "Mirror" else "Std"}")
