@@ -104,7 +104,39 @@ class FloatingLauncherService : AccessibilityService() {
     // =================================================================================
     private val TAG = "FloatingLauncherService"
 
-    // Companion object constants moved to LauncherConstants.kt
+    companion object {
+        // === MODE CONSTANTS - START ===
+        // Defines the different drawer modes/tabs
+        const val MODE_SEARCH = 0      // App picker tab
+        const val MODE_LAYOUTS = 2     // Layout selection (skips 1)
+        const val MODE_RESOLUTION = 3  // Resolution settings
+        const val MODE_DPI = 4         // DPI settings
+        const val MODE_BLACKLIST = 5   // Blacklist management tab
+        const val MODE_PROFILES = 6    // Profiles tab
+        const val MODE_KEYBINDS = 7    // Keybinds tab
+        const val MODE_SETTINGS = 8    // Settings tab
+        const val MODE_REFRESH = 9     // [NEW] Refresh Rate Tab
+        // === MODE CONSTANTS - END ===
+        
+        const val LAYOUT_FULL = 1
+        const val LAYOUT_SIDE_BY_SIDE = 2
+        const val LAYOUT_TOP_BOTTOM = 5
+        const val LAYOUT_TRI_EVEN = 3
+        const val LAYOUT_CORNERS = 4
+        const val LAYOUT_TRI_SIDE_MAIN_SIDE = 6
+        const val LAYOUT_QUAD_ROW_EVEN = 7
+        const val LAYOUT_QUAD_TALL_SHORT = 8
+        const val LAYOUT_HEX_TALL_SHORT = 9
+        const val LAYOUT_CUSTOM_DYNAMIC = 99
+
+        const val CHANNEL_ID = "OverlayServiceChannel"
+        const val TAG = "FloatingService"
+        const val DEBUG_TAG = "DROIDOS_DEBUG"
+        const val ACTION_OPEN_DRAWER = "com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER"
+        const val ACTION_UPDATE_ICON = "com.katsuyamaki.DroidOSLauncher.UPDATE_ICON"
+        const val ACTION_CYCLE_DISPLAY = "com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY"
+        const val HIGHLIGHT_COLOR = 0xFF00A0E9.toInt()
+    }
 
     private lateinit var windowManager: WindowManager
     // Track the specific WM used to add the bubble to ensure we can remove it later
@@ -122,6 +154,10 @@ class FloatingLauncherService : AccessibilityService() {
     private var secondLastValidPackageName: String? = null
 
     // === KEYBIND SYSTEM ===
+    private var visualQueueView: View? = null
+    private var visualQueueParams: WindowManager.LayoutParams? = null
+    private var visualQueueWindowManager: WindowManager? = null  // Track WM used to add view
+    private var isVisualQueueVisible = false
 
     // Command State Machine
     private var pendingCommandId: String? = null
@@ -142,7 +178,8 @@ private var isSoftKeyboardSupport = false
     private var isCustomModLatched = false
     // No timer runnable needed - latch stays active until consumed by next key press
 
-    // UI Option Wrapper - see LauncherModels.kt
+    // UI Option Wrapper
+    data class CustomModConfigOption(val currentKeyCode: Int)
     private var pendingArg1: Int = -1
     private val commandTimeoutRunnable = Runnable { abortCommandMode() }
     private val COMMAND_TIMEOUT_MS = 5000L
@@ -151,10 +188,136 @@ private var isSoftKeyboardSupport = false
     private var keyPickerView: View? = null
     private var keyPickerParams: WindowManager.LayoutParams? = null
 
-    // Data Classes - see LauncherModels.kt
-    // SUPPORTED_KEYS - see LauncherConstants.kt
+    // Data Classes for Configuration
+    data class CommandDef(val id: String, val label: String, val argCount: Int, val description: String)
+    data class KeybindOption(val def: CommandDef, var modifier: Int, var keyCode: Int)
 
-    // AVAILABLE_COMMANDS - see LauncherConstants.kt
+    val SUPPORTED_KEYS = linkedMapOf(
+        "A" to KeyEvent.KEYCODE_A, "B" to KeyEvent.KEYCODE_B, "C" to KeyEvent.KEYCODE_C,
+        "D" to KeyEvent.KEYCODE_D, "E" to KeyEvent.KEYCODE_E, "F" to KeyEvent.KEYCODE_F,
+        "G" to KeyEvent.KEYCODE_G, "H" to KeyEvent.KEYCODE_H, "I" to KeyEvent.KEYCODE_I,
+        "J" to KeyEvent.KEYCODE_J, "K" to KeyEvent.KEYCODE_K, "L" to KeyEvent.KEYCODE_L,
+        "M" to KeyEvent.KEYCODE_M, "N" to KeyEvent.KEYCODE_N, "O" to KeyEvent.KEYCODE_O,
+        "P" to KeyEvent.KEYCODE_P, "Q" to KeyEvent.KEYCODE_Q, "R" to KeyEvent.KEYCODE_R,
+        "S" to KeyEvent.KEYCODE_S, "T" to KeyEvent.KEYCODE_T, "U" to KeyEvent.KEYCODE_U,
+        "V" to KeyEvent.KEYCODE_V, "W" to KeyEvent.KEYCODE_W, "X" to KeyEvent.KEYCODE_X,
+        "Y" to KeyEvent.KEYCODE_Y, "Z" to KeyEvent.KEYCODE_Z,
+        "0" to KeyEvent.KEYCODE_0, "1" to KeyEvent.KEYCODE_1, "2" to KeyEvent.KEYCODE_2,
+        "3" to KeyEvent.KEYCODE_3, "4" to KeyEvent.KEYCODE_4, "5" to KeyEvent.KEYCODE_5,
+        "6" to KeyEvent.KEYCODE_6, "7" to KeyEvent.KEYCODE_7, "8" to KeyEvent.KEYCODE_8, "9" to KeyEvent.KEYCODE_9,
+        "Left" to KeyEvent.KEYCODE_DPAD_LEFT, "Right" to KeyEvent.KEYCODE_DPAD_RIGHT,
+        "Up" to KeyEvent.KEYCODE_DPAD_UP, "Down" to KeyEvent.KEYCODE_DPAD_DOWN,
+        "Space" to KeyEvent.KEYCODE_SPACE, "Enter" to KeyEvent.KEYCODE_ENTER,
+        "Tab" to KeyEvent.KEYCODE_TAB, "Esc" to KeyEvent.KEYCODE_ESCAPE,
+        "Backspace" to KeyEvent.KEYCODE_DEL, "Delete" to KeyEvent.KEYCODE_FORWARD_DEL,
+        "Home" to KeyEvent.KEYCODE_MOVE_HOME, "End" to KeyEvent.KEYCODE_MOVE_END,
+        "PageUp" to KeyEvent.KEYCODE_PAGE_UP, "PageDn" to KeyEvent.KEYCODE_PAGE_DOWN,
+        "F1" to KeyEvent.KEYCODE_F1, "F2" to KeyEvent.KEYCODE_F2, "F3" to KeyEvent.KEYCODE_F3,
+        "F4" to KeyEvent.KEYCODE_F4, "F5" to KeyEvent.KEYCODE_F5, "F6" to KeyEvent.KEYCODE_F6,
+        "F7" to KeyEvent.KEYCODE_F7, "F8" to KeyEvent.KEYCODE_F8, "F9" to KeyEvent.KEYCODE_F9,
+        "F10" to KeyEvent.KEYCODE_F10, "F11" to KeyEvent.KEYCODE_F11, "F12" to KeyEvent.KEYCODE_F12
+    )
+
+    // ===================================================================================
+    // BROADCAST COMMAND CHECKLIST - Adding a New Command
+    // ===================================================================================
+    // When creating a new broadcast command, update the following locations:
+    //
+    // 1. AVAILABLE_COMMANDS (below)
+    //    - Add CommandDef("CMD_ID", "Label", argCount, "Description")
+    //    - argCount: 0 = no args, 1 = single INDEX, 2 = INDEX_A + INDEX_B
+    //
+    // 2. AppPreferences.kt - getDefaultKeybind()
+    //    - Add default keybind: "CMD_ID" -> Pair(modifier, keyCode)
+    //    - Modifiers: 0=None, 2=Alt (matches META_ALT_ON), 1=Shift, etc.
+    //    - NOTE: Modifier values must match Android KeyEvent.META_* flags for HW keyboard
+    //
+    // 3. handleWindowManagerCommand() - Command Handler
+    //    - Add "CMD_ID" -> { ... } case in the when block
+    //    - For drawer-opening commands (like OPEN_MOVE_TO), call triggerCommand()
+    //
+    // 4. buildAdbCommand() - ADB Command String
+    //    - Add "CMD_ID" -> "adb shell am broadcast ..." for Settings display
+    //
+    // HARDWARE KEYBOARD FLOW:
+    //    - onKeyEvent() loops through AVAILABLE_COMMANDS and checks keybinds
+    //    - When matched, it calls triggerCommand(cmd)
+    //    - For argCount=0: executes immediately OR handles special cases
+    //    - For argCount>=1: enters visual queue input mode
+    //
+    // 5. FOR INTERACTIVE COMMANDS (like OPEN_MOVE_TO, OPEN_SWAP):
+    //    These require additional state management and UI handling:
+    //
+    //    a) State Variables (near line 378):
+    //       - Add isYourModeActive: Boolean = false
+    //       - Reuse openMoveToApp and showSlotNumbersInQueue if similar flow
+    //
+    //    b) triggerCommand() - Mode Initialization (CRITICAL FOR HW KEYBOARD):
+    //       - Add special case INSIDE the "if (cmd.argCount == 0)" block
+    //       - MUST include ALL of these steps:
+    //         1. Set your mode flag = true (reset other mode flags)
+    //         2. Reset openMoveToApp = null
+    //         3. Reset showSlotNumbersInQueue = false
+    //         4. Open drawer: if (!isExpanded) toggleDrawer()
+    //         5. Switch mode: switchMode(MODE_SEARCH)
+    //         6. Set focus: currentFocusArea = FOCUS_SEARCH
+    //         7. Setup search bar: et?.setText(""); et?.requestFocus()
+    //         8. Show prompt: debugStatusView?.text = "Your Mode: Select an app"
+    //         9. RETURN to prevent falling through to immediate execution
+    //
+    //    c) executeYourCommand() Function:
+    //       - Create function to execute the command after user selection
+    //       - Reset mode state, release keyboard capture, perform action
+    //
+    //    d) cancelOpenMoveToMode() - Mode Cancellation:
+    //       - Add your mode flag reset
+    //
+    //    e) handleRemoteKeyEvent() - FOCUS_QUEUE Section:
+    //       - DPAD_UP/DOWN: Add navigation block check for your mode
+    //       - ENTER: Add confirmation handler for your mode
+    //       - ESCAPE: Add cancellation handler for your mode
+    //       - SPACE: Add confirmation handler for your mode
+    //       - Number keys (else block): Add slot selection for your mode
+    //       - Update debugStatusView visibility checks
+    //
+    //    f) searchBar setOnKeyListener:
+    //       - DPAD_UP/DOWN in FOCUS_QUEUE: Add navigation block
+    //       - ESCAPE: Add cancellation handler
+    //       - Number keys section: Add slot selection
+    //       - Update debugStatusView visibility checks
+    //
+    //    g) drawerView setOnKeyListener - FOCUS_QUEUE Section:
+    //       - DPAD_UP/DOWN: Add navigation block
+    //       - ENTER/SPACE: Add confirmation handler
+    //       - Update debugStatusView visibility checks
+    //       - Queue navigation text: Add mode check
+    //
+    //    h) toggleDrawer():
+    //       - Add mode check to skip state reset when opening for your command
+    //       - Add mode check to skip showQueueDebugState()
+    //
+    //    i) addToSelection() - App Selection Intercept:
+    //       - Add your mode to the intercept condition
+    //
+    // REFERENCE: See OPEN_MOVE_TO and OPEN_SWAP implementations for examples
+    // ===================================================================================
+    val AVAILABLE_COMMANDS = listOf(
+        CommandDef("OPEN_DRAWER", "Toggle Drawer", 0, "Show/Hide Launcher"),
+        CommandDef("SET_FOCUS", "Set Focus", 1, "Focus app in slot #"),
+        CommandDef("FOCUS_LAST", "Focus Last", 0, "Switch to previous app"),
+        CommandDef("KILL", "Kill App", 1, "Force stop app in slot"),
+        CommandDef("SWAP_ACTIVE_LEFT", "Move Active Left", 0, "Move focused window to prev slot"),
+        CommandDef("SWAP_ACTIVE_RIGHT", "Move Active Right", 0, "Move focused window to next slot"),
+        CommandDef("MINIMIZE", "Minimize", 1, "Minimize slot (shift others)"),
+        CommandDef("UNMINIMIZE", "Restore", 1, "Restore app in slot"),
+        CommandDef("HIDE", "Hide (Blank)", 1, "Replace slot with blank space"),
+        CommandDef("SWAP", "Swap Slots", 2, "Swap app in Slot A with Slot B"),
+        CommandDef("MOVE_TO", "Move To", 2, "Move app to slot # (shifts others)"),
+        CommandDef("OPEN_MOVE_TO", "Open & Move To", 0, "Open app and place in slot #"),
+        CommandDef("OPEN_SWAP", "Open & Swap", 0, "Open app and swap with slot #"),
+        CommandDef("MINIMIZE_ALL", "Minimize All", 0, "Minimize all tiled apps"),
+        CommandDef("RESTORE_ALL", "Restore All", 0, "Restore minimized apps to slots")
+    )
 
     // Debounce for display switch to prevent flickering
     private var lastManualSwitchTime = 0L
@@ -247,7 +410,7 @@ private var isSoftKeyboardSupport = false
                     // CASE A: Phone Opened (Display 0 turned ON) -> Move to Main
                     if (display.state == Display.STATE_ON && currentDisplayId != 0) {
                         // [FIX] Dismiss visual queue before display change to prevent stuck state
-                        if (isVQVisible) { hideVisualQueue(); pendingCommandId = null }
+                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable { 
                             try { performDisplayChange(0) } catch(e: Exception) {} 
                         }
@@ -256,7 +419,7 @@ private var isSoftKeyboardSupport = false
                     // CASE B: Phone Closed (Display 0 turned OFF/DOZE) -> Move to Cover (1)
                     else if (display.state != Display.STATE_ON && currentDisplayId == 0) {
                         // [FIX] Dismiss visual queue before display change to prevent stuck state
-                        if (isVQVisible) { hideVisualQueue(); pendingCommandId = null }
+                        if (isVisualQueueVisible) { hideVisualQueue(); pendingCommandId = null }
                         switchRunnable = Runnable {
                             try { 
                                 val d0 = displayManager?.getDisplay(0)
@@ -428,17 +591,6 @@ private var isSoftKeyboardSupport = false
     
     private var shellService: IShellService? = null
     private var isBound = false
-    private lateinit var tilingManager: WindowTilingManager
-    private var visualQueueManager: VisualQueueManager? = null
-    private lateinit var inputHandler: LauncherInputHandler
-    private lateinit var drawerManager: DrawerManager
-    private lateinit var profileManager: ProfileManager
-    private lateinit var commandProcessor: LauncherCommandProcessor
-    
-    // Check visibility from manager
-    private val isVQVisible: Boolean
-        get() = visualQueueManager?.isVisualQueueVisible ?: false
-    
     lateinit var uiHandler: Handler // Declare uiHandler here
     override fun onCreate() {
         super.onCreate()
@@ -454,261 +606,6 @@ private var isSoftKeyboardSupport = false
         }
 
         uiHandler = Handler(Looper.getMainLooper())
-        
-        // Initialize WindowTilingManager
-        displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        tilingManager = WindowTilingManager(this, displayManager!!, uiHandler)
-        tilingManager.setCallback(tilingCallback)
-        inputHandler = LauncherInputHandler(this, inputCallback)
-        drawerManager = DrawerManager(this, uiHandler)
-        drawerManager.setCallback(drawerCallback)
-        profileManager = ProfileManager(this)
-        profileManager.setCallback(profileCallback)
-        commandProcessor = LauncherCommandProcessor()
-        commandProcessor.setCallback(commandProcessorCallback)
-    }
-    
-    // DrawerCallback implementation for DrawerManager
-    private val drawerCallback = object : DrawerManager.Callback {
-        override fun getWindowManager() = windowManager
-        override fun getDisplayContext() = displayContext
-        override fun getAttachedWindowManager() = attachedWindowManager
-        override fun isExpanded() = this@FloatingLauncherService.isExpanded
-        override fun setExpanded(value: Boolean) { this@FloatingLauncherService.isExpanded = value }
-        override fun getSelectedAppsQueue() = selectedAppsQueue
-        override fun getAllAppsList() = allAppsList
-        override fun getDisplayList() = displayList
-        override fun getActivePackageName() = activePackageName
-        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
-        override fun getLastValidPackageName() = lastValidPackageName
-        override fun setLastValidPackageName(pkg: String?) { lastValidPackageName = pkg }
-        override fun getPackageBlank() = PACKAGE_BLANK
-        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
-        override fun isOpenMoveToMode() = this@FloatingLauncherService.isOpenMoveToMode
-        override fun setOpenMoveToMode(value: Boolean) { this@FloatingLauncherService.isOpenMoveToMode = value }
-        override fun isOpenSwapMode() = this@FloatingLauncherService.isOpenSwapMode
-        override fun setOpenSwapMode(value: Boolean) { this@FloatingLauncherService.isOpenSwapMode = value }
-        override fun getOpenMoveToApp() = openMoveToApp
-        override fun setOpenMoveToApp(app: MainActivity.AppInfo?) { openMoveToApp = app }
-        override fun isShowSlotNumbersInQueue() = showSlotNumbersInQueue
-        override fun setShowSlotNumbersInQueue(value: Boolean) { showSlotNumbersInQueue = value }
-        override fun isProfileNameEditMode() = isProfileNameEditMode
-        override fun isLayoutNameEditMode() = isLayoutNameEditMode
-        override fun getQueueCommandPending() = queueCommandPending
-        override fun setQueueCommandPending(cmd: CommandDef?) { queueCommandPending = cmd }
-        override fun getQueueCommandSourceIndex() = queueCommandSourceIndex
-        override fun setQueueCommandSourceIndex(index: Int) { queueCommandSourceIndex = index }
-        override fun getPendingCommandId() = pendingCommandId
-        override fun getVqCursorIndex() = vqCursorIndex
-        override fun setVqCursorIndex(index: Int) { vqCursorIndex = index }
-        override fun getCustomModKey() = customModKey
-        override fun isCustomModLatched() = isCustomModLatched
-        override fun setCustomModLatched(value: Boolean) { isCustomModLatched = value }
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onSendBroadcast(intent: Intent) = sendBroadcast(intent)
-        override fun onAddToSelection(app: MainActivity.AppInfo) = addToSelection(app)
-        override fun onSelectLayout(layout: LayoutOption) = selectLayout(layout)
-        override fun onDismissKeyboardAndRestore() = dismissKeyboardAndRestore()
-        override fun onApplyRefreshRate(rate: Float) = applyRefreshRate(rate)
-        override fun onLoadProfile(name: String) = loadProfile(name)
-        override fun onExecuteOpenMoveTo(slotNum: Int) = executeOpenMoveTo(slotNum)
-        override fun onExecuteOpenSwap(slotNum: Int) = executeOpenSwap(slotNum)
-        override fun onCancelOpenMoveToMode() = cancelOpenMoveToMode()
-        override fun onQueueWindowManagerCommand(intent: Intent) = queueWindowManagerCommand(intent)
-        override fun onAbortCommandMode() = abortCommandMode()
-        override fun onShowVisualQueue(prompt: String, highlightIndex: Int) = showVisualQueue(prompt, highlightIndex)
-        override fun onHandleCommandInput(num: Int) = handleCommandInput(num)
-        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
-        override fun onUpdateAllUIs() = updateAllUIs()
-        override fun onRunShellCommand(command: String) { Thread { try { shellService?.runCommand(command) } catch(e: Exception){} }.start() }
-        override fun keyEventToNumber(keyCode: Int) = inputHandler.keyEventToNumber(keyCode)
-        override fun checkModifiers(meta: Int, required: Int, latched: Boolean) = inputHandler.checkModifiers(meta, required, latched)
-        override fun getAvailableCommands() = AVAILABLE_COMMANDS
-        override fun getKeybind(cmdId: String) = AppPreferences.getKeybind(this@FloatingLauncherService, cmdId)
-        override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
-        override fun getLastQueueNavTime() = lastQueueNavTime
-        override fun setLastQueueNavTime(time: Long) { lastQueueNavTime = time }
-        override fun getCurrentFocusArea() = currentFocusArea
-        override fun setCurrentFocusArea(area: Int) { currentFocusArea = area }
-        override fun getQueueSelectedIndex() = queueSelectedIndex
-        override fun setQueueSelectedIndex(index: Int) { queueSelectedIndex = index }
-        override fun getSelectedListIndex() = selectedListIndex
-        override fun setSelectedListIndex(index: Int) { selectedListIndex = index }
-    }
-
-    // ProfileCallback implementation for ProfileManager
-    private val profileCallback = object : ProfileManager.Callback {
-        override fun getSelectedAppsQueue() = selectedAppsQueue
-        override fun getAllAppsList() = allAppsList
-        override fun getDrawerView() = drawerView
-        override fun getSelectedLayoutType() = selectedLayoutType
-        override fun setSelectedLayoutType(type: Int) { selectedLayoutType = type }
-        override fun getSelectedResolutionIndex() = selectedResolutionIndex
-        override fun setSelectedResolutionIndex(index: Int) { selectedResolutionIndex = index }
-        override fun getCurrentDpiSetting() = currentDpiSetting
-        override fun setCurrentDpiSetting(dpi: Int) { currentDpiSetting = dpi }
-        override fun getTopMarginPercent() = topMarginPercent
-        override fun setTopMarginPercent(value: Int) { topMarginPercent = value }
-        override fun getBottomMarginPercent() = bottomMarginPercent
-        override fun setBottomMarginPercent(value: Int) { bottomMarginPercent = value }
-        override fun getAutoAdjustMarginForIME() = autoAdjustMarginForIME
-        override fun setAutoAdjustMarginForIME(value: Boolean) { autoAdjustMarginForIME = value }
-        override fun getCurrentOrientationMode() = currentOrientationMode
-        override fun setCurrentOrientationMode(mode: Int) { currentOrientationMode = mode }
-        override fun getCurrentDisplayId() = currentDisplayId
-        override fun getActiveCustomLayoutName() = activeCustomLayoutName
-        override fun setActiveCustomLayoutName(name: String?) { activeCustomLayoutName = name }
-        override fun getActiveProfileName() = activeProfileName
-        override fun setActiveProfileName(name: String?) { activeProfileName = name }
-        override fun getCurrentProfileSaveMode() = currentProfileSaveMode
-        override fun getPackageBlank() = PACKAGE_BLANK
-        override fun isInstantMode() = isInstantMode
-        override fun getShellService() = shellService
-        override fun getLayoutCustomDynamic() = LAYOUT_CUSTOM_DYNAMIC
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onOrientSuffix() = orientSuffix()
-        override fun onApplyOrientation() = applyOrientation()
-        override fun onApplyLayoutImmediate() = applyLayoutImmediate()
-        override fun onUpdateSelectedAppsDock() = updateSelectedAppsDock()
-        override fun onSwitchMode(mode: Int) = switchMode(mode)
-        override fun onSwitchToProfilesMode() = switchMode(MODE_PROFILES)
-        override fun onGetLayoutRects() = getLayoutRects()
-    }
-
-    // CommandProcessorCallback implementation for LauncherCommandProcessor
-    private val commandProcessorCallback = object : LauncherCommandProcessor.Callback {
-        override fun getSelectedAppsQueue() = selectedAppsQueue
-        override fun getAllAppsList() = allAppsList
-        override fun getActivePackageName() = activePackageName
-        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
-        override fun getLastValidPackageName() = lastValidPackageName
-        override fun setLastValidPackageName(pkg: String?) { lastValidPackageName = pkg }
-        override fun getSecondLastValidPackageName() = secondLastValidPackageName
-        override fun setSecondLastValidPackageName(pkg: String?) { secondLastValidPackageName = pkg }
-        override fun getCurrentDisplayId() = currentDisplayId
-        override fun getShellService() = shellService
-        override fun getPackageName() = this@FloatingLauncherService.packageName
-        override fun getPackageBlank() = PACKAGE_BLANK
-        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
-        override fun isBound() = isBound
-        override fun isExpanded() = this@FloatingLauncherService.isExpanded
-        override fun getReorderSelectionIndex() = reorderSelectionIndex
-        override fun setReorderSelectionIndex(index: Int) { reorderSelectionIndex = index }
-        override fun getManualStateOverrides() = manualStateOverrides
-        override fun getMinimizedAtTimestamps() = minimizedAtTimestamps
-        override fun getRecentlyRemovedPackages() = recentlyRemovedPackages
-        override fun isTiledAppsAutoMinimized() = tiledAppsAutoMinimized
-        override fun setTiledAppsAutoMinimized(value: Boolean) { tiledAppsAutoMinimized = value }
-        override fun getLastExplicitTiledLaunchAt() = lastExplicitTiledLaunchAt
-        override fun setLastExplicitTiledLaunchAt(value: Long) { lastExplicitTiledLaunchAt = value }
-        override fun getAvailableCommands() = AVAILABLE_COMMANDS
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onTryBindShizukuIfPermitted() = tryBindShizukuIfPermitted()
-        override fun onQueueWindowManagerCommand(intent: Intent, cmd: String) = queueWindowManagerCommand(intent, cmd)
-        override fun onRefreshDisplayId() = refreshDisplayId()
-        override fun onEnsureQueueLoadedForCommands() = ensureQueueLoadedForCommands()
-        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
-        override fun onGetLayoutRects() = getLayoutRects()
-        override fun onSetLayoutType(type: Int) { selectedLayoutType = type; AppPreferences.saveLastLayout(this@FloatingLauncherService, type, currentDisplayId); AppPreferences.saveLastLayout(this@FloatingLauncherService, type, currentDisplayId, orientSuffix()) }
-        override fun onGetLayoutName(type: Int) = getLayoutName(type)
-        override fun onRefreshQueueAndLayout(msg: String, focusPackage: String?, skipTiling: Boolean, forceRetile: Boolean, retileDelayMs: Long) = refreshQueueAndLayout(msg, focusPackage, skipTiling, forceRetile, retileDelayMs)
-        override fun onShowWallpaper() = showWallpaper()
-        override fun onToggleDrawer() = toggleDrawer()
-        override fun onUpdateAllUIs() = updateAllUIs()
-        override fun onRemoveFromFocusHistory(pkg: String) = removeFromFocusHistory(pkg)
-        override fun onFocusViaTask(pkg: String, bounds: Rect?) = focusViaTask(pkg, bounds)
-        override fun onLaunchViaShell(pkg: String, cls: String?, bounds: Rect?) = launchViaShell(pkg, cls, bounds)
-        override fun onSendCursorToAppCenter(bounds: Rect?) = sendCursorToAppCenter(bounds)
-    }
-
-    // InputCallback implementation for LauncherInputHandler
-    private val inputCallback = object : LauncherInputHandler.InputCallback {
-        override fun getCustomModKey() = customModKey
-        override fun isCustomModLatched() = isCustomModLatched
-        override fun setCustomModLatched(value: Boolean) { isCustomModLatched = value }
-        override fun getPendingCommandId() = pendingCommandId
-        override fun getVqCursorIndex() = vqCursorIndex
-        override fun setVqCursorIndex(value: Int) { vqCursorIndex = value }
-        override fun getSelectedAppsQueueSize() = selectedAppsQueue.size
-        override fun getAvailableCommands() = AVAILABLE_COMMANDS
-        override fun getKeybind(cmdId: String) = AppPreferences.getKeybind(this@FloatingLauncherService, cmdId)
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onAbortCommandMode() = abortCommandMode()
-        override fun onShowVisualQueue(prompt: String, highlightIndex: Int) = showVisualQueue(prompt, highlightIndex)
-        override fun onHandleCommandInput(num: Int) = handleCommandInput(num)
-        override fun onTriggerCommand(cmd: CommandDef) = triggerCommand(cmd)
-        override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
-        override fun onUnhandledKeyEvent(event: KeyEvent) = super@FloatingLauncherService.onKeyEvent(event)
-    }
-
-    // TilingCallback implementation for WindowTilingManager
-    private val tilingCallback = object : WindowTilingManager.TilingCallback {
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onUpdateAllUIs() = updateAllUIs()
-        override fun getSelectedAppsQueue() = selectedAppsQueue
-        override fun getAllAppsList() = allAppsList
-        override fun getTargetDimensions(resIndex: Int) = this@FloatingLauncherService.getTargetDimensions(resIndex)
-        override fun getResolutionCommand(resIndex: Int) = this@FloatingLauncherService.getResolutionCommand(resIndex)
-        override fun toggleDrawer() = this@FloatingLauncherService.toggleDrawer()
-        override fun refreshDisplayId() = this@FloatingLauncherService.refreshDisplayId()
-        override fun saveQueueToPrefs(identifiers: List<String>) = AppPreferences.saveLastQueue(this@FloatingLauncherService, identifiers)
-        override fun updateSelectedAppsDock() = this@FloatingLauncherService.updateSelectedAppsDock()
-        override fun debugShowAppIdentification(tag: String, pkg: String, cls: String?) = this@FloatingLauncherService.debugShowAppIdentification(tag, pkg, cls)
-        override fun removeFromFocusHistory(pkg: String) = this@FloatingLauncherService.removeFromFocusHistory(pkg)
-        override fun getActivePackageName() = activePackageName
-        override fun setActivePackageName(pkg: String?) { activePackageName = pkg }
-        override fun getPackageBlank() = PACKAGE_BLANK
-        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
-        override fun getPackageName() = this@FloatingLauncherService.packageName
-        override fun isBound() = this@FloatingLauncherService.isBound
-        override fun clearSearchBar() { drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("") }
-        override fun invalidateVisibleCache() { (shellService as? ShellUserService)?.invalidateVisibleCache() }
-        override fun getIsExecuting() = isExecuting
-        override fun setIsExecuting(value: Boolean) { isExecuting = value }
-        override fun getPendingExecutionNeeded() = pendingExecutionNeeded
-        override fun setPendingExecutionNeeded(value: Boolean) { pendingExecutionNeeded = value }
-        override fun getPendingFocusPackage() = pendingFocusPackage
-        override fun setPendingFocusPackage(value: String?) { pendingFocusPackage = value }
-        override fun getPendingLaunchRunnable() = pendingLaunchRunnable
-        override fun setPendingLaunchRunnable(value: Runnable?) { pendingLaunchRunnable = value }
-        override fun removePendingLaunchRunnable() { pendingLaunchRunnable?.let { uiHandler.removeCallbacks(it) }; pendingLaunchRunnable = null }
-        override fun getTiledAppsAutoMinimized() = tiledAppsAutoMinimized
-        override fun setTiledAppsAutoMinimized(value: Boolean) { tiledAppsAutoMinimized = value }
-        override fun getLastExplicitTiledLaunchAt() = lastExplicitTiledLaunchAt
-        override fun setLastExplicitTiledLaunchAt(value: Long) { lastExplicitTiledLaunchAt = value }
-        override fun markPackageRemoved(pkg: String) { recentlyRemovedPackages[pkg] = System.currentTimeMillis() }
-        override fun cleanupRemovedPackages(): Set<String> {
-            val now = System.currentTimeMillis()
-            recentlyRemovedPackages.entries.removeIf { now - it.value > REMOVED_PACKAGE_COOLDOWN_MS }
-            return recentlyRemovedPackages.keys.toSet()
-        }
-        override fun getLaunchIntentForPackage(pkg: String): Intent? = packageManager.getLaunchIntentForPackage(pkg)
-        override fun startActivityWithOptions(intent: Intent, displayId: Int, bounds: Rect?) {
-            val options = android.app.ActivityOptions.makeBasic()
-            options.setLaunchDisplayId(displayId)
-            if (bounds != null) options.setLaunchBounds(bounds)
-            startActivity(intent, options.toBundle())
-        }
-    }
-
-    // VisualQueueCallback implementation for VisualQueueManager
-    private val visualQueueCallback = object : VisualQueueManager.Callback {
-        override fun onToast(msg: String) = safeToast(msg)
-        override fun onSendBroadcast(intent: Intent) = sendBroadcast(intent)
-        override fun onFetchRunningApps() = fetchRunningApps()
-        override fun onSortAppQueue() = sortAppQueue()
-        override fun getSelectedAppsQueue() = selectedAppsQueue
-        override fun getActivePackageName() = activePackageName
-        override fun getCurrentDisplayId() = currentDisplayId
-        override fun getDisplayContext() = displayContext
-        override fun getShellService() = shellService
-        override fun getPackageBlank() = PACKAGE_BLANK
-        override fun getPackageTrackpad() = PACKAGE_TRACKPAD
-        override fun getTopMarginPercent() = topMarginPercent
-        override fun getEffectiveBottomMarginPercent() = effectiveBottomMarginPercent()
-        override fun getCurrentFontSize() = currentFontSize
-        override fun getPendingArg1() = pendingArg1
-        override fun getBaseWindowManager() = windowManager
     }
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
@@ -731,7 +628,7 @@ private var isSoftKeyboardSupport = false
                     wakeUp()
                 }
                 // [FIX] Dismiss visual queue on screen on if stuck from screen off
-                if (isVQVisible) {
+                if (isVisualQueueVisible) {
                     hideVisualQueue()
                     pendingCommandId = null
                 }
@@ -795,6 +692,7 @@ private var isSoftKeyboardSupport = false
                             if (newEffective != lastAppliedEffectiveMargin) {
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = System.currentTimeMillis() + 500
+                                setupVisualQueue()
                                 retileExistingWindows()
                             }
                             pendingImeRetileRunnable = null
@@ -819,6 +717,7 @@ private var isSoftKeyboardSupport = false
                             if (now >= imeRetileCooldownUntil) {
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = now + 500
+                                setupVisualQueue()
                                 retileExistingWindows()
                             }
                         }
@@ -849,6 +748,7 @@ private var isSoftKeyboardSupport = false
                 bottomMarginPercent = percent
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent, orientSuffix())
+                setupVisualQueue() // Recalc HUD pos
                 // [FIX] Always retile when margin changes while IME is visible
                 // This ensures slider changes in DockIME take effect immediately
                 if (autoAdjustMarginForIME && imeMarginOverrideActive) {
@@ -1011,7 +911,6 @@ private var isSoftKeyboardSupport = false
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
-            tilingManager.setShellService(shellService)
             isBound = true
             updateExecuteButtonColor(true)
             updateBubbleIcon()
@@ -1029,7 +928,7 @@ private var isSoftKeyboardSupport = false
                 uiHandler.postDelayed({ restartTrackpad() }, 1000) // Delay to ensure stability
             }
         }
-        override fun onServiceDisconnected(name: ComponentName?) { shellService = null; tilingManager.setShellService(null); isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
+        override fun onServiceDisconnected(name: ComponentName?) { shellService = null; isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
     }
 
 
@@ -1250,13 +1149,562 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        return inputHandler.onKeyEvent(event)
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+
+        val keyCode = event.keyCode
+        val metaState = event.metaState
+
+        // CHECK CUSTOM MODIFIER
+        if (customModKey != 0 && keyCode == customModKey) {
+            isCustomModLatched = true
+            // No timer - stays latched until next key press // 5 second latch
+            safeToast("Custom Mod Active...")
+            return true // Consume the key
+        }
+
+        // DEBUG: Log every key press
+        val keyName = KeyEvent.keyCodeToString(keyCode)
+        // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
+        // Using toString() directly on the integer for debug output.
+        val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
+        Log.d("DroidOS_Keys", "INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
+
+        // 1. INPUT MODE (Entering Numbers or Arrow Navigation)
+        if (pendingCommandId != null) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                abortCommandMode()
+                return true
+            }
+
+            // Arrow key navigation in visual queue (left/up = prev, right/down = next)
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                if (vqCursorIndex > 0) {
+                    vqCursorIndex--
+                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                }
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (vqCursorIndex < selectedAppsQueue.size - 1) {
+                    vqCursorIndex++
+                    showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex)
+                }
+                return true
+            }
+            // Space or Enter confirms the arrow-key selection
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                handleCommandInput(vqCursorIndex + 1) // +1 because handleCommandInput expects 1-based
+                return true
+            }
+
+            // Handle Numbers (Row 0-9 and Numpad 0-9)
+            val num = keyEventToNumber(keyCode)
+            if (num != -1) {
+                handleCommandInput(num)
+                return true
+            }
+
+            // If any other key is pressed while HUD is open, CANCEL IT.
+            abortCommandMode()
+            return true
+        }
+
+        // 2. TRIGGER MODE (Detecting Hotkeys)
+        // Check if this key matches any stored bind
+        var commandTriggered = false
+
+        for (cmd in AVAILABLE_COMMANDS) {
+            val bind = AppPreferences.getKeybind(this, cmd.id)
+
+            // Check if key code matches
+            if (bind.second != 0 && bind.second == keyCode) {
+                Log.d("DroidOS_Keys", " -> Key Match for '${cmd.label}'. Checking modifiers...")
+                Log.d("DroidOS_Keys", "    Required: ${bind.first} | Current: $metaState")
+
+                if (checkModifiers(metaState, bind.first)) {
+                    Log.d("DroidOS_Keys", "    MATCH! Triggering...")
+                    triggerCommand(cmd)
+                    commandTriggered = true
+                    break
+                } else {
+                    Log.d("DroidOS_Keys", "    Modifier Mismatch.")
+                }
+            }
+        }
+
+        // AUTO-RESET LATCH: If we were latched, any key press (valid command or not) consumes the latch.
+        if (isCustomModLatched) {
+            isCustomModLatched = false
+            safeToast(if (commandTriggered) "Command Executed" else "Command Cancelled")
+            return true
+        }
+
+        if (commandTriggered) return true
+
+        return super.onKeyEvent(event)
     }
 
     // Shared logic for both Hardware Keys (onKeyEvent) and Virtual Remote Keys (Broadcast)
     private fun handleRemoteKeyEvent(keyCode: Int, metaState: Int) {
-        // Delegate to DrawerManager
-        drawerManager.handleRemoteKeyEvent(keyCode, metaState)
+        val keyName = KeyEvent.keyCodeToString(keyCode)
+        Log.d("DroidOS_Keys", "RECEIVER: handleRemoteKeyEvent called with $keyCode (Meta: $metaState)")
+
+        // CHECK CUSTOM MODIFIER (Remote/Broadcast)
+        if (customModKey != 0) {
+            Log.d("DroidOS_Keys", "Checking Custom Mod: Recv($keyCode) vs Saved($customModKey)")
+
+            if (keyCode == customModKey) {
+                isCustomModLatched = true
+                // No timer - stays latched until next key press
+                safeToast("Custom Mod Active (Remote)")
+                Log.d("DroidOS_Keys", "Custom Mod LATCHED via Broadcast")
+                return
+            }
+        }
+
+        val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
+        Log.d("DroidOS_Keys", "REMOTE INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
+
+        // 0. DRAWER SEARCH NAVIGATION (via REMOTE_KEY - transition to queue/list)
+        if (isExpanded && currentFocusArea == FOCUS_SEARCH) {
+            val now = System.currentTimeMillis()
+            if (now - lastQueueNavTime < 80) return
+            lastQueueNavTime = now
+            
+            // [FIX] Skip Enter/DPAD handling when editing names - let EditText handle cursor/text
+            if ((isProfileNameEditMode || isLayoutNameEditMode) &&
+                (keyCode == KeyEvent.KEYCODE_ENTER ||
+                 keyCode == KeyEvent.KEYCODE_DEL ||
+                 keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                 keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                 keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                 keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
+                return
+            }
+            
+            // [FIX] ENTER: Activate first filtered result (works for all menu types)
+            if (keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (displayList.isNotEmpty()) {
+                    val item = displayList[0]
+                    when (item) {
+                        is MainActivity.AppInfo -> addToSelection(item)
+                        is LayoutOption -> selectLayout(item)
+                        is ActionOption -> { dismissKeyboardAndRestore(); item.action() }
+                        is ToggleOption -> { item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() }
+                        is RefreshItemOption -> if (item.isAvailable) { dismissKeyboardAndRestore(); applyRefreshRate(item.targetRate) }
+                        is ProfileOption -> loadProfile(item.name)
+                        is ResolutionOption -> { dismissKeyboardAndRestore(); Thread { try { shellService?.runCommand(item.command) } catch(e: Exception){} }.start(); safeToast("Applied: ${item.name}") }
+                    }
+                    return
+                }
+            }
+            
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
+                if (selectedAppsQueue.isNotEmpty()) {
+                    currentFocusArea = FOCUS_QUEUE
+                    queueSelectedIndex = 0
+                    // [FIX] Tell keyboard to capture all keys for queue navigation
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", true)
+                    sendBroadcast(captureIntent)
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        debugStatusView?.visibility = View.VISIBLE
+                        if (!isOpenMoveToMode && !isOpenSwapMode) {
+                            debugStatusView?.text = "Queue Navigation: Use Arrows / Hotkeys"
+                        }
+                    }
+                } else {
+                    currentFocusArea = FOCUS_LIST
+                    val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+                    uiHandler.post {
+                        if (displayList.isNotEmpty()) {
+                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler?.scrollToPosition(selectedListIndex)
+                        }
+                    }
+                }
+                return
+            }
+        }
+
+        // 0.1 DRAWER QUEUE NAVIGATION (via REMOTE_KEY for soft keyboard support on all displays)
+        if (isExpanded && currentFocusArea == FOCUS_QUEUE) {
+            // [FIX] Dedup to prevent double-processing from View listener + REMOTE_KEY
+            val now = System.currentTimeMillis()
+            if (now - lastQueueNavTime < 80) {
+                Log.d(TAG, "Queue nav dedup: skipping duplicate key $keyCode")
+                return
+            }
+            lastQueueNavTime = now
+            
+            val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    if (queueSelectedIndex > 0) {
+                        val old = queueSelectedIndex
+                        queueSelectedIndex--
+                        uiHandler.post {
+                            selectedRecycler?.adapter?.notifyItemChanged(old)
+                            selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
+                            selectedRecycler?.scrollToPosition(queueSelectedIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (queueSelectedIndex < selectedAppsQueue.size - 1) {
+                        val old = queueSelectedIndex
+                        queueSelectedIndex++
+                        uiHandler.post {
+                            selectedRecycler?.adapter?.notifyItemChanged(old)
+                            selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
+                            selectedRecycler?.scrollToPosition(queueSelectedIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    // Block navigation away from queue during OPEN_MOVE_TO/OPEN_SWAP slot selection
+                    if ((isOpenMoveToMode || isOpenSwapMode) && openMoveToApp != null) {
+                        return
+                    }
+                    
+                    currentFocusArea = FOCUS_SEARCH
+                    queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        if (!isOpenMoveToMode && !isOpenSwapMode) debugStatusView?.visibility = View.GONE
+                        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    // Block navigation away from queue during OPEN_MOVE_TO/OPEN_SWAP slot selection
+                    if ((isOpenMoveToMode || isOpenSwapMode) && openMoveToApp != null) {
+                        return
+                    }
+                    
+                    currentFocusArea = FOCUS_LIST
+                    queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        if (!isOpenMoveToMode && !isOpenSwapMode) debugStatusView?.visibility = View.GONE
+                        val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+                        if (displayList.isNotEmpty()) {
+                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler?.scrollToPosition(selectedListIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_ENTER -> {
+                    // OPEN_MOVE_TO/OPEN_SWAP: Enter confirms current selection
+                    if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenMoveTo(queueSelectedIndex + 1)
+                        return
+                    }
+                    if (isOpenSwapMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenSwap(queueSelectedIndex + 1)
+                        return
+                    }
+                    
+                    // [FIX] Complete pending 2-step command (like swap) if active
+                    if (queueCommandPending != null) {
+                        val intent = Intent()
+                            .putExtra("COMMAND", queueCommandPending!!.id)
+                            .putExtra("INDEX_A", queueCommandSourceIndex + 1)
+                            .putExtra("INDEX_B", queueSelectedIndex + 1)
+                        queueWindowManagerCommand(intent)
+                        queueCommandPending = null
+                        queueCommandSourceIndex = -1
+                        uiHandler.post {
+                            debugStatusView?.text = "Command Executed"
+                            selectedRecycler?.adapter?.notifyDataSetChanged()
+                        }
+                    } else {
+                        // [FIX] Determine command by queue position (active apps first, then minimized)
+                        // This matches how K shortcut works - doesn't rely on isMinimized flag
+                        if (queueSelectedIndex in selectedAppsQueue.indices) {
+                            val activeCount = selectedAppsQueue.count { !it.isMinimized }
+                            val cmd = if (queueSelectedIndex >= activeCount) "UNMINIMIZE" else "MINIMIZE"
+                            val intent = Intent().putExtra("COMMAND", cmd).putExtra("INDEX", queueSelectedIndex + 1)
+                            queueWindowManagerCommand(intent)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_ESCAPE -> {
+                    // OPEN_MOVE_TO/OPEN_SWAP: Cancel mode
+                    if (isOpenMoveToMode || isOpenSwapMode) {
+                        cancelOpenMoveToMode()
+                        safeToast("Open & Move To cancelled")
+                        // Release keyboard capture
+                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                        captureIntent.setPackage(PACKAGE_TRACKPAD)
+                        captureIntent.putExtra("CAPTURE", false)
+                        sendBroadcast(captureIntent)
+                        return
+                    }
+                    
+                    currentFocusArea = FOCUS_SEARCH
+                    queueSelectedIndex = -1
+                    // [FIX] Release keyboard capture when leaving queue
+                    val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                    captureIntent.setPackage(PACKAGE_TRACKPAD)
+                    captureIntent.putExtra("CAPTURE", false)
+                    sendBroadcast(captureIntent)
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyDataSetChanged()
+                        if (!isOpenMoveToMode && !isOpenSwapMode) debugStatusView?.visibility = View.GONE
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_SPACE -> {
+                    // OPEN_MOVE_TO/OPEN_SWAP: Space confirms current selection
+                    if (isOpenMoveToMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenMoveTo(queueSelectedIndex + 1)
+                        return
+                    }
+                    if (isOpenSwapMode && openMoveToApp != null && queueSelectedIndex >= 0) {
+                        executeOpenSwap(queueSelectedIndex + 1)
+                        return
+                    }
+                    
+                    // [FIX] SPACE: Toggle Internal Focus (Green Underline) - same as hardware keyboard
+                    if (queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
+                        val app = selectedAppsQueue[queueSelectedIndex]
+                        if (app.packageName != PACKAGE_BLANK) {
+                            val pkg = app.packageName
+                            val isGemini = pkg == "com.google.android.apps.bard"
+                            val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                            val isActive = (activePackageName == pkg) || (isGemini && activeIsGoogle)
+                            if (isActive) {
+                                activePackageName = null
+                            } else {
+                                if (activePackageName != null) lastValidPackageName = activePackageName
+                                activePackageName = pkg
+                            }
+                            uiHandler.post { updateAllUIs() }
+                        }
+                    }
+                    return
+                }
+                else -> {
+                    // OPEN_MOVE_TO/OPEN_SWAP: Handle number keys for slot selection
+                    if ((isOpenMoveToMode || isOpenSwapMode) && openMoveToApp != null) {
+                        val num = when (keyCode) {
+                            KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> 1
+                            KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_NUMPAD_2 -> 2
+                            KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_NUMPAD_3 -> 3
+                            KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_NUMPAD_4 -> 4
+                            KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_NUMPAD_5 -> 5
+                            KeyEvent.KEYCODE_6, KeyEvent.KEYCODE_NUMPAD_6 -> 6
+                            KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_NUMPAD_7 -> 7
+                            KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> 8
+                            KeyEvent.KEYCODE_9, KeyEvent.KEYCODE_NUMPAD_9 -> 9
+                            else -> -1
+                        }
+                        if (num in 1..(selectedAppsQueue.size + 1)) {
+                            if (isOpenMoveToMode) executeOpenMoveTo(num) else executeOpenSwap(num)
+                            return
+                        }
+                    }
+                    
+                    for (cmd in AVAILABLE_COMMANDS) {
+                        val bind = AppPreferences.getKeybind(this, cmd.id)
+                        if (bind.second == keyCode && keyCode != KeyEvent.KEYCODE_SPACE) {
+                            if (cmd.argCount == 2) {
+                                queueCommandPending = cmd
+                                queueCommandSourceIndex = queueSelectedIndex
+                                uiHandler.post {
+                                    debugStatusView?.text = "${cmd.label}: Select Target & Press Enter"
+                                    selectedRecycler?.adapter?.notifyDataSetChanged()
+                                }
+                            } else {
+                                val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", queueSelectedIndex + 1)
+                                queueWindowManagerCommand(intent)
+                            }
+                            return
+                        }
+                    }
+                }
+            }
+        }
+
+        // 0.5 DRAWER LIST NAVIGATION (via REMOTE_KEY for soft keyboard support on all displays)
+        if (isExpanded && currentFocusArea == FOCUS_LIST) {
+            val now = System.currentTimeMillis()
+            if (now - lastQueueNavTime < 80) return
+            lastQueueNavTime = now
+            val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    if (selectedListIndex > 0) {
+                        val old = selectedListIndex
+                        selectedListIndex--
+                        uiHandler.post {
+                            mainRecycler?.adapter?.notifyItemChanged(old)
+                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler?.scrollToPosition(selectedListIndex)
+                        }
+                    } else if (selectedAppsQueue.isNotEmpty()) {
+                        // Go to queue
+                        currentFocusArea = FOCUS_QUEUE
+                        queueSelectedIndex = 0
+                        // [FIX] Tell keyboard to capture all keys for queue navigation
+                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                        captureIntent.setPackage(PACKAGE_TRACKPAD)
+                        captureIntent.putExtra("CAPTURE", true)
+                        sendBroadcast(captureIntent)
+                        uiHandler.post {
+                            drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+                            debugStatusView?.visibility = View.VISIBLE
+                            if (!isOpenMoveToMode && !isOpenSwapMode) {
+                                debugStatusView?.text = "Queue Navigation"
+                            }
+                        }
+                    } else {
+                        currentFocusArea = FOCUS_SEARCH
+                        uiHandler.post {
+                            drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    if (selectedListIndex < displayList.size - 1) {
+                        val old = selectedListIndex
+                        selectedListIndex++
+                        uiHandler.post {
+                            mainRecycler?.adapter?.notifyItemChanged(old)
+                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
+                            mainRecycler?.scrollToPosition(selectedListIndex)
+                        }
+                    }
+                    return
+                }
+                KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_SPACE -> {
+                    uiHandler.post {
+                        val holder = mainRecycler?.findViewHolderForAdapterPosition(selectedListIndex)
+                        holder?.itemView?.performClick()
+                    }
+                    return
+                }
+            }
+        }
+
+        // 1. INPUT MODE (Entering Numbers or Arrow Navigation for Visual Queue)
+        if (pendingCommandId != null) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                abortCommandMode()
+                return
+            }
+
+            // Arrow key navigation in visual queue (left/up = prev, right/down = next)
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                if (vqCursorIndex > 0) {
+                    vqCursorIndex--
+                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                }
+                return
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (vqCursorIndex < selectedAppsQueue.size - 1) {
+                    vqCursorIndex++
+                    uiHandler.post { showVisualQueue(visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)?.text?.toString() ?: "", vqCursorIndex) }
+                }
+                return
+            }
+            // Space or Enter confirms the arrow-key selection
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                handleCommandInput(vqCursorIndex + 1)
+                return
+            }
+
+            val num = keyEventToNumber(keyCode)
+            if (num != -1) {
+                handleCommandInput(num)
+                return
+            }
+
+            abortCommandMode()
+            return
+        }
+
+        // 2. TRIGGER MODE (Detecting Hotkeys)
+        var commandTriggered = false
+
+        for (cmd in AVAILABLE_COMMANDS) {
+            val bind = AppPreferences.getKeybind(this, cmd.id)
+
+            if (bind.second != 0 && bind.second == keyCode) {
+                // Check modifiers
+                if (checkModifiers(metaState, bind.first)) {
+                    Log.d("DroidOS_Keys", "    MATCH! Triggering via Remote...")
+                    triggerCommand(cmd)
+                    commandTriggered = true
+                    break
+                }
+            }
+        }
+
+        // AUTO-RESET LATCH: If we were latched, any key press (valid command or not) consumes the latch.
+        if (isCustomModLatched) {
+            isCustomModLatched = false
+            safeToast(if (commandTriggered) "Command Executed" else "Command Cancelled")
+            return
+        }
+
+        if (commandTriggered) return
+    }
+
+    private fun checkModifiers(currentMeta: Int, requiredMeta: Int): Boolean {
+        if (requiredMeta == 0) return true
+        
+        // Custom Modifier Logic
+        if (requiredMeta == MOD_CUSTOM) {
+            // Log.d(TAG, "Checking CSTM: latched=$isCustomModLatched")
+            return isCustomModLatched
+        }
+        
+        // Standard Android Meta Flags
+        return (currentMeta and requiredMeta) != 0
+    }
+
+    private fun keyEventToNumber(code: Int): Int {
+        return when (code) {
+            in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> code - KeyEvent.KEYCODE_0
+            in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> code - KeyEvent.KEYCODE_NUMPAD_0
+            // [FIX] QWERTY top-row fallback: When the overlay keyboard hasn't switched to the
+            // number layer yet (SET_NUM_LAYER broadcast race), it sends letter keycodes.
+            // Map QWERTY top row to their number equivalents so command input still works.
+            KeyEvent.KEYCODE_Q -> 1
+            KeyEvent.KEYCODE_W -> 2
+            KeyEvent.KEYCODE_E -> 3
+            KeyEvent.KEYCODE_R -> 4
+            KeyEvent.KEYCODE_T -> 5
+            KeyEvent.KEYCODE_Y -> 6
+            KeyEvent.KEYCODE_U -> 7
+            KeyEvent.KEYCODE_I -> 8
+            KeyEvent.KEYCODE_O -> 9
+            KeyEvent.KEYCODE_P -> 0
+            else -> -1
+        }
     }
 
     private fun triggerCommand(cmd: CommandDef) {
@@ -2113,19 +2561,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // [REMOVED] Auto-force disabled to prevent getting stuck on 120Hz
         // checkAndForceHighRefreshRate(displayId)
-        
-        // Update WindowTilingManager config
-        tilingManager.updateConfig(
-            displayId = currentDisplayId,
-            topMargin = topMarginPercent,
-            bottomMargin = bottomMarginPercent,
-            effectiveBottomMargin = effectiveBottomMarginPercent(),
-            layoutType = selectedLayoutType,
-            resIndex = selectedResolutionIndex,
-            orientMode = currentOrientationMode,
-            dpi = currentDpiSetting,
-            customRects = activeCustomRects
-        )
     }
 
 
@@ -2204,8 +2639,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (isExpanded) windowManager.removeView(drawerView) 
         } catch (e: Exception) {}
         
-        // [FIX] Clean up visual queue on destroy
-        visualQueueManager?.cleanup()
+        // [FIX] Clean up visual queue on destroy to prevent orphaned views
+        if (visualQueueView != null) {
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            visualQueueView = null
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
 
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
     setKeepScreenOn(false)
@@ -2549,7 +2990,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val context = displayContext ?: this
         val themeContext = ContextThemeWrapper(context, R.style.Theme_QuadrantLauncher)
         drawerView = LayoutInflater.from(themeContext).inflate(R.layout.layout_rofi_drawer, null)
-        drawerManager.setDrawerView(drawerView)
         drawerView!!.fitsSystemWindows = true 
         // [FIX] Disable system focus highlight (prevents screen turning grey when drawer is focused)
         if (Build.VERSION.SDK_INT >= 26) drawerView!!.defaultFocusHighlightEnabled = false
@@ -2568,16 +3008,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         drawerParams.gravity = Gravity.TOP or Gravity.START; drawerParams.x = 0; drawerParams.y = 0
         drawerParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
         
-        // Lazy init VisualQueueManager
-        try {
-            if (visualQueueManager == null) {
-                visualQueueManager = VisualQueueManager(this, uiHandler)
-                visualQueueManager?.setCallback(visualQueueCallback)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to init VisualQueueManager", e)
-        }
-
         // FIXED: Ensure container is defined and logical
         val container = drawerView?.findViewById<LinearLayout>(R.id.drawer_container)
         if (container != null) {
@@ -2594,7 +3024,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             debugStatusView?.visibility = View.GONE
             
             container.addView(debugStatusView, 0)
-            drawerManager.setDebugStatusView(debugStatusView)
         }
 
         val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val mainRecycler = drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view); val selectedRecycler = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
@@ -3164,17 +3593,206 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // === VISUAL QUEUE (HUD) ===
 
-    private fun showVisualQueue(prompt: String, highlightSlot0Based: Int = -1) {
-        visualQueueManager?.let { mgr ->
-            mgr.showVisualQueue(prompt, highlightSlot0Based) { slotNum -> handleCommandInput(slotNum) }
-            uiHandler.removeCallbacks(commandTimeoutRunnable)
-            uiHandler.postDelayed(commandTimeoutRunnable, 30000L)
+    private fun setupVisualQueue() {
+        // [FIX] Remove existing visual queue view BEFORE creating new one to prevent orphaned views
+        if (isVisualQueueVisible && visualQueueView != null) {
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
         }
+        val themeContext = ContextThemeWrapper(displayContext ?: this, R.style.Theme_QuadrantLauncher)
+        visualQueueView = LayoutInflater.from(themeContext).inflate(R.layout.layout_visual_queue, null)
+
+        // CRITICAL: Ensure we use the WindowManager for the CURRENT display context
+        val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
+
+        // Use Type 2032 (Accessibility) or Phone, consistent with other views
+        val targetType = if (Build.VERSION.SDK_INT >= 26) 2032 else WindowManager.LayoutParams.TYPE_PHONE
+
+        visualQueueParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            targetType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+        
+        // MARGIN ADJUSTMENT: Center in the effective safe area
+        val display = (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay 
+                      ?: windowManager.defaultDisplay
+        val h = display.height
+        
+        val topPx = (h * topMarginPercent / 100f).toInt()
+        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
+        
+        // Standard CENTER is at h/2.
+
+
+        // Effective Center is at (topPx + (h - topPx - bottomPx)/2) = topPx + h/2 - topPx/2 - bottomPx/2
+        // = h/2 + (topPx - bottomPx)/2
+        // Offset from standard center = (topPx - bottomPx) / 2
+        
+        val yShift = (topPx - bottomPx) / 2
+        
+        visualQueueParams?.gravity = Gravity.CENTER
+        visualQueueParams?.y = yShift 
+
+        val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+        recycler?.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+
+        // DUMMY INPUT to keep Gboard alive
+        val dummyInput = visualQueueView?.findViewById<EditText>(R.id.vq_dummy_input)
+        dummyInput?.showSoftInputOnFocus = true
+    }
+
+    private fun showVisualQueue(prompt: String, highlightSlot0Based: Int = -1) {
+        // FAST PATH: If already visible, just update adapter & prompt without removing/re-adding the window.
+        // This prevents the blink caused by the remove+add cycle during arrow key navigation.
+        if (isVisualQueueVisible && visualQueueView != null) {
+            val promptView = visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)
+            promptView?.text = prompt
+            val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+            recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
+            // Background thread to sync visible packages (same as full path)
+            Thread {
+                val visible = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
+                uiHandler.post {
+                    (recycler?.adapter as? VisualQueueAdapter)?.updateVisibility(visible)
+                }
+            }.start()
+            return
+        }
+
+        // DEFENSIVE CLEANUP: Force-remove orphaned views that are flagged invisible but still attached
+        if (visualQueueView != null) {
+            Log.w(TAG, "Visual Queue cleanup: removing stale view before showing new one")
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
+            try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
+        
+        if (visualQueueView == null) setupVisualQueue()
+
+        // [FIX] Use same queue sync logic as drawer (fetchRunningApps) instead of separate detection.
+        // This ensures visual queue and drawer queue always show the same data.
+        if (shellService != null) {
+            fetchRunningApps()  // Syncs queue with actual visible apps, adds new visible apps, etc.
+        } else {
+            sortAppQueue()  // Fallback: just sort existing queue
+        }
+
+        // Background thread to update adapter with visibility info
+        Thread {
+            val visible = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
+            uiHandler.post {
+                val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+                recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
+                (recycler?.adapter as? VisualQueueAdapter)?.updateVisibility(visible)
+            }
+        }.start()
+
+        val promptView = visualQueueView?.findViewById<TextView>(R.id.visual_queue_prompt)
+        promptView?.text = prompt
+
+        // Set placeholder adapter immediately (will be replaced by thread above)
+        val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+        recycler?.adapter = VisualQueueAdapter(highlightSlot0Based)
+
+        // Force focus to keep keyboard up
+        val dummy = visualQueueView?.findViewById<EditText>(R.id.vq_dummy_input)
+        dummy?.requestFocus()
+
+        if (!isVisualQueueVisible) {
+            try {
+                // Use display-specific WM and store reference for reliable removal
+                val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
+                visualQueueWindowManager = targetWM
+                targetWM.addView(visualQueueView, visualQueueParams)
+                isVisualQueueVisible = true
+                Log.d(TAG, "Visual Queue Added to Display $currentDisplayId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to add Visual Queue", e)
+                e.printStackTrace()
+            }
+        } else {
+            // Just update adapter if already visible
+            recycler?.adapter?.notifyDataSetChanged()
+        }
+
+        // [FIX] Safety timeout to prevent visual queue from getting stuck forever
+        uiHandler.removeCallbacks(commandTimeoutRunnable)
+        uiHandler.postDelayed(commandTimeoutRunnable, 30000L) // 30 second safety net
+
+        // Tell Trackpad to redirect input to us
+        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        captureIntent.setPackage(PACKAGE_TRACKPAD)
+        captureIntent.putExtra("CAPTURE", true)
+        sendBroadcast(captureIntent)
+
+        // NEW: Auto-switch keyboard to Number Layer
+        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        layerIntent.setPackage(PACKAGE_TRACKPAD)
+        layerIntent.putExtra("ACTIVE", true)
+        sendBroadcast(layerIntent)
     }
 
     private fun hideVisualQueue() {
-        visualQueueManager?.hideVisualQueue()
+        if (isVisualQueueVisible && visualQueueView != null) {
+            var removed = false
+            // Try stored WM first (most reliable)
+            visualQueueWindowManager?.let { wm ->
+                try {
+                    wm.removeView(visualQueueView)
+                    removed = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to remove VQ from stored WM: ${e.message}")
+                }
+            }
+            // Fallback: try displayContext WM
+            if (!removed) {
+                try {
+                    val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                    targetWM?.removeView(visualQueueView)
+                    removed = true
+                } catch (e: Exception) {}
+            }
+            // Last resort: try base windowManager
+            if (!removed) {
+                try {
+                    windowManager.removeView(visualQueueView)
+                    removed = true
+                } catch (e: Exception) {}
+            }
+            if (removed) {
+                isVisualQueueVisible = false
+                visualQueueWindowManager = null
+            } else {
+                Log.e(TAG, "CRITICAL: Failed to remove Visual Queue from ALL WindowManagers!")
+                // Force cleanup to prevent stuck state
+                visualQueueView = null
+                isVisualQueueVisible = false
+                visualQueueWindowManager = null
+            }
+        }
         uiHandler.removeCallbacks(commandTimeoutRunnable)
+
+        // Release Trackpad input
+        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        captureIntent.setPackage(PACKAGE_TRACKPAD)
+        captureIntent.putExtra("CAPTURE", false)
+        sendBroadcast(captureIntent)
+
+        // NEW: Restore previous keyboard layer
+        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        layerIntent.setPackage(PACKAGE_TRACKPAD)
+        layerIntent.putExtra("ACTIVE", false)
+        sendBroadcast(layerIntent)
     }
 
     private fun abortCommandMode() {
@@ -3393,10 +4011,97 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
     private fun forceAppToDisplay(pkg: String, targetDisplayId: Int) {
-        // Delegate to WindowTilingManager
-        tilingManager.forceAppToDisplay(pkg, targetDisplayId)
-    }
+        // [LOCK] Prevent duplicate threads
+        if (activeEnforcements.contains(pkg)) {
+            Log.d("DROIDOS_WATCHDOG", "SKIP: Enforcement already active for $pkg")
+            return
+        }
+        activeEnforcements.add(pkg)
 
+        Thread {
+            try {
+                // 1. Get Task ID & Class Name
+                var tid = shellService?.getTaskId(pkg, null) ?: -1
+                if (tid == -1) {
+                    Thread.sleep(200) 
+                    tid = shellService?.getTaskId(pkg, null) ?: -1
+                }
+
+                if (tid != -1) {
+                    Log.w("DROIDOS_WATCHDOG", "Targeting Task $tid for $pkg. Starting Locked Loop...")
+
+                    // 2. Lookup Cache / AppInfo
+                    var bounds: Rect? = packageRectCache[pkg]
+                    var className: String? = null
+                    
+                    // Fallback to queue + get Class Name
+                    val appEntry = selectedAppsQueue.find { it.packageName == pkg || it.getBasePackage() == pkg }
+                    if (appEntry != null) {
+                         className = appEntry.className
+                         if (bounds == null) {
+                             val appIndex = selectedAppsQueue.indexOf(appEntry)
+                             val rects = getLayoutRects()
+                             if (appIndex >= 0 && appIndex < rects.size) bounds = rects[appIndex]
+                         }
+                    }
+
+                    // 3. AGGRESSIVE Loop (10 attempts)
+                    for (i in 1..10) {
+                        // A. Try Task Move (Standard)
+                        shellService?.runCommand("am task move-task-to-display $tid $targetDisplayId")
+                        shellService?.runCommand("am task set-windowing-mode $tid 5")
+                        
+                        // B. Escalation Levels
+                        // Level 1 (Attempts 3-6): Force Relaunch with NEW_TASK flag
+                        if (i > 3 && i <= 6 && className != null) {
+                             val cmd = "am start -n $pkg/$className --display $targetDisplayId --windowingMode 5 -f 0x10000000 --user 0"
+                             Log.w("DROIDOS_WATCHDOG", "Escalating L1 (Relaunch): $cmd")
+                             shellService?.runCommand(cmd)
+                        }
+                        
+                        // Level 2 (Attempts 7+): NUCLEAR OPTION (Kill & Restart)
+                        // If it refuses to move after 6 tries, the process is likely stuck with bad display affinity.
+                        if (i > 6 && className != null) {
+                             Log.e("DROIDOS_WATCHDOG", "Escalating L2 (Nuclear): Killing $pkg to break display affinity")
+                             shellService?.forceStop(pkg)
+                             Thread.sleep(300) // Wait for death
+                             
+                             val cmd = "am start -n $pkg/$className --display $targetDisplayId --windowingMode 5 -f 0x10000000 --user 0"
+                             shellService?.runCommand(cmd)
+                        }
+                        
+                        // Apply Bounds
+                        if (bounds != null) {
+                            shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId @ $bounds")
+                        } else {
+                            shellService?.runCommand("am task resize $tid 0 0 1000 1000")
+                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId (Default)")
+                        }
+
+                        // Check success
+                        // We check BOTH display ID and visibility
+                        val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)?.contains(pkg) == true
+                        if (visibleOnTarget) {
+                            Log.w("DROIDOS_WATCHDOG", "SUCCESS: App moved on attempt $i")
+                            // One final resize to ensure it stuck
+                            if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                            break
+                        }
+                        
+                        Thread.sleep(300) // Slightly slower retry to let system process
+                    }
+                } else {
+                    Log.e("DROIDOS_WATCHDOG", "Could not find Task ID for $pkg")
+                }
+            } catch (e: Exception) {
+                Log.e("DROIDOS_WATCHDOG", "Force move failed", e)
+            } finally {
+                // [UNLOCK] Release lock
+                activeEnforcements.remove(pkg)
+            }
+        }.start()
+    }
 
     // === KEY PICKER (POPUP) ===
     private fun showKeyPicker(cmdId: String, currentMod: Int) {
@@ -3473,6 +4178,102 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // Add ON TOP of everything
             windowManager.addView(keyPickerView, keyPickerParams)
         } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // ADAPTER for the HUD
+    inner class VisualQueueAdapter(private val highlightIndex: Int) : RecyclerView.Adapter<VisualQueueAdapter.Holder>() {
+        
+        private var visiblePackages: List<String> = emptyList()
+        
+        fun updateVisibility(visible: List<String>) {
+            visiblePackages = visible
+            notifyDataSetChanged()
+        }
+        inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
+            val icon: ImageView = v.findViewById(R.id.vq_app_icon)
+            val badge: TextView = v.findViewById(R.id.vq_slot_number)
+            val highlight: View = v.findViewById(R.id.vq_highlight)
+            val underline: View = v.findViewById(R.id.focus_underline)
+        }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            return Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_visual_queue_app, parent, false))
+        }
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val app = selectedAppsQueue[position]
+            val slotNum = position + 1 // 1-Based Display
+
+            // Show Focus Underline if matches activePackageName
+            // Handle Gemini/Google alias logic
+            val isFocused = (app.packageName == activePackageName) ||
+                            (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
+
+            holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE
+            holder.badge.text = slotNum.toString()
+            holder.badge.setScaledTextSize(currentFontSize, 0.625f) // Corresponds to 10sp for slot number
+
+            if (app.packageName == PACKAGE_BLANK) {
+                holder.icon.setImageResource(R.drawable.ic_box_outline)
+                holder.icon.alpha = 0.5f
+            } else {
+                try {
+                    val basePkg = if (app.packageName.contains(":")) app.packageName.substringBefore(":") else app.packageName
+                    holder.icon.setImageDrawable(packageManager.getApplicationIcon(basePkg))
+                } catch (e: Exception) {
+                    holder.icon.setImageResource(R.drawable.ic_launcher_bubble)
+                }
+                
+                // VISIBILITY LOGIC:
+                // 1. Is it explicitly minimized by user? -> Inactive
+                // 2. Is it visible on THIS screen? -> Active
+                // 3. Otherwise -> Inactive (e.g. open on other screen)
+                
+                val isVisibleOnScreen = visiblePackages.contains(app.getBasePackage()) || 
+                                      (app.getBasePackage() == "com.google.android.apps.bard" && visiblePackages.contains("com.google.android.googlequicksearchbox"))
+
+                // If visible packages list is empty (loading), fall back to stored state
+                val isActuallyActive = if (visiblePackages.isNotEmpty()) {
+                    isVisibleOnScreen
+                } else {
+                    !app.isMinimized
+                }
+                
+                holder.icon.alpha = if (isActuallyActive) 1.0f else 0.4f
+            }
+
+            // Highlight logic - matches drawer queue style
+            // 1. Current selection = solid white border
+            // 2. Command source (pendingArg1) = dashed green border
+            val isCurrentSelection = (position == highlightIndex)
+            val isCommandSource = (pendingArg1 >= 0 && position == pendingArg1)
+            
+            if (isCurrentSelection) {
+                // Solid white border for current selection
+                holder.highlight.visibility = View.VISIBLE
+                val bg = GradientDrawable()
+                bg.setStroke(4, Color.WHITE)
+                bg.cornerRadius = 8f
+                bg.setColor(Color.parseColor("#44FFFFFF")) // Semi-transparent fill
+                holder.highlight.background = bg
+            } else if (isCommandSource) {
+                // Dashed green border for source
+                holder.highlight.visibility = View.VISIBLE
+                val bg = GradientDrawable()
+                bg.setStroke(4, Color.GREEN, 10f, 5f) // Dashed
+                bg.cornerRadius = 8f
+                bg.setColor(Color.TRANSPARENT)
+                holder.highlight.background = bg
+            } else {
+                holder.highlight.visibility = View.GONE
+            }
+
+            // [FIX] Tap-to-select: Directly handle touch input in Launcher process.
+            // This bypasses the overlay keyboard entirely, avoiding the cross-process
+            // SET_INPUT_CAPTURE broadcast race that causes key leakage.
+            holder.itemView.setOnClickListener {
+                handleCommandInput(slotNum) // slotNum is 1-based
+            }
+        }
+        override fun getItemCount() = selectedAppsQueue.size
     }
 
     /**
@@ -3919,9 +4720,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 updateSelectedAppsDock()
                 drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
                 
-                // 2. Update Visual Queue HUD (if visible)
-                if (isVQVisible) {
-                    showVisualQueue(visualQueueManager?.getPromptText() ?: "", vqCursorIndex)
+                // 2. Update Visual Queue HUD (if exists)
+                if (visualQueueView != null) {
+                    val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+                    recycler?.adapter?.notifyDataSetChanged()
                 }
             }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     private fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
@@ -4105,10 +4907,50 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun toggleFavorite(app: MainActivity.AppInfo) { val newState = AppPreferences.toggleFavorite(this, app.packageName); app.isFavorite = newState; allAppsList.find { it.packageName == app.packageName }?.isFavorite = newState }
 
 
-    // === LAUNCH VIA API ===
-    // Delegated to WindowTilingManager
+    // === LAUNCH VIA API - START ===
+    // Launches app using Android API with launch bounds
     private fun launchViaApi(pkg: String, className: String?, bounds: Rect?) {
-        tilingManager.launchViaApi(pkg, className, bounds)
+        try {
+            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+
+            debugShowAppIdentification("LAUNCH_API", basePkg, className)
+
+            val intent: Intent?
+
+            if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                intent = Intent()
+                intent.setClassName(basePkg, className)
+                intent.action = Intent.ACTION_MAIN
+                intent.addCategory(Intent.CATEGORY_LAUNCHER)
+                Log.d(TAG, "launchViaApi: explicit component $basePkg/$className")
+            } else {
+                intent = packageManager.getLaunchIntentForPackage(basePkg)
+                Log.d(TAG, "launchViaApi: default intent for $basePkg")
+            }
+
+            if (intent == null) {
+                Log.w(TAG, "launchViaApi: No intent for $basePkg, trying shell")
+                launchViaShell(basePkg, className, bounds)
+                return
+            }
+
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+            val options = android.app.ActivityOptions.makeBasic()
+            options.setLaunchDisplayId(currentDisplayId)
+
+            if (bounds != null) {
+                options.setLaunchBounds(bounds)
+                Log.d(TAG, "launchViaApi: bounds=$bounds")
+            }
+
+            startActivity(intent, options.toBundle())
+            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "launchViaApi FAILED, trying shell", e)
+            launchViaShell(pkg, className, bounds)
+        }
     }
     // === LAUNCH VIA API - END ===
 
@@ -4116,8 +4958,38 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // === LAUNCH VIA SHELL - START ===
     // Launches app via shell with freeform windowing mode
     private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
-        // Delegate to WindowTilingManager
-        tilingManager.launchViaShell(pkg, className, bounds)
+        try {
+            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+
+            debugShowAppIdentification("LAUNCH_SHELL", basePkg, className)
+
+            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                "$basePkg/$className"
+            } else {
+                null
+            }
+
+            // Build launch command with freeform mode (--windowingMode 5)
+            val cmd = if (component != null) {
+                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+            } else {
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+            }
+
+            Log.d(TAG, "launchViaShell: $cmd")
+
+            Thread {
+                try {
+                    shellService?.runCommand(cmd)
+                    Log.d(TAG, "launchViaShell: SUCCESS")
+                } catch (e: Exception) {
+                    Log.e(TAG, "launchViaShell: FAILED", e)
+                }
+            }.start()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "launchViaShell FAILED: $pkg", e)
+        }
     }
     // === LAUNCH VIA SHELL - END ===
 
@@ -4126,8 +4998,21 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Unlike launchViaShell (am start -n component), this does NOT re-launch the activity,
     // so in-app navigation state is preserved (WhatsApp stays in chat, Google keeps search).
     private fun focusViaTask(pkg: String, bounds: Rect?) {
-        // Delegate to WindowTilingManager
-        tilingManager.focusViaTask(pkg, bounds)
+        Thread {
+            try {
+                val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+                val tid = shellService?.getTaskId(basePkg, null) ?: -1
+                if (tid != -1) {
+                    shellService?.moveTaskToFront(tid)
+                    Log.d(TAG, "focusViaTask: SUCCESS tid=$tid pkg=$basePkg")
+                } else {
+                    Log.w(TAG, "focusViaTask: task not found for $basePkg, falling back to launchViaShell")
+                    launchViaShell(basePkg, null, bounds)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "focusViaTask FAILED: $pkg", e)
+            }
+        }.start()
     }
     // === FOCUS VIA TASK - END ===
 
@@ -4251,7 +5136,15 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         } catch (e: Exception) { Log.e(TAG, "Cleanup failed", e) }
 
         // Clear cached auxiliary views using CURRENT (Old) WM before switching context
-        visualQueueManager?.cleanup()
+        if (visualQueueView != null) {
+            // Try stored WM first, then fallback
+            try { visualQueueWindowManager?.removeView(visualQueueView) } catch(e: Exception){
+                try { windowManager.removeView(visualQueueView) } catch(e2: Exception){}
+            }
+            visualQueueView = null
+            isVisualQueueVisible = false
+            visualQueueWindowManager = null
+        }
         if (keyPickerView != null) {
             try { windowManager.removeView(keyPickerView) } catch(e: Exception){}
             keyPickerView = null
@@ -4318,7 +5211,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         vibrate()
         isScreenOffState = true
         // [FIX] Dismiss visual queue on screen off to prevent it getting stuck
-        if (isVQVisible) {
+        if (isVisualQueueVisible) {
             hideVisualQueue()
             pendingCommandId = null
         }
@@ -4358,10 +5251,30 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun applyLayoutImmediate(focusPackage: String? = null) { executeLaunch(selectedLayoutType, closeDrawer = false, focusPackage = focusPackage) }
 
     private fun retileExistingWindows() {
-        // Delegate to WindowTilingManager
-        tilingManager.retileExistingWindows()
+        if (!isBound || shellService == null) return
+        Thread {
+            try {
+                val rects = getLayoutRects()
+                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                val packages = mutableListOf<String>()
+                val boundsList = mutableListOf<Int>()
+                for (i in 0 until minOf(activeApps.size, rects.size)) {
+                    val app = activeApps[i]
+                    if (app.packageName == PACKAGE_BLANK) continue
+                    val basePkg = app.getBasePackage()
+                    val bounds = rects[i]
+                    packageRectCache[basePkg] = bounds
+                    packages.add(basePkg)
+                    boundsList.addAll(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
+                }
+                if (packages.isNotEmpty()) {
+                    shellService?.batchResize(packages, boundsList.toIntArray())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "retileExistingWindows failed", e)
+            }
+        }.start()
     }
-
 
     private fun ensureQueueLoadedForCommands() {
         if (selectedAppsQueue.isNotEmpty()) return
@@ -4803,18 +5716,623 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     private fun pickIcon() { toggleDrawer(); try { refreshDisplayId(); val intent = Intent(this, IconPickerActivity::class.java); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); val metrics = windowManager.maximumWindowMetrics; val w = 1000; val h = (metrics.bounds.height() * 0.7).toInt(); val x = (metrics.bounds.width() - w) / 2; val y = (metrics.bounds.height() - h) / 2; val options = android.app.ActivityOptions.makeBasic(); options.setLaunchDisplayId(currentDisplayId); options.setLaunchBounds(Rect(x, y, x+w, y+h)); startActivity(intent, options.toBundle()) } catch (e: Exception) { safeToast("Error launching picker: ${e.message}") } }
     private fun saveProfile() { 
-        profileManager.saveProfile()
+        var name = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString()?.trim()
+        if (name.isNullOrEmpty()) { 
+            val timestamp = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            val modePrefix = when (currentProfileSaveMode) {
+                1 -> "Layout_"
+                2 -> "Queue_"
+                else -> "Profile_"
+            }
+            name = "$modePrefix$timestamp" 
+        }
+        
+        when (currentProfileSaveMode) {
+            0 -> {
+                // Layout + Apps: Save everything including margins + orientation
+                val pkgs = selectedAppsQueue.map { it.packageName }
+                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, pkgs, 0, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
+            }
+            1 -> {
+                // Layout Only: Save settings including margins + orientation, no apps
+                AppPreferences.saveProfile(this, name, selectedLayoutType, selectedResolutionIndex, currentDpiSetting, emptyList(), 1, topMarginPercent, bottomMarginPercent, autoAdjustMarginForIME, currentOrientationMode)
+            }
+            2 -> {
+                // App Queue Only: Save apps, use -1 for layout settings to indicate "don't change"
+                val pkgs = selectedAppsQueue.map { it.packageName }
+                AppPreferences.saveProfile(this, name, -1, -1, -1, pkgs, 2, -1, -1, false, 0)
+            }
+        }
+        
+        val modeLabel = when (currentProfileSaveMode) {
+            1 -> "Layout"
+            2 -> "Queue"
+            else -> "Profile"
+        }
+        safeToast("Saved $modeLabel: $name")
+        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
+        switchMode(MODE_PROFILES) 
     }
     private fun loadProfile(name: String) { 
-        profileManager.loadProfile(name)
-    }
-
-    // === EXECUTE LAUNCH - START ===
-    // Delegated to WindowTilingManager
-    private fun executeLaunch(layoutType: Int, closeDrawer: Boolean, focusPackage: String? = null) {
-        tilingManager.executeLaunch(layoutType, closeDrawer, focusPackage)
+        val data = AppPreferences.getProfileData(this, name) ?: return
+        try { 
+            val parts = data.split("|")
+            val profileType = parts[0].toInt()
+            val layoutType = parts[1].toInt()
+            val resIndex = parts[2].toInt()
+            val dpiSetting = parts[3].toInt()
+            
+            // Parse margin settings if available (new format has 8+ parts)
+            val topMar = if (parts.size >= 8) parts[4].toInt() else 0
+            val botMar = if (parts.size >= 8) parts[5].toInt() else 0
+            val autoMar = if (parts.size >= 8) parts[6] == "1" else false
+            val pkgList = if (parts.size >= 8) {
+                parts[7].split(",").filter { it.isNotEmpty() }
+            } else if (parts.size > 4) {
+                parts[4].split(",").filter { it.isNotEmpty() }
+            } else emptyList()
+            // Parse orientation mode (index 8 in newest format: 9+ parts)
+            val orientMode = if (parts.size >= 9) parts[8].toIntOrNull() ?: 0 else 0
+            
+            when (profileType) {
+                0 -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
+                1 -> loadProfileLayoutOnly(name, layoutType, resIndex, dpiSetting, topMar, botMar, autoMar, orientMode)
+                2 -> loadProfileQueueOnly(name, pkgList)
+                else -> loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, topMar, botMar, autoMar, orientMode)
+            }
+        } catch (e: Exception) { 
+            // Fallback for old profile format (no type prefix)
+            try {
+                val parts = data.split("|")
+                val layoutType = parts[0].toInt()
+                val resIndex = parts[1].toInt()
+                val dpiSetting = parts[2].toInt()
+                val pkgList = parts[3].split(",").filter { it.isNotEmpty() }
+                loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, 0, 0, false)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Failed to load profile", e2) 
+            }
+        } 
     }
     
+    // Profile Type 0: Layout + Apps - Opens apps from profile, minimizes others
+    private fun loadProfileLayoutAndApps(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, pkgList: List<String>, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
+        // Apply layout settings
+        selectedLayoutType = layoutType
+        selectedResolutionIndex = resIndex
+        currentDpiSetting = dpiSetting
+        
+        // Apply orientation from profile
+        currentOrientationMode = orientMode
+        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
+        applyOrientation()
+        
+        // Apply margin settings
+        topMarginPercent = topMar
+        bottomMarginPercent = botMar
+        autoAdjustMarginForIME = autoMar
+        val os = orientSuffix()
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
+        
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
+        if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
+            activeCustomLayoutName = null
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
+        }
+        AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
+        AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
+        
+        // Get current queue packages for comparison
+        val currentPkgs = selectedAppsQueue.map { it.packageName }.toSet()
+        val profilePkgs = pkgList.toSet()
+        
+        // Minimize apps not in profile (don't kill - preserve user work)
+        val appsToMinimize = selectedAppsQueue.filter { 
+            !it.isMinimized && it.packageName != PACKAGE_BLANK && it.packageName !in profilePkgs 
+        }
+        for (app in appsToMinimize) {
+            app.isMinimized = true
+        }
+        if (appsToMinimize.isNotEmpty()) {
+            Thread {
+                for (app in appsToMinimize) {
+                    try {
+                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
+                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                    } catch (e: Exception) {}
+                }
+            }.start()
+        }
+        
+        // Build new queue from profile
+        val newQueue = mutableListOf<MainActivity.AppInfo>()
+        for (pkg in pkgList) {
+            if (pkg == PACKAGE_BLANK) {
+                newQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
+            } else {
+                // Check if app is already in queue
+                val existingApp = selectedAppsQueue.find { it.packageName == pkg }
+                if (existingApp != null) {
+                    existingApp.isMinimized = false
+                    newQueue.add(existingApp)
+                } else {
+                    // App not in queue - find in app list and add
+                    val app = allAppsList.find { it.packageName == pkg }
+                    if (app != null) {
+                        app.isMinimized = false
+                        newQueue.add(app)
+                    }
+                }
+            }
+        }
+        
+        selectedAppsQueue.clear()
+        selectedAppsQueue.addAll(newQueue)
+        
+        activeProfileName = name
+        updateSelectedAppsDock()
+        // Force refresh both recyclers to prevent visual duplicates
+        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+        safeToast("Loaded: $name")
+        
+        if (isInstantMode) applyLayoutImmediate()
+    }
+    
+    // Profile Type 1: Layout Only - Applies layout settings, keeps current apps
+    private fun loadProfileLayoutOnly(name: String, layoutType: Int, resIndex: Int, dpiSetting: Int, topMar: Int = 0, botMar: Int = 0, autoMar: Boolean = false, orientMode: Int = 0) {
+        // Apply layout settings
+        selectedLayoutType = layoutType
+        selectedResolutionIndex = resIndex
+        currentDpiSetting = dpiSetting
+        
+        // Apply orientation from profile
+        currentOrientationMode = orientMode
+        AppPreferences.saveOrientationMode(this, currentDisplayId, currentOrientationMode)
+        applyOrientation()
+        
+        // Apply margin settings
+        topMarginPercent = topMar
+        bottomMarginPercent = botMar
+        autoAdjustMarginForIME = autoMar
+        val os = orientSuffix()
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar)
+        AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
+        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
+        
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
+        AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
+        if (selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
+            activeCustomLayoutName = null
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId)
+            AppPreferences.saveLastCustomLayoutName(this, null, currentDisplayId, os)
+        }
+        AppPreferences.saveDisplayResolution(this, currentDisplayId, selectedResolutionIndex)
+        AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
+        
+        // Get layout slot count
+        val layoutRects = getLayoutRects()
+        val maxSlots = layoutRects.size
+        
+        // If more active apps than slots, minimize excess
+        val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+        if (activeApps.size > maxSlots) {
+            val appsToMinimize = activeApps.drop(maxSlots)
+            for (app in appsToMinimize) {
+                app.isMinimized = true
+            }
+            Thread {
+                for (app in appsToMinimize) {
+                    try {
+                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
+                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                    } catch (e: Exception) {}
+                }
+            }.start()
+        }
+        
+        activeProfileName = name
+        updateSelectedAppsDock()
+        // Force refresh both recyclers
+        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+        safeToast("Loaded Layout: $name")
+        
+        if (isInstantMode) applyLayoutImmediate()
+    }
+    
+    // Profile Type 2: App Queue Only - Applies app queue, keeps current layout settings
+    private fun loadProfileQueueOnly(name: String, pkgList: List<String>) {
+        val profilePkgs = pkgList.toSet()
+        
+        // Minimize apps not in profile (don't kill - preserve user work)
+        val appsToMinimize = selectedAppsQueue.filter { 
+            !it.isMinimized && it.packageName != PACKAGE_BLANK && it.packageName !in profilePkgs 
+        }
+        for (app in appsToMinimize) {
+            app.isMinimized = true
+        }
+        if (appsToMinimize.isNotEmpty()) {
+            Thread {
+                for (app in appsToMinimize) {
+                    try {
+                        val tid = shellService?.getTaskId(app.getBasePackage(), null) ?: -1
+                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                    } catch (e: Exception) {}
+                }
+            }.start()
+        }
+        
+        // Build new queue from profile
+        val newQueue = mutableListOf<MainActivity.AppInfo>()
+        for (pkg in pkgList) {
+            if (pkg == PACKAGE_BLANK) {
+                newQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
+            } else {
+                // Check if app is already in queue
+                val existingApp = selectedAppsQueue.find { it.packageName == pkg }
+                if (existingApp != null) {
+                    existingApp.isMinimized = false
+                    newQueue.add(existingApp)
+                } else {
+                    // App not in queue - find in app list and add
+                    val app = allAppsList.find { it.packageName == pkg }
+                    if (app != null) {
+                        app.isMinimized = false
+                        newQueue.add(app)
+                    }
+                }
+            }
+        }
+        
+        selectedAppsQueue.clear()
+        selectedAppsQueue.addAll(newQueue)
+        
+        activeProfileName = name
+        updateSelectedAppsDock()
+        // Force refresh both recyclers to prevent visual duplicates
+        drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+        drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+        safeToast("Loaded Queue: $name")
+        
+        if (isInstantMode) applyLayoutImmediate()
+    }
+    
+
+    // === EXECUTE LAUNCH - START ===
+    // Main execution function that launches and tiles all selected apps
+    // Uses a locking mechanism to prevent parallel shell commands causing race conditions.
+    private fun executeLaunch(layoutType: Int, closeDrawer: Boolean, focusPackage: String? = null) {
+        // Cancel any pending runnable
+        if (pendingLaunchRunnable != null) {
+            uiHandler.removeCallbacks(pendingLaunchRunnable!!)
+            pendingLaunchRunnable = null
+        }
+
+        // If already executing, queue this request
+        if (isExecuting) {
+            Log.d(TAG, "executeLaunch: Already running. Queueing next run.")
+            pendingExecutionNeeded = true
+            if (focusPackage != null) pendingFocusPackage = focusPackage
+            return
+        }
+
+        // [FULLSCREEN] When user explicitly launches tiled apps, reset auto-minimize state
+        // and set cooldown to prevent fullscreen detection from immediately re-hiding them.
+        tiledAppsAutoMinimized = false
+        lastExplicitTiledLaunchAt = System.currentTimeMillis()
+
+        isExecuting = true
+        pendingExecutionNeeded = false // Reset pending flag for THIS run
+
+        // Get currently visible apps on this display, excluding ourselves and the trackpad
+        val activeApps = shellService?.getVisiblePackages(currentDisplayId)
+            ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+            ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+            ?: emptyList()
+
+        // [FULLSCREEN] If there's a visible app not in the queue (fullscreen app), add it to the queue.
+        // This converts the fullscreen app into a tiled app, placing the user's selected apps on top.
+        // Without this, the fullscreen app detection would minimize the newly launched tiled apps.
+        val queuePackages = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+        // [FIX] Clean up old entries and exclude recently removed packages from fullscreen detection
+        val now = System.currentTimeMillis()
+        recentlyRemovedPackages.entries.removeIf { now - it.value > REMOVED_PACKAGE_COOLDOWN_MS }
+        val fullscreenApps = activeApps.filter { 
+            val basePkg = it.getBasePackage()
+            basePkg !in queuePackages && 
+            !it.isMinimized && 
+            !recentlyRemovedPackages.containsKey(basePkg)
+        }
+        if (fullscreenApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized }) {
+            for (fsApp in fullscreenApps) {
+                // Add fullscreen app to END of queue (bottom position in layout)
+                // The user's selected apps will be on top
+                selectedAppsQueue.add(fsApp.copy())
+                Log.d(TAG, "executeLaunch: Added fullscreen app ${fsApp.packageName} to queue for tiling")
+            }
+            // Update UI to show the new queue
+            uiHandler.post { updateAllUIs() }
+        }
+
+        if (closeDrawer) toggleDrawer()
+        refreshDisplayId()
+
+        // Save queue
+        val identifiers = selectedAppsQueue.map { it.getIdentifier() }
+        AppPreferences.saveLastQueue(this, identifiers)
+        
+        Thread { 
+            try { 
+                var configChanged = false
+
+                // Apply orientation if not System Default
+                if (currentOrientationMode != 0) {
+                    shellService?.runCommand("settings put system accelerometer_rotation 0")
+                    shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" })
+                    configChanged = true
+                }
+
+                // Apply resolution only if changed
+                if (selectedResolutionIndex != lastAppliedResIndex) {
+                    val resCmd = getResolutionCommand(selectedResolutionIndex)
+                    shellService?.runCommand(resCmd)
+                    lastAppliedResIndex = selectedResolutionIndex
+                    configChanged = true
+                }
+                
+                // Apply DPI only if changed
+                if (currentDpiSetting != lastAppliedDpi) {
+                    if (currentDpiSetting > 0) { 
+                        shellService?.runCommand("wm density $currentDpiSetting -d $currentDisplayId")
+                    } else if (currentDpiSetting == -1) { 
+                        shellService?.runCommand("wm density reset -d $currentDisplayId")
+                    }
+                    lastAppliedDpi = currentDpiSetting
+                    configChanged = true
+                }
+                
+                // [FIX] Only sleep if we actually changed system configuration
+                if (configChanged) {
+                    Thread.sleep(800)
+                }
+                
+                // Get screen dimensions
+                
+                                // [FIX] Use getLayoutRects() which contains the Bottom Margin logic.
+                // We use the member variable 'selectedLayoutType' (which matches the passed 'layoutType' 99% of the time).
+                val rects = getLayoutRects()
+                
+                Log.d(TAG, "executeLaunch: Generated ${rects.size} tiles with Margin $bottomMarginPercent%")
+                
+                if (selectedAppsQueue.isEmpty()) {
+                    uiHandler.post { safeToast("No apps in queue") }
+                    return@Thread
+                }
+                
+                // Handle minimized apps
+                val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
+                
+                // If on Virtual Display and NO active apps (Show Desktop), just launch Wallpaper
+                if (currentDisplayId >= 2 && activeApps.isEmpty() && minimizedApps.isNotEmpty()) {
+                    showWallpaper()
+                } else {
+                    // Standard Loop
+                    for (app in minimizedApps) { 
+                        if (app.packageName != PACKAGE_BLANK) { 
+                            try { 
+                                val basePkg = app.getBasePackage()
+                                val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                                if (tid != -1) shellService?.moveTaskToBack(tid) 
+                            } catch (e: Exception) {} 
+                        } 
+                    }
+                }
+                
+                val activeApps = selectedAppsQueue.filter { !it.isMinimized }
+                
+                // Kill/Prep Logic - Only wait if we actually have apps to launch
+                // [FIX] If activeApps is empty (we are just minimizing), SKIP THE SLEEP.
+                if (activeApps.isNotEmpty()) {
+                    // [DEPRECATED] killAppOnExecute removed
+                    if (false) { // killAppOnExecute
+                        for (app in activeApps) { 
+                            if (app.packageName != PACKAGE_BLANK) { 
+                                val basePkg = app.getBasePackage()
+                                shellService?.forceStop(basePkg)
+                            } 
+                        }
+                        Thread.sleep(400) 
+                    } else { 
+                        Thread.sleep(100) 
+                    }
+                }
+                
+// === LAUNCH AND TILE APPS (Robust Background Loop) ===
+                // [FIX] We use Thread.sleep inside this background thread instead of uiHandler.postDelayed.
+                // This ensures the sequence continues executing even if the UI thread is throttled/closed.
+                for (i in 0 until minOf(activeApps.size, rects.size)) {
+                    val app = activeApps[i]
+                    val bounds = rects[i]
+
+                    if (app.packageName == PACKAGE_BLANK) continue
+
+                    val basePkg = app.getBasePackage()
+                    val cls = app.className
+
+                    // UI Update must be posted
+                    uiHandler.post {
+                        debugShowAppIdentification("TILE[$i]", basePkg, cls)
+                    }
+                    
+                    // [CACHE] Store intended bounds for Watchdog recovery
+                    packageRectCache[basePkg] = bounds
+
+                    // 1. Launch App (SYNCHRONOUSLY)
+                    val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                    val cmd = if (component != null) {
+                        "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                    } else {
+                        "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                    }
+
+                    try {
+                        // Log.d(TAG, "Tile[$i]: Executing Launch: $cmd")
+                        shellService?.runCommand(cmd)
+                    } catch (e: Exception) {
+                        // Log.e(TAG, "Tile[$i]: Launch failed", e)
+                    }
+
+                    val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")
+
+                    // 2. WAIT AND RESIZE (Sequential/Blocking)
+                    // We block the loop here until THIS window is ready and resized.
+                    // This ensures App 1 is fully positioned before we even touch App 2.
+                    try {
+                        // SMART POLLING:
+                        // Active Window (Swap): Returns almost instantly.
+                        // Cold Boot: Waits up to 3s.
+                        var tid = -1
+                        val maxWait = if (isGeminiApp) 8000L else 3000L
+                        val startPoll = System.currentTimeMillis()
+
+                        // Fast poll (50ms) for snappiness
+                        while (System.currentTimeMillis() - startPoll < maxWait) {
+                            tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                            if (tid != -1) break
+                            Thread.sleep(50)
+                        }
+
+                        // If we found it instantly (already running), delay is minimal (50ms).
+                        // If it took time, we wait a tiny bit for the window surface to be ready.
+                        val wasInstant = (System.currentTimeMillis() - startPoll < 150)
+                        if (!wasInstant) Thread.sleep(200)
+
+                        // PASS 1: Set Mode & Resize
+                        // Log.d(TAG, "Tile[$i]: Repositioning ${app.label} (TID: $tid)")
+                        shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+
+                        // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
+                        // If we are just swapping active windows, Pass 1 is usually enough.
+                        // We do a quick check-up resize.
+                        if (!wasInstant) Thread.sleep(200)
+
+                        val finalTid = shellService?.getTaskId(basePkg, cls) ?: -1
+                        if (finalTid != -1) {
+                            shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                            packageTaskIdCache[basePkg] = finalTid
+                        }
+
+
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tile[$i]: Reposition failed", e)
+                    }
+
+                    // 3. Buffer before next app
+                    // Increased to 150ms to ensure WindowManager state settles before next 'am start'
+                    Thread.sleep(150)
+                }
+                // === LAUNCH AND TILE APPS - END ===
+
+                // [FIX] Auto-minimize apps that exceed the slot count
+                // When switching from 4-slot to 2-slot layout, apps 3 and 4 should be minimized
+                if (activeApps.size > rects.size) {
+                    val packagesToMinimize = mutableListOf<String>()
+                    for (i in rects.size until activeApps.size) {
+                        val app = activeApps[i]
+                        if (app.packageName == PACKAGE_BLANK) continue
+                        val basePkg = app.getBasePackage()
+                        packagesToMinimize.add(basePkg)
+                        try {
+                            val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
+                            if (tid != -1) shellService?.moveTaskToBack(tid)
+                        } catch (e: Exception) {}
+                        // Mark as minimized in the queue
+                        val queueIndex = selectedAppsQueue.indexOfFirst { 
+                            it.packageName == app.packageName && it.className == app.className 
+                        }
+                        if (queueIndex != -1) {
+                            selectedAppsQueue[queueIndex].isMinimized = true
+                        }
+                    }
+                    // Clear focus on UI thread to prevent apps from popping back
+                    uiHandler.post {
+                        for (pkg in packagesToMinimize) {
+                            val isGemini = pkg == "com.google.android.apps.bard"
+                            val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                            if (activePackageName == pkg || (isGemini && activeIsGoogle)) {
+                                activePackageName = null
+                            }
+                            removeFromFocusHistory(pkg)
+                        }
+                        updateAllUIs()
+                    }
+                    Log.d(TAG, "executeLaunch: Auto-minimized ${activeApps.size - rects.size} apps exceeding slot count")
+                }
+
+                // === REFOCUS LOGIC ===
+                // After swapping/moving windows, re-launch the active app to bring it back to focus
+                if (focusPackage != null) {
+                    val focusIndex = activeApps.indexOfFirst {
+                        it.packageName == focusPackage ||
+                        (it.packageName == "com.google.android.apps.bard" && focusPackage == "com.google.android.googlequicksearchbox")
+                    }
+
+                    if (focusIndex != -1 && focusIndex < rects.size) {
+                        val app = activeApps[focusIndex]
+                        val bounds = rects[focusIndex]
+                        Thread.sleep(200)
+                        Log.d(TAG, "Refocusing Active Window: ${app.label}")
+                        launchViaShell(app.getBasePackage(), app.className, bounds)
+                    }
+                }
+                // === REFOCUS LOGIC - END ===
+
+                if (closeDrawer) { 
+                    uiHandler.post { 
+                        selectedAppsQueue.clear()
+                        updateSelectedAppsDock() 
+                    } 
+                }
+                
+                uiHandler.post {
+                     safeToast("Tiling Sequence Complete")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Execute Failed", e)
+                uiHandler.post { safeToast("Execute Failed: ${e.message}") }
+            } finally {
+                // [EFFICIENCY] Invalidate cache so "Active Window" updates instantly
+                (shellService as? ShellUserService)?.invalidateVisibleCache()
+
+                isExecuting = false
+
+                // If a request came in while we were running, trigger it now
+                if (pendingExecutionNeeded) {
+                    Log.d(TAG, "executeLaunch: Triggering pending execution")
+                    val nextFocus = pendingFocusPackage
+                    pendingFocusPackage = null
+                    uiHandler.post {
+                        executeLaunch(selectedLayoutType, false, nextFocus)
+                    }
+                }
+            }
+        }.start()
+
+        drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.setText("")
+    }
 
     // === EXECUTE LAUNCH - END ===
     
@@ -5203,15 +6721,42 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
     // === SWITCH MODE - END ===
 
-    // RefreshItemOption, CustomResInputOption, RefreshHeaderOption, LegendOption - see LauncherModels.kt
+    object CustomResInputOption
+    data class RefreshHeaderOption(val text: String)
+    data class LegendOption(val text: String)
+    // =================================================================================
+    // DATA CLASS: RefreshItemOption
+    // SUMMARY: Represents a refresh rate option in the menu. isAvailable indicates
+    //          if the hardware supports this rate. Unavailable rates are greyed out.
+    // =================================================================================
+    data class RefreshItemOption(
+        val label: String, 
+        val targetRate: Float, 
+        val isSelected: Boolean,
 
-    // LayoutOption - see LauncherModels.kt
+    val isAvailable: Boolean = true  // NEW: false if hardware doesn't support this rate
+    )
+    // =================================================================================
+    // END DATA CLASS: RefreshItemOption
+    // =================================================================================
+
+    data class LayoutOption(val name: String, val type: Int, val isCustomSaved: Boolean = false, val customRects: List<Rect>? = null)
     private var isLayoutNameEditMode = false
     private var isProfileNameEditMode = false
     private val unfilteredDisplayList = mutableListOf<Any>() // Store full list for menu filtering
-    // ResolutionOption, DpiOption - see LauncherModels.kt
-    // ProfileOption - see LauncherModels.kt
-    // FontSizeOption, HeightOption, WidthOption, MarginOption, IconOption, BubbleSizeOption, ActionOption, ToggleOption, TimeoutOption - see LauncherModels.kt
+    data class ResolutionOption(val name: String, val command: String, val index: Int)
+    data class DpiOption(val currentDpi: Int)
+    // profileType: 0 = Layout + Apps, 1 = Layout Only, 2 = App Queue Only
+    data class ProfileOption(val name: String, val isCurrent: Boolean, val layout: Int, val resIndex: Int, val dpi: Int, val apps: List<String>, val profileType: Int = 0, val topMargin: Int = 0, val bottomMargin: Int = 0, val autoAdjustMargin: Boolean = false, val orientMode: Int = 0)
+    data class FontSizeOption(val currentSize: Float)
+    data class HeightOption(val currentPercent: Int)
+    data class WidthOption(val currentPercent: Int)
+    data class MarginOption(val type: Int, val currentPercent: Int) // type: 0=Top, 1=Bottom
+    data class IconOption(val name: String)
+    data class BubbleSizeOption(val currentPercent: Int)
+    data class ActionOption(val name: String, val action: () -> Unit)
+    data class ToggleOption(val name: String, var isEnabled: Boolean, val onToggle: (Boolean) -> Unit)
+    data class TimeoutOption(val seconds: Int)
 
     inner class SelectedAppsAdapter : RecyclerView.Adapter<SelectedAppsAdapter.Holder>() {
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
@@ -5331,30 +6876,969 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     // =================================================================================
     // WINDOW MANAGER COMMAND PROCESSOR (v2)
-    // Delegated to LauncherCommandProcessor
+    // SUMMARY: Handles headless commands with 1-BASED INDEXING.
+    //          Supports Active Window swapping and Blank Space hiding.
     // =================================================================================
     private fun handleWindowManagerCommand(intent: Intent) {
-        commandProcessor.handleWindowManagerCommand(intent)
+        val cmd = intent.getStringExtra("COMMAND")?.uppercase(Locale.ROOT) ?: return
+
+        if (!isBound || shellService == null) {
+            Log.w(TAG, "WM Command $cmd queued (Shizuku not bound)")
+            tryBindShizukuIfPermitted()
+            queueWindowManagerCommand(intent, cmd)
+            return
+        }
+        
+        // [FIX] Sync display context before executing commands to prevent stale state
+        refreshDisplayId()
+        ensureQueueLoadedForCommands()
+        
+        // CONVERT 1-BASED INDEX TO 0-BASED INTERNAL INDEX
+        // If user sends 1, we get 0. If user sends 0 or nothing (-1), it stays invalid (-1).
+        val rawIndex = intent.getIntExtra("INDEX", -1)
+        val index = if (rawIndex > 0) rawIndex - 1 else -1
+
+        Log.d(TAG, "WM Command: $cmd RawIdx: $rawIndex (Internal: $index)")
+
+        when (cmd) {
+            "OPEN_SWAP" -> {
+                // Trigger the OPEN_SWAP flow via triggerCommand
+                val cmdDef = AVAILABLE_COMMANDS.find { it.id == "OPEN_SWAP" }
+                if (cmdDef != null) triggerCommand(cmdDef)
+            }
+            "OPEN_MOVE_TO" -> {
+                // Trigger the OPEN_MOVE_TO flow via triggerCommand
+                val cmdDef = AVAILABLE_COMMANDS.find { it.id == "OPEN_MOVE_TO" }
+                if (cmdDef != null) {
+                    triggerCommand(cmdDef)
+                }
+            }
+            "SWAP" -> {
+                // Convert both A and B from 1-based
+                val rawA = intent.getIntExtra("INDEX_A", -1)
+                val rawB = intent.getIntExtra("INDEX_B", -1)
+                val idxA = if (rawA > 0) rawA - 1 else -1
+                val idxB = if (rawB > 0) rawB - 1 else -1
+                
+                if (idxA in selectedAppsQueue.indices && idxB in selectedAppsQueue.indices) {
+                    val appA = selectedAppsQueue[idxA]
+                    val appB = selectedAppsQueue[idxB]
+
+                    // Track apps that need window state changes
+                    val appsToMinimize = mutableListOf<MainActivity.AppInfo>()
+                    val appsToRestore = mutableListOf<MainActivity.AppInfo>()
+
+                    val aIsBlank = appA.packageName == PACKAGE_BLANK
+                    val bIsBlank = appB.packageName == PACKAGE_BLANK
+                    
+                    // [FIX] Special case: swapping active app with active blank
+                    // When an active real app swaps with an active blank, the app should be minimized
+                    if (!appA.isMinimized && !appB.isMinimized && (aIsBlank || bIsBlank)) {
+                        // One is blank, one is real app - minimize the real app
+                        if (!aIsBlank) {
+                            appsToMinimize.add(appA)
+                            appA.isMinimized = true
+                        }
+                        if (!bIsBlank) {
+                            appsToMinimize.add(appB)
+                            appB.isMinimized = true
+                        }
+                    } else if (appA.isMinimized != appB.isMinimized) {
+                        // LOGIC: State Swap if mixed Active/Inactive
+                        // This allows inactive apps to "take the place" of active ones
+                        if (!appA.isMinimized && !aIsBlank) {
+                            appsToMinimize.add(appA)
+                        }
+                        if (!appB.isMinimized && !bIsBlank) {
+                            appsToMinimize.add(appB)
+                        }
+                        if (appA.isMinimized && !aIsBlank) {
+                            appsToRestore.add(appA)
+                        }
+                        if (appB.isMinimized && !bIsBlank) {
+                            appsToRestore.add(appB)
+                        }
+
+                        val stateA = appA.isMinimized
+                        appA.isMinimized = appB.isMinimized
+                        appB.isMinimized = stateA
+                    }
+
+                    Collections.swap(selectedAppsQueue, idxA, idxB)
+
+                    // [FIX] Actually minimize windows
+                    for (app in appsToMinimize) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        // Clear focus if minimizing the active app
+                        val isGemini = basePkg == "com.google.android.apps.bard"
+                        val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                        if (activePackageName == basePkg || 
+                            activePackageName == app.packageName ||
+                            (isGemini && activeIsGoogle)) {
+                            activePackageName = null
+                        }
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                        
+                        Thread {
+                            try {
+                                if (currentDisplayId >= 2) {
+                                    val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                    if (visibleCount <= 1) {
+                                        showWallpaper()
+                                    } else {
+                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                    }
+                                } else {
+                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                }
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+                    
+                    // [FIX] Actually restore windows
+                    for (app in appsToRestore) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps.remove(basePkg)
+                        
+                        Thread {
+                            try {
+                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                val cmd = if (component != null) {
+                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                } else {
+                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                }
+                                shellService?.runCommand(cmd)
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+
+                    // LOGIC: Remove Inactive Blanks (Auto-Delete)
+                    // [FIX] Remove by index - all blanks are equals() so removeAll removes all of them
+                    val indicesToRemove = mutableListOf<Int>()
+                    if (appA.packageName == PACKAGE_BLANK && appA.isMinimized) indicesToRemove.add(idxB)
+                    if (appB.packageName == PACKAGE_BLANK && appB.isMinimized) indicesToRemove.add(idxA)
+                    
+                    for (i in indicesToRemove.sortedDescending()) {
+                        selectedAppsQueue.removeAt(i)
+                    }
+
+                    refreshQueueAndLayout("Swapped slots $rawA & $rawB", forceRetile = true, retileDelayMs = 300L)
+                }
+            }
+            // =====================================================================
+            // MOVE_TO: Move app from slot A to slot B, shifting others
+            // Example: 4 active apps + 1 minimized. MOVE_TO minimized app to slot 3:
+            // - Apps in slots 3,4 shift to 4,5 (slot 5 becomes minimized)
+            // - Previously minimized app is restored and placed in slot 3
+            // =====================================================================
+            "MOVE_TO" -> {
+                val rawA = intent.getIntExtra("INDEX_A", -1)
+                val rawB = intent.getIntExtra("INDEX_B", -1)
+                val srcIdx = if (rawA > 0) rawA - 1 else -1
+                val dstIdx = if (rawB > 0) rawB - 1 else -1
+                
+                if (srcIdx == dstIdx) {
+                    safeToast("Source and destination are the same")
+                    return
+                }
+                
+                if (srcIdx in selectedAppsQueue.indices && dstIdx in selectedAppsQueue.indices) {
+                    val movingApp = selectedAppsQueue[srcIdx]
+                    val movingIsBlank = movingApp.packageName == PACKAGE_BLANK
+                    
+                    // Get active slot count from current layout
+                    val rects = getLayoutRects()
+                    val activeSlotCount = rects.size
+                    
+                    // Track if moving app was minimized (to restore it if moving to active slot)
+                    val wasMinimized = movingApp.isMinimized
+                    
+                    // Track apps that need window state changes
+                    val appsToMinimize = mutableListOf<MainActivity.AppInfo>()
+                    val appsToRestore = mutableListOf<MainActivity.AppInfo>()
+                    
+                    // Remove app from source position
+                    selectedAppsQueue.removeAt(srcIdx)
+                    
+                    // Adjust destination index if source was before it
+                    val adjustedDstIdx = if (srcIdx < dstIdx) dstIdx - 1 else dstIdx
+                    
+                    // Insert at destination
+                    selectedAppsQueue.add(adjustedDstIdx, movingApp)
+                    
+                    // Now update minimized states based on new positions
+                    for (i in selectedAppsQueue.indices) {
+                        val app = selectedAppsQueue[i]
+                        if (app.packageName == PACKAGE_BLANK) continue
+                        
+                        val isInActiveSlot = i < activeSlotCount
+                        val wasActive = !app.isMinimized
+                        
+                        if (isInActiveSlot && app.isMinimized) {
+                            // App moved into active slot - needs to be restored
+                            app.isMinimized = false
+                            appsToRestore.add(app)
+                        } else if (!isInActiveSlot && !app.isMinimized) {
+                            // App pushed out of active slots - needs to be minimized
+                            app.isMinimized = true
+                            appsToMinimize.add(app)
+                        }
+                    }
+                    
+                    // Execute minimize operations
+                    for (app in appsToMinimize) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        // Clear focus if minimizing the active app
+                        val isGemini = basePkg == "com.google.android.apps.bard"
+                        val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                        if (activePackageName == basePkg || 
+                            activePackageName == app.packageName ||
+                            (isGemini && activeIsGoogle)) {
+                            activePackageName = null
+                        }
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                        
+                        Thread {
+                            try {
+                                if (currentDisplayId >= 2) {
+                                    val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                    if (visibleCount <= 1) {
+                                        showWallpaper()
+                                    } else {
+                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                    }
+                                } else {
+                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                }
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+                    
+                    // Execute restore operations
+                    for (app in appsToRestore) {
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        
+                        manualStateOverrides[basePkg] = System.currentTimeMillis()
+                        minimizedAtTimestamps.remove(basePkg)
+                        
+                        Thread {
+                            try {
+                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                val cmd = if (component != null) {
+                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                } else {
+                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                }
+                                shellService?.runCommand(cmd)
+                            } catch (e: Exception) {}
+                        }.start()
+                    }
+                    
+                    // Remove inactive blanks (same cleanup as SWAP)
+                    val indicesToRemove = mutableListOf<Int>()
+                    for (i in selectedAppsQueue.indices) {
+                        val app = selectedAppsQueue[i]
+                        if (app.packageName == PACKAGE_BLANK && app.isMinimized) {
+                            indicesToRemove.add(i)
+                        }
+                    }
+                    for (i in indicesToRemove.sortedDescending()) {
+                        selectedAppsQueue.removeAt(i)
+                    }
+                    
+                    val appName = if (movingIsBlank) "Blank" else movingApp.getBasePackage().substringAfterLast('.')
+                    refreshQueueAndLayout("Moved $appName to slot $rawB", forceRetile = true, retileDelayMs = 300L)
+                }
+            }
+            // =====================================================================
+            // ACTIVE WINDOW COMMANDS (PC Style)
+            // Finds the currently focused app in the queue and moves it.
+            // =====================================================================
+            "SWAP_ACTIVE_LEFT", "SWAP_ACTIVE_RIGHT" -> {
+                if (activePackageName == null) {
+                    safeToast("No active window detected")
+                    return
+                }
+                
+                // Find index of active app
+                // We match by package name (simplest)
+                val activeIdx = selectedAppsQueue.indexOfFirst { 
+                    it.packageName == activePackageName || 
+                    (it.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox") 
+                }
+
+                if (activeIdx != -1) {
+                    val dir = if (cmd == "SWAP_ACTIVE_LEFT") -1 else 1
+                    val targetIdx = activeIdx + dir
+
+                    if (targetIdx in selectedAppsQueue.indices) {
+                        Collections.swap(selectedAppsQueue, activeIdx, targetIdx)
+                        refreshQueueAndLayout("Moved Active Window ${if(dir<0) "Left" else "Right"}", activePackageName)
+                    } else {
+                        safeToast("Edge of layout reached")
+                    }
+                } else {
+                    safeToast("Active app not in layout")
+                }
+            }
+            // =====================================================================
+            // MINIMIZE_ALL - Minimize all tiled (non-minimized) apps
+            // Leaves blank spaces as-is (minimized state) so layout can be restored
+            // =====================================================================
+            "MINIMIZE_ALL" -> {
+                val appsToMinimize = selectedAppsQueue.filter { 
+                    !it.isMinimized && it.packageName != PACKAGE_BLANK 
+                }
+                
+                if (appsToMinimize.isEmpty()) {
+                    safeToast("No active tiled apps")
+                    return
+                }
+                
+                // Clear active focus
+                activePackageName = null
+                
+                for (app in appsToMinimize) {
+                    app.isMinimized = true
+                    val basePkg = app.getBasePackage()
+                    manualStateOverrides[basePkg] = System.currentTimeMillis()
+                    minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                }
+                
+                // Move all to back in background thread
+                Thread {
+                    try {
+                        for (app in appsToMinimize) {
+                            val basePkg = app.getBasePackage()
+                            val cls = app.className
+                            if (currentDisplayId >= 2) {
+                                val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                if (visibleCount <= 1) {
+                                    showWallpaper()
+                                } else {
+                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                }
+                            } else {
+                                val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                if (tid != -1) shellService?.moveTaskToBack(tid)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MINIMIZE_ALL failed", e)
+                    }
+                }.start()
+                
+                // Also mark blanks as minimized to preserve layout positions
+                for (app in selectedAppsQueue) {
+                    if (app.packageName == PACKAGE_BLANK && !app.isMinimized) {
+                        app.isMinimized = true
+                    }
+                }
+                
+                refreshQueueAndLayout("Minimized ${appsToMinimize.size} apps")
+            }
+            // =====================================================================
+            // RESTORE_ALL - Restore minimized apps up to available layout slots
+            // Respects current layout slot count (e.g., 2-app layout = max 2 restored)
+            // =====================================================================
+            "RESTORE_ALL" -> {
+                val layoutRects = getLayoutRects()
+                val maxSlots = layoutRects.size
+                
+                // Count currently active (non-minimized) apps and blanks
+                val currentActiveCount = selectedAppsQueue.count { !it.isMinimized }
+                val availableSlots = maxSlots - currentActiveCount
+                
+                if (availableSlots <= 0) {
+                    safeToast("No available slots (layout: $maxSlots)")
+                    return
+                }
+                
+                // Get minimized apps (excluding blanks), sorted by most recently minimized first
+                val minimizedApps = selectedAppsQueue.filter { 
+                    it.isMinimized && it.packageName != PACKAGE_BLANK 
+                }.sortedByDescending { minimizedAtTimestamps[it.getBasePackage()] ?: 0L }
+                
+                if (minimizedApps.isEmpty()) {
+                    safeToast("No minimized apps to restore")
+                    return
+                }
+                
+                // Restore up to available slots
+                val appsToRestore = minimizedApps.take(availableSlots)
+                
+                for (app in appsToRestore) {
+                    app.isMinimized = false
+                    val basePkg = app.getBasePackage()
+                    manualStateOverrides[basePkg] = System.currentTimeMillis()
+                    minimizedAtTimestamps.remove(basePkg)
+                }
+                
+                // Also restore minimized blanks up to remaining available slots
+                val remainingSlots = availableSlots - appsToRestore.size
+                if (remainingSlots > 0) {
+                    var blanksRestored = 0
+                    for (app in selectedAppsQueue) {
+                        if (app.packageName == PACKAGE_BLANK && app.isMinimized && blanksRestored < remainingSlots) {
+                            app.isMinimized = false
+                            blanksRestored++
+                        }
+                    }
+                }
+                
+                // Clear auto-minimized flag since we're explicitly restoring
+                tiledAppsAutoMinimized = false
+                lastExplicitTiledLaunchAt = System.currentTimeMillis()
+                
+                refreshQueueAndLayout("Restored ${appsToRestore.size} apps", forceRetile = true, retileDelayMs = 300L)
+            }
+            "KILL" -> {
+                if (index in selectedAppsQueue.indices) {
+                    val app = selectedAppsQueue[index]
+                    if (app.packageName != PACKAGE_BLANK) {
+                        val basePkg = app.getBasePackage()
+                        // [FIX] Record killed package to prevent re-adding as fullscreen app
+                        recentlyRemovedPackages[basePkg] = System.currentTimeMillis()
+                        removeFromFocusHistory(basePkg) // Clean up history
+                        Thread { try { shellService?.forceStop(basePkg) } catch(e: Exception){} }.start()
+                    }
+                    selectedAppsQueue.removeAt(index)
+                    
+                    if (reorderSelectionIndex == index) reorderSelectionIndex = -1
+                    else if (reorderSelectionIndex > index) reorderSelectionIndex--
+                    
+                    refreshQueueAndLayout("Closed ${app.label}")
+                }
+            }
+            // =====================================================================
+            // MINIMIZE (Formerly Hide) - Toggles 'isMinimized' flag
+            // =====================================================================
+            // =====================================================================
+            // MINIMIZE (Shifting Hide)
+            // SUMMARY: Toggles the 'isMinimized' flag. The app remains in queue
+            //          but is skipped by tiling, causing neighbors to SHIFT to fill gap.
+            // =====================================================================
+            "MINIMIZE", "UNMINIMIZE", "TOGGLE_MINIMIZE" -> {
+                if (index in selectedAppsQueue.indices) {
+                    val app = selectedAppsQueue[index]
+
+                    // SPECIAL BLANK LOGIC: Hide/Minimize = Delete
+                    if (app.packageName == PACKAGE_BLANK) {
+                        if (cmd == "MINIMIZE" || (cmd == "TOGGLE_MINIMIZE" && !app.isMinimized)) {
+                            selectedAppsQueue.removeAt(index)
+                            refreshQueueAndLayout("Removed Blank Space")
+                            return
+                        }
+                    }
+
+                    // [FIX] If apps were auto-minimized by fullscreen detection but isMinimized
+                    // was never set, UNMINIMIZE would see isMinimized=false and skip.
+                    // Detect this state: mark all OTHER apps as truly minimized so the
+                    // restored app gets slot 1. Then fall through to normal restore logic.
+                    if (tiledAppsAutoMinimized && (cmd == "UNMINIMIZE" || cmd == "TOGGLE_MINIMIZE") && !app.isMinimized) {
+                        tiledAppsAutoMinimized = false
+                        lastExplicitTiledLaunchAt = System.currentTimeMillis()
+                        // Mark all OTHER queue apps as minimized (they were already moved to back)
+                        for (other in selectedAppsQueue) {
+                            if (other !== app && !other.isMinimized && other.packageName != PACKAGE_BLANK) {
+                                other.isMinimized = true
+                                minimizedAtTimestamps[other.getBasePackage()] = System.currentTimeMillis()
+                            }
+                        }
+                        // The target app stays isMinimized=false → it will be the only active app → slot 1
+                        Log.d(TAG, "WM Command: Auto-minimize state synced, restoring ${app.label} to slot 1")
+                        // Now retile to launch only this app in slot 1
+                        refreshQueueAndLayout("Restored ${app.label}", forceRetile = true, retileDelayMs = 300L)
+                        return
+                    }
+
+                    // [FIX] If UNMINIMIZE is called but app.isMinimized is already false,
+                    // still launch the app to bring it to front. This handles cases where
+                    // the app was closed/crashed/covered without updating minimized state.
+                    // NOTE: Only apply to explicit UNMINIMIZE, not TOGGLE_MINIMIZE (which should toggle)
+                    if (cmd == "UNMINIMIZE" && !app.isMinimized) {
+                        Log.d(TAG, "WM Command: ${app.label} already not minimized, forcing bring-to-front")
+                        lastExplicitTiledLaunchAt = System.currentTimeMillis()
+                        val basePkg = app.getBasePackage()
+                        val cls = app.className
+                        Thread {
+                            try {
+                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                val cmd = if (component != null) {
+                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                } else {
+                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                }
+                                shellService?.runCommand(cmd)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Force bring-to-front failed", e)
+                            }
+                        }.start()
+                        refreshQueueAndLayout("Restored ${app.label}", forceRetile = true, retileDelayMs = 350L)
+                        return
+                    }
+
+                    val newState = when (cmd) {
+                        "MINIMIZE" -> true
+                        "UNMINIMIZE" -> false
+                        else -> !app.isMinimized
+                    }
+
+                                        if (app.isMinimized != newState) {
+                                                                app.isMinimized = newState
+                                                                
+                                                                val basePkg = app.getBasePackage()
+                                                                // [FIX] Record manual override timestamp
+                                                                manualStateOverrides[basePkg] = System.currentTimeMillis()
+                                                                
+                                                                // Track minimization timestamp for queue ordering (newest first)
+                                                                if (newState) {
+                                                                    minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
+                                                                } else {
+                                                                    minimizedAtTimestamps.remove(basePkg)
+                                                                }
+                                                                
+                                                                val cls = app.className
+                                                                
+                                                                if (newState) {
+                                                                     // [FIX] Clear focus if minimizing the active app
+                                                                     // Handles Gemini alias (app=bard, active=google)
+                                                                     val isGemini = basePkg == "com.google.android.apps.bard"
+                                                                     val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+                                                                     
+                                                                     if (activePackageName == basePkg || 
+                                                                         activePackageName == app.packageName ||
+                                                                         (isGemini && activeIsGoogle)) {
+                                                                         activePackageName = null
+                                                                     }
+                                                                     
+    // MINIMIZING: Move to Back
+                                     Thread {
+                                         try {
+                                             // Virtual Display Strategy
+                                             if (currentDisplayId >= 2) {
+                                                 // Check if this is the ONLY visible app
+                                                 val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                                                 val isLastApp = visibleCount <= 1 
+
+                                                 if (isLastApp) {
+                                                     // LAST APP: "Launch" the wallpaper to cover it.
+                                                     // This avoids the system hanging while searching for a Home screen.
+                                                     showWallpaper()
+                                                 } else {
+                                                     // NOT LAST: Standard minimize works fine (focus transfers to app behind)
+                                                     val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                                     if (tid != -1) shellService?.moveTaskToBack(tid)
+                                                 }
+                                             } else {
+                                                 // Standard Display (Phone/Cover)
+                                                 val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                                 if (tid != -1) shellService?.moveTaskToBack(tid)
+                                             }
+                                         } catch(e: Exception){}
+                                     }.start()
+                                                                     // We removed the redundant thread here to prevent race conditions and double-execution lag.
+
+                                                                } else {
+                             // RESTORING: Bring to Front on Current Display
+                             // We reuse the launch logic which handles "Bring to Front" if already running.
+                             // We run this in background to avoid UI stutter.
+
+                             tiledAppsAutoMinimized = false
+                             lastExplicitTiledLaunchAt = System.currentTimeMillis()
+                             minimizedAtTimestamps.remove(app.getBasePackage()) // Clear minimized timestamp
+
+                             // [FULLSCREEN] If there's a visible fullscreen app not in the queue, add it to position 0.
+                             // This converts the fullscreen app into a tiled app so both stay open together.
+                             // The fullscreen app goes to position 0 (first tiling slot).
+                             try {
+                                 val visiblePkgs = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
+                                 val userVisibleApps = visiblePkgs.mapNotNull { pkgName ->
+                                     val pkg = if (pkgName.contains(":")) pkgName.substringBefore(":") else pkgName
+                                     if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
+                                         pkg.contains("systemui") || pkg.contains("inputmethod") ||
+                                         pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.")) null
+                                     else allAppsList.find { it.getBasePackage() == pkg }
+                                 }.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                                 
+                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+                                 
+                                 // If exactly one visible app (fullscreen) not in queue, add to position 0
+                                 if (userVisibleApps.size == 1) {
+                                     val fullscreenApp = userVisibleApps.first()
+                                     if (!queuePkgs.contains(fullscreenApp.getBasePackage())) {
+                                         fullscreenApp.isMinimized = false
+                                         selectedAppsQueue.add(0, fullscreenApp.copy())
+                                     }
+                                 }
+                             } catch (e: Exception) { Log.e(TAG, "Failed to detect fullscreen app", e) }
+                             
+                             // Continue with existing logic for multiple visible apps
+                             try {
+                                 val activeApps = shellService?.getVisiblePackages(currentDisplayId)
+                                     ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+                                     ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                                     ?: emptyList()
+                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+                                 val fsApps = activeApps.filter { it.getBasePackage() !in queuePkgs && !it.isMinimized }
+                                 if (fsApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized || it == app }) {
+                                     for (fsApp in fsApps) {
+                                         selectedAppsQueue.add(fsApp.copy())
+                                         Log.d(TAG, "UNMINIMIZE: Added fullscreen app ${fsApp.packageName} to queue for tiling")
+                                     }
+                                     uiHandler.post { updateAllUIs() }
+                                 }
+                             } catch (e: Exception) { Log.e(TAG, "UNMINIMIZE: Failed to detect fullscreen apps", e) }
+
+                             Thread {
+                                 try {
+                                     // Use launchViaShell which forces display ID and windowing mode
+                                     // We calculate the target bounds based on current layout to ensure it snaps back correctly
+                                     val rects = getLayoutRects()
+                                     val bounds = if (index < rects.size) rects[index] else null
+
+                                     // This command forces the activity to the top of the stack on current display
+                                     val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
+                                     val cmd = if (component != null) {
+                                         "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
+                                     } else {
+                                         "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
+                                     }
+                                     shellService?.runCommand(cmd)
+
+                                     // If we have bounds, apply them immediately
+                                     if (bounds != null) {
+                                         Thread.sleep(300) // Wait for start
+                                         val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                         if (tid != -1) {
+                                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                                         }
+                                     }
+                                 } catch(e: Exception) {
+                                     Log.e(TAG, "Restore failed", e)
+                                 }
+                             }.start()
+                        }
+
+                        val retileDelay = if (newState) 200L else 350L
+                        refreshQueueAndLayout(
+                            if (newState) "Minimized ${app.label}" else "Restored ${app.label}",
+                            forceRetile = true,
+                            retileDelayMs = retileDelay
+                        )
+                    }
+                }
+            }
+
+                        // =====================================================================
+                        // HIDE (Swap & Minimize)
+                        // SUMMARY: 1. Minimizes target app window.
+                        //          2. Adds Blank Space to end of queue.
+                        //          3. Swaps Target App with Blank Space.
+                        //          Result: Slot becomes empty. Target App moves to end of dock (saved).
+                        // =====================================================================
+                        "HIDE" -> {
+                             if (index in selectedAppsQueue.indices) {
+                                val targetApp = selectedAppsQueue[index]
+                                
+                                // If already blank, remove it
+                                if (targetApp.packageName == PACKAGE_BLANK) {
+                                    selectedAppsQueue.removeAt(index)
+                                    refreshQueueAndLayout("Removed Blank Space")
+                                    return
+                                }
+                                
+                                // 1. Force Minimize the visual window
+                                val basePkg = targetApp.getBasePackage()
+                                val cls = targetApp.className
+                                
+                                // [FIX] Record hidden package to prevent re-adding as fullscreen app
+                                recentlyRemovedPackages[basePkg] = System.currentTimeMillis()
+                                
+                                // [FIX] Clear focus if hiding the active app
+                                val isGemini = basePkg == "com.google.android.apps.bard"
+                                val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
+
+                                if (activePackageName == basePkg || 
+                                    activePackageName == targetApp.packageName ||
+                                    (isGemini && activeIsGoogle)) {
+                                    activePackageName = null
+                                    Log.d(TAG, "WM Command: Cleared focus for hidden app: $basePkg")
+                                }
+
+                                Thread { 
+                                    try { 
+                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
+                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                        // [DEPRECATED] if (killAppOnExecute) shellService?.forceStop(basePkg)
+                                    } catch(e: Exception){}
+                                }.start()
+                                
+                                // 2. Mark target as minimized (Grey out)
+                                targetApp.isMinimized = true
+                                
+                                // 3. Create Blank App
+                                val blankApp = MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null)
+                                
+                                // 4. Add Blank to end of queue
+                                selectedAppsQueue.add(blankApp)
+                                
+                                // 5. Swap Target (at index) with Blank (at end)
+                                // Layout: [A, B, C] -> HIDE B -> [A, Blank, C, B(min)]
+                                Collections.swap(selectedAppsQueue, index, selectedAppsQueue.lastIndex)
+                                
+                                refreshQueueAndLayout(
+                                    "Hidden Slot ${index + 1}",
+                                    forceRetile = true,
+                                    retileDelayMs = 200L
+                                )
+                             }
+                        }            "LAYOUT" -> {
+                val type = intent.getIntExtra("TYPE", -1)
+                if (type != -1) {
+                    selectedLayoutType = type
+                    AppPreferences.saveLastLayout(this, type, currentDisplayId)
+                    AppPreferences.saveLastLayout(this, type, currentDisplayId, orientSuffix())
+                    refreshQueueAndLayout("Layout: ${getLayoutName(type)}")
+                }
+            }
+            "CLEAR_ALL" -> {
+                // [DEPRECATED] killAppOnExecute removed - apps are not force stopped on clear
+                // if (killAppOnExecute) {
+                //     val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+                //     Thread {
+                //         for (app in activeApps) {
+                //             try { shellService?.forceStop(app.getBasePackage()) } catch(e: Exception){}
+                //         }
+                //     }.start()
+                // }
+                // Wipe all history
+                activePackageName = null
+                lastValidPackageName = null
+                secondLastValidPackageName = null
+                
+                selectedAppsQueue.clear()
+                refreshQueueAndLayout("Cleared All")
+            }
+            "OPEN_DRAWER" -> {
+                Log.d(TAG, "OPEN_DRAWER command received, calling toggleDrawer()")
+                toggleDrawer()
+                refreshQueueAndLayout("Toggled Drawer", skipTiling = true)
+            }
+            "SET_FOCUS" -> {
+                // 'index' is 0-based here
+                if (index in selectedAppsQueue.indices) {
+                    val app = selectedAppsQueue[index]
+                    if (app.packageName != PACKAGE_BLANK) {
+                        
+                        // [FIX] Internal Focus vs System Launch
+                        if (isExpanded) {
+                            // Drawer Open: Update Internal Variable Only (Green Underline)
+                            if (activePackageName != app.packageName) {
+                                if (activePackageName != null) lastValidPackageName = activePackageName
+                                activePackageName = app.packageName
+                                updateAllUIs()
+                            }
+                        } else {
+                            // Drawer Closed: Focus or Launch
+                            val rects = getLayoutRects()
+                            // Layout rects only include non-minimized slots, so find the layout index
+                            val layoutIdx = selectedAppsQueue.take(index).count { !it.isMinimized }
+                            val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
+                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
+                            // instead of re-launching activity (preserves chat/search state)
+                            if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), bounds)
+                            } else {
+                                Thread {
+                                     launchViaShell(app.getBasePackage(), app.className, bounds)
+                                }.start()
+                            }
+                            sendCursorToAppCenter(bounds)
+                            safeToast("Focused: ${app.label}")
+                        }
+                    }
+                }
+            }
+            "FOCUS_LAST" -> {
+                // Switch to previous valid app
+                val target = if (lastValidPackageName == activePackageName) secondLastValidPackageName else lastValidPackageName
+
+                if (target != null) {
+                    val app = selectedAppsQueue.find { it.packageName == target }
+                    if (app != null) {
+                        
+                        // [FIX] Internal Focus vs System Launch
+                        if (isExpanded) {
+                            // Drawer Open: Update Internal Variable Only
+                            if (activePackageName != app.packageName) {
+                                activePackageName = app.packageName
+                                // Swap logic for history
+                                lastValidPackageName = target
+                                updateAllUIs()
+                            }
+                        } else {
+                            // Drawer Closed: Focus or Launch
+                            val idx = selectedAppsQueue.indexOf(app)
+                            val rects = getLayoutRects()
+                            // Layout rects only include non-minimized slots, so find the layout index
+                            val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
+                            val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
+                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
+                            // instead of re-launching activity (preserves chat/search state)
+                            if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), bounds)
+                            } else {
+                                Thread {
+                                     launchViaShell(app.getBasePackage(), app.className, bounds)
+                                }.start()
+                            }
+                            sendCursorToAppCenter(bounds)
+                            safeToast("Focused: ${app.label}")
+                        }
+                    } else {
+                        safeToast("Last app not in layout")
+                    }
+                } else {
+                    safeToast("No history found")
+                }
+            }
+        }
     }
 
     // Helper to calculate current layout rectangles without executing launch
-    // Now delegates to WindowTilingManager for the calculation
     private fun getLayoutRects(): List<Rect> {
-        // Ensure config is up to date before getting rects
-        tilingManager.updateConfig(
-            displayId = currentDisplayId,
-            topMargin = topMarginPercent,
-            bottomMargin = bottomMarginPercent,
-            effectiveBottomMargin = effectiveBottomMarginPercent(),
-            layoutType = selectedLayoutType,
-            resIndex = selectedResolutionIndex,
-            orientMode = currentOrientationMode,
-            dpi = currentDpiSetting,
-            customRects = activeCustomRects
-        )
-        return tilingManager.getLayoutRects()
-    }
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        val display = dm.getDisplay(currentDisplayId) ?: return emptyList()
+        val metrics = DisplayMetrics()
+        display.getRealMetrics(metrics)
+        var w = metrics.widthPixels
+        var h = metrics.heightPixels
 
+        // Apply Resolution Override (if any)
+        val targetDim = getTargetDimensions(selectedResolutionIndex)
+        if (targetDim != null) {
+             w = targetDim.first
+             h = targetDim.second
+        }
+
+        // === MARGIN LOGIC ===
+        // Calculate effective height based on Top and Bottom margins
+        val topPx = (h * topMarginPercent / 100f).toInt()
+        val bottomPx = (h * effectiveBottomMarginPercent() / 100f).toInt()
+        val effectiveH = max(100, h - topPx - bottomPx) // Safety floor
+
+
+        // ====================
+
+        val rects = mutableListOf<Rect>()
+        when (selectedLayoutType) {
+            LAYOUT_FULL -> rects.add(Rect(0, 0, w, effectiveH))
+            LAYOUT_SIDE_BY_SIDE -> {
+                rects.add(Rect(0, 0, w/2, effectiveH))
+                rects.add(Rect(w/2, 0, w, effectiveH))
+            }
+            LAYOUT_TOP_BOTTOM -> {
+                // Split effective space in half
+                val mid = effectiveH / 2
+                rects.add(Rect(0, 0, w, mid))
+                rects.add(Rect(0, mid, w, effectiveH))
+            }
+            LAYOUT_TRI_EVEN -> {
+                val third = w / 3
+                rects.add(Rect(0, 0, third, effectiveH))
+                rects.add(Rect(third, 0, third * 2, effectiveH))
+                rects.add(Rect(third * 2, 0, w, effectiveH))
+            }
+            LAYOUT_CORNERS -> {
+                val midH = effectiveH / 2
+                val midW = w / 2
+                rects.add(Rect(0, 0, midW, midH))
+                rects.add(Rect(midW, 0, w, midH))
+                rects.add(Rect(0, midH, midW, effectiveH))
+                rects.add(Rect(midW, midH, w, effectiveH))
+            }
+            LAYOUT_TRI_SIDE_MAIN_SIDE -> {
+                val quarter = w / 4
+                rects.add(Rect(0, 0, quarter, effectiveH))
+                rects.add(Rect(quarter, 0, quarter * 3, effectiveH))
+                rects.add(Rect(quarter * 3, 0, w, effectiveH))
+            }
+            LAYOUT_QUAD_ROW_EVEN -> {
+                val quarter = w / 4
+                rects.add(Rect(0, 0, quarter, effectiveH))
+                rects.add(Rect(quarter, 0, quarter * 2, effectiveH))
+                rects.add(Rect(quarter * 2, 0, quarter * 3, effectiveH))
+                rects.add(Rect(quarter * 3, 0, w, effectiveH))
+            }
+            LAYOUT_QUAD_TALL_SHORT -> {
+                // Top Row: 75% H, 2 Apps (50% W each)
+                // Bottom Row: 25% H, 2 Apps (50% W each)
+                val splitY = (effectiveH * 0.75f).toInt()
+                val midW = w / 2
+                
+                rects.add(Rect(0, 0, midW, splitY))
+                rects.add(Rect(midW, 0, w, splitY))
+                rects.add(Rect(0, splitY, midW, effectiveH))
+                rects.add(Rect(midW, splitY, w, effectiveH))
+            }
+            LAYOUT_HEX_TALL_SHORT -> {
+                // Top Row: 75% H, 3 Apps (Side/Main/Side 25/50/25)
+                // Bottom Row: 25% H, 3 Apps (Same widths)
+                val splitY = (effectiveH * 0.75f).toInt()
+                val q = w / 4
+                
+                rects.add(Rect(0, 0, q, splitY))
+                rects.add(Rect(q, 0, q * 3, splitY))
+                rects.add(Rect(q * 3, 0, w, splitY))
+                
+                rects.add(Rect(0, splitY, q, effectiveH))
+                rects.add(Rect(q, splitY, q * 3, effectiveH))
+                rects.add(Rect(q * 3, splitY, w, effectiveH))
+            }
+            LAYOUT_CUSTOM_DYNAMIC -> {
+                if (activeCustomRects != null) {
+                    // For custom layouts, we assume they were saved WITH the desired geometry.
+                    // However, if the user turns on margin, we should probably clamp them?
+                    // For now, let's respect the saved rects exactly as they define absolute pixels.
+                    rects.addAll(activeCustomRects!!)
+                } else {
+                    // Fallback if custom data missing
+                    rects.add(Rect(0, 0, w/2, effectiveH))
+                    rects.add(Rect(w/2, 0, w, effectiveH))
+                }
+            }
+        }
+        
+        // SHIFT ALL RECTS DOWN BY TOP MARGIN
+        // [FIX] Skip offset for Custom Dynamic layouts (they are absolute snapshots)
+        // This prevents double-margin application when loading saved profiles.
+        if (topPx > 0 && selectedLayoutType != LAYOUT_CUSTOM_DYNAMIC) {
+            for (r in rects) {
+                r.offset(0, topPx)
+            }
+        }
+        
+        return rects
+    }
 
     private fun refreshQueueAndLayout(
         msg: String,
@@ -6085,6 +8569,9 @@ else -> AppHolder(View(parent.context)) } }
                             intent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard") // Explicit target
                             sendBroadcast(intent)
                         }
+                        
+                        // Recalculate visual queue pos
+                        setupVisualQueue()
                         
                         // Apply layout
                         if (isInstantMode) {
