@@ -40,6 +40,7 @@ class VisualQueueAdapter(
         val isFocused = (app.packageName == handler.activePackageName) ||
                         (app.packageName == "com.google.android.apps.bard" && handler.activePackageName == "com.google.android.googlequicksearchbox")
 
+        android.util.Log.d("VisualQueueAdapter", "BIND pos=$position pkg=${app.packageName} activePkg=${handler.activePackageName} isFocused=$isFocused")
         holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE
         holder.badge.text = slotNum.toString()
         holder.badge.setScaledTextSize(handler.currentFontSize, 0.625f)

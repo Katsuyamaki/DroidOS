@@ -148,6 +148,7 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY
     // Tracks the currently focused app package for "Active Window" commands
     override var activePackageName: String? = null
+    private var manualFocusLockUntil: Long = 0L  // Timestamp until A11Y should not override activePackageName
     private val minimizedAtTimestamps = mutableMapOf<String, Long>() // Track when apps were minimized (newest first)
     // History for focus restoration (ignoring overlays)
     private var lastValidPackageName: String? = null
@@ -1814,6 +1815,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        // [DEBUG] Log all events briefly
+        val eventPkg = event.packageName?.toString() ?: "null"
+        if (eventPkg != "com.android.systemui" && !eventPkg.contains("inputmethod")) {
+            Log.d(TAG, "A11Y_EVENT: type=${event.eventType} pkg=$eventPkg displayId=${if (android.os.Build.VERSION.SDK_INT >= 30) event.displayId else -1}")
+        }
+
         // [EFFICIENCY] IMMEDIATE FILTER
         // Ignore high-frequency events that we don't use
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -1965,7 +1972,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     }
                     
                     // Update history if package changed
-                    if (activePackageName != detectedPkg) {
+                    // Skip if we recently manually set focus via SET_FOCUS command
+                    if (activePackageName != detectedPkg && System.currentTimeMillis() > manualFocusLockUntil) {
+                        Log.d(TAG, "ACCESSIBILITY: Focus changed from $activePackageName to $detectedPkg")
                         secondLastValidPackageName = lastValidPackageName
                         // [FIX] Don't overwrite history with null if we manually cleared activePackageName
                         // This preserves "Focus Last" functionality after minimizing an app
@@ -4621,6 +4630,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
 
             private fun updateAllUIs() {
+                Log.e(TAG, "INSIDE_UPDATE_ALL_UIS vq=${visualQueueView != null}")
                 // 1. Update Drawer Dock
                 updateSelectedAppsDock()
                 drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
@@ -4628,10 +4638,33 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // 2. Update Visual Queue HUD (if exists)
                 if (visualQueueView != null) {
                     val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+                    Log.d(TAG, "updateAllUIs: visualQueue recycler=${recycler != null} adapter=${recycler?.adapter != null}")
                     recycler?.adapter?.notifyDataSetChanged()
                 }
-            }    private fun updateSelectedAppsDock() { val dock = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
+                Log.d(TAG, "updateAllUIs: DONE")
+            }    private fun updateSelectedAppsDock() { val dock = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler) ?: return; if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     override fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
+
+    private fun updateAllUIs2() {
+        Log.d(TAG, "UPDATE_ALL_UIS_2_CALLED vq=${visualQueueView != null} activePkg=$activePackageName")
+        if (visualQueueView != null) {
+            val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
+            val adapter = recycler?.adapter
+            val count = adapter?.itemCount ?: 0
+            Log.d(TAG, "UPDATE_ALL_UIS_2: recycler=${recycler != null} adapter=${adapter != null} itemCount=$count")
+            if (count > 0) {
+                adapter?.notifyItemRangeChanged(0, count)
+            }
+        }
+        val dockAdapter = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter
+        if ((dockAdapter?.itemCount ?: 0) > 0) dockAdapter?.notifyItemRangeChanged(0, dockAdapter.itemCount)
+        val rofiAdapter = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter
+        if ((rofiAdapter?.itemCount ?: 0) > 0) rofiAdapter?.notifyItemRangeChanged(0, rofiAdapter.itemCount)
+    }
+
+    private fun testFocusUpdate() {
+        safeToast("TEST_FOCUS_UPDATE CALLED")
+    }
     
     // Helper to get searchable text from any option type
     private fun getOptionSearchText(item: Any): String {
@@ -4906,14 +4939,27 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         Thread {
             try {
                 val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-                val tid = shellService?.getTaskId(basePkg, null) ?: -1
-                if (tid != -1) {
-                    shellService?.moveTaskToFront(tid)
-                    Log.d(TAG, "focusViaTask: SUCCESS tid=$tid pkg=$basePkg")
+                // Find the app's className from queue for precise component targeting
+                val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+                val className = appEntry?.className
+                
+                val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                    "$basePkg/$className"
                 } else {
-                    Log.w(TAG, "focusViaTask: task not found for $basePkg, falling back to launchViaShell")
-                    launchViaShell(basePkg, null, bounds)
+                    null
                 }
+                
+                // Use am start with --activity-brought-to-front to bring to front AND give input focus
+                // This preserves app state (unlike fresh launch) while giving actual focus (unlike moveTaskToFront)
+                val cmd = if (component != null) {
+                    "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+                } else {
+                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+                }
+                
+                Log.d(TAG, "focusViaTask: $cmd")
+                shellService?.runCommand(cmd)
+                Log.d(TAG, "focusViaTask: SUCCESS pkg=$basePkg")
             } catch (e: Exception) {
                 Log.e(TAG, "focusViaTask FAILED: $pkg", e)
             }
@@ -7405,8 +7451,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
             "SET_FOCUS" -> {
                 // 'index' is 0-based here
+                Log.d(TAG, "SET_FOCUS: rawIndex=$rawIndex index=$index queueSize=${selectedAppsQueue.size} isExpanded=$isExpanded")
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
+                    Log.d(TAG, "SET_FOCUS: app=${app.label} pkg=${app.packageName} isMinimized=${app.isMinimized}")
                     if (app.packageName != PACKAGE_BLANK) {
                         
                         // [FIX] Internal Focus vs System Launch
@@ -7423,17 +7471,39 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = selectedAppsQueue.take(index).count { !it.isMinimized }
                             val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
-                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
-                            // instead of re-launching activity (preserves chat/search state)
-                            if (!app.isMinimized) {
-                                focusViaTask(app.getBasePackage(), bounds)
+                            
+                            // [FIX] Skip focusViaTask if app is already focused - avoids 3-5 second Android delay
+                            val alreadyFocused = (activePackageName == app.packageName) || 
+                                (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
+                            
+                            if (!alreadyFocused) {
+                                Log.d(TAG, "SET_FOCUS: Drawer CLOSED - calling ${if (!app.isMinimized) "focusViaTask" else "launchViaShell"}")
+                                if (!app.isMinimized) {
+                                    focusViaTask(app.getBasePackage(), bounds)
+                                } else {
+                                    Thread {
+                                         launchViaShell(app.getBasePackage(), app.className, bounds)
+                                    }.start()
+                                }
+                                sendCursorToAppCenter(bounds)
+                                
+                                // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
+                                Log.d(TAG, "SET_FOCUS: CHECKING condition: current=$activePackageName target=${app.packageName} needsUpdate=${activePackageName != app.packageName}")
+                                if (activePackageName != null) lastValidPackageName = activePackageName
+                                activePackageName = app.packageName
+                                Log.d(TAG, "SET_FOCUS: CALLING updateAllUIs directly")
+                                manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
+                                try {
+                                    updateAllUIs2()
+                                    Log.d(TAG, "SET_FOCUS: updateAllUIs2 COMPLETED")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
+                                }
+                                safeToast("Focused: ${app.label}")
                             } else {
-                                Thread {
-                                     launchViaShell(app.getBasePackage(), app.className, bounds)
-                                }.start()
+                                Log.d(TAG, "SET_FOCUS: App already focused, skipping focusViaTask")
                             }
-                            sendCursorToAppCenter(bounds)
-                            safeToast("Focused: ${app.label}")
+                            Log.d(TAG, "SET_FOCUS: activePackageName is now $activePackageName")
                         }
                     }
                 }
@@ -7464,6 +7534,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
                             // [FIX] Non-minimized apps are already visible — use moveTaskToFront
                             // instead of re-launching activity (preserves chat/search state)
+                            Log.d(TAG, "SET_FOCUS: Drawer CLOSED - calling ${if (!app.isMinimized) "focusViaTask" else "launchViaShell"}")
                             if (!app.isMinimized) {
                                 focusViaTask(app.getBasePackage(), bounds)
                             } else {
@@ -7472,6 +7543,22 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 }.start()
                             }
                             sendCursorToAppCenter(bounds)
+                            
+                            // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
+                            Log.d(TAG, "SET_FOCUS: CHECKING condition: current=$activePackageName target=${app.packageName} needsUpdate=${activePackageName != app.packageName}")
+                            if (activePackageName != app.packageName) {
+                                if (activePackageName != null) lastValidPackageName = activePackageName
+                                activePackageName = app.packageName
+                                Log.d(TAG, "SET_FOCUS: CALLING updateAllUIs directly")
+                                manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
+                                try {
+                                    updateAllUIs2()
+                                    Log.d(TAG, "SET_FOCUS: updateAllUIs2 COMPLETED")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
+                                }
+                            }
+                            Log.d(TAG, "SET_FOCUS: activePackageName is now $activePackageName")
                             safeToast("Focused: ${app.label}")
                         }
                     } else {
