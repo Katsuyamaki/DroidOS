@@ -114,6 +114,14 @@ class DrawerManager(
         // Debounce
         fun getLastQueueNavTime(): Long
         fun setLastQueueNavTime(time: Long)
+        
+        // Focus state (single source of truth in service)
+        fun getCurrentFocusArea(): Int
+        fun setCurrentFocusArea(area: Int)
+        fun getQueueSelectedIndex(): Int
+        fun setQueueSelectedIndex(index: Int)
+        fun getSelectedListIndex(): Int
+        fun setSelectedListIndex(index: Int)
     }
 
     // View state
@@ -122,14 +130,19 @@ class DrawerManager(
     private var drawerParams: WindowManager.LayoutParams? = null
     var debugStatusView: TextView? = null
         private set
+    
+    fun setDrawerView(view: View?) {
+        drawerView = view
+    }
+    
+    fun setDebugStatusView(view: TextView?) {
+        debugStatusView = view
+    }
 
-    // Navigation state
-    var currentFocusArea = FOCUS_SEARCH
-        private set
-    var queueSelectedIndex = -1
-        private set
-    var selectedListIndex = 0
-        private set
+    // Navigation state - delegated to service via callbacks
+    val currentFocusArea: Int get() = callback?.getCurrentFocusArea() ?: FOCUS_SEARCH
+    val queueSelectedIndex: Int get() = callback?.getQueueSelectedIndex() ?: -1
+    val selectedListIndex: Int get() = callback?.getSelectedListIndex() ?: 0
 
     private var callback: Callback? = null
 
@@ -198,8 +211,8 @@ class DrawerManager(
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
                 if (cb.getSelectedAppsQueue().isNotEmpty()) {
-                    currentFocusArea = FOCUS_QUEUE
-                    queueSelectedIndex = 0
+                    setCurrentFocusArea(FOCUS_QUEUE)
+                    setQueueSelectedIndex(0)
                     val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
                     captureIntent.setPackage(cb.getPackageTrackpad())
                     captureIntent.putExtra("CAPTURE", true)
@@ -212,12 +225,12 @@ class DrawerManager(
                         }
                     }
                 } else {
-                    currentFocusArea = FOCUS_LIST
+                    setCurrentFocusArea(FOCUS_LIST)
                     val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
                     val displayList = cb.getDisplayList()
                     uiHandler.post {
                         if (displayList.isNotEmpty()) {
-                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            if (selectedListIndex >= displayList.size) setSelectedListIndex(0)
                             mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
                             mainRecycler?.scrollToPosition(selectedListIndex)
                         }
@@ -248,7 +261,7 @@ class DrawerManager(
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
                     if (queueSelectedIndex > 0) {
                         val old = queueSelectedIndex
-                        queueSelectedIndex--
+                        setQueueSelectedIndex(queueSelectedIndex - 1)
                         uiHandler.post {
                             selectedRecycler?.adapter?.notifyItemChanged(old)
                             selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
@@ -260,7 +273,7 @@ class DrawerManager(
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
                     if (queueSelectedIndex < cb.getSelectedAppsQueue().size - 1) {
                         val old = queueSelectedIndex
-                        queueSelectedIndex++
+                        setQueueSelectedIndex(queueSelectedIndex + 1)
                         uiHandler.post {
                             selectedRecycler?.adapter?.notifyItemChanged(old)
                             selectedRecycler?.adapter?.notifyItemChanged(queueSelectedIndex)
@@ -273,8 +286,8 @@ class DrawerManager(
                     if ((cb.isOpenMoveToMode() || cb.isOpenSwapMode()) && cb.getOpenMoveToApp() != null) {
                         return
                     }
-                    currentFocusArea = FOCUS_SEARCH
-                    queueSelectedIndex = -1
+                    setCurrentFocusArea(FOCUS_SEARCH)
+                    setQueueSelectedIndex(-1)
                     val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
                     captureIntent.setPackage(cb.getPackageTrackpad())
                     captureIntent.putExtra("CAPTURE", false)
@@ -290,8 +303,8 @@ class DrawerManager(
                     if ((cb.isOpenMoveToMode() || cb.isOpenSwapMode()) && cb.getOpenMoveToApp() != null) {
                         return
                     }
-                    currentFocusArea = FOCUS_LIST
-                    queueSelectedIndex = -1
+                    setCurrentFocusArea(FOCUS_LIST)
+                    setQueueSelectedIndex(-1)
                     val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
                     captureIntent.setPackage(cb.getPackageTrackpad())
                     captureIntent.putExtra("CAPTURE", false)
@@ -302,7 +315,7 @@ class DrawerManager(
                         val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
                         val displayList = cb.getDisplayList()
                         if (displayList.isNotEmpty()) {
-                            if (selectedListIndex >= displayList.size) selectedListIndex = 0
+                            if (selectedListIndex >= displayList.size) setSelectedListIndex(0)
                             mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
                             mainRecycler?.scrollToPosition(selectedListIndex)
                         }
@@ -383,8 +396,8 @@ class DrawerManager(
             return
         }
         
-        currentFocusArea = FOCUS_SEARCH
-        queueSelectedIndex = -1
+        setCurrentFocusArea(FOCUS_SEARCH)
+        setQueueSelectedIndex(-1)
         val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
         captureIntent.setPackage(cb.getPackageTrackpad())
         captureIntent.putExtra("CAPTURE", false)
@@ -493,15 +506,15 @@ class DrawerManager(
             KeyEvent.KEYCODE_DPAD_UP -> {
                 if (selectedListIndex > 0) {
                     val old = selectedListIndex
-                    selectedListIndex--
+                    setSelectedListIndex(selectedListIndex - 1)
                     uiHandler.post {
                         mainRecycler?.adapter?.notifyItemChanged(old)
                         mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
                         mainRecycler?.scrollToPosition(selectedListIndex)
                     }
                 } else if (selectedAppsQueue.isNotEmpty()) {
-                    currentFocusArea = FOCUS_QUEUE
-                    queueSelectedIndex = 0
+                    setCurrentFocusArea(FOCUS_QUEUE)
+                    setQueueSelectedIndex(0)
                     val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
                     captureIntent.setPackage(cb.getPackageTrackpad())
                     captureIntent.putExtra("CAPTURE", true)
@@ -514,7 +527,7 @@ class DrawerManager(
                         }
                     }
                 } else {
-                    currentFocusArea = FOCUS_SEARCH
+                    setCurrentFocusArea(FOCUS_SEARCH)
                     uiHandler.post {
                         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
                     }
@@ -523,7 +536,7 @@ class DrawerManager(
             KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (selectedListIndex < displayList.size - 1) {
                     val old = selectedListIndex
-                    selectedListIndex++
+                    setSelectedListIndex(selectedListIndex + 1)
                     uiHandler.post {
                         mainRecycler?.adapter?.notifyItemChanged(old)
                         mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
@@ -600,17 +613,17 @@ class DrawerManager(
         }
     }
 
-    // State setters for external use
+    // State setters delegate to service
     fun setCurrentFocusArea(area: Int) {
-        currentFocusArea = area
+        callback?.setCurrentFocusArea(area)
     }
 
     fun setQueueSelectedIndex(index: Int) {
-        queueSelectedIndex = index
+        callback?.setQueueSelectedIndex(index)
     }
 
     fun setSelectedListIndex(index: Int) {
-        selectedListIndex = index
+        callback?.setSelectedListIndex(index)
     }
 
     fun cleanup() {

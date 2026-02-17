@@ -528,6 +528,12 @@ private var isSoftKeyboardSupport = false
         override fun getVisualQueuePromptText() = visualQueueManager?.getPromptText() ?: ""
         override fun getLastQueueNavTime() = lastQueueNavTime
         override fun setLastQueueNavTime(time: Long) { lastQueueNavTime = time }
+        override fun getCurrentFocusArea() = currentFocusArea
+        override fun setCurrentFocusArea(area: Int) { currentFocusArea = area }
+        override fun getQueueSelectedIndex() = queueSelectedIndex
+        override fun setQueueSelectedIndex(index: Int) { queueSelectedIndex = index }
+        override fun getSelectedListIndex() = selectedListIndex
+        override fun setSelectedListIndex(index: Int) { selectedListIndex = index }
     }
 
     // ProfileCallback implementation for ProfileManager
@@ -2543,6 +2549,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val context = displayContext ?: this
         val themeContext = ContextThemeWrapper(context, R.style.Theme_QuadrantLauncher)
         drawerView = LayoutInflater.from(themeContext).inflate(R.layout.layout_rofi_drawer, null)
+        drawerManager.setDrawerView(drawerView)
         drawerView!!.fitsSystemWindows = true 
         // [FIX] Disable system focus highlight (prevents screen turning grey when drawer is focused)
         if (Build.VERSION.SDK_INT >= 26) drawerView!!.defaultFocusHighlightEnabled = false
@@ -2587,6 +2594,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             debugStatusView?.visibility = View.GONE
             
             container.addView(debugStatusView, 0)
+            drawerManager.setDebugStatusView(debugStatusView)
         }
 
         val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val mainRecycler = drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view); val selectedRecycler = drawerView!!.findViewById<RecyclerView>(R.id.selected_apps_recycler); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
