@@ -72,7 +72,6 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
             when (intent?.action) {
                 "com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY" -> {
                     val targetId = intent.getIntExtra("displayId", 0)
-                    Log.d(TAG, "Launcher moving to Display: $targetId")
                     uiHandler.post {
                         // CLEANUP OLD VIEWS (Bubble & Drawer)
                         try {
@@ -369,7 +368,6 @@ private var isSoftKeyboardSupport = false
             //          when display states flicker during virtual display use (e.g., launching apps).
             // =================================================================================
             if (currentDisplayId >= 2) {
-                Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $currentDisplayId")
                 return
             }
             // =================================================================================
@@ -651,7 +649,6 @@ private var isSoftKeyboardSupport = false
                 // Trackpad is asking for the key, send it
                 if (customModKey != 0) {
                     sendCustomModToTrackpad()
-                    Log.d(TAG, "Synced Custom Mod ($customModKey) to Trackpad")
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REMOTE_KEY") {
                 val keyCode = intent?.getIntExtra("keyCode", 0) ?: 0
@@ -668,7 +665,6 @@ private var isSoftKeyboardSupport = false
                 if (!droidOsImeDetected) {
                     droidOsImeDetected = true
                     AppPreferences.setDroidOsImeDetected(this@FloatingLauncherService, true)
-                    Log.d(TAG, "DroidOS IME detected via IME_VISIBILITY broadcast")
                 }
                 if (autoAdjustMarginForIME) {
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
@@ -733,7 +729,6 @@ private var isSoftKeyboardSupport = false
                     tiledAppsAutoMinimized = true
                     val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
                     queueWindowManagerCommand(minimizeIntent)
-                    Log.d(TAG, "FULLSCREEN_APP_OPENING: Queued MINIMIZE_ALL for external fullscreen request")
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") {
                 val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
@@ -743,7 +738,6 @@ private var isSoftKeyboardSupport = false
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
-                Log.d("MarginSlider", "SET_MARGIN_BOTTOM received: percent=$percent (current bottomMarginPercent=$bottomMarginPercent)")
                 bottomMarginPercent = percent
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
                 AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent, orientSuffix())
@@ -943,7 +937,6 @@ private var isSoftKeyboardSupport = false
             try {
                 // 1. Save Target Display
                 val targetId = currentDisplayId
-                Log.d(TAG, "Saving Target Display ID: $targetId")
                 shellService?.runCommand("settings put global droidos_target_display $targetId")
                 
                 val pkgName = "com.katsuyamaki.DroidOSTrackpadKeyboard"
@@ -961,7 +954,6 @@ private var isSoftKeyboardSupport = false
                                            .replace("$serviceComponent:", "")
                                            .replace(serviceComponent, "")
                     shellService?.runCommand("settings put secure enabled_accessibility_services $newList")
-                    Log.d(TAG, "Service Disabled")
                 }
 
                 // 3. FORCE STOP
@@ -984,7 +976,6 @@ private var isSoftKeyboardSupport = false
                     "$cleanList:$serviceComponent"
                 }
                 
-                Log.d(TAG, "Enabling Service...")
                 shellService?.runCommand("settings put secure enabled_accessibility_services $enableList")
                 shellService?.runCommand("settings put secure accessibility_enabled 1")
 
@@ -1082,7 +1073,6 @@ private var isSoftKeyboardSupport = false
         val typedChar = sequence.last()
         val typedCode = getKeyCodeFromChar(typedChar)
 
-Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customModKey. Latched: $isCustomModLatched")
         
         if (typedCode == 0) return
 
@@ -1166,7 +1156,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
         // Using toString() directly on the integer for debug output.
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
-        Log.d("DroidOS_Keys", "INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
         // 1. INPUT MODE (Entering Numbers or Arrow Navigation)
         if (pendingCommandId != null) {
@@ -1217,16 +1206,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             // Check if key code matches
             if (bind.second != 0 && bind.second == keyCode) {
-                Log.d("DroidOS_Keys", " -> Key Match for '${cmd.label}'. Checking modifiers...")
-                Log.d("DroidOS_Keys", "    Required: ${bind.first} | Current: $metaState")
 
                 if (checkModifiers(metaState, bind.first)) {
-                    Log.d("DroidOS_Keys", "    MATCH! Triggering...")
                     triggerCommand(cmd)
                     commandTriggered = true
                     break
                 } else {
-                    Log.d("DroidOS_Keys", "    Modifier Mismatch.")
                 }
             }
         }
@@ -1246,23 +1231,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Shared logic for both Hardware Keys (onKeyEvent) and Virtual Remote Keys (Broadcast)
     private fun handleRemoteKeyEvent(keyCode: Int, metaState: Int) {
         val keyName = KeyEvent.keyCodeToString(keyCode)
-        Log.d("DroidOS_Keys", "RECEIVER: handleRemoteKeyEvent called with $keyCode (Meta: $metaState)")
 
         // CHECK CUSTOM MODIFIER (Remote/Broadcast)
         if (customModKey != 0) {
-            Log.d("DroidOS_Keys", "Checking Custom Mod: Recv($keyCode) vs Saved($customModKey)")
 
             if (keyCode == customModKey) {
                 isCustomModLatched = true
                 // No timer - stays latched until next key press
                 safeToast("Custom Mod Active (Remote)")
-                Log.d("DroidOS_Keys", "Custom Mod LATCHED via Broadcast")
                 return
             }
         }
 
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
-        Log.d("DroidOS_Keys", "REMOTE INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
         // 0. DRAWER SEARCH NAVIGATION (via REMOTE_KEY - transition to queue/list)
         if (isExpanded && currentFocusArea == FOCUS_SEARCH) {
@@ -1335,7 +1316,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // [FIX] Dedup to prevent double-processing from View listener + REMOTE_KEY
             val now = System.currentTimeMillis()
             if (now - lastQueueNavTime < 80) {
-                Log.d(TAG, "Queue nav dedup: skipping duplicate key $keyCode")
                 return
             }
             lastQueueNavTime = now
@@ -1654,7 +1634,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (bind.second != 0 && bind.second == keyCode) {
                 // Check modifiers
                 if (checkModifiers(metaState, bind.first)) {
-                    Log.d("DroidOS_Keys", "    MATCH! Triggering via Remote...")
                     triggerCommand(cmd)
                     commandTriggered = true
                     break
@@ -1677,7 +1656,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         
         // Custom Modifier Logic
         if (requiredMeta == MOD_CUSTOM) {
-            // Log.d(TAG, "Checking CSTM: latched=$isCustomModLatched")
             return isCustomModLatched
         }
         
@@ -1710,7 +1688,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         if (cmd.argCount == 0) {
             // Special case: OPEN_MOVE_TO opens drawer in app selection mode
             if (cmd.id == "OPEN_MOVE_TO") {
-                Log.d("DroidOS_Keys", "OPEN_MOVE_TO: Opening drawer for app selection")
                 isOpenMoveToMode = true
                 isOpenSwapMode = false
                 openMoveToApp = null
@@ -1736,7 +1713,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             
             // Special case: OPEN_SWAP opens drawer in app selection mode
             } else if (cmd.id == "OPEN_SWAP") {
-                Log.d("DroidOS_Keys", "OPEN_SWAP: Opening drawer for app selection")
                 isOpenSwapMode = true
                 isOpenMoveToMode = false
                 openMoveToApp = null
@@ -1762,7 +1738,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
             
             // Immediate
-            Log.d("DroidOS_Keys", "Executing Immediate Command: ${cmd.id}")
             val intent = Intent().putExtra("COMMAND", cmd.id)
             handleWindowManagerCommand(intent)
             safeToast("Executed: ${cmd.label}")
@@ -1776,6 +1751,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     override fun handleCommandInput(number: Int) {
+        val t0 = System.currentTimeMillis()
         // Convert input 1-based to 0-based
         if (number == 0) return // 0 is invalid for 1-based slot
         val slotIndex = number - 1
@@ -1818,7 +1794,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // [DEBUG] Log all events briefly
         val eventPkg = event.packageName?.toString() ?: "null"
         if (eventPkg != "com.android.systemui" && !eventPkg.contains("inputmethod")) {
-            Log.d(TAG, "A11Y_EVENT: type=${event.eventType} pkg=$eventPkg displayId=${if (android.os.Build.VERSION.SDK_INT >= 30) event.displayId else -1}")
         }
 
         // [EFFICIENCY] IMMEDIATE FILTER
@@ -1932,7 +1907,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             detectedPkg == "android"
                         
                         if (!isSystemOverlay && !isManagedApp) {
-                            Log.d(TAG, "FULLSCREEN_DEBUG: TYPE_WINDOWS_CHANGED for same pkg $detectedPkg, checking bounds")
                             // Check if this app covers the screen
                             var coversScreen = false
                             try {
@@ -1953,7 +1927,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                         window.getBoundsInScreen(boundsRect)
                                         val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
                                         val startsAtTop = boundsRect.top < screenHeight * 5 / 100
-                                        Log.d(TAG, "FULLSCREEN_DEBUG: $detectedPkg bounds=$boundsRect coverage=${windowArea*100/screenArea}% startsAtTop=$startsAtTop")
                                         if (windowArea >= screenArea * 85 / 100 && startsAtTop) {
                                             coversScreen = true
                                         }
@@ -1966,7 +1939,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 tiledAppsAutoMinimized = true
                                 val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
                                 queueWindowManagerCommand(minimizeIntent)
-                                Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $detectedPkg (TYPE_WINDOWS_CHANGED)")
                             }
                         }
                     }
@@ -1974,7 +1946,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // Update history if package changed
                     // Skip if we recently manually set focus via SET_FOCUS command
                     if (activePackageName != detectedPkg && System.currentTimeMillis() > manualFocusLockUntil) {
-                        Log.d(TAG, "ACCESSIBILITY: Focus changed from $activePackageName to $detectedPkg")
                         secondLastValidPackageName = lastValidPackageName
                         // [FIX] Don't overwrite history with null if we manually cleared activePackageName
                         // This preserves "Focus Last" functionality after minimizing an app
@@ -2033,7 +2004,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         
                         // [DEBUG] Log fullscreen detection state
                         val hasNonMinimized = selectedAppsQueue.any { !it.isMinimized }
-                        Log.d(TAG, "FULLSCREEN_DEBUG: pkg=$detectedPkg isSystemOverlay=$isSystemOverlay isManagedApp=$isManagedApp isTiledApp=$isTiledApp hasNonMinimized=$hasNonMinimized tiledAppsAutoMinimized=$tiledAppsAutoMinimized inCooldown=$inExplicitLaunchCooldown eventType=${event.eventType}")
                         
                         // [FULLSCREEN] Key insight: Only auto-minimize if the FOCUSED app is NOT managed.
                         // If the focused app IS managed (user opened a tiled app via hotkey/sidebar),
@@ -2060,7 +2030,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 val screenHeight = dm.heightPixels
                                 val boundsRect = android.graphics.Rect()
                                 var foundWindow = false
-                                Log.d(TAG, "FULLSCREEN_DEBUG: Checking windows for $detectedPkg, screen=${dm.widthPixels}x${dm.heightPixels} isSystemPanel=$isSystemPanel")
                                 for (window in windows) {
                                     val windowType = window.type
                                     // Check both TYPE_APPLICATION and TYPE_SYSTEM to catch Android system menus
@@ -2069,7 +2038,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     val node = window.root
                                     val windowPkg = node?.packageName?.toString()
                                     node?.recycle()
-                                    Log.d(TAG, "FULLSCREEN_DEBUG: Window type=$windowType pkg=$windowPkg isRelevant=$isRelevantType")
                                     if (!isRelevantType) continue
                                     if (node == null) continue
                                     if (windowPkg == detectedPkg) {
@@ -2082,14 +2050,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                         // System panels (Settings) use lower 50% threshold since Samsung opens them as side panels
                                         val coverageThreshold = if (isSystemPanel) 50 else 95
                                         val startsAtTop = boundsRect.top < screenHeight * 5 / 100
-                                        Log.d(TAG, "FULLSCREEN_DEBUG: $detectedPkg bounds=$boundsRect coverage=$coveragePercent% threshold=$coverageThreshold% startsAtTop=$startsAtTop")
                                         if (coveragePercent >= coverageThreshold && startsAtTop) {
                                             coversScreen = true
                                         }
                                         break
                                     }
                                 }
-                                if (!foundWindow) Log.d(TAG, "FULLSCREEN_DEBUG: Window not found for $detectedPkg")
+
                             } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_DEBUG: Error checking coversScreen", e) }
 
                             if (coversScreen) {
@@ -2100,7 +2067,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             // Use MINIMIZE_ALL command for consistency and proper state tracking
                             val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
                             queueWindowManagerCommand(minimizeIntent)
-                            Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $detectedPkg")
                             } else {
                             // [FULLSCREEN] Window doesn't cover screen yet (may still be animating).
                             // Schedule a delayed re-check to catch apps like Android Settings that
@@ -2145,7 +2111,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     // Use MINIMIZE_ALL command for consistency and proper state tracking
                                     val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
                                     queueWindowManagerCommand(minimizeIntent)
-                                    Log.d(TAG, "FULLSCREEN: Queued MINIMIZE_ALL for $recheckPkg (delayed re-check)")
                                 }
                                 pendingFullscreenCheckRunnable = null
                             }
@@ -2190,7 +2155,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 val fsAppInfo = allAppsList.find { it.packageName == fullscreenPkg || it.getBasePackage() == fullscreenPkg }
                                 if (fsAppInfo != null) {
                                     selectedAppsQueue.add(0, fsAppInfo.copy())  // Add at position 0 (slot 1)
-                                    Log.d(TAG, "FULLSCREEN: Added fullscreen app $fullscreenPkg at slot 1, tiling with $detectedPkg")
                                     uiHandler.post { updateAllUIs() }
                                     applyLayoutImmediate()  // Force freeform mode and tile all apps
                                 }
@@ -2202,7 +2166,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             tiledAppsRestoredAt = System.currentTimeMillis()
                             ensureFullscreenAppAtSlot1()  // Same logic as launcher app queue
                             applyLayoutImmediate()  // Force freeform mode and tile all apps
-                            Log.d(TAG, "FULLSCREEN: Auto-restored tiled apps for $detectedPkg")
                         }
 
 
@@ -2238,7 +2201,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
                         if (windowArea >= screenArea * 85 / 100) {
                             // This tiled app has been maximized — minimize all others
-                            Log.d(TAG, "FULLSCREEN: Tiled app $windowPkg maximized (${boundsRect.width()}x${boundsRect.height()} vs ${dm.widthPixels}x${dm.heightPixels})")
                             tiledAppsAutoMinimized = true
                             val maximizedPkg = windowPkg
                             Thread {
@@ -2280,7 +2242,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             window.getBoundsInScreen(boundsRect)
                             val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
                             if (windowArea >= screenArea * 85 / 100) {
-                                Log.d(TAG, "FULLSCREEN: External app $windowPkg maximized (${boundsRect.width()}x${boundsRect.height()} vs ${dm.widthPixels}x${dm.heightPixels})")
                                 tiledAppsAutoMinimized = true
                                 activePackageName = windowPkg
                                 Thread {
@@ -2349,8 +2310,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
             .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
             .putExtra("TILED_ACTIVE", false))
-        Log.d(TAG, "onServiceConnected: Reset DockIMEPrefs and TILED_STATE to prevent stale sync")
-        Log.d(TAG, "Accessibility Service Connected")
 
         // Initialize WindowManager
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -2448,7 +2407,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Priority: 1. Explicit ID from Intent (Triggered by Icon Click) 2. Last saved Physical ID
         val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", currentDisplayId) ?: currentDisplayId
 
-        Log.d(TAG, "onStartCommand: Target Display $targetDisplayId (Current: $currentDisplayId)")
 
         if (bubbleView != null) {
             // If we are already running but the target display changed, move the bubble
@@ -2554,7 +2512,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Save it immediately so it becomes the baseline preference
                 AppPreferences.saveDisplayDpi(this, displayId, currentDpiSetting)
 
-                Log.d(TAG, "Initialized DPI from System: $currentDpiSetting")
             } else {
                 currentDpiSetting = -1
             }
@@ -2697,7 +2654,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         uiHandler.post {
             debugStatusView?.text = debugText
             // Also log full details
-            Log.d(DEBUG_TAG, "[$action] FULL: pkg=$pkg cls=$className")
         }
     }
     // === DEBUG APP IDENTIFICATION - END ===
@@ -2816,7 +2772,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         } catch (e: Exception) {}
                     }
                 }.start()
-                Log.d(TAG, "refreshUIForOrientationChange: Minimized ${appsToMinimize.size} apps exceeding new slot count ($newSlotCount)")
             }
 
             setupBubble()
@@ -3722,7 +3677,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 visualQueueWindowManager = targetWM
                 targetWM.addView(visualQueueView, visualQueueParams)
                 isVisualQueueVisible = true
-                Log.d(TAG, "Visual Queue Added to Display $currentDisplayId")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to add Visual Queue", e)
                 e.printStackTrace()
@@ -3788,6 +3742,25 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
         }
         uiHandler.removeCallbacks(commandTimeoutRunnable)
+
+        // [FIX] Force focus back to active app BEFORE releasing keyboard capture
+        // This ensures Android gives input focus to the app even while keyboard processes CAPTURE=false
+        if (activePackageName != null && !isExpanded) {
+            val basePkg = if (activePackageName!!.contains(":")) activePackageName!!.substringBefore(":") else activePackageName!!
+            val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+            val className = appEntry?.className
+            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                "$basePkg/$className"
+            } else {
+                null
+            }
+            val cmd = if (component != null) {
+                "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+            } else {
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+            }
+            Thread { shellService?.runCommand(cmd) }.start()
+        }
 
         // Release Trackpad input
         val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
@@ -4020,7 +3993,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun forceAppToDisplay(pkg: String, targetDisplayId: Int) {
         // [LOCK] Prevent duplicate threads
         if (activeEnforcements.contains(pkg)) {
-            Log.d("DROIDOS_WATCHDOG", "SKIP: Enforcement already active for $pkg")
             return
         }
         activeEnforcements.add(pkg)
@@ -4080,10 +4052,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // Apply Bounds
                         if (bounds != null) {
                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId @ $bounds")
                         } else {
                             shellService?.runCommand("am task resize $tid 0 0 1000 1000")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId (Default)")
                         }
 
                         // Check success
@@ -4225,9 +4195,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Opens/closes the launcher drawer overlay
     // Updates debug display with queue state when opening
     private fun toggleDrawer() {
-        Log.d(TAG, "toggleDrawer called. isExpanded=$isExpanded")
         if (isExpanded) {
-            Log.d(TAG, "Closing drawer")
             try { windowManager.removeView(drawerView) } catch(e: Exception) {}
             // bubbleView?.visibility = View.VISIBLE // No need to toggle if always visible
             isExpanded = false
@@ -4250,20 +4218,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }.start()
             }
         } else {
-            Log.d(TAG, "Opening drawer")
             updateDrawerHeight(false)
             
             // Z-ORDER UPDATE: Try adding with High Priority, Fallback if fails
             try {
-                Log.d(TAG, "Attempting to add drawer view")
                 windowManager.addView(drawerView, drawerParams)
-                Log.d(TAG, "Drawer view added successfully")
             } catch(e: Exception) {
                 Log.e(TAG, "Failed to add drawer with high priority: ${e.message}")
                 try {
                     drawerParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                     windowManager.addView(drawerView, drawerParams)
-                    Log.d(TAG, "Drawer added with fallback type")
                 } catch(e2: Exception) {
                     Log.e(TAG, "Failed to add drawer with fallback: ${e2.message}")
                 }
@@ -4337,7 +4301,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             
             // Also log full details
             selectedAppsQueue.forEachIndexed { i, app ->
-                Log.d(DEBUG_TAG, "Queue[$i]: ${app.label} pkg=${app.packageName} cls=${app.className}")
             }
         }
     }
@@ -4403,10 +4366,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 allAppsList.add(app)
             }
             
-            Log.d(DEBUG_TAG, "Loaded: $label pkg=$pkg cls=$validClassName")
         }
         allAppsList.sortBy { it.label.lowercase() }
-        Log.d(TAG, "Loaded ${allAppsList.size} apps total")
     }
     // === LOAD INSTALLED APPS - END ===
 
@@ -4573,7 +4534,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                 // Already in queue but not at position 0 - move it
                                 val app = selectedAppsQueue.removeAt(existingIdx)
                                 selectedAppsQueue.add(0, app)
-                                Log.d(TAG, "FULLSCREEN: Moved $windowPkg to slot 1")
                             } else if (existingIdx == -1) {
                                 // Not in queue - add at position 0
                                 var appInfo = allAppsList.find { it.getBasePackage() == windowPkg || it.packageName == windowPkg }
@@ -4584,7 +4544,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     appInfo = MainActivity.AppInfo(label, windowPkg, null, false, false)
                                 }
                                 selectedAppsQueue.add(0, appInfo.copy())
-                                Log.d(TAG, "FULLSCREEN: Added $windowPkg at slot 1")
                             }
                             return true  // Found and positioned fullscreen app
                         }
@@ -4638,20 +4597,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // 2. Update Visual Queue HUD (if exists)
                 if (visualQueueView != null) {
                     val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
-                    Log.d(TAG, "updateAllUIs: visualQueue recycler=${recycler != null} adapter=${recycler?.adapter != null}")
                     recycler?.adapter?.notifyDataSetChanged()
                 }
-                Log.d(TAG, "updateAllUIs: DONE")
             }    private fun updateSelectedAppsDock() { val dock = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler) ?: return; if (selectedAppsQueue.isEmpty() || currentMode != MODE_SEARCH) { dock.visibility = View.GONE } else { dock.visibility = View.VISIBLE; dock.adapter?.notifyDataSetChanged(); dock.scrollToPosition(selectedAppsQueue.size - 1) } }
     override fun refreshSearchList() { val query = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.text?.toString() ?: ""; filterList(query) }
 
     private fun updateAllUIs2() {
-        Log.d(TAG, "UPDATE_ALL_UIS_2_CALLED vq=${visualQueueView != null} activePkg=$activePackageName")
         if (visualQueueView != null) {
             val recycler = visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)
             val adapter = recycler?.adapter
             val count = adapter?.itemCount ?: 0
-            Log.d(TAG, "UPDATE_ALL_UIS_2: recycler=${recycler != null} adapter=${adapter != null} itemCount=$count")
             if (count > 0) {
                 adapter?.notifyItemRangeChanged(0, count)
             }
@@ -4860,10 +4815,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 intent.setClassName(basePkg, className)
                 intent.action = Intent.ACTION_MAIN
                 intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                Log.d(TAG, "launchViaApi: explicit component $basePkg/$className")
             } else {
                 intent = packageManager.getLaunchIntentForPackage(basePkg)
-                Log.d(TAG, "launchViaApi: default intent for $basePkg")
             }
 
             if (intent == null) {
@@ -4879,11 +4832,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             if (bounds != null) {
                 options.setLaunchBounds(bounds)
-                Log.d(TAG, "launchViaApi: bounds=$bounds")
             }
 
             startActivity(intent, options.toBundle())
-            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
 
         } catch (e: Exception) {
             Log.e(TAG, "launchViaApi FAILED, trying shell", e)
@@ -4914,12 +4865,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
             }
 
-            Log.d(TAG, "launchViaShell: $cmd")
 
             Thread {
                 try {
                     shellService?.runCommand(cmd)
-                    Log.d(TAG, "launchViaShell: SUCCESS")
                 } catch (e: Exception) {
                     Log.e(TAG, "launchViaShell: FAILED", e)
                 }
@@ -4957,9 +4906,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
                 }
                 
-                Log.d(TAG, "focusViaTask: $cmd")
                 shellService?.runCommand(cmd)
-                Log.d(TAG, "focusViaTask: SUCCESS pkg=$basePkg")
             } catch (e: Exception) {
                 Log.e(TAG, "focusViaTask FAILED: $pkg", e)
             }
@@ -4985,7 +4932,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         intent.putExtra("X", centerX)
         intent.putExtra("Y", centerY)
         sendBroadcast(intent)
-        Log.d(TAG, "CURSOR: Sent cursor to ($centerX, $centerY) topPx=$topPx bounds=$bounds")
     }
 
     
@@ -5246,11 +5192,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun runPendingHeadlessRetile() {
         if (!pendingHeadlessRetile) return
         if (!isBound || shellService == null) {
-            Log.d(TAG, "Headless retile pending (Shizuku not bound) reason=$pendingHeadlessRetileReason")
             return
         }
         if (isExecuting) {
-            Log.d(TAG, "Headless retile pending (execute running) reason=$pendingHeadlessRetileReason")
             uiHandler.postDelayed(headlessRetileRunnable, 200)
             return
         }
@@ -5274,7 +5218,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             pendingWindowManagerCommands.removeFirst()
         }
         pendingWindowManagerCommands.addLast(copy)
-        Log.d(TAG, "WM Command queued: $cmd (pending=${pendingWindowManagerCommands.size})")
         schedulePendingWindowManagerFlush(400L)
     }
 
@@ -5335,7 +5278,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Preserve sorting (Active -> Minimized)
         sortAppQueue()
         updateAllUIs()
-        Log.d(TAG, "Restored ${selectedAppsQueue.size} apps from prefs (minimized: ${minimizedPkgs.size})")
     }
     // === RESTORE QUEUE IMMEDIATE - END ===
 
@@ -5353,8 +5295,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 val allRunning = shellService!!.getAllRunningPackages()
                 val lastQueue = AppPreferences.getLastQueue(this)
 
-                // Log.d(DEBUG_TAG, "fetchRunningApps: visible=${visiblePackages.joinToString()}")
-                // Log.d(DEBUG_TAG, "fetchRunningApps: lastQueue=${lastQueue.joinToString()}")
 
                 uiHandler.post {
                     selectedAppsQueue.clear()
@@ -5396,11 +5336,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     if (!isRecentOverride) {
                                         appInfo.isMinimized = !isVisible
                                     } else {
-                                        Log.d(DEBUG_TAG, "fetchRunningApps: Ignoring system visibility for ${appInfo.label} (Manual Override Active)")
                                     }
 
                                     selectedAppsQueue.add(appInfo)
-                                    Log.d(DEBUG_TAG, "fetchRunningApps: Restored ${appInfo.label} minimized=${appInfo.isMinimized}")
                                 }
                             } else {
                                 Log.w(DEBUG_TAG, "fetchRunningApps: Could not find app for identifier=$identifier")
@@ -5433,7 +5371,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             if (appInfo != null) {
                                 appInfo.isMinimized = false
                                 selectedAppsQueue.add(appInfo)
-                                Log.d(DEBUG_TAG, "fetchRunningApps: Added new visible ${appInfo.label}")
                             }
                         }
                     }
@@ -5538,11 +5475,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 val currentMode = display?.mode
                 
                 // Log available modes for debugging
-                Log.d(TAG, "=== REFRESH RATE DEBUG ===")
-                Log.d(TAG, "Target rate: $targetRate Hz")
-                Log.d(TAG, "Display $currentDisplayId has ${modes.size} mode(s):")
                 modes.forEach { mode ->
-                    Log.d(TAG, "  Mode ${mode.modeId}: ${mode.physicalWidth}x${mode.physicalHeight} @ ${mode.refreshRate}Hz")
                 }
                 
                 // Check if hardware supports target rate
@@ -5563,7 +5496,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 
                 if (hasHardwareSupport) {
                     // === METHOD A: Hardware mode exists - use standard approach ===
-                    Log.d(TAG, "Hardware supports ${targetRate}Hz (Mode $bestModeId)")
                     
                     // 1. App-Level Window Override
                     uiHandler.post {
@@ -5585,7 +5517,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // 3. Force display mode
                     val forceCmd = "cmd display set-user-preferred-display-mode $currentDisplayId $width $height $targetRate"
                     shellService?.runCommand(forceCmd)
-                    Log.d(TAG, "Applied HW mode: $forceCmd")
                     
                     activeRefreshRateLabel = "${rateInt}Hz"
                     
@@ -5597,7 +5528,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // This tells SF to throttle frame composition for this display
                     val sfThrottleCmd = "service call SurfaceFlinger 1035 i32 $currentDisplayId f $targetRate"
                     val sfResult = shellService?.runCommand(sfThrottleCmd)
-                    Log.d(TAG, "SF throttle result: $sfResult")
                     
                     // Method B2: Set frame rate policy via display service
                     // This affects the render frame rate policy
@@ -5612,7 +5542,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // This requests SF to limit the render rate even if HW is higher
                     val specCmd = "cmd display set-desired-display-mode-specs $currentDisplayId -p $targetRate $targetRate -r $targetRate $targetRate"
                     val specResult = shellService?.runCommand(specCmd)
-                    Log.d(TAG, "Mode specs result: $specResult")
                     
                     // Method B5: Try forcing the base/peak refresh for this display specifically
                     shellService?.runCommand("settings put system min_refresh_rate_$currentDisplayId $rateStr")
@@ -5636,7 +5565,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Re-query to see what actually happened
                 val newDisplay = dm.getDisplay(currentDisplayId)
                 val actualRate = newDisplay?.refreshRate ?: 0f
-                Log.d(TAG, "Post-apply rate: $actualRate Hz")
                 
                 uiHandler.post { 
                     switchMode(MODE_REFRESH)
@@ -5973,7 +5901,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // If already executing, queue this request
         if (isExecuting) {
-            Log.d(TAG, "executeLaunch: Already running. Queueing next run.")
             pendingExecutionNeeded = true
             if (focusPackage != null) pendingFocusPackage = focusPackage
             return
@@ -6011,7 +5938,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Add fullscreen app to END of queue (bottom position in layout)
                 // The user's selected apps will be on top
                 selectedAppsQueue.add(fsApp.copy())
-                Log.d(TAG, "executeLaunch: Added fullscreen app ${fsApp.packageName} to queue for tiling")
             }
             // Update UI to show the new queue
             uiHandler.post { updateAllUIs() }
@@ -6065,7 +5991,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // We use the member variable 'selectedLayoutType' (which matches the passed 'layoutType' 99% of the time).
                 val rects = getLayoutRects()
                 
-                Log.d(TAG, "executeLaunch: Generated ${rects.size} tiles with Margin $bottomMarginPercent%")
                 
                 if (selectedAppsQueue.isEmpty()) {
                     uiHandler.post { safeToast("No apps in queue") }
@@ -6139,7 +6064,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     }
 
                     try {
-                        // Log.d(TAG, "Tile[$i]: Executing Launch: $cmd")
                         shellService?.runCommand(cmd)
                     } catch (e: Exception) {
                         // Log.e(TAG, "Tile[$i]: Launch failed", e)
@@ -6171,7 +6095,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         if (!wasInstant) Thread.sleep(200)
 
                         // PASS 1: Set Mode & Resize
-                        // Log.d(TAG, "Tile[$i]: Repositioning ${app.label} (TID: $tid)")
                         shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
 
                         // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
@@ -6230,7 +6153,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         }
                         updateAllUIs()
                     }
-                    Log.d(TAG, "executeLaunch: Auto-minimized ${activeApps.size - rects.size} apps exceeding slot count")
                 }
 
                 // === REFOCUS LOGIC ===
@@ -6245,7 +6167,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         val app = activeApps[focusIndex]
                         val bounds = rects[focusIndex]
                         Thread.sleep(200)
-                        Log.d(TAG, "Refocusing Active Window: ${app.label}")
                         launchViaShell(app.getBasePackage(), app.className, bounds)
                     }
                 }
@@ -6273,7 +6194,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
                 // If a request came in while we were running, trigger it now
                 if (pendingExecutionNeeded) {
-                    Log.d(TAG, "executeLaunch: Triggering pending execution")
                     val nextFocus = pendingFocusPackage
                     pendingFocusPackage = null
                     uiHandler.post {
@@ -6392,7 +6312,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     supportedRates.add(Math.round(mode.refreshRate).toInt())
                 }
                 
-                Log.d(TAG, "Display $currentDisplayId supported rates: $supportedRates")
                 
                 // 3. Build header text based on available modes
                 val headerText = when {
@@ -6570,7 +6489,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
                 displayList.add(WidthOption(currentDrawerWidthPercent))
-                Log.d("MarginSlider", "switchMode(MODE_SETTINGS): Adding MarginOptions with top=$topMarginPercent bottom=$bottomMarginPercent")
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
                 // [FIX] Improved DroidOS IME detection for Flip 7 cover screen compatibility.
@@ -6704,7 +6622,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val rawIndex = intent.getIntExtra("INDEX", -1)
         val index = if (rawIndex > 0) rawIndex - 1 else -1
 
-        Log.d(TAG, "WM Command: $cmd RawIdx: $rawIndex (Internal: $index)")
 
         when (cmd) {
             "OPEN_SWAP" -> {
@@ -7170,7 +7087,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             }
                         }
                         // The target app stays isMinimized=false → it will be the only active app → slot 1
-                        Log.d(TAG, "WM Command: Auto-minimize state synced, restoring ${app.label} to slot 1")
                         // Now retile to launch only this app in slot 1
                         refreshQueueAndLayout("Restored ${app.label}", forceRetile = true, retileDelayMs = 300L)
                         return
@@ -7181,7 +7097,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // the app was closed/crashed/covered without updating minimized state.
                     // NOTE: Only apply to explicit UNMINIMIZE, not TOGGLE_MINIMIZE (which should toggle)
                     if (cmd == "UNMINIMIZE" && !app.isMinimized) {
-                        Log.d(TAG, "WM Command: ${app.label} already not minimized, forcing bring-to-front")
                         lastExplicitTiledLaunchAt = System.currentTimeMillis()
                         val basePkg = app.getBasePackage()
                         val cls = app.className
@@ -7308,7 +7223,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                  if (fsApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized || it == app }) {
                                      for (fsApp in fsApps) {
                                          selectedAppsQueue.add(fsApp.copy())
-                                         Log.d(TAG, "UNMINIMIZE: Added fullscreen app ${fsApp.packageName} to queue for tiling")
                                      }
                                      uiHandler.post { updateAllUIs() }
                                  }
@@ -7387,7 +7301,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     activePackageName == targetApp.packageName ||
                                     (isGemini && activeIsGoogle)) {
                                     activePackageName = null
-                                    Log.d(TAG, "WM Command: Cleared focus for hidden app: $basePkg")
                                 }
 
                                 Thread { 
@@ -7445,16 +7358,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 refreshQueueAndLayout("Cleared All")
             }
             "OPEN_DRAWER" -> {
-                Log.d(TAG, "OPEN_DRAWER command received, calling toggleDrawer()")
                 toggleDrawer()
                 refreshQueueAndLayout("Toggled Drawer", skipTiling = true)
             }
             "SET_FOCUS" -> {
                 // 'index' is 0-based here
-                Log.d(TAG, "SET_FOCUS: rawIndex=$rawIndex index=$index queueSize=${selectedAppsQueue.size} isExpanded=$isExpanded")
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
-                    Log.d(TAG, "SET_FOCUS: app=${app.label} pkg=${app.packageName} isMinimized=${app.isMinimized}")
                     if (app.packageName != PACKAGE_BLANK) {
                         
                         // [FIX] Internal Focus vs System Launch
@@ -7476,34 +7386,36 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             val alreadyFocused = (activePackageName == app.packageName) || 
                                 (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
                             
-                            if (!alreadyFocused) {
-                                Log.d(TAG, "SET_FOCUS: Drawer CLOSED - calling ${if (!app.isMinimized) "focusViaTask" else "launchViaShell"}")
-                                if (!app.isMinimized) {
-                                    focusViaTask(app.getBasePackage(), bounds)
-                                } else {
+                            if (alreadyFocused) {
+                                // App already focused - am start is no-op, use input tap to force focus back
+                                if (bounds != null) {
+                                    val centerX = bounds.centerX()
+                                    val centerY = bounds.centerY()
                                     Thread {
-                                         launchViaShell(app.getBasePackage(), app.className, bounds)
+                                        shellService?.runCommand("input tap $centerX $centerY")
                                     }.start()
                                 }
-                                sendCursorToAppCenter(bounds)
-                                
-                                // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
-                                Log.d(TAG, "SET_FOCUS: CHECKING condition: current=$activePackageName target=${app.packageName} needsUpdate=${activePackageName != app.packageName}")
+                            } else if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), bounds)
+                            } else {
+                                Thread {
+                                     launchViaShell(app.getBasePackage(), app.className, bounds)
+                                }.start()
+                            }
+                            sendCursorToAppCenter(bounds)
+                            
+                            if (!alreadyFocused) {
+                                // Update focus state only when changing apps
                                 if (activePackageName != null) lastValidPackageName = activePackageName
                                 activePackageName = app.packageName
-                                Log.d(TAG, "SET_FOCUS: CALLING updateAllUIs directly")
                                 manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
                                 try {
                                     updateAllUIs2()
-                                    Log.d(TAG, "SET_FOCUS: updateAllUIs2 COMPLETED")
                                 } catch (e: Exception) {
                                     Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
                                 }
                                 safeToast("Focused: ${app.label}")
-                            } else {
-                                Log.d(TAG, "SET_FOCUS: App already focused, skipping focusViaTask")
                             }
-                            Log.d(TAG, "SET_FOCUS: activePackageName is now $activePackageName")
                         }
                     }
                 }
@@ -7534,7 +7446,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
                             // [FIX] Non-minimized apps are already visible — use moveTaskToFront
                             // instead of re-launching activity (preserves chat/search state)
-                            Log.d(TAG, "SET_FOCUS: Drawer CLOSED - calling ${if (!app.isMinimized) "focusViaTask" else "launchViaShell"}")
                             if (!app.isMinimized) {
                                 focusViaTask(app.getBasePackage(), bounds)
                             } else {
@@ -7545,20 +7456,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             sendCursorToAppCenter(bounds)
                             
                             // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
-                            Log.d(TAG, "SET_FOCUS: CHECKING condition: current=$activePackageName target=${app.packageName} needsUpdate=${activePackageName != app.packageName}")
                             if (activePackageName != app.packageName) {
                                 if (activePackageName != null) lastValidPackageName = activePackageName
                                 activePackageName = app.packageName
-                                Log.d(TAG, "SET_FOCUS: CALLING updateAllUIs directly")
                                 manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
                                 try {
                                     updateAllUIs2()
-                                    Log.d(TAG, "SET_FOCUS: updateAllUIs2 COMPLETED")
                                 } catch (e: Exception) {
                                     Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
                                 }
                             }
-                            Log.d(TAG, "SET_FOCUS: activePackageName is now $activePackageName")
                             safeToast("Focused: ${app.label}")
                         }
                     } else {
@@ -7757,7 +7664,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // =================================================================================
 
     private fun logSavedKeybinds() {
-        Log.d("DroidOS_Keys", "=== SAVED KEYBINDS ===")
         for (cmd in AVAILABLE_COMMANDS) {
             val bind = AppPreferences.getKeybind(this, cmd.id)
             if (bind.second != 0) {
@@ -7765,10 +7671,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
                 // Using toString() directly on the integer for debug output.
                 val modName = if (bind.first != 0) "Meta(${bind.first})" else "None"
-                Log.d("DroidOS_Keys", "CMD: ${cmd.label} -> [$modName] + [$keyName] (Mod:${bind.first}, Key:${bind.second})")
             }
         }
-        Log.d("DroidOS_Keys", "======================")
     }
 
     override fun buildAdbCommand(cmdId: String): String? {

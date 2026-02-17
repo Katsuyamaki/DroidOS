@@ -118,6 +118,19 @@ private var isMetaActive = false // For Windows/Command key
     private var isInputCaptureActive = false
     private var shortcutCooldownUntil = 0L  // Prevents key leakage after triggering a Launcher shortcut
 
+    // =================================================================================
+    // CAPTURE MODE KEY BLOCKING STATE
+    // SUMMARY: Tracks the key tag that was blocked during ACTION_DOWN due to capture mode.
+    //          When a key is blocked on DOWN, it must also be blocked on UP even if
+    //          capture mode is cleared between DOWN and UP (due to visual queue dismissal).
+    //          This prevents the "q/w leak" bug where letter keys get typed after
+    //          a number selection completes and clears capture mode.
+    // =================================================================================
+    private var captureBlockedKeyTag: String? = null
+    // =================================================================================
+    // END BLOCK: CAPTURE MODE KEY BLOCKING STATE
+    // =================================================================================
+
 private var customModKeyCode = 0
     private var isCustomModLatchedLocal = false
     private var overrideSystemShortcuts = true
@@ -649,9 +662,12 @@ private var customModKeyCode = 0
 
     fun setInputCaptureMode(active: Boolean) {
         isInputCaptureActive = active
-        // [FIX] Don't clear shortcutCooldownUntil here - let the cooldown run its natural course
-        // to block any lingering key presses that arrive after the command completes.
-        // No visual feedback - keep normal keyboard color
+        // [FIX] When CAPTURE=false is received from launcher, also clear the cooldown
+        // so input can resume immediately. The original 5-second cooldown was causing
+        // a delay when focusing an already-focused app via Alt+F.
+        if (!active) {
+            shortcutCooldownUntil = 0L
+        }
     }
 
     fun setOverrideSystemShortcuts(enabled: Boolean) {
@@ -1987,6 +2003,22 @@ private fun buildKeyboard() {
         // Stop any active key repeat
         if (key == currentRepeatKey) stopRepeat()
 
+        // =================================================================================
+        // [FIX] CHECK CAPTURE-BLOCKED KEY
+        // SUMMARY: If this key was blocked during ACTION_DOWN due to capture mode,
+        //          don't process it on ACTION_UP. This prevents the "q/w leak" bug
+        //          where capture mode is cleared between DOWN and UP.
+        // =================================================================================
+        if (captureBlockedKeyTag == key) {
+            android.util.Log.d("KeyboardView", "onKeyUp: Key '$key' was capture-blocked on DOWN - ignoring UP")
+            captureBlockedKeyTag = null
+            return
+        }
+        captureBlockedKeyTag = null  // Clear for any other key
+        // =================================================================================
+        // END BLOCK: CHECK CAPTURE-BLOCKED KEY
+        // =================================================================================
+
         // FIX: Block ALL key presses during active swipe
         // This includes letter keys, special keys, and deferred keys
         if (isSwiping) {
@@ -2310,6 +2342,12 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                     context.sendBroadcast(intent)
                     android.util.Log.d("KeyboardView", "Capture Mode: Sent $finalCode for key $key")
                 }
+
+                // [FIX] Track that this key was blocked during capture mode.
+                // This prevents the key from being processed again on ACTION_UP
+                // even if capture mode is cleared between DOWN and UP.
+                captureBlockedKeyTag = key
+                android.util.Log.d("KeyboardView", "Capture Mode: Blocked key '$key' - will ignore on UP")
 
                 // BLOCK EVERYTHING - don't let keys leak to app
                 return
