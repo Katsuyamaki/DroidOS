@@ -65,8 +65,10 @@ class KeyboardOverlay(
 
     private var isResizing = false
     // [NEW] Track scale internally to avoid slow SharedPreferences reads during drag
-    private var internalScale = 1.0f
-    private var dragStartScale = 1.0f
+    // Default to 0.69f (69%) to match resetPosition default. Using 1.0f caused distortion
+    // when keyboard loaded before preferences were read (e.g., fresh install, APK reinstall).
+    private var internalScale = 0.69f
+    private var dragStartScale = 0.69f
     private var dragStartHeight = 0
 
     // Mouse Tracking
@@ -200,14 +202,20 @@ class KeyboardOverlay(
         this.screenHeight = height
         this.currentDisplayId = displayId
 
-        // 2. Apply Dynamic Resize Logic (Same as Reset)
-        // This ensures that when entering split-screen or rotating, the keyboard
-        // recalculates its perfect size (90% width, 300dp height) instead of stretching.
+        // 2. [FIX] Load saved scale for THIS display (not stale scale from previous display)
+        // Scale is saved per-display: keyboard_key_scale_d${displayId}_L/P
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        val savedScale = getSavedScalePercent(prefs, os) / 100f
+        internalScale = savedScale
+        keyboardView?.setScale(savedScale)
+        
+        // 3. Apply Dynamic Resize Logic
         val newWidth = (width * 0.90f).toInt().coerceIn(300, 1200)
         
         // Calculate Height: 300dp * Scale * Density
         val density = context.resources.displayMetrics.density
-        val scale = if (internalScale > 0f) internalScale else 0.69f
+        val scale = savedScale
         val baseHeightDp = 300f
         val newHeight = (baseHeightDp * scale * density).toInt()
 
