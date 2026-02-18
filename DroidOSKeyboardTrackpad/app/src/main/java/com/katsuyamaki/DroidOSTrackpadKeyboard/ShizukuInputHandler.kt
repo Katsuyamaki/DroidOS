@@ -95,13 +95,44 @@ class ShizukuInputHandler(
                 val isDockActive = currentIme.contains(context.packageName) &&
                     (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
 
+                // =================================================================================
+                // COVER SCREEN (Display 1) FLASH ISSUE - DOCUMENTED TESTING RESULTS
+                // =================================================================================
+                // PROBLEM: On Samsung cover screen, UI elements flash on every keystroke.
+                // ROOT CAUSE: Samsung's AOD service reacts to InputManager.injectInputEvent().
+                //
+                // WHAT WORKS (no flash):
+                // - Display 0 with DroidOS IME: Uses NullIME InputConnection.sendKeyEvent()
+                // - Display 0 with Gboard/Samsung KB: Shell injection with device ID 0
+                //
+                // WHAT DOESN'T WORK (still flashes on display 1):
+                // - Device ID 0: AOD still reacts
+                // - Device ID 1: AOD still reacts  
+                // - Device ID -1: AOD still reacts
+                // - FLAG_SOFT_KEYBOARD (2): AOD still reacts
+                // - FLAG_FROM_SYSTEM (8): AOD still reacts
+                // - SOURCE_TOUCHSCREEN: AOD still reacts
+                // - SOURCE_KEYBOARD: AOD still reacts
+                // - Forcing IME back with "ime set": Samsung immediately switches back to HoneyBoard
+                //   and NullIME loses InputConnection before broadcast arrives
+                //
+                // CONCLUSION: Samsung's AOD service on cover screen reacts to ANY 
+                // InputManager.injectInputEvent() call. The only flash-free path is
+                // InputConnection.sendKeyEvent() via NullIME, but Samsung aggressively
+                // switches IME to HoneyBoard on cover screen, making this path unavailable.
+                //
+                // CURRENT BEHAVIOR: Typing works on cover screen but with visual flash.
+                // =================================================================================
+
                 if (isDockActive) {
+                    // DroidOS IME active - use broadcast path (no flash)
                     val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY")
                     intent.setPackage(context.packageName)
                     intent.putExtra("keyCode", keyCode)
                     intent.putExtra("metaState", metaState)
                     context.sendBroadcast(intent)
                 } else {
+                    // Shell injection - works but flashes on cover screen (Samsung AOD limitation)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, displayId, 1)
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)

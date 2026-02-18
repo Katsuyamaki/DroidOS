@@ -283,18 +283,28 @@ class ShellUserService : IShellService.Stub() {
         if (!this::inputManager.isInitialized) return
         val now = SystemClock.uptimeMillis()
         
-        // CRITICAL CONFIGURATION:
-        // Device ID = 1 mimics "Hardware Keyboard" to block soft-kb on cover screen.
-        // Device ID = 0 avoids hardware keyboard detection on main/virtual displays,
-        // preventing Samsung system UI (floating window handlebars, popup icons) from
-        // flashing on every keystroke when using Gboard/Samsung keyboard.
-        val forcedDeviceId = if (displayId == 1) 1 else 0
+        // =================================================================================
+        // KEY INJECTION CONFIGURATION
+        // =================================================================================
+        // Device ID controls Samsung's "Hardware Keyboard" detection:
+        // - Device ID 1: Triggers "Hardware Keyboard" mode, suppresses soft keyboard
+        // - Device ID 0: Avoids hardware keyboard detection, prevents Samsung UI flash
+        //                on display 0 (main screen) with Gboard/Samsung KB
+        //
+        // COVER SCREEN (Display 1) FLASH ISSUE:
+        // Tested combinations that ALL still cause AOD flash on cover screen:
+        // - Device ID 0, 1, -1 with FLAG_FROM_SYSTEM (8)
+        // - Device ID 0, 1, -1 with FLAG_SOFT_KEYBOARD (2)  
+        // - SOURCE_KEYBOARD vs SOURCE_TOUCHSCREEN
+        // Samsung's AOD service reacts to ANY InputManager injection on cover screen.
+        // =================================================================================
+        val finalDeviceId = if (displayId == 1) 1 else if (deviceId >= 0) deviceId else 0
         val finalScanCode = 0 
         val finalFlags = 8 // FLAG_FROM_SYSTEM
         
         val event = KeyEvent(
             now, now, action, keyCode, 0, metaState, 
-            forcedDeviceId, finalScanCode, finalFlags, 
+            finalDeviceId, finalScanCode, finalFlags, 
             InputDevice.SOURCE_KEYBOARD
         )
         

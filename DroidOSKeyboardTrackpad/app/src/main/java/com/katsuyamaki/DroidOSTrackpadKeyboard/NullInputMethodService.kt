@@ -36,7 +36,7 @@ class NullInputMethodService : InputMethodService() {
     // =================================================================================
     private val inputReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val ic = currentInputConnection ?: return
+            val ic = currentInputConnection
             
             when (intent?.action) {
                 // =====================================================================
@@ -47,7 +47,11 @@ class NullInputMethodService : InputMethodService() {
                 "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT" -> {
                     val text = intent.getStringExtra("text")
                     if (!text.isNullOrEmpty()) {
-                        ic.commitText(text, 1)
+                        if (ic != null) {
+                            ic.commitText(text, 1)
+                        } else {
+                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for text, injection skipped")
+                        }
                     }
                 }
                 
@@ -64,7 +68,11 @@ class NullInputMethodService : InputMethodService() {
                     val metaState = intent.getIntExtra("metaState", 0)
                     
                     if (code > 0) {
-                        sendKeyEventWithMeta(ic, code, metaState)
+                        if (ic != null) {
+                            sendKeyEventWithMeta(ic, code, metaState)
+                        } else {
+                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for key=$code")
+                        }
                     }
                 }
                 
@@ -76,7 +84,11 @@ class NullInputMethodService : InputMethodService() {
                 "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE" -> {
                     val length = intent.getIntExtra("length", 1)
                     if (length > 0) {
-                        ic.deleteSurroundingText(length, 0)
+                        if (ic != null) {
+                            ic.deleteSurroundingText(length, 0)
+                        } else {
+                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for delete, injection skipped")
+                        }
                     }
                 }
             }
@@ -112,7 +124,7 @@ class NullInputMethodService : InputMethodService() {
             metaState,              // metaState - THE KEY FIX!
             0,                      // deviceId
             0,                      // scanCode
-            KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE,  // flags
+            8,  // FLAG_FROM_SYSTEM - prevents Samsung UI flash
             android.view.InputDevice.SOURCE_KEYBOARD  // source
         )
         
@@ -126,11 +138,12 @@ class NullInputMethodService : InputMethodService() {
             metaState,              // metaState - THE KEY FIX!
             0,                      // deviceId
             0,                      // scanCode
-            KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE,  // flags
+            8,  // FLAG_FROM_SYSTEM - prevents Samsung UI flash
             android.view.InputDevice.SOURCE_KEYBOARD  // source
         )
         
         // Send both events through the InputConnection
+        android.util.Log.d("CoverFlash", "NullIME sending key: $keyCode flags=${downEvent.flags}")
         ic.sendKeyEvent(downEvent)
         ic.sendKeyEvent(upEvent)
         

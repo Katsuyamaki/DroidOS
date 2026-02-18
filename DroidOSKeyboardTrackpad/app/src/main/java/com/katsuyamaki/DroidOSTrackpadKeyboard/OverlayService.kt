@@ -319,8 +319,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
+            // DEBUG: Log accessibility events on cover screen
+            if (currentDisplayId == 1) {
+                val timeSinceInject = System.currentTimeMillis() - lastInjectionTime
+                android.util.Log.d("CoverFlash", "Event: type=${event.eventType} pkg=$eventPkg timeSinceInject=$timeSinceInject")
+            }
+
             // GUARD: Only run blocking logic on Cover Screen (display 1)
-            if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive) {
+            // Skip during active typing to prevent overlay flashing with DroidOS IME
+            val isActivelyTyping = System.currentTimeMillis() - lastInjectionTime < 300
+            if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive && !isActivelyTyping) {
+                 android.util.Log.d("CoverFlash", "Running blocking logic")
                  // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
                  imeManager?.ensureKeyboardBlocked()
                  imeManager?.triggerAggressiveBlockingWithThrottle()
@@ -3529,6 +3538,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
         lastInjectionTime = System.currentTimeMillis()
+        android.util.Log.d("CoverFlash", "injectKeyFromKeyboard: keyCode=$keyCode display=$currentDisplayId")
         checkAndDismissVoice()
         inputHandler.injectKeyFromKeyboard(keyCode, metaState)
     }
