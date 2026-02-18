@@ -127,6 +127,7 @@ private var isMetaActive = false // For Windows/Command key
     //          a number selection completes and clears capture mode.
     // =================================================================================
     private var captureBlockedKeyTag: String? = null
+    private var captureBlockedKeyCode: Int? = null
     // =================================================================================
     // END BLOCK: CAPTURE MODE KEY BLOCKING STATE
     // =================================================================================
@@ -662,11 +663,17 @@ private var customModKeyCode = 0
 
     fun setInputCaptureMode(active: Boolean) {
         isInputCaptureActive = active
-        // [FIX] When CAPTURE=false is received from launcher, also clear the cooldown
-        // so input can resume immediately. The original 5-second cooldown was causing
-        // a delay when focusing an already-focused app via Alt+F.
+        // [FIX] Keep a brief cooldown when capture is disabled to absorb delayed
+        // key-up events and cross-process timing jitter that can leak q/w into apps.
+        // We clamp to a short window so normal typing resumes quickly.
         if (!active) {
-            shortcutCooldownUntil = 0L
+            val now = System.currentTimeMillis()
+            val minGuardUntil = now + 300L
+            shortcutCooldownUntil = if (shortcutCooldownUntil > minGuardUntil) {
+                minGuardUntil
+            } else {
+                maxOf(shortcutCooldownUntil, minGuardUntil)
+            }
         }
     }
 
@@ -2009,12 +2016,21 @@ private fun buildKeyboard() {
         //          don't process it on ACTION_UP. This prevents the "q/w leak" bug
         //          where capture mode is cleared between DOWN and UP.
         // =================================================================================
-        if (captureBlockedKeyTag == key) {
+        val blockedTag = captureBlockedKeyTag
+        val blockedCode = captureBlockedKeyCode
+        val upCode = resolveKeyCodeForTag(key)
+        val blockedByCapture =
+            (!blockedTag.isNullOrEmpty() && blockedTag.equals(key, ignoreCase = true)) ||
+            (blockedCode != null && blockedCode != 0 && blockedCode == upCode)
+
+        if (blockedByCapture) {
             android.util.Log.d("KeyboardView", "onKeyUp: Key '$key' was capture-blocked on DOWN - ignoring UP")
             captureBlockedKeyTag = null
+            captureBlockedKeyCode = null
             return
         }
         captureBlockedKeyTag = null  // Clear for any other key
+        captureBlockedKeyCode = null
         // =================================================================================
         // END BLOCK: CHECK CAPTURE-BLOCKED KEY
         // =================================================================================
@@ -2347,6 +2363,7 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                 // This prevents the key from being processed again on ACTION_UP
                 // even if capture mode is cleared between DOWN and UP.
                 captureBlockedKeyTag = key
+                captureBlockedKeyCode = finalCode
                 android.util.Log.d("KeyboardView", "Capture Mode: Blocked key '$key' - will ignore on UP")
 
                 // BLOCK EVERYTHING - don't let keys leak to app
@@ -2590,6 +2607,26 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                 }
             }
         }
+
+    private fun resolveKeyCodeForTag(key: String): Int {
+        if (key.length == 1) {
+            return getSymbolKeyCode(key[0]).first
+        }
+
+        return when (key) {
+            "←" -> KeyEvent.KEYCODE_DPAD_LEFT
+            "→" -> KeyEvent.KEYCODE_DPAD_RIGHT
+            "↑" -> KeyEvent.KEYCODE_DPAD_UP
+            "↓" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "ENTER" -> KeyEvent.KEYCODE_ENTER
+            "BKSP" -> KeyEvent.KEYCODE_DEL
+            "SPACE" -> KeyEvent.KEYCODE_SPACE
+            "TAB" -> KeyEvent.KEYCODE_TAB
+            "ESC" -> KeyEvent.KEYCODE_ESCAPE
+            else -> 0
+        }
+    }
+
     private fun getSymbolKeyCode(c: Char): Pair<Int, Boolean> {
         return when (c) {
             in 'a'..'z' -> KeyEvent.keyCodeFromString("KEYCODE_${c.uppercase()}") to false
