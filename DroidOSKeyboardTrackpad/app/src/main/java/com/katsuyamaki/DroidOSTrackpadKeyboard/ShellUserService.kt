@@ -284,9 +284,11 @@ class ShellUserService : IShellService.Stub() {
         val now = SystemClock.uptimeMillis()
         
         // CRITICAL CONFIGURATION:
-        // Device ID = 1 (Mimics the "Hardware Keyboard" we use to block soft-kb)
-        // Scan Code = 0 (Generic/Ignore). Setting this to 1 caused the buffering/reject issue.
-        val forcedDeviceId = 1 
+        // Device ID = 1 mimics "Hardware Keyboard" to block soft-kb on cover screen.
+        // Device ID = 0 avoids hardware keyboard detection on main/virtual displays,
+        // preventing Samsung system UI (floating window handlebars, popup icons) from
+        // flashing on every keystroke when using Gboard/Samsung keyboard.
+        val forcedDeviceId = if (displayId == 1) 1 else 0
         val finalScanCode = 0 
         val finalFlags = 8 // FLAG_FROM_SYSTEM
         

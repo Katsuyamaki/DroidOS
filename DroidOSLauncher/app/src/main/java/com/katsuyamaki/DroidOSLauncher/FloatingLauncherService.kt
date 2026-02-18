@@ -113,6 +113,16 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
         }
     }
 
+    private fun isImeOrKeyboardPackage(pkg: String?): Boolean {
+        if (pkg.isNullOrEmpty()) return false
+        val p = pkg.lowercase(Locale.ROOT)
+        return p.contains("inputmethod") ||
+            p.contains("honeyboard") ||
+            p.contains("swiftkey") ||
+            p.contains("latinime") ||
+            p.contains(".ime")
+    }
+
     companion object {
         // === MODE CONSTANTS - START ===
         // Defines the different drawer modes/tabs
@@ -1932,7 +1942,7 @@ private var isSoftKeyboardSupport = false
 
         // [DEBUG] Log all events briefly
         val eventPkg = event.packageName?.toString() ?: "null"
-        if (eventPkg != "com.android.systemui" && !eventPkg.contains("inputmethod")) {
+        if (eventPkg != "com.android.systemui" && !isImeOrKeyboardPackage(eventPkg)) {
         }
 
         // [EFFICIENCY] IMMEDIATE FILTER
@@ -1954,7 +1964,7 @@ private var isSoftKeyboardSupport = false
                 pkg != PACKAGE_TRACKPAD && 
                 pkg != "com.android.systemui" && 
                 pkg != "com.sec.android.app.launcher" && 
-                !pkg.contains("inputmethod")) {
+                !isImeOrKeyboardPackage(pkg)) {
                 
                 // Only act on state changes (app opening/resuming)
                 if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -2024,7 +2034,7 @@ private var isSoftKeyboardSupport = false
                     detectedPkg != packageName &&
                     detectedPkg != "com.android.systemui" &&
                     detectedPkg != PACKAGE_TRACKPAD &&
-                    !detectedPkg.contains("inputmethod")) {
+                    !isImeOrKeyboardPackage(detectedPkg)) {
 
                     // [FULLSCREEN] Handle TYPE_WINDOWS_CHANGED for fullscreen detection even when package hasn't changed
                     // This catches Settings and system menus that fire TYPE_VIEW_FOCUSED first (which sets activePackageName)
@@ -2103,7 +2113,7 @@ private var isSoftKeyboardSupport = false
                             detectedPkg.contains("android.providers") ||
                             detectedPkg.contains("permissioncontroller") ||
                             detectedPkg.contains("DroidOSTrackpadKeyboard") ||
-                            detectedPkg.contains("inputmethod") ||
+                            isImeOrKeyboardPackage(detectedPkg) ||
                             detectedPkg == "android"
                         // [FIX] Managed state: if app is in queue and not minimized, DroidOS is managing its bounds.
                         // We notify the IME to suppress insets for ANY managed app (even single apps) 
@@ -2409,6 +2419,7 @@ private var isSoftKeyboardSupport = false
                 pkg != packageName &&
                 pkg != "com.android.systemui" &&
                 pkg != PACKAGE_TRACKPAD &&
+                !isImeOrKeyboardPackage(pkg) &&
                 (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                  event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED)) {
 
@@ -4721,7 +4732,7 @@ private var isSoftKeyboardSupport = false
                         if (windowPkg == packageName || windowPkg == PACKAGE_TRACKPAD ||
                             windowPkg.contains("systemui") || windowPkg.contains("launcher") ||
                             windowPkg.contains("home") || windowPkg.contains("wallpaper") ||
-                            windowPkg.contains("inputmethod") || windowPkg.contains("NavigationBar")) continue
+                            isImeOrKeyboardPackage(windowPkg) || windowPkg.contains("NavigationBar")) continue
                         
                         window.getBoundsInScreen(boundsRect)
                         val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
@@ -7430,7 +7441,7 @@ private var isSoftKeyboardSupport = false
                                  val userVisibleApps = visiblePkgs.mapNotNull { pkgName ->
                                      val pkg = if (pkgName.contains(":")) pkgName.substringBefore(":") else pkgName
                                      if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
-                                         pkg.contains("systemui") || pkg.contains("inputmethod") ||
+                                         pkg.contains("systemui") || isImeOrKeyboardPackage(pkg) ||
                                          pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.")) null
                                      else allAppsList.find { it.getBasePackage() == pkg }
                                  }.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
