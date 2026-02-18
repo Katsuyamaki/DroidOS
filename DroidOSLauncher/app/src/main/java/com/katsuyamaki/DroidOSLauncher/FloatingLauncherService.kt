@@ -1596,60 +1596,8 @@ private var isSoftKeyboardSupport = false
                 return
             }
 
-            when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (selectedListIndex > 0) {
-                        val old = selectedListIndex
-                        selectedListIndex--
-                        uiHandler.post {
-                            mainRecycler?.adapter?.notifyItemChanged(old)
-                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
-                            mainRecycler?.scrollToPosition(selectedListIndex)
-                        }
-                    } else if (selectedAppsQueue.isNotEmpty()) {
-                        // Go to queue
-                        currentFocusArea = FOCUS_QUEUE
-                        queueSelectedIndex = 0
-                        // [FIX] Tell keyboard to capture all keys for queue navigation
-                        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
-                        captureIntent.setPackage(PACKAGE_TRACKPAD)
-                        captureIntent.putExtra("CAPTURE", true)
-                        sendBroadcast(captureIntent)
-                        uiHandler.post {
-                            drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
-                            debugStatusView?.visibility = View.VISIBLE
-                            if (!isOpenMoveToMode && !isOpenSwapMode) {
-                                debugStatusView?.text = "Queue Navigation"
-                            }
-                        }
-                    } else {
-                        currentFocusArea = FOCUS_SEARCH
-                        uiHandler.post {
-                            drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
-                        }
-                    }
-                    return
-                }
-                KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (selectedListIndex < displayList.size - 1) {
-                        val old = selectedListIndex
-                        selectedListIndex++
-                        uiHandler.post {
-                            mainRecycler?.adapter?.notifyItemChanged(old)
-                            mainRecycler?.adapter?.notifyItemChanged(selectedListIndex)
-                            mainRecycler?.scrollToPosition(selectedListIndex)
-                        }
-                    }
-                    return
-                }
-                KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_SPACE -> {
-                    uiHandler.post {
-                        val holder = mainRecycler?.findViewHolderForAdapterPosition(selectedListIndex)
-                        holder?.itemView?.performClick()
-                    }
-                    return
-                }
-            }
+            // REMOTE_KEY FOCUS_LIST navigation is handled by DrawerKeyRouter.
+            // Unhandled keys intentionally fall through to shared pending-command/hotkey logic below.
         }
 
         // 1. INPUT MODE (Entering Numbers or Arrow Navigation for Visual Queue)
