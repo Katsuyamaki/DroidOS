@@ -2253,7 +2253,10 @@ private var isSoftKeyboardSupport = false
                             val windowArea = boundsRect.width().toLong() * boundsRect.height().toLong()
                             if (windowArea >= screenArea * 85 / 100) {
                                 tiledAppsAutoMinimized = true
-                                activePackageName = windowPkg
+                                // [FIX] Ignore fullscreen-driven focus writes while WM queue is active.
+                                if (!isProcessingWmCommand && wmCommandQueue.isEmpty()) {
+                                    activePackageName = windowPkg
+                                }
                                 Thread {
                                     try {
                                         for (app in selectedAppsQueue) {
@@ -2280,9 +2283,18 @@ private var isSoftKeyboardSupport = false
                 (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                  event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED)) {
 
-                activePackageName = pkg
+                // [FIX] Ignore fallback focus writes while WM queue is active.
+                if (isProcessingWmCommand || wmCommandQueue.isNotEmpty()) {
+                    Log.d(TAG, "Accessibility focus skipped during WM command: $pkg")
+                } else {
+                    activePackageName = pkg
+                }
             }
         }
+
+        // [FOCUS_GUARD] Accessibility can race with WM queue close/hide/minimize.
+        // Scrub stale focus/history after all event-driven focus mutations.
+        sanitizeFocusState("onAccessibilityEvent")
 
         // 2. SOFT KEYBOARD TRIGGER SUPPORT (Toggleable)
         if (isSoftKeyboardSupport && event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
@@ -4760,6 +4772,60 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+    // [FOCUS_GUARD] Keep DroidOS focus/history consistent with visible queue apps.
+    // If a focus entry points to a queue app that is now hidden/minimized/removed,
+    // clear/scrub it so stale focus cannot resurrect dead windows.
+    private fun sanitizeFocusState(reason: String) {
+        fun shouldDrop(focusPkg: String?): Boolean {
+            if (focusPkg.isNullOrEmpty()) return false
+
+            val focusBase = focusPkg.substringBefore(":")
+            val matches = selectedAppsQueue.filter { app ->
+                val appBase = app.getBasePackage()
+                appBase == focusBase ||
+                    app.packageName == focusPkg ||
+                    app.packageName == focusBase ||
+                    (focusBase == "com.google.android.googlequicksearchbox" && appBase == "com.google.android.apps.bard")
+            }
+
+            // Not a managed queue app -> leave focus untouched (external fullscreen/system apps).
+            if (matches.isEmpty()) return false
+
+            // Managed queue app has no visible non-minimized instance -> stale focus.
+            return matches.none { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+        }
+
+        var changed = false
+
+        if (shouldDrop(activePackageName)) {
+            activePackageName = null
+            changed = true
+        }
+
+        if (shouldDrop(lastValidPackageName)) {
+            lastValidPackageName = secondLastValidPackageName?.takeUnless { shouldDrop(it) }
+            secondLastValidPackageName = null
+            changed = true
+        } else if (shouldDrop(secondLastValidPackageName)) {
+            secondLastValidPackageName = null
+            changed = true
+        }
+
+        if (activePackageName != null && activePackageName == lastValidPackageName) {
+            lastValidPackageName = secondLastValidPackageName
+            secondLastValidPackageName = null
+            changed = true
+        }
+        if (lastValidPackageName != null && lastValidPackageName == secondLastValidPackageName) {
+            secondLastValidPackageName = null
+            changed = true
+        }
+
+        if (changed) {
+            Log.d(TAG, "sanitizeFocusState: removed stale focus/history ($reason)")
+        }
+    }
+
     // === ADD TO SELECTION - START ===
     // Adds app to the selection queue, handles removal if already selected
     // Uses proper package name extraction for force-stop and launch operations
@@ -4946,36 +5012,36 @@ private var isSoftKeyboardSupport = false
     // === LAUNCH VIA SHELL - END ===
 
     // === FOCUS VIA TASK - START ===
-    // Focuses an already-visible freeform window using ATM.moveTaskToFront().
-    // Unlike launchViaShell (am start -n component), this does NOT re-launch the activity,
-    // so in-app navigation state is preserved (WhatsApp stays in chat, Google keeps search).
+    // Focuses an already-visible freeform window using am start --activity-brought-to-front.
+    // Executed inline from WM command queue to preserve command ordering.
     private fun focusViaTask(pkg: String, bounds: Rect?) {
-        Thread {
-            try {
-                val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-                // Find the app's className from queue for precise component targeting
-                val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
-                val className = appEntry?.className
-                
-                val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                    "$basePkg/$className"
-                } else {
-                    null
-                }
-                
-                // Use am start with --activity-brought-to-front to bring to front AND give input focus
-                // This preserves app state (unlike fresh launch) while giving actual focus (unlike moveTaskToFront)
-                val cmd = if (component != null) {
-                    "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-                } else {
-                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-                }
-                
-                shellService?.runCommand(cmd)
-            } catch (e: Exception) {
-                Log.e(TAG, "focusViaTask FAILED: $pkg", e)
+        try {
+            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
+            val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+
+            // Skip stale focus targets (already removed/minimized/hidden)
+            if (appEntry == null || appEntry.packageName == PACKAGE_BLANK || appEntry.isMinimized) {
+                Log.w(TAG, "focusViaTask skipped stale target: $basePkg")
+                return
             }
-        }.start()
+
+            val className = appEntry.className
+            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                "$basePkg/$className"
+            } else {
+                null
+            }
+
+            val cmd = if (component != null) {
+                "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+            } else {
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
+            }
+
+            shellService?.runCommand(cmd)
+        } catch (e: Exception) {
+            Log.e(TAG, "focusViaTask FAILED: $pkg", e)
+        }
     }
     // === FOCUS VIA TASK - END ===
 
@@ -6641,6 +6707,7 @@ private var isSoftKeyboardSupport = false
         // [FIX] Sync display context before executing commands to prevent stale state
         refreshDisplayId()
         ensureQueueLoadedForCommands()
+        sanitizeFocusState("handleWindowManagerCommand:$cmd")
         
         // CONVERT 1-BASED INDEX TO 0-BASED INTERNAL INDEX
         // If user sends 1, we get 0. If user sends 0 or nothing (-1), it stays invalid (-1).
@@ -7317,6 +7384,7 @@ private var isSoftKeyboardSupport = false
                                 
                                 // [FIX] Record hidden package to prevent re-adding as fullscreen app
                                 recentlyRemovedPackages[basePkg] = System.currentTimeMillis()
+                                removeFromFocusHistory(basePkg)
                                 
                                 // [FIX] Clear focus if hiding the active app
                                 val isGemini = basePkg == "com.google.android.apps.bard"
@@ -7411,21 +7479,30 @@ private var isSoftKeyboardSupport = false
                             val alreadyFocused = (activePackageName == app.packageName) || 
                                 (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
                             
+                            val targetStillInQueue = selectedAppsQueue.any {
+                                it.packageName == app.packageName && it.className == app.className
+                            }
+
+                            if (!targetStillInQueue) {
+                                Log.w(TAG, "SET_FOCUS skipped stale target: ${app.packageName}")
+                                return
+                            }
+                            
                             if (alreadyFocused) {
                                 // App already focused - am start is no-op, use input tap to force focus back
                                 if (bounds != null) {
                                     val centerX = bounds.centerX()
                                     val centerY = bounds.centerY()
-                                    Thread {
+                                    try {
                                         shellService?.runCommand("input tap $centerX $centerY")
-                                    }.start()
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "SET_FOCUS tap-back failed", e)
+                                    }
                                 }
                             } else if (!app.isMinimized) {
                                 focusViaTask(app.getBasePackage(), bounds)
                             } else {
-                                Thread {
-                                     launchViaShell(app.getBasePackage(), app.className, bounds)
-                                }.start()
+                                launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
                             sendCursorToAppCenter(bounds)
                             
@@ -7452,7 +7529,11 @@ private var isSoftKeyboardSupport = false
                 if (target != null) {
                     val app = selectedAppsQueue.find { it.packageName == target }
                     if (app != null) {
-                        
+                        if (app.packageName == PACKAGE_BLANK || app.isMinimized) {
+                            safeToast("Last app is hidden/minimized")
+                            return
+                        }
+
                         // [FIX] Internal Focus vs System Launch
                         if (isExpanded) {
                             // Drawer Open: Update Internal Variable Only
@@ -7469,15 +7550,7 @@ private var isSoftKeyboardSupport = false
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
-                            // [FIX] Non-minimized apps are already visible — use moveTaskToFront
-                            // instead of re-launching activity (preserves chat/search state)
-                            if (!app.isMinimized) {
-                                focusViaTask(app.getBasePackage(), bounds)
-                            } else {
-                                Thread {
-                                     launchViaShell(app.getBasePackage(), app.className, bounds)
-                                }.start()
-                            }
+                            focusViaTask(app.getBasePackage(), bounds)
                             sendCursorToAppCenter(bounds)
                             
                             // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
@@ -7628,6 +7701,7 @@ private var isSoftKeyboardSupport = false
     ) {
         uiHandler.post {
             sortAppQueue() // Ensure active apps are at the front
+            sanitizeFocusState("refreshQueueAndLayout:$msg")
             updateAllUIs()
 
             // Auto-save queue state including minimized packages
