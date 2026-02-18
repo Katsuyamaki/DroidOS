@@ -102,6 +102,16 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     // END BLOCK: WAKE LOCK
     // =================================================================================
     private val TAG = "FloatingLauncherService"
+    private val drawerKeyRouter = DrawerKeyRouter()
+
+    private fun currentRouterArea(): DrawerKeyRouter.Area {
+        return when (currentFocusArea) {
+            FOCUS_SEARCH -> DrawerKeyRouter.Area.SEARCH
+            FOCUS_QUEUE -> DrawerKeyRouter.Area.QUEUE
+            FOCUS_LIST -> DrawerKeyRouter.Area.LIST
+            else -> DrawerKeyRouter.Area.OTHER
+        }
+    }
 
     companion object {
         // === MODE CONSTANTS - START ===
@@ -1562,13 +1572,27 @@ private var isSoftKeyboardSupport = false
             if (now - lastQueueNavTime < 80) return
             lastQueueNavTime = now
             val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+            val selectedRecycler = drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)
 
-            // [FIX] Name editor guard: while editing, never execute list item actions/hotkeys.
-            val focusedNameEditor = getFocusedNameEditor()
-            if (focusedNameEditor != null) {
-                if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                    focusedNameEditor.onEditorAction(EditorInfo.IME_ACTION_DONE)
-                }
+            val routeCtx = DrawerKeyRouter.Context(
+                source = DrawerKeyRouter.Source.REMOTE,
+                area = currentRouterArea(),
+                isExpanded = isExpanded,
+                isNameEditorActive = getFocusedNameEditor() != null,
+                pendingCommandActive = pendingCommandId != null,
+                selectedListIndex = selectedListIndex,
+                queueSelectedIndex = queueSelectedIndex,
+                displayListSize = displayList.size,
+                queueSize = selectedAppsQueue.size,
+                nowMs = now,
+                lastNavMs = lastQueueNavTime
+            )
+
+            val decision = drawerKeyRouter.routeListKey(routeCtx, keyCode)
+            if (decision is DrawerKeyRouter.Decision.PassThroughToEditor) {
+                return
+            }
+            if (applyDrawerRouterDecision(decision, DrawerKeyRouter.Source.REMOTE, mainRecycler, selectedRecycler)) {
                 return
             }
 
@@ -1703,6 +1727,116 @@ private var isSoftKeyboardSupport = false
             R.id.layout_name,
             R.id.profile_name_text -> focusedView
             else -> null
+        }
+    }
+
+    private fun applyDrawerRouterDecision(
+        decision: DrawerKeyRouter.Decision,
+        source: DrawerKeyRouter.Source,
+        mainRecycler: RecyclerView?,
+        selectedRecycler: RecyclerView?
+    ): Boolean {
+        return when (decision) {
+            is DrawerKeyRouter.Decision.NotHandled -> false
+            is DrawerKeyRouter.Decision.Handled -> decision.consume
+
+            is DrawerKeyRouter.Decision.MoveList -> {
+                val old = selectedListIndex
+                val next = (selectedListIndex + decision.delta).coerceIn(0, maxOf(displayList.size - 1, 0))
+                if (old != next) {
+                    selectedListIndex = next
+                    uiHandler.post {
+                        mainRecycler?.adapter?.notifyItemChanged(old)
+                        mainRecycler?.adapter?.notifyItemChanged(next)
+                        mainRecycler?.scrollToPosition(next)
+                    }
+                }
+                true
+            }
+
+            is DrawerKeyRouter.Decision.MoveQueue -> {
+                val old = queueSelectedIndex
+                val next = (queueSelectedIndex + decision.delta).coerceIn(0, maxOf(selectedAppsQueue.size - 1, 0))
+                if (old != next) {
+                    queueSelectedIndex = next
+                    uiHandler.post {
+                        selectedRecycler?.adapter?.notifyItemChanged(old)
+                        selectedRecycler?.adapter?.notifyItemChanged(next)
+                        selectedRecycler?.scrollToPosition(next)
+                    }
+                }
+                true
+            }
+
+            DrawerKeyRouter.Decision.ToSearch -> {
+                currentFocusArea = FOCUS_SEARCH
+                queueSelectedIndex = -1
+                uiHandler.post {
+                    drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
+                }
+                true
+            }
+
+            DrawerKeyRouter.Decision.ToList -> {
+                currentFocusArea = FOCUS_LIST
+                queueSelectedIndex = -1
+                true
+            }
+
+            DrawerKeyRouter.Decision.ToQueue -> {
+                currentFocusArea = FOCUS_QUEUE
+                queueSelectedIndex = 0
+
+                val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+                captureIntent.setPackage(PACKAGE_TRACKPAD)
+                captureIntent.putExtra("CAPTURE", true)
+                sendBroadcast(captureIntent)
+
+                uiHandler.post {
+                    drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
+                    debugStatusView?.visibility = View.VISIBLE
+                    if (!isOpenMoveToMode && !isOpenSwapMode) {
+                        debugStatusView?.text = "Queue Navigation"
+                    }
+                }
+                true
+            }
+
+            DrawerKeyRouter.Decision.ActivateSelectedListItem -> {
+                uiHandler.post {
+                    mainRecycler?.findViewHolderForAdapterPosition(selectedListIndex)?.itemView?.performClick()
+                }
+                true
+            }
+
+            DrawerKeyRouter.Decision.ActivateSelectedQueueItem -> {
+                uiHandler.post {
+                    selectedRecycler?.findViewHolderForAdapterPosition(queueSelectedIndex)?.itemView?.performClick()
+                }
+                true
+            }
+
+            DrawerKeyRouter.Decision.ConfirmPendingQueueCommand -> true
+
+            DrawerKeyRouter.Decision.CommitNameEdit -> {
+                getFocusedNameEditor()?.onEditorAction(EditorInfo.IME_ACTION_DONE)
+                true
+            }
+
+            DrawerKeyRouter.Decision.PassThroughToEditor -> {
+                source == DrawerKeyRouter.Source.DRAWER_LISTENER ||
+                    source == DrawerKeyRouter.Source.SEARCH_LISTENER
+            }
+
+            DrawerKeyRouter.Decision.AbortPendingCommand -> {
+                abortCommandMode()
+                true
+            }
+
+            is DrawerKeyRouter.Decision.PendingCommandNumber -> {
+                handleCommandInput(decision.number)
+                true
+            }
         }
     }
 
