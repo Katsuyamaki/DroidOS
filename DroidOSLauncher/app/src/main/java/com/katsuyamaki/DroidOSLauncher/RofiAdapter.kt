@@ -331,10 +331,10 @@ class RofiAdapter(
             holder.details.visibility = View.VISIBLE
             holder.btnSave.visibility = View.GONE
             
-            if (handler.activeProfileName == item.name) { 
-                holder.itemView.setBackgroundResource(R.drawable.bg_item_active) 
-            } else { 
-                holder.itemView.setBackgroundResource(0) 
+            if (handler.activeProfileName == item.name || isKeyboardSelected) {
+                holder.itemView.setBackgroundResource(R.drawable.bg_item_active)
+            } else {
+                holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
             }
             
             holder.name.apply {
@@ -407,7 +407,7 @@ class RofiAdapter(
             holder.iconsContainer.removeAllViews()
             holder.details.visibility = View.GONE
             holder.btnSave.visibility = View.VISIBLE
-            holder.itemView.setBackgroundResource(0)
+            holder.itemView.setBackgroundResource(if (isKeyboardSelected) R.drawable.bg_item_active else R.drawable.bg_item_press)
             holder.name.isEnabled = true
             holder.name.isFocusable = true
             holder.name.isFocusableInTouchMode = true
