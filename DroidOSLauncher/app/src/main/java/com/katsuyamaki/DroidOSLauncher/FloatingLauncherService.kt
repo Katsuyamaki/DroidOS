@@ -166,9 +166,22 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private var lastEnterToggleTime: Long = 0L  // [FIX] Debounce for ENTER smart toggle
     private var vqTextWatcher: android.text.TextWatcher? = null
     
-    // [FIX] Command queue for sequential execution
-    private val wmCommandQueue = java.util.concurrent.LinkedBlockingQueue<Intent>()
+    // [FIX] Unified WM command queue with paced execution and retry handling
+    private val wmCommandQueue: ArrayDeque<Intent> = ArrayDeque()
     private var isProcessingWmCommand = false
+    private var pendingWmRetryScheduled = false
+    private var lastWmBindAttemptAt = 0L
+    private var consecutiveWmQueueFailures = 0
+    private val wmQueueFlushRunnable = Runnable {
+        pendingWmRetryScheduled = false
+        flushWindowManagerCommandQueue()
+    }
+    private val wmQueueAdvanceRunnable = Runnable {
+        isProcessingWmCommand = false
+        if (wmCommandQueue.isNotEmpty()) {
+            scheduleWindowManagerQueueFlush(0L)
+        }
+    }
 
 // Custom Modifier State
     override val MOD_CUSTOM = -999 // Internal ID for custom modifier
@@ -332,9 +345,6 @@ private var isSoftKeyboardSupport = false
     @Volatile private var pendingHeadlessRetile = false
     private var pendingHeadlessRetileReason: String? = null
     private val headlessRetileRunnable = Runnable { runPendingHeadlessRetile() }
-    private val pendingWindowManagerCommands: ArrayDeque<Intent> = ArrayDeque()
-    private var pendingWmRetryScheduled = false
-    private var lastWmBindAttemptAt = 0L
     // === EXECUTION DEBOUNCE - END ===
 
     private var manualRefreshRateSet = false // [NEW] Prevents auto-force from overwriting user choice
@@ -912,8 +922,8 @@ private var isSoftKeyboardSupport = false
             if (pendingHeadlessRetile) {
                 uiHandler.postDelayed(headlessRetileRunnable, 200)
             }
-            if (pendingWindowManagerCommands.isNotEmpty()) {
-                uiHandler.post { flushPendingWindowManagerCommands() }
+            if (wmCommandQueue.isNotEmpty()) {
+                scheduleWindowManagerQueueFlush(0L)
             }
 
             // NEW: Auto-Restart Trackpad if enabled
@@ -1739,7 +1749,7 @@ private var isSoftKeyboardSupport = false
             
             // Immediate
             val intent = Intent().putExtra("COMMAND", cmd.id)
-            handleWindowManagerCommand(intent)
+            queueWindowManagerCommand(intent)
             safeToast("Executed: ${cmd.label}")
         } else {
             // Enter Input Mode
@@ -1765,7 +1775,7 @@ private var isSoftKeyboardSupport = false
             if (cmd.argCount == 1) {
                 // Done! Execute (1 Arg)
                 val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", number)
-                handleWindowManagerCommand(intent)
+                queueWindowManagerCommand(intent)
                 hideVisualQueue()
                 pendingCommandId = null
             } else {
@@ -1781,7 +1791,7 @@ private var isSoftKeyboardSupport = false
                 .putExtra("INDEX_A", pendingArg1 + 1) // Convert back to 1-based for handler
                 .putExtra("INDEX_B", number)
 
-            handleWindowManagerCommand(intent)
+            queueWindowManagerCommand(intent)
             hideVisualQueue()
             pendingCommandId = null
         }
@@ -2586,27 +2596,11 @@ private var isSoftKeyboardSupport = false
 
     override fun onDestroy() {
         super.onDestroy()
-
-        // [FIX] Clean ALL handler callbacks to prevent memory leaks
-        uiHandler.removeCallbacks(commandTimeoutRunnable)
-        switchRunnable?.let { uiHandler.removeCallbacks(it) }
-        pendingLaunchRunnable?.let { uiHandler.removeCallbacks(it) }
-        uiHandler.removeCallbacks(headlessRetileRunnable)
-        pendingFullscreenCheckRunnable?.let { uiHandler.removeCallbacks(it) }
-        pendingImeRetileRunnable?.let { uiHandler.removeCallbacks(it) }
-        uiHandler.removeCallbacksAndMessages(null)
-
         try { unregisterReceiver(launcherReceiver) } catch(e: Exception) {}
         isScreenOffState = false
         wakeUp()
         try { Shizuku.removeBinderReceivedListener(shizukuBinderListener); Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); unregisterReceiver(commandReceiver) } catch (e: Exception) {}
         
-        // [FIX] Clear RecyclerView adapters to break reference chain
-        try {
-            drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter = null
-            drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter = null
-        } catch (e: Exception) {}
-
         // Robust cleanup using attached manager
         try { 
             if (bubbleView != null) {
@@ -2614,16 +2608,13 @@ private var isSoftKeyboardSupport = false
                 wm.removeView(bubbleView) 
             }
         } catch (e: Exception) {}
-        bubbleView = null
         
         try { 
             if (isExpanded) windowManager.removeView(drawerView) 
         } catch (e: Exception) {}
-        drawerView = null
         
         // [FIX] Clean up visual queue on destroy to prevent orphaned views
         if (visualQueueView != null) {
-            try { visualQueueView?.findViewById<RecyclerView>(R.id.visual_queue_recycler)?.adapter = null } catch (e: Exception) {}
             try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
             try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
             visualQueueView = null
@@ -2631,15 +2622,17 @@ private var isSoftKeyboardSupport = false
             visualQueueWindowManager = null
         }
 
-        if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
-        setKeepScreenOn(false)
-        wakeLock = null
+        // [FIX] Clear WM queue callbacks/state to avoid leaking delayed runnables
+        uiHandler.removeCallbacks(wmQueueFlushRunnable)
+        uiHandler.removeCallbacks(wmQueueAdvanceRunnable)
+        wmCommandQueue.clear()
+        pendingWmRetryScheduled = false
+        isProcessingWmCommand = false
+        consecutiveWmQueueFailures = 0
 
-        // [FIX] Nullify runnable references for GC
-        switchRunnable = null
-        pendingLaunchRunnable = null
-        pendingFullscreenCheckRunnable = null
-        pendingImeRetileRunnable = null
+        if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
+    setKeepScreenOn(false)
+    wakeLock = null
     }
     
     // === SAFE TOAST FUNCTION - START ===
@@ -3861,7 +3854,7 @@ private var isSoftKeyboardSupport = false
                 .putExtra("COMMAND", "MOVE_TO")
                 .putExtra("INDEX_A", existingIdx + 1)
                 .putExtra("INDEX_B", targetSlot)
-            handleWindowManagerCommand(intent)
+            queueWindowManagerCommand(intent)
         } else {
             // App not in queue - add it
             // Set minimized state based on target position
@@ -3940,7 +3933,7 @@ private var isSoftKeyboardSupport = false
                 .putExtra("COMMAND", "SWAP")
                 .putExtra("INDEX_A", existingIdx + 1)
                 .putExtra("INDEX_B", targetSlot)
-            handleWindowManagerCommand(intent)
+            queueWindowManagerCommand(intent)
         } else {
             // App not in queue - add it first, then swap
             savedApp.isMinimized = !isTargetActive
@@ -3959,7 +3952,7 @@ private var isSoftKeyboardSupport = false
                     .putExtra("COMMAND", "SWAP")
                     .putExtra("INDEX_A", newIdx + 1)
                     .putExtra("INDEX_B", targetSlot)
-                handleWindowManagerCommand(intent)
+                queueWindowManagerCommand(intent)
             } else {
                 // Already in correct position or invalid target
                 updateSelectedAppsDock()
@@ -3996,22 +3989,69 @@ private var isSoftKeyboardSupport = false
     
     // [FIX] Queue commands for sequential execution to avoid race conditions
     private fun queueWindowManagerCommand(intent: Intent) {
-        wmCommandQueue.offer(intent)
-        processNextWmCommand()
+        val copy = Intent(intent)
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            uiHandler.post { enqueueWindowManagerCommandOnMain(copy) }
+            return
+        }
+        enqueueWindowManagerCommandOnMain(copy)
     }
-    
-    private fun processNextWmCommand() {
-        if (isProcessingWmCommand) return
-        val intent = wmCommandQueue.poll() ?: return
-        
+
+    private fun enqueueWindowManagerCommandOnMain(intent: Intent) {
+        if (wmCommandQueue.size >= 20) {
+            val dropped = wmCommandQueue.removeFirst()
+            val droppedCmd = dropped.getStringExtra("COMMAND") ?: "UNKNOWN"
+            Log.w(TAG, "WM queue overflow, dropping oldest command: $droppedCmd")
+        }
+        wmCommandQueue.addLast(intent)
+        val delay = if (isBound && shellService != null) 0L else 400L
+        scheduleWindowManagerQueueFlush(delay)
+    }
+
+    private fun scheduleWindowManagerQueueFlush(delayMs: Long) {
+        if (pendingWmRetryScheduled) return
+        pendingWmRetryScheduled = true
+        uiHandler.postDelayed(wmQueueFlushRunnable, delayMs)
+    }
+
+    private fun flushWindowManagerCommandQueue() {
+        if (isProcessingWmCommand) {
+            if (wmCommandQueue.isNotEmpty()) {
+                scheduleWindowManagerQueueFlush(450L)
+            }
+            return
+        }
+
+        if (wmCommandQueue.isEmpty()) {
+            return
+        }
+
+        if (!isBound || shellService == null) {
+            val now = System.currentTimeMillis()
+            if (now - lastWmBindAttemptAt > 1000L) {
+                lastWmBindAttemptAt = now
+                tryBindShizukuIfPermitted()
+            }
+            scheduleWindowManagerQueueFlush(600L)
+            return
+        }
+
+        val nextIntent = wmCommandQueue.removeFirst()
         isProcessingWmCommand = true
-        handleWindowManagerCommand(intent)
-        
-        // Allow next command after tiling completes (use same delay as retile)
-        uiHandler.postDelayed({
+        try {
+            handleWindowManagerCommand(nextIntent)
+            consecutiveWmQueueFailures = 0
+        } catch (e: Exception) {
+            val failedCmd = nextIntent.getStringExtra("COMMAND") ?: "UNKNOWN"
+            Log.e(TAG, "WM queue command execution failed: $failedCmd", e)
             isProcessingWmCommand = false
-            processNextWmCommand() // Process next in queue if any
-        }, 400)
+            consecutiveWmQueueFailures = (consecutiveWmQueueFailures + 1).coerceAtMost(5)
+            val backoffMs = 300L + (consecutiveWmQueueFailures * 150L)
+            scheduleWindowManagerQueueFlush(backoffMs)
+            return
+        }
+
+        uiHandler.postDelayed(wmQueueAdvanceRunnable, 400L)
     }
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
@@ -5237,47 +5277,7 @@ private var isSoftKeyboardSupport = false
         } catch (e: Exception) {}
     }
 
-    private fun queueWindowManagerCommand(intent: Intent, cmd: String) {
-        val copy = Intent(intent)
-        if (pendingWindowManagerCommands.size >= 20) {
-            pendingWindowManagerCommands.removeFirst()
-        }
-        pendingWindowManagerCommands.addLast(copy)
-        schedulePendingWindowManagerFlush(400L)
-    }
 
-    private fun schedulePendingWindowManagerFlush(delayMs: Long) {
-        if (pendingWmRetryScheduled) return
-        pendingWmRetryScheduled = true
-        uiHandler.postDelayed({
-            pendingWmRetryScheduled = false
-            flushPendingWindowManagerCommands()
-        }, delayMs)
-    }
-
-    private fun flushPendingWindowManagerCommands() {
-        if (!isBound || shellService == null) {
-            val now = System.currentTimeMillis()
-            if (now - lastWmBindAttemptAt > 1000) {
-                lastWmBindAttemptAt = now
-                tryBindShizukuIfPermitted()
-            }
-            if (pendingWindowManagerCommands.isNotEmpty()) {
-                schedulePendingWindowManagerFlush(600L)
-            }
-            return
-        }
-
-        var processed = 0
-        while (pendingWindowManagerCommands.isNotEmpty() && processed < 5) {
-            val cmdIntent = pendingWindowManagerCommands.removeFirst()
-            handleWindowManagerCommand(cmdIntent)
-            processed++
-        }
-        if (pendingWindowManagerCommands.isNotEmpty()) {
-            schedulePendingWindowManagerFlush(200L)
-        }
-    }
 
     // === RESTORE QUEUE IMMEDIATE - START ===
     // Loads the saved queue from preferences immediately without checking shell/running state.
@@ -6634,7 +6634,7 @@ private var isSoftKeyboardSupport = false
         if (!isBound || shellService == null) {
             Log.w(TAG, "WM Command $cmd queued (Shizuku not bound)")
             tryBindShizukuIfPermitted()
-            queueWindowManagerCommand(intent, cmd)
+            queueWindowManagerCommand(intent)
             return
         }
         
