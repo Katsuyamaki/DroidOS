@@ -1776,7 +1776,8 @@ private var isSoftKeyboardSupport = false
                 // Done! Execute (1 Arg)
                 val intent = Intent().putExtra("COMMAND", cmd.id).putExtra("INDEX", number)
                 queueWindowManagerCommand(intent)
-                hideVisualQueue()
+                // Prevent race: do not am-start old active app while new WM command is queued.
+                hideVisualQueue(restoreFocusToActive = false)
                 pendingCommandId = null
             } else {
                 // Need Second Arg - reset cursor for second selection
@@ -1792,7 +1793,8 @@ private var isSoftKeyboardSupport = false
                 .putExtra("INDEX_B", number)
 
             queueWindowManagerCommand(intent)
-            hideVisualQueue()
+            // Prevent race: do not am-start old active app while new WM command is queued.
+            hideVisualQueue(restoreFocusToActive = false)
             pendingCommandId = null
         }
     }
@@ -3733,7 +3735,7 @@ private var isSoftKeyboardSupport = false
         sendBroadcast(layerIntent)
     }
 
-    private fun hideVisualQueue() {
+    private fun hideVisualQueue(restoreFocusToActive: Boolean = true) {
         if (isVisualQueueVisible && visualQueueView != null) {
             var removed = false
             // Try stored WM first (most reliable)
@@ -3775,7 +3777,7 @@ private var isSoftKeyboardSupport = false
 
         // [FIX] Force focus back to active app BEFORE releasing keyboard capture
         // This ensures Android gives input focus to the app even while keyboard processes CAPTURE=false
-        if (activePackageName != null && !isExpanded) {
+        if (restoreFocusToActive && activePackageName != null && !isExpanded) {
             val basePkg = if (activePackageName!!.contains(":")) activePackageName!!.substringBefore(":") else activePackageName!!
             val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
             val className = appEntry?.className
