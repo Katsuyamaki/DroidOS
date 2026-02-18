@@ -181,6 +181,12 @@ class RofiAdapter(
         imm.hideSoftInputFromWindow(editText.windowToken, 0) 
     }
 
+    private fun isDoneAction(actionId: Int, event: KeyEvent?): Boolean {
+        if (actionId == EditorInfo.IME_ACTION_DONE) return true
+        return event?.action == KeyEvent.ACTION_DOWN &&
+            (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+    }
+
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val item = handler.displayList[position]
         if (holder is AppHolder) holder.text.setScaledTextSize(handler.currentFontSize, 1.0f)
@@ -476,44 +482,56 @@ class RofiAdapter(
         holder.itemView.setOnClickListener(clickAction)
         holder.nameInput.setOnClickListener(clickAction)
 
-        val saveAction = { 
-            val newName = holder.nameInput.text.toString().trim()
-            var changed = false
-            
-            if (newName.isNotEmpty() && newName != item.name) { 
-                if (item.isCustomSaved) {
-                    if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) { 
-                        handler.safeToast("Renamed to $newName")
-                        if (handler.activeCustomLayoutName == item.name) { 
-                            handler.activeCustomLayoutName = newName
-                            AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, handler.currentDisplayId)
-                            AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, handler.currentDisplayId, handler.orientSuffix())
+        var isSaving = false
+        val saveAction = {
+            if (!isSaving) {
+                isSaving = true
+                val newName = holder.nameInput.text.toString().trim()
+                var changed = false
+
+                if (newName.isNotEmpty() && newName != item.name) {
+                    if (item.isCustomSaved) {
+                        if (AppPreferences.renameCustomLayout(holder.itemView.context, item.name, newName)) {
+                            handler.safeToast("Renamed to $newName")
+                            if (handler.activeCustomLayoutName == item.name) {
+                                handler.activeCustomLayoutName = newName
+                                AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, handler.currentDisplayId)
+                                AppPreferences.saveLastCustomLayoutName(holder.itemView.context, newName, handler.currentDisplayId, handler.orientSuffix())
+                            }
+                            handler.switchMode(LauncherModes.MODE_LAYOUTS)
+                            changed = true
                         }
-                        handler.switchMode(LauncherModes.MODE_LAYOUTS) 
+                    } else {
+                        AppPreferences.saveDefaultLayoutName(holder.itemView.context, item.type, newName)
+                        handler.safeToast("Renamed to $newName")
+                        handler.switchMode(LauncherModes.MODE_LAYOUTS)
                         changed = true
-                    } 
-                } else {
-                    AppPreferences.saveDefaultLayoutName(holder.itemView.context, item.type, newName)
-                    handler.safeToast("Renamed to $newName")
-                    handler.switchMode(LauncherModes.MODE_LAYOUTS)
-                    changed = true
+                    }
+                }
+
+                if (!changed) {
+                    endRename(holder.nameInput)
+                    holder.nameInput.isEnabled = true
+                    holder.nameInput.isFocusable = false
+                    holder.nameInput.isClickable = true
+                    holder.nameInput.inputType = 0
+                    isSaving = false
                 }
             }
-            
-            if (!changed) {
-                endRename(holder.nameInput)
-                holder.nameInput.isEnabled = true
-                holder.nameInput.isFocusable = false
-                holder.nameInput.isClickable = true
-                holder.nameInput.inputType = 0
-            }
         }
-        
-        holder.nameInput.setOnEditorActionListener { _, actionId, _ -> 
-            if (actionId == EditorInfo.IME_ACTION_DONE) { saveAction(); true } else false 
+
+        holder.nameInput.setOnEditorActionListener { _, actionId, event ->
+            if (isDoneAction(actionId, event)) {
+                val imm = handler.handlerContext.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.hideSoftInputFromWindow(holder.nameInput.windowToken, 0)
+                holder.nameInput.clearFocus()
+                handler.updateDrawerHeight(false)
+                saveAction()
+                true
+            } else false
         }
-        holder.nameInput.setOnFocusChangeListener { _, hasFocus -> 
-            if (!hasFocus) saveAction() 
+        holder.nameInput.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus && !isSaving) saveAction()
         }
     }
     

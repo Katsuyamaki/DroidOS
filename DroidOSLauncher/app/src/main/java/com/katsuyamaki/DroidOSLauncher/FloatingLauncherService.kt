@@ -1167,6 +1167,17 @@ private var isSoftKeyboardSupport = false
         // Using toString() directly on the integer for debug output.
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
 
+        // [FIX] Name editor guard: while editing, don't route keys into command/hotkey paths.
+        val focusedNameEditor = getFocusedNameEditor()
+        if (focusedNameEditor != null) {
+            if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                focusedNameEditor.onEditorAction(EditorInfo.IME_ACTION_DONE)
+                return true
+            }
+            // Let EditText/system handle normal typing/backspace/navigation.
+            return false
+        }
+
         // 1. INPUT MODE (Entering Numbers or Arrow Navigation)
         if (pendingCommandId != null) {
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
@@ -1254,6 +1265,16 @@ private var isSoftKeyboardSupport = false
         }
 
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
+
+        // [FIX] Global name editor guard for REMOTE_KEY: never route typed keys into
+        // launcher navigation/hotkey handlers while renaming.
+        val focusedNameEditor = getFocusedNameEditor()
+        if (focusedNameEditor != null) {
+            if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                focusedNameEditor.onEditorAction(EditorInfo.IME_ACTION_DONE)
+            }
+            return
+        }
 
         // 0. DRAWER SEARCH NAVIGATION (via REMOTE_KEY - transition to queue/list)
         if (isExpanded && currentFocusArea == FOCUS_SEARCH) {
@@ -1541,6 +1562,16 @@ private var isSoftKeyboardSupport = false
             if (now - lastQueueNavTime < 80) return
             lastQueueNavTime = now
             val mainRecycler = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+
+            // [FIX] Name editor guard: while editing, never execute list item actions/hotkeys.
+            val focusedNameEditor = getFocusedNameEditor()
+            if (focusedNameEditor != null) {
+                if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    focusedNameEditor.onEditorAction(EditorInfo.IME_ACTION_DONE)
+                }
+                return
+            }
+
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     if (selectedListIndex > 0) {
@@ -1659,6 +1690,20 @@ private var isSoftKeyboardSupport = false
         }
 
         if (commandTriggered) return
+    }
+
+    private fun getFocusedNameEditor(): EditText? {
+        if (!(isProfileNameEditMode || isLayoutNameEditMode)) return null
+        if (!isExpanded) return null
+
+        val focusedView = drawerView?.findFocus()
+        if (focusedView !is EditText || !focusedView.isFocusableInTouchMode) return null
+
+        return when (focusedView.id) {
+            R.id.layout_name,
+            R.id.profile_name_text -> focusedView
+            else -> null
+        }
     }
 
     private fun checkModifiers(currentMeta: Int, requiredMeta: Int): Boolean {
@@ -3509,19 +3554,14 @@ private var isSoftKeyboardSupport = false
                     if (System.currentTimeMillis() - lastQueueNavTime < 150) {
                         return@setOnKeyListener true
                     }
-                    // [FIX] Let Enter/Space/DPAD/Backspace pass through to EditText when in name edit mode
-                    if ((isProfileNameEditMode || isLayoutNameEditMode) &&
-                        (keyCode == KeyEvent.KEYCODE_ENTER ||
-                         keyCode == KeyEvent.KEYCODE_SPACE ||
-                         keyCode == KeyEvent.KEYCODE_DEL ||
-                         keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                         keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
-                         keyCode == KeyEvent.KEYCODE_DPAD_UP ||
-                         keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
-                        val focusedView = mainRecycler.findFocus()
-                        if (focusedView is EditText && focusedView.isFocusableInTouchMode) {
-                            return@setOnKeyListener false // Let EditText handle it
+                    // [FIX] Name editor guard: while actively editing, skip all launcher list actions.
+                    val focusedNameEditor = getFocusedNameEditor()
+                    if (focusedNameEditor != null) {
+                        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                            focusedNameEditor.onEditorAction(EditorInfo.IME_ACTION_DONE)
+                            return@setOnKeyListener true
                         }
+                        return@setOnKeyListener false
                     }
                     when (keyCode) {
                         KeyEvent.KEYCODE_DPAD_UP -> {
