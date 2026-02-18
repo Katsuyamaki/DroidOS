@@ -6991,21 +6991,40 @@ private var isSoftKeyboardSupport = false
                     safeToast("No active window detected")
                     return
                 }
-                
-                // Find index of active app
-                // We match by package name (simplest)
-                val activeIdx = selectedAppsQueue.indexOfFirst { 
-                    it.packageName == activePackageName || 
-                    (it.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox") 
+
+                // Only swap within visible tiled apps (non-minimized, non-blank).
+                // Swapping by raw queue index can cross minimized/blank entries and desync layout.
+                val activeIndices = selectedAppsQueue.withIndex()
+                    .filter { (_, app) -> !app.isMinimized && app.packageName != PACKAGE_BLANK }
+                    .map { it.index }
+
+                if (activeIndices.isEmpty()) {
+                    safeToast("No active tiled apps")
+                    return
                 }
 
-                if (activeIdx != -1) {
-                    val dir = if (cmd == "SWAP_ACTIVE_LEFT") -1 else 1
-                    val targetIdx = activeIdx + dir
+                val activeVisiblePos = activeIndices.indexOfFirst { idx ->
+                    val app = selectedAppsQueue[idx]
+                    app.packageName == activePackageName ||
+                        (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
+                }
 
-                    if (targetIdx in selectedAppsQueue.indices) {
+                if (activeVisiblePos != -1) {
+                    val dir = if (cmd == "SWAP_ACTIVE_LEFT") -1 else 1
+                    val targetVisiblePos = activeVisiblePos + dir
+
+                    if (targetVisiblePos in activeIndices.indices) {
+                        val activeIdx = activeIndices[activeVisiblePos]
+                        val targetIdx = activeIndices[targetVisiblePos]
+                        val focusPkg = selectedAppsQueue[activeIdx].packageName
+
                         Collections.swap(selectedAppsQueue, activeIdx, targetIdx)
-                        refreshQueueAndLayout("Moved Active Window ${if(dir<0) "Left" else "Right"}", activePackageName)
+                        refreshQueueAndLayout(
+                            "Moved Active Window ${if (dir < 0) "Left" else "Right"}",
+                            focusPackage = focusPkg,
+                            forceRetile = true,
+                            retileDelayMs = 300L
+                        )
                     } else {
                         safeToast("Edge of layout reached")
                     }
