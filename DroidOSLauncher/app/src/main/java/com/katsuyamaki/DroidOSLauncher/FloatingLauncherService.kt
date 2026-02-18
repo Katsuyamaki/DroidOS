@@ -881,36 +881,6 @@ private var isSoftKeyboardSupport = false
         override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) { super.clearView(recyclerView, viewHolder); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this@FloatingLauncherService, pkgs); if (isInstantMode) applyLayoutImmediate() }
     }
 
-    // === SWIPE DETECTOR - START ===
-    // Detects horizontal swipe gestures for blacklist/favorite actions
-    // Left swipe = blacklist, Long press = favorite
-    private inner class SwipeDetector : GestureDetector.SimpleOnGestureListener() {
-        private val SWIPE_THRESHOLD = 100
-        private val SWIPE_VELOCITY_THRESHOLD = 100
-
-        override fun onFling(
-            e1: MotionEvent?,
-            e2: MotionEvent,
-            velocityX: Float,
-            velocityY: Float
-        ): Boolean {
-            if (e1 == null) return false
-
-            val diffX = e2.x - e1.x
-            val diffY = e2.y - e1.y
-
-            if (Math.abs(diffX) > Math.abs(diffY)) {
-                if (Math.abs(diffX) > SWIPE_THRESHOLD && Math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
-                    if (diffX < 0) {
-                        return true // Left swipe detected
-                    }
-                }
-            }
-            return false
-        }
-    }
-    // === SWIPE DETECTOR - END ===
-
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
@@ -1127,9 +1097,10 @@ private var isSoftKeyboardSupport = false
         
         // 3. NUMBER INPUT FOR HUD
         if (pendingCommandId != null) {
-            if (Character.isDigit(typedChar)) {
-                val num = typedChar - '0'
-                // Delete character
+            val num = softCharToNumber(typedChar)
+
+            if (num != -1) {
+                // Delete character so command keys never leak into the focused app.
                 Thread {
                     shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, currentDisplayId, -1)
                     Thread.sleep(10)
@@ -1139,9 +1110,13 @@ private var isSoftKeyboardSupport = false
                 handleCommandInput(num)
                 return
             } else {
-                // Non-digit typed -> Abort
+                // Non-command character while HUD is active: consume and cancel command mode.
+                Thread {
+                    shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, currentDisplayId, -1)
+                    Thread.sleep(10)
+                    shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, currentDisplayId, -1)
+                }.start()
                 abortCommandMode()
-                // Let the character stay - if they typed "a" to cancel, they probably want "a"
                 return
             }
         }
@@ -1690,6 +1665,32 @@ private var isSoftKeyboardSupport = false
             KeyEvent.KEYCODE_I -> 8
             KeyEvent.KEYCODE_O -> 9
             KeyEvent.KEYCODE_P -> 0
+            else -> -1
+        }
+    }
+
+    private fun softCharToNumber(c: Char): Int {
+        return when (c.lowercaseChar()) {
+            '0' -> 0
+            '1' -> 1
+            '2' -> 2
+            '3' -> 3
+            '4' -> 4
+            '5' -> 5
+            '6' -> 6
+            '7' -> 7
+            '8' -> 8
+            '9' -> 9
+            'q' -> 1
+            'w' -> 2
+            'e' -> 3
+            'r' -> 4
+            't' -> 5
+            'y' -> 6
+            'u' -> 7
+            'i' -> 8
+            'o' -> 9
+            'p' -> 0
             else -> -1
         }
     }
@@ -4694,10 +4695,6 @@ private var isSoftKeyboardSupport = false
         if ((rofiAdapter?.itemCount ?: 0) > 0) rofiAdapter?.notifyItemRangeChanged(0, rofiAdapter.itemCount)
     }
 
-    private fun testFocusUpdate() {
-        safeToast("TEST_FOCUS_UPDATE CALLED")
-    }
-    
     // Helper to get searchable text from any option type
     private fun getOptionSearchText(item: Any): String {
         return when (item) {
@@ -5014,10 +5011,26 @@ private var isSoftKeyboardSupport = false
     // === FOCUS VIA TASK - START ===
     // Focuses an already-visible freeform window using am start --activity-brought-to-front.
     // Executed inline from WM command queue to preserve command ordering.
-    private fun focusViaTask(pkg: String, bounds: Rect?) {
+    private fun focusViaTask(pkg: String, classNameHint: String?, bounds: Rect?) {
         try {
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-            val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+            val normalizedClass = classNameHint?.takeUnless { it == "null" || it == "default" }
+            val appEntry = if (normalizedClass != null) {
+                selectedAppsQueue.find {
+                    it.getBasePackage() == basePkg &&
+                        it.className == normalizedClass &&
+                        !it.isMinimized &&
+                        it.packageName != PACKAGE_BLANK
+                } ?: selectedAppsQueue.find {
+                    it.getBasePackage() == basePkg && it.className == normalizedClass
+                }
+            } else {
+                selectedAppsQueue.find {
+                    it.getBasePackage() == basePkg &&
+                        !it.isMinimized &&
+                        it.packageName != PACKAGE_BLANK
+                } ?: selectedAppsQueue.find { it.getBasePackage() == basePkg }
+            }
 
             // Skip stale focus targets (already removed/minimized/hidden)
             if (appEntry == null || appEntry.packageName == PACKAGE_BLANK || appEntry.isMinimized) {
@@ -5025,7 +5038,7 @@ private var isSoftKeyboardSupport = false
                 return
             }
 
-            val className = appEntry.className
+            val className = normalizedClass ?: appEntry.className
             val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
                 "$basePkg/$className"
             } else {
@@ -7494,10 +7507,6 @@ private var isSoftKeyboardSupport = false
                             val layoutIdx = selectedAppsQueue.take(index).count { !it.isMinimized }
                             val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
                             
-                            // [FIX] Skip focusViaTask if app is already focused - avoids 3-5 second Android delay
-                            val alreadyFocused = (activePackageName == app.packageName) || 
-                                (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
-                            
                             val targetStillInQueue = selectedAppsQueue.any {
                                 it.packageName == app.packageName && it.className == app.className
                             }
@@ -7506,37 +7515,41 @@ private var isSoftKeyboardSupport = false
                                 Log.w(TAG, "SET_FOCUS skipped stale target: ${app.packageName}")
                                 return
                             }
-                            
-                            if (alreadyFocused) {
-                                // App already focused - am start is no-op, use input tap to force focus back
-                                if (bounds != null) {
-                                    val centerX = bounds.centerX()
-                                    val centerY = bounds.centerY()
-                                    try {
-                                        shellService?.runCommand("input tap $centerX $centerY")
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "SET_FOCUS tap-back failed", e)
-                                    }
-                                }
-                            } else if (!app.isMinimized) {
-                                focusViaTask(app.getBasePackage(), bounds)
+
+                            if (!app.isMinimized) {
+                                focusViaTask(app.getBasePackage(), app.className, bounds)
                             } else {
                                 launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
                             sendCursorToAppCenter(bounds)
-                            
-                            if (!alreadyFocused) {
-                                // Update focus state only when changing apps
+
+                            // Fallback focus enforcement: when WM brings app forward but input focus lags,
+                            // a synthetic tap in the target bounds consistently transfers input focus.
+                            if (bounds != null) {
+                                val centerX = bounds.centerX()
+                                val centerY = bounds.centerY()
+                                Thread {
+                                    try {
+                                        Thread.sleep(120)
+                                        shellService?.runCommand("input tap $centerX $centerY")
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "SET_FOCUS fallback tap failed", e)
+                                    }
+                                }.start()
+                            }
+
+                            // Update focus state only when changing apps
+                            if (activePackageName != app.packageName) {
                                 if (activePackageName != null) lastValidPackageName = activePackageName
                                 activePackageName = app.packageName
-                                manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
                                 try {
                                     updateAllUIs2()
                                 } catch (e: Exception) {
                                     Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
                                 }
-                                safeToast("Focused: ${app.label}")
                             }
+                            manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
+                            safeToast("Focused: ${app.label}")
                         }
                     }
                 }
@@ -7569,7 +7582,7 @@ private var isSoftKeyboardSupport = false
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
-                            focusViaTask(app.getBasePackage(), bounds)
+                            focusViaTask(app.getBasePackage(), app.className, bounds)
                             sendCursorToAppCenter(bounds)
                             
                             // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
