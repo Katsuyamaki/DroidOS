@@ -152,7 +152,7 @@ class MirrorModeManager(
      * Toggles Virtual Mirror Mode on/off.
      */
     fun toggle() {
-        service.saveLayout()
+        service.saveCurrentState()
 
         val wasEnabled = service.prefs.prefVirtualMirrorMode
         service.prefs.prefVirtualMirrorMode = !wasEnabled

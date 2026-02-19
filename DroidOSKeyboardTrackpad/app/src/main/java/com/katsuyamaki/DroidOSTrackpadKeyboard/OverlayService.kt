@@ -1033,7 +1033,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     action == "SWITCH_DISPLAY" -> switchDisplay()
                     action == "RESET_POSITION" -> {
                         val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
-                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition() else resetTrackpadPosition()
+                        if (target == "KEYBOARD") keyboardOverlay?.resetPosition(preserveScale = true) else resetTrackpadPosition()
                     }
                     action == "ROTATE" -> {
                         val target = intent.getStringExtra("TARGET") ?: "TRACKPAD"
@@ -1116,7 +1116,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // Just save current state and rebuild UI - setupUI loads per-display prefs.
                 // This prevents scale being overwritten by profile defaults on every fold/unfold.
                 // =================================================================================
-                saveLayout()
+                saveCurrentState()
                 lastKnownScreenW = w; lastKnownScreenH = h
                 handler.post { setupUI(currentDisplayId) }
             } else {
@@ -1453,10 +1453,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val targetId = if (currentDisplayId == 0) 1 else 0
                 
                 try {
-                    saveLayout()
+                    saveCurrentState()
                     showToast("Force Switch to $targetId")
                     setupUI(targetId)
-                    loadLayout()
                     resetBubblePosition()
                     menuManager?.show()
                     enforceZOrder()
@@ -1551,7 +1550,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
-    fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; saveLayout(); setupUI(displayId); loadLayout() }
+    fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; saveCurrentState(); setupUI(displayId) }
     fun hideApp() { menuManager?.hide(); if (isTrackpadVisible) toggleTrackpad() }
 
 
@@ -1664,6 +1663,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
         val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
         return "P_${uiScreenWidth}_${uiScreenHeight}_D${currentDisplayId}_$mode$orientSuffix"
+    }
+
+    // =================================================================================
+    // FUNCTION: restoreTrackpadBoundsOnly
+    // SUMMARY: Restores only trackpad x/y/w/h for current display profile key.
+    //          Does NOT apply full profile settings (dock mode, scale, etc.).
+    //          This keeps display-switch behavior on last runtime state instead of
+    //          forcing profile reload.
+    // =================================================================================
+    internal fun restoreTrackpadBoundsOnly() {
+        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val key = getProfileKey()
+        val legacyKey = getLegacyProfileKey()
+        val effectiveKey = when {
+            p.contains("X_$key") -> key
+            p.contains("X_$legacyKey") -> legacyKey
+            else -> key
+        }
+
+        trackpadParams.x = p.getInt("X_$effectiveKey", trackpadParams.x)
+        trackpadParams.y = p.getInt("Y_$effectiveKey", trackpadParams.y)
+        trackpadParams.width = p.getInt("W_$effectiveKey", trackpadParams.width)
+        trackpadParams.height = p.getInt("H_$effectiveKey", trackpadParams.height)
     }
 
     fun getSavedProfileList(): List<String> {
@@ -1839,7 +1861,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             if (trackpadLayout == null) return
             if (isResize) { trackpadParams.width = max(200, trackpadParams.width + dx); trackpadParams.height = max(200, trackpadParams.height + dy) } 
             { trackpadParams.x += dx; trackpadParams.y += dy }
-            try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveLayout() 
+            try { windowManager?.updateViewLayout(trackpadLayout, trackpadParams) } catch (e: Exception) {}; saveCurrentState() 
         } 
     }
     
@@ -2102,6 +2124,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     
 
+
+    // =================================================================================
+    // FUNCTION: saveCurrentState
+    // SUMMARY: Saves only live runtime window state used for automatic display switches.
+    //          Does NOT write SETTINGS_ profile payload.
+    // =================================================================================
+    internal fun saveCurrentState() {
+        // Capture latest keyboard geometry in memory so rebinds reuse current values
+        savedKbX = keyboardOverlay?.getViewX() ?: savedKbX
+        savedKbY = keyboardOverlay?.getViewY() ?: savedKbY
+        savedKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
+        savedKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
+
+        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+        val key = getProfileKey()
+        p.putInt("X_$key", trackpadParams.x)
+        p.putInt("Y_$key", trackpadParams.y)
+        p.putInt("W_$key", trackpadParams.width)
+        p.putInt("H_$key", trackpadParams.height)
+        p.apply()
+    }
 
     fun saveLayout() {
         // 1. FETCH LIVE VALUES FROM PHYSICAL KEYBOARD
@@ -2857,14 +2900,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 
                 // =================================================================================
                 // FIX: SYNC PROFILE SCALE TO SHAREDPREFS
-                // SUMMARY: KeyboardOverlay.show() now prefers display+orientation scale keys.
-                //          Write both display-aware and legacy keys for compatibility.
+                // SUMMARY: Keep scale strictly display+orientation scoped to avoid
+                //          cross-display profile bleed for floating keyboard.
                 // =================================================================================
                 val orientKey = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
                 p.edit()
                     .putInt("keyboard_key_scale_d${currentDisplayId}$orientKey", prefs.prefKeyScale)
-                    .putInt("keyboard_key_scale$orientKey", prefs.prefKeyScale)
-                    .putInt("keyboard_key_scale", prefs.prefKeyScale)
                     .apply()
                 logOverlayKbDiag("loadLayout_scaleSync", "prefKeyScale=${prefs.prefKeyScale} orientKey=$orientKey")
                 // =================================================================================
@@ -2919,7 +2960,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
                      savedKbW = parts[kbIndex+2].toInt(); savedKbH = parts[kbIndex+3].toInt()
                      
-                     keyboardOverlay?.setWindowBounds(savedKbX, savedKbY, savedKbW, savedKbH)
+                     // Apply bounds + scale atomically from the saved geometry.
+                     // This avoids stale profile-scale overrides that can shrink rows in floating mode.
+                     keyboardOverlay?.setWindowBoundsWithScale(savedKbX, savedKbY, savedKbW, savedKbH)
                      keyboardUpdated = true
                 } catch (e: Exception) { }
 
@@ -2962,7 +3005,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // Apply Visuals
                 updateBorderColor(currentBorderColor); updateScrollSize(); updateHandleSize()
                 updateCursorSize(); updateScrollPosition()
-                keyboardOverlay?.updateScale(prefs.prefKeyScale / 100f)
                 keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
                 keyboardOverlay?.setAnchored(prefs.prefAnchored)
                 keyboardOverlay?.setVibrationEnabled(prefs.prefVibrate)
@@ -3006,7 +3048,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     fun deleteCurrentProfile() { /* Stub */ }
     fun resetKeyboardPosition() {
-        keyboardOverlay?.resetPosition()
+        keyboardOverlay?.resetPosition(preserveScale = true)
     }
 
     fun rotateKeyboard() {
@@ -3346,7 +3388,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     // This prevents scale being overwritten by profile defaults on every fold/unfold.
                     // =================================================================================
                     logOverlayKbDiag("onDisplayChanged_orientationRebuild", "old=${lastKnownScreenW}x${lastKnownScreenH} new=${w}x${h}")
-                    saveLayout()
+                    saveCurrentState()
                     lastKnownScreenW = w; lastKnownScreenH = h
                     handler.post { setupUI(currentDisplayId) }
                 } else {
@@ -3379,7 +3421,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                         } catch (e: Exception) {}
                                     }
                                 }
-                                
+
+                                saveCurrentState()
                                 setupUI(0)
                                 resetBubblePosition()
                             }
@@ -3407,6 +3450,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                 // This prevents the UI from disappearing on single-screen devices (Beam Pro)
                                 // where setupUI(1) would remove the views but fail to re-add them.
                                 if (displayManager?.getDisplay(1) != null) {
+                                    saveCurrentState()
                                     setupUI(1)
                                     // We don't reset bubble pos here to avoid it jumping if you just locked the screen
                                     // But we do ensure menu is hidden if it was open

@@ -32,11 +32,10 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                 if (intent.hasExtra("DISPLAY_ID")) {
                     val targetDisplayId = intent.getIntExtra("DISPLAY_ID", service.currentDisplayId)
                     service.handler.post {
-                        service.saveLayout()
+                        service.saveCurrentState()
                         service.removeOldViews()
                         service.handler.postDelayed({
                             service.setupUI(targetDisplayId)
-                            service.loadLayout()
                             service.enforceZOrder()
                             service.showToast("Trackpad Soft Restarted")
                         }, 200)
@@ -55,10 +54,9 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                 val targetId = intent.getIntExtra("displayId", 0)
 
                 service.handler.post {
-                    service.saveLayout()
+                    service.saveCurrentState()
                     service.removeOldViews()
                     service.setupUI(targetId)
-                    service.loadLayout()
                     service.enforceZOrder()
                 }
             }

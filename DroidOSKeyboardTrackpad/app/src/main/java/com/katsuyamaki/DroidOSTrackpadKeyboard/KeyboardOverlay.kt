@@ -356,8 +356,6 @@ class KeyboardOverlay(
                 .putInt("keyboard_width_d${currentDisplayId}$os", width)
                 .putInt("keyboard_height_d${currentDisplayId}$os", height)
                 .putInt("keyboard_key_scale_d${currentDisplayId}$os", targetScaleInt)
-                .putInt("keyboard_key_scale$os", targetScaleInt)
-                .putInt("keyboard_key_scale", targetScaleInt)
                 .apply()
         }
         
@@ -528,18 +526,22 @@ class KeyboardOverlay(
         if (keyboardParams == null) return
         
         // 1. Scale Handling
-        // If preserveScale is true, keep current scale (don't overwrite user preference)
-        // Otherwise reset to default 0.69f
+        // If preserveScale is true, restore the display-specific saved scale.
+        // Falling back to in-memory internalScale keeps behavior stable while visible.
+        // Otherwise reset to default 0.69f.
         val defaultScale = 0.69f
-        val targetScale = if (preserveScale && internalScale > 0f) {
-            internalScale  // Keep existing scale
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        val savedScale = getSavedScalePercent(prefs, os) / 100f
+        val targetScale = if (preserveScale) {
+            if (savedScale > 0f) savedScale else if (internalScale > 0f) internalScale else defaultScale
         } else {
             defaultScale
         }
         internalScale = targetScale
         keyboardView?.setScale(targetScale)
-        
-        // Only save scale to prefs if we're actually changing it
+
+        // Only save scale to prefs if we're actually changing it.
         if (!preserveScale) {
             saveKeyboardScale()
         }
@@ -562,7 +564,7 @@ class KeyboardOverlay(
         // This ensures the window is exactly tall enough for the keys on ANY device.
         val density = context.resources.displayMetrics.density
         val baseHeightDp = 300f
-        val defaultHeight = (baseHeightDp * defaultScale * density).toInt()
+        val defaultHeight = (baseHeightDp * targetScale * density).toInt()
         
         // Position: Center
         val defaultX = (screenWidth - defaultWidth) / 2
@@ -574,7 +576,7 @@ class KeyboardOverlay(
         
         // Reset Drag Anchors
         dragStartHeight = defaultHeight
-        dragStartScale = defaultScale
+        dragStartScale = targetScale
         
         keyboardParams?.x = defaultX
         keyboardParams?.y = defaultY
@@ -1612,20 +1614,19 @@ windowManager.addView(keyboardContainer, keyboardParams)
         val orientKey = "keyboard_key_scale$os"
         val globalKey = "keyboard_key_scale"
         val defaultScale = 69
-        return when {
-            prefs.contains(displayKey) -> {
-                val v = prefs.getInt(displayKey, defaultScale)
-                v
-            }
-            prefs.contains(orientKey) -> {
-                val v = prefs.getInt(orientKey, defaultScale)
-                v
-            }
-            else -> {
-                val v = prefs.getInt(globalKey, defaultScale)
-                v
-            }
+
+        if (prefs.contains(displayKey)) {
+            return prefs.getInt(displayKey, defaultScale)
         }
+
+        // One-time migration path for legacy installs that only had orient/global keys.
+        val migrated = when {
+            prefs.contains(orientKey) -> prefs.getInt(orientKey, defaultScale)
+            prefs.contains(globalKey) -> prefs.getInt(globalKey, defaultScale)
+            else -> defaultScale
+        }
+        prefs.edit().putInt(displayKey, migrated).apply()
+        return migrated
     }
     private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d${currentDisplayId}${orientSuffix()}", keyboardWidth).putInt("keyboard_height_d${currentDisplayId}${orientSuffix()}", keyboardHeight).apply() }
     private fun saveKeyboardScale() {
@@ -1634,8 +1635,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
         context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
             .edit()
             .putInt("keyboard_key_scale_d${currentDisplayId}$os", scaleVal)
-            .putInt("keyboard_key_scale$os", scaleVal)
-            .putInt("keyboard_key_scale", scaleVal)
             .apply()
         logKeyboardDiag("saveKeyboardScale", "savedScale=$scaleVal")
     }

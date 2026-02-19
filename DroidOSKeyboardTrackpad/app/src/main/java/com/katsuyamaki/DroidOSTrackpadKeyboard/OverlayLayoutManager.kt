@@ -207,7 +207,8 @@ class OverlayLayoutManager(
              trackpadParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
-        trackpadParams.gravity = Gravity.TOP or Gravity.LEFT; service.loadLayout()
+        trackpadParams.gravity = Gravity.TOP or Gravity.LEFT
+        service.restoreTrackpadBoundsOnly()
         val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { return false }
         })
