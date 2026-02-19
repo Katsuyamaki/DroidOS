@@ -1385,20 +1385,16 @@ fun setCustomModKey(keyCode: Int) {
         keyboardParams?.y = if (useDefaults) defaultY else clampedY
 
 windowManager.addView(keyboardContainer, keyboardParams)
-        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: window added with w=$keyboardWidth h=$keyboardHeight internalScale=$internalScale")
         updateAlpha(currentAlpha)
         
         // [FIX] Call setScale() AFTER window is added to WindowManager.
-        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: about to call setScale($internalScale)")
         keyboardView?.setScale(internalScale)
-        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: setScale done, keyboardView dimensions: ${keyboardView?.width}x${keyboardView?.height}")
         
-        // [FIX] Post a delayed rebuild after the view is laid out.
+        // [FIX] Post a rebuild after the view is laid out.
         // The initial buildKeyboard() runs with 0x0 dimensions because the view hasn't been
         // measured yet. This causes bottomContainer rows to shrink. Post a rebuild that will
         // run after the layout pass when the view has actual dimensions.
         keyboardView?.post {
-            android.util.Log.w("KB_DEBUG", "createKeyboardWindow: posted rebuild, dimensions: ${keyboardView?.width}x${keyboardView?.height}")
             if ((keyboardView?.width ?: 0) > 0 && (keyboardView?.height ?: 0) > 0) {
                 keyboardView?.setScale(internalScale)
             }

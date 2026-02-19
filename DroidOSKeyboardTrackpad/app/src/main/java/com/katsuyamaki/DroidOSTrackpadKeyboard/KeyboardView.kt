@@ -645,11 +645,9 @@ private var customModKeyCode = 0
     fun setVibrationEnabled(enabled: Boolean) { vibrationEnabled = enabled }
     
     fun setScale(scale: Float) {
-        android.util.Log.w("KB_DEBUG", "setScale($scale) called: old scaleFactor=$scaleFactor old keyHeight=$keyHeight")
         this.scaleFactor = scale.coerceIn(0.5f, 2.0f)
         this.keyHeight = (BASE_KEY_HEIGHT * scaleFactor).toInt()
         this.fontSize = BASE_FONT_SIZE * scaleFactor
-        android.util.Log.w("KB_DEBUG", "setScale: new scaleFactor=$scaleFactor new keyHeight=$keyHeight -> calling buildKeyboard()")
         buildKeyboard()
     }
 
@@ -980,9 +978,6 @@ private var customModKeyCode = 0
 
 
 private fun buildKeyboard() {
-        // DEBUG: Log buildKeyboard call with key values
-        android.util.Log.w("KB_DEBUG", "buildKeyboard() called: scaleFactor=$scaleFactor keyHeight=$keyHeight width=$width height=$height measuredW=$measuredWidth measuredH=$measuredHeight")
-        
         // =======================================================================
         // SAVE CURRENT CANDIDATES before rebuilding
         // This preserves the prediction bar when SHIFT/layout changes occur
@@ -1087,7 +1082,6 @@ private fun buildKeyboard() {
         // to prevent LinearLayout weight distribution from shrinking it when window is constrained.
         // Height = 2 rows × (keyHeight + keySpacing margin)
         val bottomContainerHeight = 2 * (dpToPx(keyHeight) + dpToPx(keySpacing))
-        android.util.Log.w("KB_DEBUG", "bottomContainer: keyHeight=$keyHeight keySpacing=$keySpacing dpToPx(keyHeight)=${dpToPx(keyHeight)} bottomContainerHeight=$bottomContainerHeight")
         
         val bottomContainer = LinearLayout(context)
         bottomContainer.orientation = HORIZONTAL
