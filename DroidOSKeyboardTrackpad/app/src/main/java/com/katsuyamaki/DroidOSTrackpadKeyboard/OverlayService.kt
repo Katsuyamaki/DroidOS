@@ -163,7 +163,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var cursorView: ImageView? = null
     
     private lateinit var bubbleParams: WindowManager.LayoutParams
-    private lateinit var trackpadParams: WindowManager.LayoutParams
+    internal lateinit var trackpadParams: WindowManager.LayoutParams
     private lateinit var cursorParams: WindowManager.LayoutParams
 
     internal var menuManager: TrackpadMenuManager? = null
@@ -171,10 +171,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal var btMouseManager: BluetoothMouseManager? = null
     internal var imeManager: SystemImeManager? = null
     internal var layoutManager: OverlayLayoutManager? = null
-    private var savedKbX = 0
-    private var savedKbY = 0
-    private var savedKbW = 0
-    private var savedKbH = 0
+    internal var savedKbX = 0
+    internal var savedKbY = 0
+    internal var savedKbW = 0
+    internal var savedKbH = 0
     internal var keyboardOverlay: KeyboardOverlay? = null
 
     var currentDisplayId = 0
@@ -211,6 +211,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
     
     val prefs = TrackpadPrefs()
+    internal val layoutStateStore by lazy { OverlayLayoutStateStore(this) }
 
     // =================================================================================
     // LAUNCHER BLOCKED SHORTCUTS SET
@@ -1649,87 +1650,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
     // =================================================================================
-    // PROFILE KEY GENERATION
-    // SUMMARY: Generates a unique key based on Resolution + Mirror Mode State.
-    //          Allows separate profiles for "Standard" and "Mirror" modes.
+    // PROFILE KEY / STATE STORE DELEGATION
+    // SUMMARY: Persistence logic lives in OverlayLayoutStateStore to keep this
+    //          service focused on runtime orchestration.
     // =================================================================================
-    private fun getLegacyProfileKey(): String {
-        val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
-        val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-        return "P_${uiScreenWidth}_${uiScreenHeight}_$mode$orientSuffix"
-    }
-
-    fun getProfileKey(): String {
-        val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
-        val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-        return "P_${uiScreenWidth}_${uiScreenHeight}_D${currentDisplayId}_$mode$orientSuffix"
-    }
-
-    // =================================================================================
-    // FUNCTION: restoreTrackpadBoundsOnly
-    // SUMMARY: Restores only trackpad x/y/w/h for current display profile key.
-    //          Does NOT apply full profile settings (dock mode, scale, etc.).
-    //          This keeps display-switch behavior on last runtime state instead of
-    //          forcing profile reload.
-    // =================================================================================
-    internal fun restoreTrackpadBoundsOnly() {
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        val key = getProfileKey()
-        val legacyKey = getLegacyProfileKey()
-        val effectiveKey = when {
-            p.contains("X_$key") -> key
-            p.contains("X_$legacyKey") -> legacyKey
-            else -> key
-        }
-
-        trackpadParams.x = p.getInt("X_$effectiveKey", trackpadParams.x)
-        trackpadParams.y = p.getInt("Y_$effectiveKey", trackpadParams.y)
-        trackpadParams.width = p.getInt("W_$effectiveKey", trackpadParams.width)
-        trackpadParams.height = p.getInt("H_$effectiveKey", trackpadParams.height)
-    }
-
-    fun getSavedProfileList(): List<String> {
-
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        val allKeys = p.all.keys
-        val profiles = java.util.HashSet<String>()
-        
-        // Regex matches both formats:
-        // Legacy: X_P_{width}_{height}_{mode}_{orient}
-        // New:    X_P_{width}_{height}_D{display}_{mode}_{orient}
-        // Group 1: Width
-        // Group 2: Height
-        // Group 3: Optional displayId
-        // Group 4: Mode suffix (STD or MIRROR)
-        // Group 5: Optional orientation suffix (_L or _P)
-        val regex = Regex("X_P_(\\d+)_(\\d+)(?:_D(\\d+))?(?:_(STD|MIRROR))?(?:_([LP]))?")
-        
-        for (key in allKeys) { 
-            // We only care about X position keys to identify a profile exists
-            if (!key.startsWith("X_P_")) continue
-
-            val match = regex.matchEntire(key)
-            if (match != null) {
-                val w = match.groupValues[1]
-                val h = match.groupValues[2]
-                val suffix = match.groupValues.getOrNull(3) // STD or MIRROR
-                val orient = match.groupValues.getOrNull(4) // L or P
-                
-                var displayLabel = "$w x $h"
-                
-                // If it is a Mirror Profile, append VM
-                if (suffix == "MIRROR") {
-                    displayLabel += " VM"
-                }
-                // Append orientation label
-                if (orient == "L") displayLabel += " Land"
-                else if (orient == "P") displayLabel += " Port"
-                
-                profiles.add(displayLabel)
-            }
-        }
-        return profiles.sorted()
-    }
+    private fun getLegacyProfileKey(): String = layoutStateStore.getLegacyProfileKey()
+    fun getProfileKey(): String = layoutStateStore.getProfileKey()
+    internal fun restoreTrackpadBoundsOnly() = layoutStateStore.restoreTrackpadBoundsOnly()
+    fun getSavedProfileList(): List<String> = layoutStateStore.getSavedProfileList()
 
 
 
@@ -2126,95 +2054,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
     // =================================================================================
-    // FUNCTION: saveCurrentState
-    // SUMMARY: Saves only live runtime window state used for automatic display switches.
-    //          Does NOT write SETTINGS_ profile payload.
+    // PROFILE STATE SAVE DELEGATION
     // =================================================================================
-    internal fun saveCurrentState() {
-        // Capture latest keyboard geometry in memory so rebinds reuse current values
-        savedKbX = keyboardOverlay?.getViewX() ?: savedKbX
-        savedKbY = keyboardOverlay?.getViewY() ?: savedKbY
-        savedKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
-        savedKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
-
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-        val key = getProfileKey()
-        p.putInt("X_$key", trackpadParams.x)
-        p.putInt("Y_$key", trackpadParams.y)
-        p.putInt("W_$key", trackpadParams.width)
-        p.putInt("H_$key", trackpadParams.height)
-        p.apply()
-    }
-
-    fun saveLayout() {
-        // 1. FETCH LIVE VALUES FROM PHYSICAL KEYBOARD
-        val currentKbX = keyboardOverlay?.getViewX() ?: savedKbX
-        val currentKbY = keyboardOverlay?.getViewY() ?: savedKbY
-        val currentKbW = keyboardOverlay?.getViewWidth() ?: savedKbW
-        val currentKbH = keyboardOverlay?.getViewHeight() ?: savedKbH
-        
-        // Fetch live scale
-        val liveScale = keyboardOverlay?.getScale() ?: (prefs.prefKeyScale / 100f)
-        prefs.prefKeyScale = (liveScale * 100).toInt()
-
-        savedKbX = currentKbX; savedKbY = currentKbY; savedKbW = currentKbW; savedKbH = currentKbH
-
-        // 2. SAVE TO SHARED PREFS (Using Mode-Specific Key)
-        val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
-        val key = getProfileKey() // Returns ..._STD or ..._MIRROR
-        
-        // Save Trackpad Window
-        p.putInt("X_$key", trackpadParams.x)
-        p.putInt("Y_$key", trackpadParams.y)
-        p.putInt("W_$key", trackpadParams.width)
-        p.putInt("H_$key", trackpadParams.height)
-
-        // Save Settings String (Standard Settings)
-        val settingsStr = StringBuilder()
-        settingsStr.append("${prefs.cursorSpeed};${prefs.scrollSpeed};${if(prefs.prefTapScroll) 1 else 0};${if(prefs.prefReverseScroll) 1 else 0};${prefs.prefAlpha};${prefs.prefBgAlpha};${prefs.prefKeyboardAlpha};${prefs.prefHandleSize};${prefs.prefHandleTouchSize};${prefs.prefScrollTouchSize};${prefs.prefScrollVisualSize};${prefs.prefCursorSize};${prefs.prefKeyScale};${if(prefs.prefAutomationEnabled) 1 else 0};${if(prefs.prefAnchored) 1 else 0};${prefs.prefBubbleSize};${prefs.prefBubbleAlpha};${prefs.prefBubbleIconIndex};${prefs.prefBubbleX};${prefs.prefBubbleY};${prefs.hardkeyVolUpTap};${prefs.hardkeyVolUpDouble};${prefs.hardkeyVolUpHold};${prefs.hardkeyVolDownTap};${prefs.hardkeyVolDownDouble};${prefs.hardkeyVolDownHold};${prefs.hardkeyPowerDouble};")
-        
-        // New Settings (Vibrate, Position)
-        settingsStr.append("${if(prefs.prefVibrate) 1 else 0};${if(prefs.prefVPosLeft) 1 else 0};${if(prefs.prefHPosTop) 1 else 0};")
-        
-        // Prediction Aggression
-        settingsStr.append("${prefs.prefPredictionAggression};")
-
-        // Physical Keyboard Bounds
-        settingsStr.append("$currentKbX;$currentKbY;$currentKbW;$currentKbH;")
-
-        // Dock Mode + All Dock Prefs (per-display, per-orientation)
-        val dockSavePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-        val saveDockMode = dockSavePrefs.getBoolean("dock_mode_d${currentDisplayId}$dockOs", dockSavePrefs.getBoolean("dock_mode_d$currentDisplayId", dockSavePrefs.getBoolean("dock_mode", false)))
-        val saveAutoShow = dockSavePrefs.getBoolean("auto_show_overlay$dockOs", dockSavePrefs.getBoolean("auto_show_overlay", false))
-        val saveAutoResize = dockSavePrefs.getBoolean("auto_resize$dockOs", dockSavePrefs.getBoolean("auto_resize", false))
-        val saveResizeScale = dockSavePrefs.getInt("auto_resize_scale$dockOs", dockSavePrefs.getInt("auto_resize_scale", 0))
-        val saveSyncMargin = dockSavePrefs.getBoolean("sync_margin$dockOs", dockSavePrefs.getBoolean("sync_margin", false))
-        val saveKBAboveDock = dockSavePrefs.getBoolean("show_kb_above_dock$dockOs", dockSavePrefs.getBoolean("show_kb_above_dock", true))
-        settingsStr.append("${if(saveDockMode) 1 else 0};${if(saveAutoShow) 1 else 0};${if(saveAutoResize) 1 else 0};$saveResizeScale;${if(saveSyncMargin) 1 else 0};${if(saveKBAboveDock) 1 else 0}")
-
-        p.putString("SETTINGS_$key", settingsStr.toString())
-
-        // [FIX] SAVE MIRROR KEYBOARD PARAMS (If in Mirror Mode)
-        if (prefs.prefVirtualMirrorMode) {
-            // Get live values from window params if available, otherwise use prefs
-            val mirrorParams = mirrorManager?.getParams()
-            val mX = mirrorParams?.x ?: prefs.prefMirrorX
-            val mY = mirrorParams?.y ?: prefs.prefMirrorY
-            val mW = mirrorParams?.width ?: prefs.prefMirrorWidth
-            val mH = mirrorParams?.height ?: prefs.prefMirrorHeight
-            val mAlpha = prefs.prefMirrorAlpha
-
-            p.putInt("MIRROR_X_$key", mX)
-            p.putInt("MIRROR_Y_$key", mY)
-            p.putInt("MIRROR_W_$key", mW)
-            p.putInt("MIRROR_H_$key", mH)
-            p.putInt("MIRROR_ALPHA_$key", mAlpha)
-        }
-
-        p.apply()
-        showToast("Layout Saved (${if(prefs.prefVirtualMirrorMode) "Mirror" else "Std"})")
-    }
+    internal fun saveCurrentState() = layoutStateStore.saveCurrentState()
+    fun saveLayout() = layoutStateStore.saveLayout()
 
 
 
