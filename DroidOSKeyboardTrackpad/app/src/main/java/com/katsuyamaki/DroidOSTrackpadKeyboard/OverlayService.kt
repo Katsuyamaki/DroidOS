@@ -99,7 +99,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val intent = Intent("com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS")
         intent.setPackage("com.katsuyamaki.DroidOSLauncher")
         sendBroadcast(intent)
-        Log.d("OverlayService", "Requested keybinds from Launcher")
     }
     // =================================================================================
     // END FUNCTION: requestKeybindsFromLauncher
@@ -119,9 +118,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             }
             btMouseManager?.bringToFront()
 
-            Log.d("OverlayService", "Z-Order Enforced via layoutManager")
         } catch (e: Exception) {
-            Log.e("OverlayService", "Z-Order failed", e)
         }
     }
 
@@ -131,24 +128,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private val TAG = "OverlayService"
 
     private fun logOverlayKbDiag(event: String, extra: String = "") {
-        val tp = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
-        val dock = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val os = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-        val scaleD = tp.getInt("keyboard_key_scale_d${currentDisplayId}$os", -1)
-        val scaleO = tp.getInt("keyboard_key_scale$os", -1)
-        val scaleG = tp.getInt("keyboard_key_scale", -1)
-        val w = tp.getInt("keyboard_width_d${currentDisplayId}$os", -1)
-        val h = tp.getInt("keyboard_height_d${currentDisplayId}$os", -1)
-        val x = tp.getInt("keyboard_x_d${currentDisplayId}$os", -1)
-        val y = tp.getInt("keyboard_y_d${currentDisplayId}$os", -1)
-        val dockMode = dock.getBoolean("dock_mode_d${currentDisplayId}$os", dock.getBoolean("dock_mode_d$currentDisplayId", dock.getBoolean("dock_mode", false)))
-        Log.w(
-            TAG,
-            "KB_DIAG[$event] currentDisplay=$currentDisplayId inputTarget=$inputTargetDisplayId ui=${uiScreenWidth}x${uiScreenHeight} " +
-                "visible=$isCustomKeyboardVisible prefScale=${prefs.prefKeyScale} savedScale[d/o/g]=$scaleD/$scaleO/$scaleG " +
-                "savedBounds=${w}x${h}@(${x},${y}) dockMode=$dockMode dockMargin=$lastDockMarginPercent " +
-                "dockImeVisible=$isDockIMEVisible aboveDock=${prefs.prefShowKBAboveDock} $extra"
-        )
     }
 
     // Command dispatcher for broadcast receiver logic
@@ -322,14 +301,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // DEBUG: Log accessibility events on cover screen
             if (currentDisplayId == 1) {
                 val timeSinceInject = System.currentTimeMillis() - lastInjectionTime
-                android.util.Log.d("CoverFlash", "Event: type=${event.eventType} pkg=$eventPkg timeSinceInject=$timeSinceInject")
             }
 
             // GUARD: Only run blocking logic on Cover Screen (display 1)
             // Skip during active typing to prevent overlay flashing with DroidOS IME
             val isActivelyTyping = System.currentTimeMillis() - lastInjectionTime < 300
             if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive && !isActivelyTyping) {
-                 android.util.Log.d("CoverFlash", "Running blocking logic")
                  // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
                  imeManager?.ensureKeyboardBlocked()
                  imeManager?.triggerAggressiveBlockingWithThrottle()
@@ -489,7 +466,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try {
             keyboardOverlay?.setFocusable(focusable)
         } catch (e: Exception) {
-            e.printStackTrace()
+            
         }
     }
 
@@ -508,7 +485,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
                 fixIntent.putExtra("VISIBLE", true)
                 sendBroadcast(fixIntent)
-                android.util.Log.d("OverlayService", "FORCE_HIDE blocked — spacebar mouse active")
             } else if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
                 keyboardOverlay?.hide()
                 isCustomKeyboardVisible = false
@@ -615,7 +591,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 focus.recycle()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            
         }
     }
     // =================================================================================
@@ -658,7 +634,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         imeManager?.triggerAggressiveBlocking()
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    
                 }
             }.start()
         }
@@ -722,7 +698,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     // Try to refocus input
                     handler.postDelayed({ attemptRefocusInput() }, 500)
                 } else {
-                    Log.w(TAG, "Voice IME not found")
                     handler.post { 
                         isVoiceActive = false
                         keyboardOverlay?.setVoiceActive(false)
@@ -730,7 +705,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Voice Switch Failed", e)
                 handler.post { 
                     isVoiceActive = false
                     keyboardOverlay?.setVoiceActive(false)
@@ -913,7 +887,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                y >= kbBounds.top && y <= kbBounds.bottom
         
         if (!isInsideKeyboard) {
-            android.util.Log.d("SpaceTrackpad", "Tap outside keyboard detected - exiting extended mode")
             kbView.exitSpacebarMouseMode()
         }
     }
@@ -923,7 +896,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "Accessibility Service Connected")
         isAccessibilityReady = true
 
         // =================================================================================
@@ -970,8 +942,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
         
-        Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
-        
         // =================================================================================
         // ONE-TIME FIX: Clear stale Samsung preference if Gboard is available
         // SUMMARY: Previous bug caused Samsung to be saved as preferred IME.
@@ -989,7 +959,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             it.contains("com.google.android.inputmethod.latin") 
                         }
                         if (gboard != null) {
-                            android.util.Log.w(TAG, "STARTUP FIX: Replacing stale Samsung preference with Gboard")
                             prefs.edit().putString("user_preferred_ime", gboard.trim()).apply()
                         }
                     } catch (e: Exception) {}
@@ -1018,20 +987,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try { createNotification() } catch(e: Exception){ e.printStackTrace() }
+        try { createNotification() } catch(e: Exception){  }
         
         // === DEBUG LOGGING START ===
         if (intent != null) {
             val dId = intent.getIntExtra("displayId", -999)
             val action = intent.action
             val force = intent.getBooleanExtra("force_start", false)
-            Log.w(TAG, ">>> SERVICE STARTED | Action: $action | DisplayID: $dId | Force: $force <<<")
-            
             if (dId != -999) {
                 handler.post { Toast.makeText(this, "Service Started on D:$dId", Toast.LENGTH_SHORT).show() }
             }
         } else {
-            Log.e(TAG, ">>> SERVICE STARTED | INTENT IS NULL <<<")
         }
         // === DEBUG LOGGING END ===
 
@@ -1045,11 +1011,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (dId != -1) {
                     if (isAccessibilityReady) {
                         // Safe to launch immediately
-                        Log.d(TAG, "onStartCommand: Ready -> Setup UI Display $dId")
                         setupUI(dId)
                     } else {
                         // Too early! Queue it for onServiceConnected
-                        Log.d(TAG, "onStartCommand: Not Ready -> Queueing Display $dId")
                         pendingDisplayId = dId
                     }
                     return START_STICKY
@@ -1097,7 +1061,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     
                     // ADB / Launcher Commands (Suffix Matching)
                     matches("SOFT_RESTART") -> {
-                        Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
                         performSoftRestart()
                     }
                     matches("MOVE_TO_VIRTUAL") -> {
@@ -1130,7 +1093,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "CRASH during onStartCommand", e)
             // Retry setup safely
             try { setupUI(Display.DEFAULT_DISPLAY) } catch(e2: Exception) {}
         }
@@ -1268,26 +1230,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     internal fun removeOldViews() {
-        Log.i(BT_TAG, "removeOldViews() called - Attempting to clean up all overlays")
-        
         val viewsToRemove = listOf(trackpadLayout, bubbleView, cursorLayout)
         for (view in viewsToRemove) {
             if (view != null && view.parent != null && windowManager != null) {
                 try {
                     windowManager?.removeViewImmediate(view)
-                    android.util.Log.d("OverlayService", "Successfully removed view: ${view.javaClass.simpleName}")
                 } catch (e: Exception) {
-                    android.util.Log.e("OverlayService", "Failed to remove view immediate", e)
                 }
             }
         }
         // Clean up keyboard and menu — each independently so one failure doesn't block others
         try { keyboardOverlay?.hide() } catch (e: Exception) {
-            android.util.Log.e("OverlayService", "Failed to hide keyboard", e)
         }
         keyboardOverlay = null
         try { menuManager?.hide() } catch (e: Exception) {
-            android.util.Log.e("OverlayService", "Failed to hide menu", e)
         }
         menuManager = null
         // Clean up BT mouse capture overlay
@@ -1300,7 +1256,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     internal fun setupUI(displayId: Int) {
-        android.util.Log.d("OverlayService", "setupUI starting for Display $displayId")
         logOverlayKbDiag("setupUI_start", "targetDisplay=$displayId")
 
         // 1. Force complete removal of all views using the current WindowManager
@@ -1365,12 +1320,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             } else { "N/A (API < 24)" }
             
             /*
-            android.util.Log.w(TAG, "├─ PRE-STATE:")
-            android.util.Log.w(TAG, "│  ├─ displayId: $displayId")
-            android.util.Log.w(TAG, "│  ├─ currentDisplayId: $currentDisplayId")
-            android.util.Log.w(TAG, "│  ├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
-            android.util.Log.w(TAG, "│  ├─ current IME: $preCurrentIme")
-            android.util.Log.w(TAG, "│  └─ showMode: $preShowMode")
             */
 
             // =================================================================================
@@ -1380,12 +1329,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             if (displayId == 1) {
                 // COVER SCREEN - Apply blocking if enabled
                 if (prefs.prefBlockSoftKeyboard) {
-                    android.util.Log.d(TAG, "setupUI: Cover screen (D1) - enabling keyboard blocking")
                     imeManager?.triggerAggressiveBlocking()
                 }
             } else {
                 // MAIN SCREEN (0) or VIRTUAL DISPLAY (2+) - Never block, ensure AUTO mode
-                android.util.Log.d(TAG, "setupUI: Display $displayId - ensuring keyboard NOT blocked")
                 if (Build.VERSION.SDK_INT >= 24) {
                     try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {}
                 }
@@ -1399,12 +1346,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // =================================================================================
 
-            android.util.Log.d("OverlayService", "setupUI completed successfully on Display $displayId")
             logOverlayKbDiag("setupUI_end", "targetDisplay=$displayId")
 
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup UI on display $displayId", e)
             showToast("Failed to launch on display $displayId")
         }
     }
@@ -1536,8 +1481,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
 
         showToast("!!! EMERGENCY RESET TRIGGERED !!!")
-        Log.w(TAG, "EMERGENCY RESET TRIGGERED BY HARDWARE KEYS")
-
         // 1. Force Screen ON
         isScreenOff = false
         Thread {
@@ -1624,8 +1567,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      */
     internal fun moveToVirtualDisplayAndEnableMirror(virtualDisplayId: Int) {
         try {
-            Log.d(TAG, "Moving to virtual display $virtualDisplayId and enabling mirror mode")
-            
             // Store current state for potential return
             preMirrorTrackpadVisible = isTrackpadVisible
             preMirrorKeyboardVisible = isCustomKeyboardVisible
@@ -1659,7 +1600,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             showToast("Virtual Display Mode Active")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to move to virtual display", e)
             showToast("Error: ${e.message}")
         }
     }
@@ -1670,8 +1610,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      */
     internal fun returnToPhysicalDisplay(physicalDisplayId: Int) {
         try {
-            Log.d(TAG, "Returning to physical display $physicalDisplayId")
-            
             // Disable Virtual Mirror Mode
             if (prefs.prefVirtualMirrorMode) {
                 prefs.prefVirtualMirrorMode = false
@@ -1701,7 +1639,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             showToast("Returned to Physical Display")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to return to physical display", e)
             showToast("Error: ${e.message}")
         }
     }
@@ -1784,8 +1721,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }
             } catch(e: Exception) {}
 
-            Log.i(TAG, ">>> SCHEDULING RESTART (SERVICE) | Display: $restartDisplayId <<<")
-            
             // [FIX] Target the SERVICE directly, not the Activity.
             // This bypasses the "Background Activity Start" restriction that was blocking the restart.
             val restartIntent = Intent(applicationContext, OverlayService::class.java)
@@ -1815,11 +1750,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                      alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
                 }
             } catch (e: SecurityException) {
-                Log.w(TAG, "Exact Alarm permission missing, using standard alarm")
                 alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule restart", e)
         }
     }
 
@@ -1843,7 +1776,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun forceExit() {
-        Log.i(TAG, "forceExit called. Persistent: ${prefs.prefPersistentService}")
         try {
             removeOldViews()
             
@@ -1866,7 +1798,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }, 100)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            
         }
     }
 
@@ -2056,7 +1988,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Save keyboard height for Dock IME auto-resize feature
         saveKeyboardHeightForDock(kbHeight)
         
-        android.util.Log.d(TAG, "applyDockMode: x=0, y=$targetY, w=$targetW, h=$kbHeight, aboveDock=${prefs.prefShowKBAboveDock}")
         showToast("Keyboard docked to bottom")
     }
     
@@ -2107,7 +2038,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Save keyboard height for Dock IME auto-resize feature
         saveKeyboardHeightForDock(kbHeight)
         
-        android.util.Log.w(TAG, ">>> applyDockModeWithMargin: screenH=$screenHeight, density=$density, margin%=$marginPercent, marginPx=$marginHeight, navToolbar=$dockToolbarHeight, kbH=$kbHeight, y=$targetY, aboveDock=${prefs.prefShowKBAboveDock}, dockIMEVisible=$isDockIMEVisible")
         logOverlayKbDiag("applyDockModeWithMargin_end", "marginPercent=$marginPercent targetW=$targetW kbHeight=$kbHeight targetY=$targetY")
     }
     // =================================================================================
@@ -2130,7 +2060,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
             .putInt(key, height)
             .apply()
-        android.util.Log.d(TAG, "Saved keyboard height: $height for display $currentDisplayId orient=$os")
     }
     // =================================================================================
     // END BLOCK: applyDockMode
@@ -2238,7 +2167,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
 
-    private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) { e.printStackTrace() } }
+    private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) {  } }
 
     // Helper to retry binding if connection is dead/null
 
@@ -2257,7 +2186,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             shellService = null
         }
 
-        Log.d(TAG, "Binding Shizuku: Attempt 1 (Immediate)")
         // Use existing safe bind method
         bindShizuku() 
         
@@ -2265,7 +2193,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // We use 'handler' here (not uiHandler)
         handler.postDelayed({
             if (shellService == null) {
-                Log.w(TAG, "Binding Shizuku: Attempt 2 (Delayed 2.5s)")
                 bindShizuku()
             }
         }, 2500)
@@ -2281,7 +2208,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
             val notif = Notification.Builder(this, "overlay_service").setContentTitle("Trackpad Active").setSmallIcon(R.drawable.ic_cursor).build()
             try { if (Build.VERSION.SDK_INT >= 34) startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notif) } catch(e: Exception) { startForeground(1, notif) }
-        } catch(e: Exception) { e.printStackTrace() }
+        } catch(e: Exception) {  }
     }
 
 
@@ -2472,7 +2399,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             val hideIntent = android.content.Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME")
             hideIntent.setPackage(packageName)
             sendBroadcast(hideIntent)
-            android.util.Log.d(TAG, "Manual KB hide: sent HIDE_DOCK_IME broadcast")
         }
         
         if (prefs.prefAutomationEnabled && !suppressAutomation) { 
@@ -2691,7 +2617,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         // Move system cursor to target display using relative movement
                         shellService?.runCommand("input -d $inputTargetDisplayId mouse move $dxInt $dyInt")
                     } catch (e: Exception) {
-                        Log.e("OverlayService", "BT mouse display sync failed", e)
                     }
                 }.start()
             }
@@ -2772,7 +2697,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 Thread.sleep(50)
                 shellService?.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, now + 50)
             } catch (e: Exception) {
-                android.util.Log.e("TouchInjection", "TAP failed", e)
             }
         }.start()
     }
@@ -2956,7 +2880,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     prefs.prefPredictionAggression = parts[30].toFloat()
                     PredictionEngine.instance.speedThreshold = prefs.prefPredictionAggression
                 } catch (e: Exception) {
-                    android.util.Log.e("OverlayService", "Failed to parse aggression", e)
                 }
             }
 
@@ -3106,16 +3029,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // END BLOCK: resetMirrorKeyboardPosition
     // =================================================================================
     fun cycleInputTarget() {
-        Log.i(BT_TAG, "cycleInputTarget() initiated. Current: $inputTargetDisplayId, Host: $currentDisplayId")
-        
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
         
         if (nextId == -1) { 
-            Log.w(BT_TAG, "Cycle -> Switching to LOCAL ($currentDisplayId). Removing BT Capture.")
             inputTargetDisplayId = currentDisplayId; targetScreenWidth = uiScreenWidth; targetScreenHeight = uiScreenHeight; removeRemoteCursor(); mirrorManager?.removeMirrorKeyboard(); btMouseManager?.removeBtMouseCaptureOverlay(); cursorX = uiScreenWidth / 2f; cursorY = uiScreenHeight / 2f; cursorParams.x = cursorX.toInt(); cursorParams.y = cursorY.toInt(); try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch(e: Exception){}; cursorView?.visibility = View.VISIBLE; updateBorderColor(0x55FFFFFF.toInt()); showToast("Target: Local (Display $currentDisplayId)"); updateWakeLockState() 
         } else { 
-            Log.w(BT_TAG, "Cycle -> Switching to REMOTE ($nextId). Creating BT Capture.")
             inputTargetDisplayId = nextId; updateTargetMetrics(nextId); createRemoteCursor(nextId); updateVirtualMirrorMode(); btMouseManager?.createBtMouseCaptureOverlay(); cursorX = targetScreenWidth / 2f; cursorY = targetScreenHeight / 2f; layoutManager?.updateRemoteCursorPosition(cursorX.toInt(), cursorY.toInt()); cursorView?.visibility = View.GONE; updateBorderColor(0xFFFF00FF.toInt()); showToast("Target: Display $nextId"); updateWakeLockState() 
         }
     }
@@ -3134,9 +3053,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 "DroidOS:VirtualDisplayKeepAlive"
             )
             displayWakeLock?.acquire(60 * 60 * 1000L) // 1 hour max, will release manually
-            Log.d(TAG, "Display wake lock ACQUIRED for remote display")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to acquire display wake lock", e)
         }
     }
 
@@ -3144,10 +3061,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try {
             if (displayWakeLock?.isHeld == true) {
                 displayWakeLock?.release()
-                Log.d(TAG, "Display wake lock RELEASED")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to release display wake lock", e)
         }
         displayWakeLock = null
     }
@@ -3164,7 +3079,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // Even when using virtual display, we want to keep the physical display awake
                 shellService?.runCommand("input keyevent --longpress 0") // KEYCODE_UNKNOWN - no visible effect
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to ping user activity", e)
             }
         }.start()
     }
@@ -3395,7 +3309,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         //          when display states flicker during virtual display use.
         // =================================================================================
         if (inputTargetDisplayId >= 2) {
-            Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $inputTargetDisplayId")
             return
         }
         // =================================================================================
@@ -3439,21 +3352,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 //          ALSO: Fight Samsung's keyboard takeover with delayed restoration.
                 // =================================================================================
                 if (display.state == Display.STATE_ON && currentDisplayId != 0) {
-                    android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
-                    android.util.Log.w(TAG, "║ PHONE OPENED DETECTED - onDisplayChanged                 ║")
-                    android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
-                    android.util.Log.w(TAG, "├─ display.state: ${display.state} (STATE_ON=${Display.STATE_ON})")
-                    android.util.Log.w(TAG, "├─ currentDisplayId: $currentDisplayId")
-                    android.util.Log.w(TAG, "├─ prefBlockSoftKeyboard: ${prefs.prefBlockSoftKeyboard}")
-                    android.util.Log.w(TAG, "├─ Scheduling UI switch in 500ms...")
-                    
                     handler.postDelayed({
                         try {
                             val timeSinceManual = System.currentTimeMillis() - lastManualSwitchTime
-                            android.util.Log.w(TAG, "├─ DELAYED HANDLER EXECUTING")
-                            android.util.Log.w(TAG, "│  ├─ timeSinceManualSwitch: ${timeSinceManual}ms")
-                            android.util.Log.w(TAG, "│  └─ Will execute: ${timeSinceManual > 5000}")
-                            
                             if (timeSinceManual > 5000) {
                                 // Pre-restore showMode
                                 if (prefs.prefBlockSoftKeyboard) {
@@ -3468,7 +3369,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                 resetBubblePosition()
                             }
                         } catch(e: Exception) {
-                            android.util.Log.e(TAG, "└─ EXCEPTION: ${e.message}", e)
                         }
 
                     }, 500)
@@ -3548,7 +3448,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
         lastInjectionTime = System.currentTimeMillis()
-        android.util.Log.d("CoverFlash", "injectKeyFromKeyboard: keyCode=$keyCode display=$currentDisplayId")
         checkAndDismissVoice()
         inputHandler.injectKeyFromKeyboard(keyCode, metaState)
     }

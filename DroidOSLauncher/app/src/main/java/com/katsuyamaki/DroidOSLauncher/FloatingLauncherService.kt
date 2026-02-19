@@ -82,7 +82,7 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
                             if (drawerView != null && isExpanded) {
                                 try { wm.removeView(drawerView) } catch(e: Exception) {}
                             }
-                        } catch (e: Exception) { Log.e(TAG, "Receiver cleanup failed", e) }
+                        } catch (e: Exception) { }
 
                         currentDisplayId = targetId
                         initWindow()
@@ -820,7 +820,6 @@ private var isSoftKeyboardSupport = false
         intent.putStringArrayListExtra("KEYBINDS", binds)
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
         sendBroadcast(intent)
-        Log.e(TAG, "Broadcasted ${binds.size} keybinds to Keyboard (inc. defaults)")
     }
     // === SWIPE CALLBACK - START ===
     // Handles swipe gestures for various modes including blacklist
@@ -1020,8 +1019,6 @@ private var isSoftKeyboardSupport = false
                 shellService?.runCommand(legacyCmd)
 
             } catch (e: Exception) {
-                Log.e(TAG, "Shell Restart Failed", e)
-                
                 // [FIX] ADD FALLBACK DELAY
                 // If the shell failed, we still want to wait before blindly launching the app
                 Thread.sleep(2000)
@@ -1063,7 +1060,6 @@ private var isSoftKeyboardSupport = false
                 }
                 wakeLock?.acquire(60 * 60 * 1000L) // 1 hour max, will re-acquire as needed
                 keepScreenOnEnabled = true
-                Log.i(TAG, "Wake lock ACQUIRED - screen will stay on")
             } else {
                 wakeLock?.let {
                     if (it.isHeld) {
@@ -1071,10 +1067,8 @@ private var isSoftKeyboardSupport = false
                     }
                 }
                 keepScreenOnEnabled = false
-                Log.i(TAG, "Wake lock RELEASED - normal screen timeout")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Wake lock error: ${e.message}")
         }
     }
     // =================================================================================
@@ -1968,7 +1962,6 @@ private var isSoftKeyboardSupport = false
                 
                 // Only act on state changes (app opening/resuming)
                 if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                    Log.w("DROIDOS_WATCHDOG", "ESCAPE DETECTED: $pkg on Cover (D1). Triggering Recovery to D$currentDisplayId")
                     forceAppToDisplay(pkg, currentDisplayId)
                 }
             }
@@ -2082,7 +2075,7 @@ private var isSoftKeyboardSupport = false
                                         break
                                     }
                                 }
-                            } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_DEBUG: Error", e) }
+                            } catch (e: Exception) { }
                             
                             if (coversScreen) {
                                 tiledAppsAutoMinimized = true
@@ -2206,7 +2199,7 @@ private var isSoftKeyboardSupport = false
                                     }
                                 }
 
-                            } catch (e: Exception) { Log.e(TAG, "FULLSCREEN_DEBUG: Error checking coversScreen", e) }
+                            } catch (e: Exception) { }
 
                             if (coversScreen) {
                             pendingFullscreenCheckRunnable?.let { uiHandler.removeCallbacks(it) }
@@ -2254,7 +2247,7 @@ private var isSoftKeyboardSupport = false
                                             break
                                         }
                                     }
-                                } catch (e: Exception) { Log.e(TAG, "FULLSCREEN re-check failed", e) }
+                                } catch (e: Exception) { }
                                 if (nowCoversScreen) {
                                     tiledAppsAutoMinimized = true
                                     // Use MINIMIZE_ALL command for consistency and proper state tracking
@@ -2362,7 +2355,7 @@ private var isSoftKeyboardSupport = false
                                             if (tid != -1) shellService?.moveTaskToBack(tid)
                                         }
                                     }
-                                } catch (e: Exception) { Log.e(TAG, "Auto-minimize others failed", e) }
+                                } catch (e: Exception) { }
                             }.start()
                             break
                         }
@@ -2404,7 +2397,7 @@ private var isSoftKeyboardSupport = false
                                                 if (tid != -1) shellService?.moveTaskToBack(tid)
                                             }
                                         }
-                                    } catch (e: Exception) { Log.e(TAG, "Auto-minimize for external fullscreen failed", e) }
+                                    } catch (e: Exception) { }
                                 }.start()
                                 break
                             }
@@ -2425,7 +2418,6 @@ private var isSoftKeyboardSupport = false
 
                 // [FIX] Ignore fallback focus writes while WM queue is active.
                 if (isProcessingWmCommand || wmCommandQueue.isNotEmpty()) {
-                    Log.d(TAG, "Accessibility focus skipped during WM command: $pkg")
                 } else {
                     activePackageName = pkg
                 }
@@ -2577,7 +2569,6 @@ private var isSoftKeyboardSupport = false
                     windowManager.removeView(bubbleView)
                     if (isExpanded) windowManager.removeView(drawerView)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error removing views for migration", e)
                 }
                 setupDisplayContext(targetDisplayId)
                 setupBubble()
@@ -2605,7 +2596,6 @@ private var isSoftKeyboardSupport = false
 
                 if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku()
             } catch (e: Exception) {
-                Log.e(TAG, "Setup failed", e)
                 stopSelf()
             }
         }
@@ -2654,7 +2644,6 @@ private var isSoftKeyboardSupport = false
                     }
                     activeCustomRects = rects
                 } catch(e: Exception) {
-                    Log.e(TAG, "Failed to load custom rects", e)
                 }
             }
         }
@@ -2720,8 +2709,6 @@ private var isSoftKeyboardSupport = false
 
             // Only auto-force if we found a high refresh rate (>60)
             if (maxRate > 60f) {
-                Log.i(TAG, "Auto-Force $maxRate Hz (Mode $bestModeId)")
-
                 uiHandler.post {
                     try {
                         if (bubbleView != null && bubbleView?.isAttachedToWindow == true) {
@@ -2739,7 +2726,6 @@ private var isSoftKeyboardSupport = false
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Refresh Rate Error", e)
         }
     }
 
@@ -2862,7 +2848,7 @@ private var isSoftKeyboardSupport = false
     }
     private fun refreshDisplayId() { val id = displayContext?.display?.displayId ?: Display.DEFAULT_DISPLAY; currentDisplayId = id }
     private fun startForegroundService() { val channelId = if (android.os.Build.VERSION.SDK_INT >= 26) { val channel = android.app.NotificationChannel(CHANNEL_ID, "Floating Launcher", android.app.NotificationManager.IMPORTANCE_LOW); getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel); CHANNEL_ID } else ""; val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build(); if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification) }
-    private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { Log.e(TAG, "Bind Shizuku Failed", e) } }
+    private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { } }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
 
     private fun saveOrientationState(os: String = orientSuffix()) {
@@ -2907,7 +2893,7 @@ private var isSoftKeyboardSupport = false
                         if (c.size == 4) rects.add(Rect(c[0].toInt(), c[1].toInt(), c[2].toInt(), c[3].toInt()))
                     }
                     activeCustomRects = rects
-                } catch (e: Exception) { Log.e(TAG, "Failed to load orient custom rects", e) }
+                } catch (e: Exception) { }
             }
         }
     }
@@ -2950,7 +2936,7 @@ private var isSoftKeyboardSupport = false
             isExpanded = false
             // Retile all tiled windows to fit the new screen dimensions
             requestHeadlessRetile("orientation-change", 400L)
-        } catch (e: Exception) { Log.e(TAG, "refreshUIForOrientationChange failed", e) }
+        } catch (e: Exception) { }
     }
 
     private fun setupBubble() {
@@ -3066,7 +3052,6 @@ private var isSoftKeyboardSupport = false
                 windowManager.addView(bubbleView, bubbleParams)
                 attachedWindowManager = windowManager
             } catch (e2: Exception) {
-                Log.e(TAG, "Error adding bubble", e2)
             }
         }
         // [FIX] Apply saved bubble size after view is added
@@ -3114,7 +3099,6 @@ private var isSoftKeyboardSupport = false
             options.setLaunchDisplayId(currentDisplayId)
             startActivity(intent, options.toBundle())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to show wallpaper", e)
         }
     }
 
@@ -3796,7 +3780,6 @@ private var isSoftKeyboardSupport = false
 
         // DEFENSIVE CLEANUP: Force-remove orphaned views that are flagged invisible but still attached
         if (visualQueueView != null) {
-            Log.w(TAG, "Visual Queue cleanup: removing stale view before showing new one")
             try { visualQueueWindowManager?.removeView(visualQueueView) } catch (e: Exception) {}
             try { (displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(visualQueueView) } catch (e: Exception) {}
             try { windowManager.removeView(visualQueueView) } catch (e: Exception) {}
@@ -3843,8 +3826,6 @@ private var isSoftKeyboardSupport = false
                 targetWM.addView(visualQueueView, visualQueueParams)
                 isVisualQueueVisible = true
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to add Visual Queue", e)
-                e.printStackTrace()
             }
         } else {
             // Just update adapter if already visible
@@ -3877,7 +3858,6 @@ private var isSoftKeyboardSupport = false
                     wm.removeView(visualQueueView)
                     removed = true
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to remove VQ from stored WM: ${e.message}")
                 }
             }
             // Fallback: try displayContext WM
@@ -3899,7 +3879,6 @@ private var isSoftKeyboardSupport = false
                 isVisualQueueVisible = false
                 visualQueueWindowManager = null
             } else {
-                Log.e(TAG, "CRITICAL: Failed to remove Visual Queue from ALL WindowManagers!")
                 // Force cleanup to prevent stuck state
                 visualQueueView = null
                 isVisualQueueVisible = false
@@ -4148,7 +4127,6 @@ private var isSoftKeyboardSupport = false
         if (wmCommandQueue.size >= 20) {
             val dropped = wmCommandQueue.removeFirst()
             val droppedCmd = dropped.getStringExtra("COMMAND") ?: "UNKNOWN"
-            Log.w(TAG, "WM queue overflow, dropping oldest command: $droppedCmd")
         }
         wmCommandQueue.addLast(intent)
         val delay = if (isBound && shellService != null) 0L else 400L
@@ -4190,7 +4168,6 @@ private var isSoftKeyboardSupport = false
             consecutiveWmQueueFailures = 0
         } catch (e: Exception) {
             val failedCmd = nextIntent.getStringExtra("COMMAND") ?: "UNKNOWN"
-            Log.e(TAG, "WM queue command execution failed: $failedCmd", e)
             isProcessingWmCommand = false
             consecutiveWmQueueFailures = (consecutiveWmQueueFailures + 1).coerceAtMost(5)
             val backoffMs = 300L + (consecutiveWmQueueFailures * 150L)
@@ -4219,8 +4196,6 @@ private var isSoftKeyboardSupport = false
                 }
 
                 if (tid != -1) {
-                    Log.w("DROIDOS_WATCHDOG", "Targeting Task $tid for $pkg. Starting Locked Loop...")
-
                     // 2. Lookup Cache / AppInfo
                     var bounds: Rect? = packageRectCache[pkg]
                     var className: String? = null
@@ -4246,14 +4221,12 @@ private var isSoftKeyboardSupport = false
                         // Level 1 (Attempts 3-6): Force Relaunch with NEW_TASK flag
                         if (i > 3 && i <= 6 && className != null) {
                              val cmd = "am start -n $pkg/$className --display $targetDisplayId --windowingMode 5 -f 0x10000000 --user 0"
-                             Log.w("DROIDOS_WATCHDOG", "Escalating L1 (Relaunch): $cmd")
                              shellService?.runCommand(cmd)
                         }
                         
                         // Level 2 (Attempts 7+): NUCLEAR OPTION (Kill & Restart)
                         // If it refuses to move after 6 tries, the process is likely stuck with bad display affinity.
                         if (i > 6 && className != null) {
-                             Log.e("DROIDOS_WATCHDOG", "Escalating L2 (Nuclear): Killing $pkg to break display affinity")
                              shellService?.forceStop(pkg)
                              Thread.sleep(300) // Wait for death
                              
@@ -4272,7 +4245,6 @@ private var isSoftKeyboardSupport = false
                         // We check BOTH display ID and visibility
                         val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)?.contains(pkg) == true
                         if (visibleOnTarget) {
-                            Log.w("DROIDOS_WATCHDOG", "SUCCESS: App moved on attempt $i")
                             // One final resize to ensure it stuck
                             if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
                             break
@@ -4281,10 +4253,8 @@ private var isSoftKeyboardSupport = false
                         Thread.sleep(300) // Slightly slower retry to let system process
                     }
                 } else {
-                    Log.e("DROIDOS_WATCHDOG", "Could not find Task ID for $pkg")
                 }
             } catch (e: Exception) {
-                Log.e("DROIDOS_WATCHDOG", "Force move failed", e)
             } finally {
                 // [UNLOCK] Release lock
                 activeEnforcements.remove(pkg)
@@ -4366,7 +4336,7 @@ private var isSoftKeyboardSupport = false
         try {
             // Add ON TOP of everything
             windowManager.addView(keyPickerView, keyPickerParams)
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {  }
     }
 
     // ADAPTER for the HUD
@@ -4436,12 +4406,10 @@ private var isSoftKeyboardSupport = false
             try {
                 windowManager.addView(drawerView, drawerParams)
             } catch(e: Exception) {
-                Log.e(TAG, "Failed to add drawer with high priority: ${e.message}")
                 try {
                     drawerParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                     windowManager.addView(drawerView, drawerParams)
                 } catch(e2: Exception) {
-                    Log.e(TAG, "Failed to add drawer with fallback: ${e2.message}")
                 }
             }
 
@@ -4561,7 +4529,6 @@ private var isSoftKeyboardSupport = false
 
             // Validate className - must not be null, empty, or "default"
             val validClassName = if (cls.isNullOrEmpty() || cls == "default") {
-                Log.w(DEBUG_TAG, "App $label ($pkg) has invalid className: $cls")
                 null
             } else {
                 cls
@@ -4614,7 +4581,6 @@ private var isSoftKeyboardSupport = false
                 val app = MainActivity.AppInfo(label, pkg, activity, false, false)
                 displayList.add(app)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load blacklisted app: $identifier", e)
             }
         }
 
@@ -4761,7 +4727,6 @@ private var isSoftKeyboardSupport = false
                         }
                     }
                 } catch (e: Exception) { 
-                    Log.e(TAG, "ensureFullscreenAppAtSlot1 failed", e)
                 }
                 return false
             }
@@ -4801,7 +4766,6 @@ private var isSoftKeyboardSupport = false
             }
 
             private fun updateAllUIs() {
-                Log.e(TAG, "INSIDE_UPDATE_ALL_UIS vq=${visualQueueView != null}")
                 // 1. Update Drawer Dock
                 updateSelectedAppsDock()
                 drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
@@ -4957,7 +4921,6 @@ private var isSoftKeyboardSupport = false
         }
 
         if (changed) {
-            Log.d(TAG, "sanitizeFocusState: removed stale focus/history ($reason)")
         }
     }
 
@@ -5030,7 +4993,6 @@ private var isSoftKeyboardSupport = false
                 try { 
                     shellService?.forceStop(basePkg) 
                 } catch(e: Exception) {
-                    Log.e(TAG, "forceStop failed for $basePkg", e)
                 } 
             }.start()
             
@@ -5086,7 +5048,6 @@ private var isSoftKeyboardSupport = false
             }
 
             if (intent == null) {
-                Log.w(TAG, "launchViaApi: No intent for $basePkg, trying shell")
                 launchViaShell(basePkg, className, bounds)
                 return
             }
@@ -5103,7 +5064,6 @@ private var isSoftKeyboardSupport = false
             startActivity(intent, options.toBundle())
 
         } catch (e: Exception) {
-            Log.e(TAG, "launchViaApi FAILED, trying shell", e)
             launchViaShell(pkg, className, bounds)
         }
     }
@@ -5136,12 +5096,10 @@ private var isSoftKeyboardSupport = false
                 try {
                     shellService?.runCommand(cmd)
                 } catch (e: Exception) {
-                    Log.e(TAG, "launchViaShell: FAILED", e)
                 }
             }.start()
 
         } catch (e: Exception) {
-            Log.e(TAG, "launchViaShell FAILED: $pkg", e)
         }
     }
     // === LAUNCH VIA SHELL - END ===
@@ -5156,7 +5114,6 @@ private var isSoftKeyboardSupport = false
 
             // Skip stale focus targets (already removed/minimized/hidden)
             if (appEntry == null || appEntry.packageName == PACKAGE_BLANK || appEntry.isMinimized) {
-                Log.w(TAG, "focusViaTask skipped stale target: $basePkg")
                 return
             }
 
@@ -5175,7 +5132,6 @@ private var isSoftKeyboardSupport = false
 
             shellService?.runCommand(cmd)
         } catch (e: Exception) {
-            Log.e(TAG, "focusViaTask FAILED: $pkg", e)
         }
     }
     // === FOCUS VIA TASK - END ===
@@ -5296,7 +5252,7 @@ private var isSoftKeyboardSupport = false
             if (drawerView != null && isExpanded) {
                 try { wm.removeView(drawerView) } catch(e: Exception) {}
             }
-        } catch (e: Exception) { Log.e(TAG, "Cleanup failed", e) }
+        } catch (e: Exception) { }
 
         // Clear cached auxiliary views using CURRENT (Old) WM before switching context
         if (visualQueueView != null) {
@@ -5321,9 +5277,7 @@ private var isSoftKeyboardSupport = false
         
         // WATCHDOG STATE LOG
         if (currentDisplayId >= 2) {
-            Log.w("DROIDOS_WATCHDOG", ">>> WATCHDOG ENABLED (Targeting Virtual D$currentDisplayId) <<<")
         } else {
-            Log.w("DROIDOS_WATCHDOG", ">>> WATCHDOG DISABLED (Targeting Physical D$currentDisplayId) <<<")
         }
         
         // [NEW] Launch Wallpaper if on Virtual Display
@@ -5349,7 +5303,6 @@ private var isSoftKeyboardSupport = false
                 }, 500)
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to launch wallpaper", e)
             }
         }
 
@@ -5367,7 +5320,7 @@ private var isSoftKeyboardSupport = false
             uiHandler.postDelayed({ applyLayoutImmediate() }, 500)
         }
     }
-    private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { Log.e(TAG, "Virtual Display Toggle Failed", e) } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
+    private fun toggleVirtualDisplay(enable: Boolean) { isVirtualDisplayActive = enable; Thread { try { if (enable) { shellService?.runCommand("settings put global overlay_display_devices \"1920x1080/320\""); uiHandler.post { safeToast("Creating Virtual Display... Wait a moment, then Switch Display.") } } else { shellService?.runCommand("settings delete global overlay_display_devices"); uiHandler.post { safeToast("Destroying Virtual Display...") } } } catch (e: Exception) { } }.start(); if (currentMode == MODE_SETTINGS) uiHandler.postDelayed({ switchMode(MODE_SETTINGS) }, 500) }
 
     // --- v2.0 SCREEN OFF LOGIC ---
     private fun performScreenOff() {
@@ -5390,7 +5343,6 @@ private var isSoftKeyboardSupport = false
                          safeToast("Service Disconnected!")
                      }
                  } catch (e: Exception) {
-                     Log.e(TAG, "Binder Call Failed", e)
                      safeToast("Error: ${e.message}")
                  }
             }.start()
@@ -5435,7 +5387,6 @@ private var isSoftKeyboardSupport = false
                     shellService?.batchResize(packages, boundsList.toIntArray())
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "retileExistingWindows failed", e)
             }
         }.start()
     }
@@ -5567,7 +5518,6 @@ private var isSoftKeyboardSupport = false
                                     selectedAppsQueue.add(appInfo)
                                 }
                             } else {
-                                Log.w(DEBUG_TAG, "fetchRunningApps: Could not find app for identifier=$identifier")
                             }
                         }
                     }
@@ -5605,7 +5555,6 @@ private var isSoftKeyboardSupport = false
                     updateAllUIs()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Fetch failed", e)
             }
         }.start()
     }
@@ -5674,7 +5623,7 @@ private var isSoftKeyboardSupport = false
         
         if (isInstantMode) applyLayoutImmediate() 
     }
-    private fun saveCurrentAsCustom() { Thread { try { val rawLayouts = shellService!!.getWindowLayouts(currentDisplayId); if (rawLayouts.isEmpty()) { safeToast("Found 0 active app windows"); return@Thread }; val rectStrings = mutableListOf<String>(); for (line in rawLayouts) { val parts = line.split("|"); if (parts.size == 2) { rectStrings.add(parts[1]) } }; if (rectStrings.isEmpty()) { safeToast("Found 0 valid frames"); return@Thread }; val count = rectStrings.size; var baseName = "$count Apps - Custom"; val existingNames = AppPreferences.getCustomLayoutNames(this); var counter = 1; var finalName = "$baseName $counter"; while (existingNames.contains(finalName)) { counter++; finalName = "$baseName $counter" }; AppPreferences.saveCustomLayout(this, finalName, rectStrings.joinToString("|")); safeToast("Saved: $finalName"); uiHandler.post { switchMode(MODE_LAYOUTS) } } catch (e: Exception) { Log.e(TAG, "Failed to save custom layout", e); safeToast("Error saving: ${e.message}") } }.start() }
+    private fun saveCurrentAsCustom() { Thread { try { val rawLayouts = shellService!!.getWindowLayouts(currentDisplayId); if (rawLayouts.isEmpty()) { safeToast("Found 0 active app windows"); return@Thread }; val rectStrings = mutableListOf<String>(); for (line in rawLayouts) { val parts = line.split("|"); if (parts.size == 2) { rectStrings.add(parts[1]) } }; if (rectStrings.isEmpty()) { safeToast("Found 0 valid frames"); return@Thread }; val count = rectStrings.size; var baseName = "$count Apps - Custom"; val existingNames = AppPreferences.getCustomLayoutNames(this); var counter = 1; var finalName = "$baseName $counter"; while (existingNames.contains(finalName)) { counter++; finalName = "$baseName $counter" }; AppPreferences.saveCustomLayout(this, finalName, rectStrings.joinToString("|")); safeToast("Saved: $finalName"); uiHandler.post { switchMode(MODE_LAYOUTS) } } catch (e: Exception) { safeToast("Error saving: ${e.message}") } }.start() }
 
 
 // =================================================================================
@@ -5732,7 +5681,6 @@ private var isSoftKeyboardSupport = false
                                 wm.updateViewLayout(bubbleView, bubbleParams)
                             }
                         } catch(e: Exception) {
-                            Log.e(TAG, "Window mode override failed", e)
                         }
                     }
                     
@@ -5748,8 +5696,6 @@ private var isSoftKeyboardSupport = false
                     
                 } else {
                     // === METHOD B: No hardware support - use software throttling ===
-                    Log.w(TAG, "Hardware does NOT support ${targetRate}Hz - using software throttling")
-                    
                     // Method B1: SurfaceFlinger frame rate override for the display
                     // This tells SF to throttle frame composition for this display
                     val sfThrottleCmd = "service call SurfaceFlinger 1035 i32 $currentDisplayId f $targetRate"
@@ -5783,7 +5729,6 @@ private var isSoftKeyboardSupport = false
                     
                     activeRefreshRateLabel = "Limit: ${rateInt}Hz (SW)"
                     
-                    Log.i(TAG, "Software throttle applied - display still at HW rate but rendering limited")
                 }
                 
                 Thread.sleep(800)
@@ -5802,7 +5747,6 @@ private var isSoftKeyboardSupport = false
                 }
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to set refresh rate", e)
                 uiHandler.post { safeToast("Error: ${e.message}") }
             }
         }.start()
@@ -5814,9 +5758,9 @@ private var isSoftKeyboardSupport = false
 
 
 
-    private fun applyOrientation() { Thread { try { when (currentOrientationMode) { 1 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 0") }; 2 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 1") }; else -> { shellService?.runCommand("settings put system accelerometer_rotation 1") } } } catch (e: Exception) { e.printStackTrace() } }.start() }
+    private fun applyOrientation() { Thread { try { when (currentOrientationMode) { 1 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 0") }; 2 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 1") }; else -> { shellService?.runCommand("settings put system accelerometer_rotation 1") } } } catch (e: Exception) {  } }.start() }
     override fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread {     if (currentOrientationMode != 0) { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" }) }; val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
-    override fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) { e.printStackTrace() } }.start() }
+    override fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) {  } }.start() }
     override fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
     override fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     override fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
@@ -5896,7 +5840,6 @@ private var isSoftKeyboardSupport = false
                 val pkgList = parts[3].split(",").filter { it.isNotEmpty() }
                 loadProfileLayoutAndApps(name, layoutType, resIndex, dpiSetting, pkgList, 0, 0, false)
             } catch (e2: Exception) {
-                Log.e(TAG, "Failed to load profile", e2) 
             }
         } 
     }
@@ -6337,7 +6280,6 @@ private var isSoftKeyboardSupport = false
 
 
                     } catch (e: Exception) {
-                        Log.e(TAG, "Tile[$i]: Reposition failed", e)
                     }
 
                     // 3. Buffer before next app
@@ -6410,7 +6352,6 @@ private var isSoftKeyboardSupport = false
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "Execute Failed", e)
                 uiHandler.post { safeToast("Execute Failed: ${e.message}") }
             } finally {
                 // [EFFICIENCY] Invalidate cache so "Active Window" updates instantly
@@ -6833,7 +6774,6 @@ private var isSoftKeyboardSupport = false
         val cmd = intent.getStringExtra("COMMAND")?.uppercase(Locale.ROOT) ?: return
 
         if (!isBound || shellService == null) {
-            Log.w(TAG, "WM Command $cmd queued (Shizuku not bound)")
             tryBindShizukuIfPermitted()
             queueWindowManagerCommand(intent)
             return
@@ -7211,7 +7151,6 @@ private var isSoftKeyboardSupport = false
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "MINIMIZE_ALL failed", e)
                     }
                 }.start()
                 
@@ -7356,7 +7295,6 @@ private var isSoftKeyboardSupport = false
                                 }
                                 shellService?.runCommand(cmd)
                             } catch (e: Exception) {
-                                Log.e(TAG, "Force bring-to-front failed", e)
                             }
                         }.start()
                         refreshQueueAndLayout("Restored ${app.label}", forceRetile = true, retileDelayMs = 350L)
@@ -7456,7 +7394,7 @@ private var isSoftKeyboardSupport = false
                                          selectedAppsQueue.add(0, fullscreenApp.copy())
                                      }
                                  }
-                             } catch (e: Exception) { Log.e(TAG, "Failed to detect fullscreen app", e) }
+                             } catch (e: Exception) { }
                              
                              // Continue with existing logic for multiple visible apps
                              try {
@@ -7472,7 +7410,7 @@ private var isSoftKeyboardSupport = false
                                      }
                                      uiHandler.post { updateAllUIs() }
                                  }
-                             } catch (e: Exception) { Log.e(TAG, "UNMINIMIZE: Failed to detect fullscreen apps", e) }
+                             } catch (e: Exception) { }
 
                              Thread {
                                  try {
@@ -7499,7 +7437,6 @@ private var isSoftKeyboardSupport = false
                                          }
                                      }
                                  } catch(e: Exception) {
-                                     Log.e(TAG, "Restore failed", e)
                                  }
                              }.start()
                         }
@@ -7638,7 +7575,6 @@ private var isSoftKeyboardSupport = false
                             }
 
                             if (!targetStillInQueue) {
-                                Log.w(TAG, "SET_FOCUS skipped stale target: ${app.packageName}")
                                 return
                             }
                             
@@ -7650,7 +7586,6 @@ private var isSoftKeyboardSupport = false
                                     try {
                                         shellService?.runCommand("input tap $centerX $centerY")
                                     } catch (e: Exception) {
-                                        Log.e(TAG, "SET_FOCUS tap-back failed", e)
                                     }
                                 }
                             } else if (!app.isMinimized) {
@@ -7668,7 +7603,6 @@ private var isSoftKeyboardSupport = false
                                 try {
                                     updateAllUIs2()
                                 } catch (e: Exception) {
-                                    Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
                                 }
                                 safeToast("Focused: ${app.label}")
                             }
@@ -7715,7 +7649,6 @@ private var isSoftKeyboardSupport = false
                                 try {
                                     updateAllUIs2()
                                 } catch (e: Exception) {
-                                    Log.e(TAG, "SET_FOCUS: updateAllUIs CRASHED", e)
                                 }
                             }
                             safeToast("Focused: ${app.label}")
