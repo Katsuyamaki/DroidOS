@@ -67,7 +67,7 @@ class OverlayLayoutManager(
             remoteCursorParams = params
             remoteWindowManager?.addView(remoteCursorLayout, params)
         } catch (e: Exception) {
-            e.printStackTrace()
+
         }
     }
 
@@ -400,7 +400,7 @@ class OverlayLayoutManager(
     }
 
     private fun handleTrackpadTouch(event: MotionEvent) {
-        android.util.Log.d("TrackpadDebug", "handleTrackpadTouch: action=${event.action}")
+
         val viewWidth = trackpadLayout?.width ?: 0; val viewHeight = trackpadLayout?.height ?: 0; if (viewWidth == 0 || viewHeight == 0) return
         if (isReleaseDebouncing && event.actionMasked != MotionEvent.ACTION_DOWN) return
         

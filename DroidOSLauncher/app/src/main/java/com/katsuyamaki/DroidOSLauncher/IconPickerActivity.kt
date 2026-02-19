@@ -21,7 +21,7 @@ class IconPickerActivity : ComponentActivity() {
                 // Notify Service to update
                 sendBroadcast(Intent("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON"))
             } catch (e: Exception) {
-                e.printStackTrace()
+
             }
         }
         finish()

@@ -225,7 +225,7 @@ class KeyboardPickerActivity : Activity() {
             dialog.show()
 
         } catch (e: Exception) {
-            e.printStackTrace()
+
             Toast.makeText(this, "Error loading keyboards", Toast.LENGTH_SHORT).show()
             openKeyboardSettings()
         }

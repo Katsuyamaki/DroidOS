@@ -205,7 +205,7 @@ class PredictionEngine {
     fun clearTemporaryPenalties() {
         if (temporaryPenalties.isNotEmpty()) {
             temporaryPenalties.clear()
-            android.util.Log.d("DroidOS_Prediction", "Penalties cleared (new input detected)")
+
         }
     }
 
@@ -213,7 +213,7 @@ class PredictionEngine {
         val clean = word.trim().lowercase(java.util.Locale.ROOT)
         // Set expiration time
         temporaryPenalties[clean] = System.currentTimeMillis() + PENALTY_DURATION_MS
-        android.util.Log.d("DroidOS_Prediction", "PENALIZED: '$clean' (Score x10 for 60s)")
+
     }
     private var lastSwipePath: List<TimedPoint>? = null // Cache last path to learn from
     
@@ -403,7 +403,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                         userFrequencyMap[w] = c
                     }
                 }
-                android.util.Log.d("DroidOS_Prediction", "Loaded stats for ${userFrequencyMap.size} words")
+
             }
         } catch (e: Exception) {
             android.util.Log.e("DroidOS_Prediction", "Failed to load user stats", e)
@@ -426,7 +426,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 val file = java.io.File(context.filesDir, USER_STATS_FILE)
                 file.writeText(sb.toString())
             } catch (e: Exception) {
-                e.printStackTrace()
+
             }
         }.start()
     }
@@ -496,9 +496,9 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                     if (blockFile.exists()) {
                         val blockedLines = blockFile.readLines().map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotEmpty() }
                         newBlocked.addAll(blockedLines)
-                        android.util.Log.d("DroidOS_Prediction", "LOAD: Blocked words file found, ${blockedLines.size} words")
+
                     } else {
-                        android.util.Log.d("DroidOS_Prediction", "LOAD: No blocked words file exists yet")
+
                     }
 
                     val userFile = java.io.File(context.filesDir, USER_DICT_FILE)
@@ -517,12 +517,12 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                                 newDisplayForms[lookupForm] = originalForm
                                 newDisplayForms[trieKey] = originalForm
                             } else {
-                                android.util.Log.d("DroidOS_Prediction", "Pruned garbage from user dict: $originalForm")
+
                             }
                         }
-                        android.util.Log.d("DroidOS_Prediction", "LOAD: User words file found, ${newCustom.size} valid words")
+
                     } else {
-                        android.util.Log.d("DroidOS_Prediction", "LOAD: No user words file exists yet")
+
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("DroidOS_Prediction", "Failed to load user lists", e)
@@ -634,10 +634,10 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 // Note: Templates require keyMap which we don't have here.
                 // Templates will be created on first use, but the word indexes are ready.
                 // =================================================================================
-                android.util.Log.d("DroidOS_Prediction", "Dictionary Loaded: $lineCount asset + ${newCustom.size} user words + ${newBlocked.size} blocked. Common Cache: ${commonWordsCache.size}")
+
 
             } catch (e: Exception) {
-                e.printStackTrace()
+
             }
         }.start()
     }
@@ -686,7 +686,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
         // Don't learn garbage
         if (looksLikeGarbage(trieKey)) {
-             android.util.Log.d("DroidOS_Prediction", "Ignored garbage input: $originalWord")
+
              return
         }
 
@@ -724,10 +724,10 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                             it.trim().lowercase(java.util.Locale.ROOT).replace("'", "") != trieKey 
                         } + displayForm
                         file.writeText(updatedLines.joinToString("\n") + "\n")
-                        android.util.Log.d("DroidOS_Prediction", "Updated word: '$displayForm' (was in dict, updated display form)")
+
                     } else {
                         file.appendText("$displayForm\n")
-                        android.util.Log.d("DroidOS_Prediction", "Learned word: '$displayForm' (lookup: '$trieKey', sentenceStart=$isSentenceStart)")
+
                     }
 
                     // Safe to call here (it uses synchronized data)
@@ -735,7 +735,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 }
 
             } catch (e: Exception) {
-                e.printStackTrace()
+
             }
         }.start()
     }
@@ -771,7 +771,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             // FIX: Append newline to prevent next write from merging with last word (e.g. can'twon't)
             val content = data.filter { it.isNotEmpty() }.joinToString("\n") + "\n"
             file.writeText(content)
-            android.util.Log.d("DroidOS_Prediction", "SAVEFILE: Wrote ${data.size} items to $filename")
+
         } catch (e: Exception) {
             android.util.Log.e("DroidOS_Prediction", "SAVEFILE FAILED: $filename - ${e.message}", e)
         }
@@ -1144,7 +1144,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
                                 candidates.addAll(strictMatches)
 
-                                android.util.Log.d("DroidOS_PathKeys", "Strict Match found: ${strictMatches.take(5)}")
+
 
                             }
 
@@ -1174,7 +1174,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
                 // Debug: Log total candidates
 
-                android.util.Log.d("DroidOS_PathKeys", "Total candidates: ${candidates.size}")
+
 
         
 
@@ -1624,7 +1624,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 val wordWithApostrophe = findApostropheVariant(word)
                 if (wordWithApostrophe != null) {
                     userBoost *= 1.5f  // Strong boost for apostrophe variants
-                    android.util.Log.d("DroidOS_Apostrophe", "Boosting '$word' -> '$wordWithApostrophe'")
+
                 }
                 // =======================================================================
                 // END BLOCK: APOSTROPHE VARIANT BOOST
@@ -1667,14 +1667,14 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         val previewAge = System.currentTimeMillis() - lastPreviewTimestamp
         val pathCoverage = if (inputLength > 0f) lastPreviewPathLength / inputLength else 0f
         if (lastPreviewWords.isNotEmpty() && previewAge < 500L && pathCoverage >= 0.90f && inputLength > 200f) {
-            android.util.Log.d("DroidOS_Preview", "USING PREVIEW (coverage=${String.format("%.0f", pathCoverage * 100)}%): $lastPreviewWords")
+
             return lastPreviewWords.map { word ->
                 val apostropheVariant = findApostropheVariant(word)
                 val base = apostropheVariant ?: word
                 getDisplayForm(base)
             }
         } else if (lastPreviewWords.isNotEmpty() && previewAge < 500L) {
-            android.util.Log.d("DroidOS_Preview", "REJECTED PREVIEW (coverage=${String.format("%.0f", pathCoverage * 100)}%): $lastPreviewWords — path too incomplete")
+
         }
 
         val allSorted = scored.sortedBy { it.second }.distinctBy { it.first }
@@ -1707,7 +1707,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             
             val lenDiff = kotlin.math.abs(commonCandidate?.first?.length?.minus(top.first.length) ?: 99)
             if (commonCandidate != null && commonRank < 200 && topRank2 > commonRank * 10 && commonCandidate.first != top.first && lenDiff <= 1) {
-                android.util.Log.d("DroidOS_Tiebreak", "PROMOTE: '${commonCandidate.first}'(rank=$commonRank) over '${top.first}'(rank=$topRank2) lenDiff=$lenDiff")
+
                 val mutable = topFive.toMutableList()
                 mutable.remove(commonCandidate)
                 mutable.add(0, commonCandidate)
@@ -1768,13 +1768,13 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             if (wordLower.contains(keyChar)) {
                 // Word contains this lingered-on key - BOOST it
                 boost *= dwellFactor
-                android.util.Log.d("DroidOS_Dwell", "BOOST '$word': contains '$keyChar' (${dwellMs}ms) -> boost $dwellFactor")
+
             } else {
                 // Word does NOT contain this lingered-on key - slight penalty
                 // This helps "four" beat "for" when user lingered on "u"
                 val penalty = 1.0f / (dwellFactor * 0.5f + 0.5f)  // Gentler penalty
                 boost *= penalty
-                android.util.Log.d("DroidOS_Dwell", "PENALTY '$word': missing '$keyChar' (${dwellMs}ms) -> penalty $penalty")
+
             }
         }
         
@@ -1869,7 +1869,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
         // DEBUG: Log path keys for live preview
         if (pathKeys.isNotEmpty()) {
-            android.util.Log.d("DroidOS_Preview", "PREVIEW Keys: ${pathKeys.joinToString("→")}")
+
         }
 
         // FAST CANDIDATE COLLECTION - fewer candidates for speed
@@ -2096,7 +2096,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         }
 
         // DEBUG: Log extracted keys
-        android.util.Log.d("DroidOS_PathKeys", "Extracted: ${keys.joinToString("→")} from ${path.size} pts (Sharp turns + midpoint fallback)")
+
 
         return keys.take(maxKeys)
     }
@@ -2830,7 +2830,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 
                 saveUserStats(context)
 
-                android.util.Log.d("DroidOS_Prediction", "BLOCKED: '$cleanWord'")
+
             } catch (e: Exception) {
                 android.util.Log.e("DroidOS_Prediction", "Block failed", e)
             }
@@ -3038,8 +3038,8 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // DEBUG: Calculate "Letters Swiped" for logcat
         val pathKeys = extractPathKeys(sampledInput, keyMap, 8)
         val pathKeyString = pathKeys.joinToString("-")
-        android.util.Log.d("DroidOS_SwipeDebug", "========================================")
-        android.util.Log.d("DroidOS_SwipeDebug", "[INPUT] Path: $pathKeyString | Start: $startKey | End: $endKey")
+
+
         
         // Candidate collection
         val candidates = HashSet<String>()
@@ -3173,14 +3173,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                                     finalScore *= 10.0f // Massive penalty
                                 }
                                 
-                                // DEBUG LOGGING
-                if (finalScore < 5.0f || totalContextBoost > 1.1f) {
-                     android.util.Log.d("DroidOS_SwipeDebug", 
-                        "CAND: %-10s | Final: %.2f | Geom: %.2f | Ctx: %.2f (NG:%.2f * GR:%.2f)".format(
-                            word, finalScore, geometryScore + penalty, totalContextBoost, nGramBoost, grammarBoost
-                        )
-                    )
-                }
+
 
                 val confidence = (1.0f / (1.0f + finalScore)).coerceIn(0f, 1f)
                 SwipeResult(word, PredictionSource.SHAPE_CONTEXT, confidence, finalScore)
@@ -3217,11 +3210,11 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         
         lastSwipePath = ArrayList(timedPath)
         lastKeyMap = keyMap // Cache reference
-        android.util.Log.d("DroidOS_Debug", "CACHE: Saved path with ${timedPath.size} points")
+
 
         // Ensure dictionary is loaded
         if (wordList.isEmpty()) {
-            android.util.Log.w("DroidOS_Dual", "Dictionary not loaded, loading now...")
+
             loadDefaults()
             if (wordList.isEmpty()) {
                 android.util.Log.e("DroidOS_Dual", "Failed to load dictionary!")
@@ -3232,7 +3225,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         val swipePath = timedPath.map { it.toPointF() }
         val keyDwellTimes = calculateKeyDwellTimes(timedPath, keyMap)
         
-        android.util.Log.d("DroidOS_Dual", "========== DUAL DECODE ==========")
+
         
         // Run BOTH algorithms
         val preciseResults = mutableListOf<SwipeResult>()
@@ -3241,7 +3234,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // Precise algorithm
         try {
             val preciseWords = decodeSwipeWithDwell(swipePath, keyMap, keyDwellTimes)
-            android.util.Log.d("DroidOS_Dual", "PRECISE raw: $preciseWords")
+
             preciseResults.addAll(preciseWords.mapIndexed { idx, word ->
                 SwipeResult(
                     word = word,
@@ -3250,21 +3243,21 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                     rawScore = idx.toFloat()
                 )
             })
-            android.util.Log.d("DroidOS_Dual", "PRECISE: ${preciseResults.take(3).map { it.word }}")
+
         } catch (e: Exception) {
             android.util.Log.e("DroidOS_Dual", "Precise error: ${e.message}")
-            e.printStackTrace()  // Print full stack trace to logcat
+              // Print full stack trace to logcat
         }
         
         // Shape/Context algorithm
         try {
             val shapeRaw = decodeSwipeShapeContext(timedPath, keyMap)
-            android.util.Log.d("DroidOS_Dual", "SHAPE raw: ${shapeRaw.map { it.word }}")
+
             shapeResults.addAll(shapeRaw)
-            android.util.Log.d("DroidOS_Dual", "SHAPE: ${shapeResults.take(3).map { it.word }}")
+
         } catch (e: Exception) {
             android.util.Log.e("DroidOS_Dual", "Shape error: ${e.message}")
-            e.printStackTrace()  // Print full stack trace to logcat
+              // Print full stack trace to logcat
         }
 
         
@@ -3295,8 +3288,8 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             else { seen.add(normalized); true }
         }.take(3)
         
-        android.util.Log.d("DroidOS_Dual", "FINAL: ${deduplicated.map { "${it.word}(${it.source.name[0]})" }}")
-        android.util.Log.d("DroidOS_Dual", "==================================")
+
+
 
         // DEBUG: Log the weights of the WINNER to verify Consonant Anchoring
         // This confirms if vowels are getting 0.6 and consonants 1.0
@@ -3304,19 +3297,19 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             val winner = deduplicated[0]
             val t = templateCache[winner.word]
             if (t != null) {
-                 android.util.Log.d("DroidOS_Weights", "WINNER '${winner.word}': ${t.rawWeights.map { "%.1f".format(it) }}")
+
             }
         }
         
         // FALLBACK: If both algorithms failed, try basic prefix matching
         if (deduplicated.isEmpty()) {
-            android.util.Log.w("DroidOS_Dual", "Both algorithms failed! Using fallback...")
+
             val startPoint = swipePath.first()
             val startKey = findClosestKey(startPoint, keyMap)
             if (startKey != null) {
                 val fallbackWords = getSuggestions(startKey, 3)
                 if (fallbackWords.isNotEmpty()) {
-                    android.util.Log.d("DroidOS_Dual", "Fallback results: $fallbackWords")
+
                     return fallbackWords.map { word ->
                         SwipeResult(word, PredictionSource.PRECISE, 0.5f, 100f)
                     }
@@ -3355,7 +3348,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // Get quick PRECISE prediction (using existing preview function)
         try {
             val preciseWords = decodeSwipePreview(swipePath, keyMap)
-            android.util.Log.d("DroidOS_Preview", "Precise preview: $preciseWords")
+
             if (preciseWords.isNotEmpty()) {
                 preciseResult = SwipeResult(
                     word = preciseWords.first(),
@@ -3370,7 +3363,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // Get quick SHAPE prediction (simplified for speed)
         try {
             shapeResult = decodeSwipeShapePreview(swipePath, keyMap)
-            android.util.Log.d("DroidOS_Preview", "Shape preview: ${shapeResult?.word}")
+
         } catch (e: Exception) { 
             // Silent fail for preview
         }
@@ -3532,7 +3525,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                 val dy = startPoint.y - idealStart.y
                 val dist = hypot(dx, dy)
                 
-                android.util.Log.d("DroidOS_Heatmap", "Start Key '$firstChar': Offset $dist px (Limit: 150f)")
+
 
                 // INCREASED LIMIT: 80f -> 150f for easier testing
                 if (dist < 150f) {
@@ -3562,7 +3555,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             if (modified) {
                 saveKeyOffsets(context)
                 templateCache.clear() // Clear cache so new offsets apply
-                android.util.Log.d("DroidOS_Heatmap", "Updated offsets for $firstChar, $lastChar")
+
             }
         }
     }
@@ -3580,7 +3573,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                     val pos = json.getJSONObject(key)
                     keyOffsets[key] = PointF(pos.getDouble("x").toFloat(), pos.getDouble("y").toFloat())
                 }
-                android.util.Log.d("DroidOS_Heatmap", "Loaded offsets for ${keyOffsets.size} keys")
+
             }
         } catch (e: Exception) {
             android.util.Log.e("DroidOS_Heatmap", "Failed to load offsets", e)
@@ -3600,7 +3593,7 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             }
             java.io.File(context.filesDir, KEY_OFFSETS_FILE).writeText(json.toString())
         } catch (e: Exception) {
-            e.printStackTrace()
+            
         }
     }
 }

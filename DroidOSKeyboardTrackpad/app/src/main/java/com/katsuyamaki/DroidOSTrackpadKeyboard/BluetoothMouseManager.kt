@@ -172,11 +172,11 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
             btMouseCaptureLayout?.let {
                 if (it.isAttachedToWindow) {
                     windowManager.removeView(it)
-                    Log.d(BT_TAG, "├─ ★ SUCCESS: Overlay REMOVED ★")
+
                 }
             }
         } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ Error removing overlay: ${e.message}")
+
         }
 
         btMouseCaptureLayout = null
@@ -184,7 +184,7 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
         lastBtMouseX = 0f
         lastBtMouseY = 0f
         showSystemCursor()
-        Log.d(BT_TAG, "└─ Cleanup complete, system cursor restored")
+
         service.showToast("BT Mouse Capture: OFF")
     }
 
@@ -203,12 +203,12 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
     }
 
     private fun hideSystemCursor() {
-        Log.d(BT_TAG, "hideSystemCursor() called")
+
         if (service.shellService != null) {
             try {
                 service.shellService?.setSystemCursorVisibility(false)
                 systemCursorHidden = true
-                Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Shizuku")
+
                 return
             } catch (e: Exception) {
                 Log.e(BT_TAG, "├─ Shizuku cursor hide failed", e)
@@ -221,13 +221,13 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, false)
             systemCursorHidden = true
-            Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Local Reflection")
+
         } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
+
             try {
                 service.shellService?.runCommand("settings put system pointer_speed -7")
                 systemCursorHidden = true
-                Log.d(BT_TAG, "├─ Set pointer_speed to -7 (fallback)")
+
             } catch (e2: Exception) {
                 Log.e(BT_TAG, "├─ Failed to hide cursor: ${e2.message}")
             }
@@ -235,16 +235,16 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
     }
 
     private fun showSystemCursor() {
-        Log.d(BT_TAG, "showSystemCursor() called")
+
         if (!systemCursorHidden) {
-            Log.d(BT_TAG, "├─ Cursor wasn't hidden, skipping")
+
             return
         }
         if (service.shellService != null) {
             try {
                 service.shellService?.setSystemCursorVisibility(true)
                 systemCursorHidden = false
-                Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Shizuku")
+
                 return
             } catch (e: Exception) {}
         }
@@ -255,13 +255,13 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, true)
             systemCursorHidden = false
-            Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Local Reflection")
+
         } catch (e: Exception) {
-            Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
+
             try {
                 service.shellService?.runCommand("settings put system pointer_speed 0")
                 systemCursorHidden = false
-                Log.d(BT_TAG, "├─ Reset pointer_speed to 0 (fallback)")
+
             } catch (e2: Exception) {
                 Log.e(BT_TAG, "├─ Failed to show cursor: ${e2.message}")
             }
@@ -270,7 +270,7 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
 
     fun handleInputDeviceChange() {
         if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "Input device change detected - Refreshing Cursor Visibility")
+
             hideSystemCursor()
         }
     }
@@ -280,7 +280,7 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
             try {
                 windowManager.removeView(btMouseCaptureLayout)
                 windowManager.addView(btMouseCaptureLayout, btMouseCaptureParams)
-                Log.d(BT_TAG, "Z-Order: BT Capture Overlay moved to TOP")
+
             } catch (e: Exception) {
                 Log.e(BT_TAG, "Z-Order: Failed to move BT Capture", e)
             }

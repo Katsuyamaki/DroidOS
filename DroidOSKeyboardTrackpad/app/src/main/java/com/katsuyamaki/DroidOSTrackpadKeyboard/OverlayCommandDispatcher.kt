@@ -27,7 +27,7 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
         when {
             // === COMMAND RECEIVER ACTIONS ===
             matches("SOFT_RESTART") && !action.contains("SWITCH") -> {
-                Log.d(TAG, "Received SOFT_RESTART")
+
                 // Check if this is from switchReceiver (has DISPLAY_ID) or commandReceiver
                 if (intent.hasExtra("DISPLAY_ID")) {
                     val targetDisplayId = intent.getIntExtra("DISPLAY_ID", service.currentDisplayId)
@@ -47,13 +47,13 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
             }
 
             matches("ENFORCE_ZORDER") -> {
-                Log.d(TAG, "Received ENFORCE_ZORDER")
+
                 service.handler.post { service.enforceZOrder() }
             }
 
             matches("MOVE_TO_DISPLAY") -> {
                 val targetId = intent.getIntExtra("displayId", 0)
-                Log.d(TAG, "Moving to Display: $targetId")
+
                 service.handler.post {
                     service.saveLayout()
                     service.removeOldViews()
@@ -64,29 +64,29 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
             }
 
             matches("TOGGLE_MIRROR") || matches("TOGGLE_VIRTUAL_MIRROR") -> {
-                Log.d(TAG, "Toggling Mirror Mode")
+
                 service.handler.post { service.toggleVirtualMirrorMode() }
             }
 
             matches("OPEN_DRAWER") -> {
-                Log.d(TAG, "Opening Drawer")
+
                 service.handler.post { service.toggleDrawer() }
             }
 
             matches("STOP_SERVICE") -> {
-                Log.d(TAG, "Stopping Service")
+
                 service.forceExit()
             }
 
             matches("SET_INPUT_CAPTURE") -> {
                 val capture = intent.getBooleanExtra("CAPTURE", false)
-                Log.d(TAG, "Input Capture Set: $capture")
+
                 service.keyboardOverlay?.setInputCaptureMode(capture)
             }
 
             matches("SET_CUSTOM_MOD") -> {
                 val keyCode = intent.getIntExtra("KEYCODE", 0)
-                Log.d(TAG, "Custom Mod Key Set: $keyCode")
+
                 service.prefs.customModKey = keyCode
                 service.keyboardOverlay?.setCustomModKey(keyCode)
             }
@@ -98,12 +98,12 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
 
             matches("UPDATE_KEYBINDS") -> {
                 val keybinds = intent.getStringArrayListExtra("KEYBINDS")
-                Log.d(TAG, "Received UPDATE_KEYBINDS: ${keybinds?.size ?: 0} keybinds")
+
                 if (keybinds != null) {
                     service.launcherBlockedShortcuts.clear()
                     service.launcherBlockedShortcuts.addAll(keybinds)
                     service.keyboardOverlay?.setLauncherBlockedShortcuts(service.launcherBlockedShortcuts)
-                    Log.d(TAG, "Blocked shortcuts updated: ${service.launcherBlockedShortcuts}")
+
                 }
             }
 
@@ -133,7 +133,7 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                         result.putExtra("ENABLED_IMES", enabledImes)
                         service.sendBroadcast(result)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+
                     }
                 }.start()
             }
@@ -208,19 +208,19 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
             }
 
             matches("MOVE_TO_VIRTUAL") -> {
-                Log.d(TAG, "Received MOVE_TO_VIRTUAL command")
+
                 val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
                 service.handler.post { service.moveToVirtualDisplayAndEnableMirror(virtualDisplayId) }
             }
 
             matches("RETURN_TO_PHYSICAL") -> {
-                Log.d(TAG, "Received RETURN_TO_PHYSICAL command")
+
                 val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
                 service.handler.post { service.returnToPhysicalDisplay(physicalDisplayId) }
             }
 
             matches("GET_STATUS") -> {
-                Log.d(TAG, "Received GET_STATUS command")
+
                 service.showToast("D:${service.currentDisplayId} T:${service.inputTargetDisplayId} M:${if(service.prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
             }
         }

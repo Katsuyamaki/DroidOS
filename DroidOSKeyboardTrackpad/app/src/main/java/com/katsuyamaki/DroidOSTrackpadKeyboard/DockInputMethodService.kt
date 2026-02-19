@@ -48,12 +48,12 @@ class DockInputMethodService : InputMethodService() {
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
-            android.util.Log.w(TAG, ">>> TILED_STATE received: $newState (was $launcherTiledActive, inputShown=$isInputViewShown)")
+
 
             lastTiledStateTime = System.currentTimeMillis()
             if (newState != launcherTiledActive) {
                 launcherTiledActive = newState
-                android.util.Log.w(TAG, ">>> TILED_STATE: changed to $newState, recomputing")
+
                 // Force the system to recompute insets with the new tiled state
                 window?.window?.decorView?.requestLayout()
                 if (prefAutoResize && prefDockMode) {
@@ -97,7 +97,7 @@ class DockInputMethodService : InputMethodService() {
         windowShownTime = System.currentTimeMillis()
         staleTiledHandler.removeCallbacks(staleTiledCheck)
         
-        android.util.Log.w(TAG, ">>> onWindowShown: tiled=$launcherTiledActive, autoResize=$prefAutoResize, dockMode=$prefDockMode, scale=$prefResizeScale")
+
         
         // Notify Launcher that IME is now visible
         val imeShowIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
@@ -114,7 +114,7 @@ class DockInputMethodService : InputMethodService() {
 
 
 
-            android.util.Log.d(TAG, "Dock shown - auto-showing overlay keyboard")
+
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
             intent.setPackage(packageName)
             intent.putExtra("FORCE_SHOW", true)
@@ -124,7 +124,7 @@ class DockInputMethodService : InputMethodService() {
         
         // Apply dock mode if enabled
         if (prefDockMode) {
-            android.util.Log.d(TAG, "Dock shown - applying dock mode (autoResize=$prefAutoResize, margin=$prefResizeScale%)")
+
             val intent = Intent("APPLY_DOCK_MODE")
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
@@ -168,7 +168,7 @@ class DockInputMethodService : InputMethodService() {
 
 
         if (prefAutoShowOverlay) {
-            android.util.Log.d(TAG, "Dock hidden - auto-hiding overlay keyboard")
+
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
             intent.setPackage(packageName)
             intent.putExtra("FORCE_HIDE", true)
@@ -239,7 +239,7 @@ class DockInputMethodService : InputMethodService() {
     private val hideDockReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME") {
-                android.util.Log.w(TAG, ">>> HIDE_DOCK_IME received - hiding self")
+
                 requestHideSelf(0)
             }
         }
@@ -355,7 +355,7 @@ class DockInputMethodService : InputMethodService() {
         
         val longPressRunnable = Runnable {
             kbLongPressTriggered = true
-            android.util.Log.d(TAG, "KB long press -> unhide keyboard")
+
             // Vibrate feedback
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
             if (android.os.Build.VERSION.SDK_INT >= 26) {
@@ -395,7 +395,7 @@ class DockInputMethodService : InputMethodService() {
                     if (deltaY > swipeThreshold && deltaX < swipeThreshold * 2 && !kbLongPressTriggered) {
                         longPressHandler.removeCallbacks(longPressRunnable)
                         kbLongPressTriggered = true
-                        android.util.Log.d(TAG, "KB swipe up -> showing popup")
+
                         showDockPopup(v)
                     }
                     true
@@ -408,7 +408,7 @@ class DockInputMethodService : InputMethodService() {
                     if (!kbLongPressTriggered) {
                         // Normal tap - show popup menu (only if no long press was triggered)
                         if (duration < longPressDelay && kotlin.math.abs(deltaY) < swipeThreshold) {
-                            android.util.Log.d(TAG, "Dock KB tap -> showing popup")
+
                             showDockPopup(v)
                         }
                     }
@@ -426,7 +426,7 @@ class DockInputMethodService : InputMethodService() {
         // 2. Voice Input
         // FIX: Use SHORT action - OverlayService listens for "REQUEST_VOICE_INPUT"
         btnVoice?.setOnClickListener {
-            android.util.Log.d(TAG, "Dock MIC pressed -> REQUEST_VOICE_INPUT")
+
             val intent = Intent("REQUEST_VOICE_INPUT")
             intent.setPackage(packageName)
             intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
@@ -435,7 +435,7 @@ class DockInputMethodService : InputMethodService() {
 
         // 3. Paste
         btnPaste?.setOnClickListener {
-            android.util.Log.d(TAG, "Dock PST pressed -> pasting clipboard")
+
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             if (clipboard.hasPrimaryClip()) {
                 val item = clipboard.primaryClip?.getItemAt(0)
@@ -448,14 +448,14 @@ class DockInputMethodService : InputMethodService() {
 
         // 4. Switch IME
         btnSwitch?.setOnClickListener {
-            android.util.Log.d(TAG, "Dock IME pressed -> showing picker")
+
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showInputMethodPicker()
         }
 
         // 5. Hide Dock
         btnHide?.setOnClickListener {
-            android.util.Log.d(TAG, "Dock X pressed -> hiding")
+
             requestHideSelf(0)
         }
     }
@@ -624,7 +624,7 @@ class DockInputMethodService : InputMethodService() {
             intent.putExtra("auto_show_overlay", prefAutoShowOverlay)
             sendBroadcast(intent)
             
-            android.util.Log.d(TAG, "Auto-show overlay: $prefAutoShowOverlay")
+
         }
         
         // Option 2: Dock mode
@@ -643,7 +643,7 @@ class DockInputMethodService : InputMethodService() {
             intent.putExtra("show_kb_above_dock", prefShowKBAboveDock && prefDockMode)
             sendBroadcast(intent)
             
-            android.util.Log.d(TAG, "Dock mode: $prefDockMode")
+
         }
         
         // Option 2b: Show KB Above Dock (sub-option of Dock Mode)
@@ -660,7 +660,7 @@ class DockInputMethodService : InputMethodService() {
             intent.putExtra("show_kb_above_dock", prefShowKBAboveDock)
             sendBroadcast(intent)
             
-            android.util.Log.d(TAG, "Show KB Above Dock: $prefShowKBAboveDock")
+
         }
         
         // Option 3: Auto Resize Apps (only when dock mode enabled)
@@ -683,7 +683,7 @@ class DockInputMethodService : InputMethodService() {
             launcherIntent.putExtra("ENABLED", prefAutoResize)
             sendBroadcast(launcherIntent)
             
-            android.util.Log.d(TAG, "Auto resize: $prefAutoResize")
+
 
 
         }
@@ -808,7 +808,7 @@ class DockInputMethodService : InputMethodService() {
             // the IME window stays strictly below the Launcher's tiling line.
             val correctedHeight = (marginHeight - navHeight - 2).coerceAtLeast(0)
             
-            android.util.Log.d(TAG, "updateInputViewHeight: ON. Margin=$marginHeight, Nav=$navHeight -> IME Height=$correctedHeight, tiled=$launcherTiledActive")
+
             
             // [FIX] Check if we already have a wrapper with the same height structure
             // If the wrapper exists and is attached, just request a layout update instead of setInputView()
@@ -836,7 +836,7 @@ class DockInputMethodService : InputMethodService() {
                 existingWrapper.requestLayout()
                 lastCalculatedHeight = correctedHeight
                 
-                android.util.Log.d(TAG, "updateInputViewHeight: SOFT UPDATE (tiled) h=$safeTotalHeight")
+
             } else {
                 // First time, wrapper not attached, OR fullscreen app - do full setInputView()
                 val wrapper = createInputViewWrapper(correctedHeight)
@@ -844,11 +844,11 @@ class DockInputMethodService : InputMethodService() {
                 lastCalculatedHeight = correctedHeight
                 forceFullUpdate = false // Clear flag after full update
                 setInputView(wrapper)
-                android.util.Log.d(TAG, "updateInputViewHeight: FULL UPDATE (setInputView) h=$correctedHeight fullscreen=${!launcherTiledActive}")
+
             }
         } else {
             // Reset to normal - just the toolbar
-            android.util.Log.d(TAG, "updateInputViewHeight: OFF. Dock Only.")
+
             
             // CRITICAL: Must detach from any previous wrapper before re-using
             (dockView?.parent as? android.view.ViewGroup)?.removeView(dockView)
@@ -971,7 +971,7 @@ class DockInputMethodService : InputMethodService() {
             // SharedPrefs fallback removed - it was causing fullscreen apps to not resize.
             val shouldSuppressInsets = launcherTiledActive
             
-            android.util.Log.w(TAG, ">>> onComputeInsets: tiled=$launcherTiledActive, autoResize=$prefAutoResize, dockMode=$prefDockMode, viewH=$viewH, wrapperH=$wrapperH, lastCalcH=$lastCalculatedHeight")
+
             
             if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
                 // TILED/MANAGED: Launcher handles resize via retileExistingWindows().
@@ -979,23 +979,23 @@ class DockInputMethodService : InputMethodService() {
                 outInsets.contentTopInsets = viewH
                 outInsets.visibleTopInsets = viewH
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_FRAME
-                android.util.Log.w(TAG, ">>> onComputeInsets: TILED MODE - suppressing insets (contentTop=$viewH)")
+
             } else if (prefAutoResize && prefDockMode) {
                 // FULLSCREEN (independent app): Let Android handle resize via normal insets.
                 // contentTopInsets=0 means "content starts at top of IME frame".
                 outInsets.contentTopInsets = 0
                 outInsets.visibleTopInsets = 0
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
-                android.util.Log.w(TAG, ">>> onComputeInsets: FULLSCREEN MODE - using default insets (wrapper=$wrapperH)")
+
             } else {
                 // No auto-resize: minimal toolbar only, normal inset behavior
                 outInsets.contentTopInsets = 0
                 outInsets.visibleTopInsets = 0
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
-                android.util.Log.w(TAG, ">>> onComputeInsets: NO AUTO-RESIZE - minimal toolbar")
+
             }
         } else {
-            android.util.Log.w(TAG, ">>> onComputeInsets: SKIPPED (inputViewShown=${isInputViewShown}, dockView=${dockView != null})")
+
         }
     }
 

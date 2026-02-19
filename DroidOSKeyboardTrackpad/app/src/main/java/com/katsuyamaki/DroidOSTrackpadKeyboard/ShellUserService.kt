@@ -90,7 +90,7 @@ class ShellUserService : IShellService.Stub() {
             displayControlClassLoaded = true
             loadedClass
         } catch (e: Exception) {
-            Log.w(TAG, "DisplayControl not available", e)
+
             null
         }
     }
@@ -135,7 +135,7 @@ class ShellUserService : IShellService.Stub() {
                     
                     if (token != null) tokens.add(token)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to get token for physical ID $id", e)
+
                 }
             }
         } catch (e: Exception) {
@@ -207,7 +207,7 @@ class ShellUserService : IShellService.Stub() {
     override fun setBrightness(value: Int) {
         val token = Binder.clearCallingIdentity()
         try {
-            Log.i(TAG, "setBrightness: $value")
+
             execShell("settings put system screen_brightness_mode 0")
 
             if (value == -1) {

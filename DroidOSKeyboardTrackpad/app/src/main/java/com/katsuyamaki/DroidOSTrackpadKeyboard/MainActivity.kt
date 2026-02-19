@@ -82,7 +82,7 @@ override fun onCreate(savedInstanceState: Bundle?) {
         val dId = intent.getIntExtra("displayId", -999)
         val force = intent.getBooleanExtra("force_start", false)
         val isRestart = intent.getBooleanExtra("IS_RESTART", false)
-        android.util.Log.w("MainActivity", ">>> ON CREATE | Display: $dId | Force: $force | IsRestart: $isRestart <<<")
+
         
         if (dId != -999) {
             Toast.makeText(this, "Activity Woke: D$dId", Toast.LENGTH_SHORT).show()

@@ -1654,10 +1654,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // SUMMARY: Generates a unique key based on Resolution + Mirror Mode State.
     //          Allows separate profiles for "Standard" and "Mirror" modes.
     // =================================================================================
-    fun getProfileKey(): String {
+    private fun getLegacyProfileKey(): String {
         val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
         val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
         return "P_${uiScreenWidth}_${uiScreenHeight}_$mode$orientSuffix"
+    }
+
+    fun getProfileKey(): String {
+        val mode = if (prefs.prefVirtualMirrorMode) "MIRROR" else "STD"
+        val orientSuffix = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        return "P_${uiScreenWidth}_${uiScreenHeight}_D${currentDisplayId}_$mode$orientSuffix"
     }
 
     fun getSavedProfileList(): List<String> {
@@ -1666,12 +1672,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val allKeys = p.all.keys
         val profiles = java.util.HashSet<String>()
         
-        // Regex matches: X_P_{width}_{height}_{mode}_{orient}
+        // Regex matches both formats:
+        // Legacy: X_P_{width}_{height}_{mode}_{orient}
+        // New:    X_P_{width}_{height}_D{display}_{mode}_{orient}
         // Group 1: Width
         // Group 2: Height
-        // Group 3: Mode suffix (STD or MIRROR)
-        // Group 4: Optional orientation suffix (_L or _P)
-        val regex = Regex("X_P_(\\d+)_(\\d+)(?:_(STD|MIRROR))?(?:_([LP]))?")
+        // Group 3: Optional displayId
+        // Group 4: Mode suffix (STD or MIRROR)
+        // Group 5: Optional orientation suffix (_L or _P)
+        val regex = Regex("X_P_(\\d+)_(\\d+)(?:_D(\\d+))?(?:_(STD|MIRROR))?(?:_([LP]))?")
         
         for (key in allKeys) { 
             // We only care about X position keys to identify a profile exists
@@ -2800,19 +2809,25 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     fun loadLayout() {
         val p = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
         val key = getProfileKey()
-        logOverlayKbDiag("loadLayout_start", "profileKey=$key")
+        val legacyKey = getLegacyProfileKey()
+        val effectiveKey = when {
+            p.contains("SETTINGS_$key") || p.contains("X_$key") -> key
+            p.contains("SETTINGS_$legacyKey") || p.contains("X_$legacyKey") -> legacyKey
+            else -> key
+        }
+        logOverlayKbDiag("loadLayout_start", "profileKey=$key effectiveKey=$effectiveKey")
         
         // 1. Load Trackpad Window
-        trackpadParams.x = p.getInt("X_$key", 100)
-        trackpadParams.y = p.getInt("Y_$key", 100)
-        trackpadParams.width = p.getInt("W_$key", 400)
-        trackpadParams.height = p.getInt("H_$key", 300)
+        trackpadParams.x = p.getInt("X_$effectiveKey", 100)
+        trackpadParams.y = p.getInt("Y_$effectiveKey", 100)
+        trackpadParams.width = p.getInt("W_$effectiveKey", 400)
+        trackpadParams.height = p.getInt("H_$effectiveKey", 300)
         try {
             windowManager?.updateViewLayout(trackpadLayout, trackpadParams)
         } catch(e: Exception){}
         
         // 2. Load Settings String
-        val settings = p.getString("SETTINGS_$key", null)
+        val settings = p.getString("SETTINGS_$effectiveKey", null)
         var keyboardUpdated = false
 
         // If no saved profile for this orientation, apply landscape defaults
@@ -2959,12 +2974,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         // [FIX] LOAD MIRROR KEYBOARD PARAMS (If in Mirror Mode)
         if (prefs.prefVirtualMirrorMode) {
-            if (p.contains("MIRROR_X_$key")) {
-                prefs.prefMirrorX = p.getInt("MIRROR_X_$key", -1)
-                prefs.prefMirrorY = p.getInt("MIRROR_Y_$key", 0)
-                prefs.prefMirrorWidth = p.getInt("MIRROR_W_$key", -1)
-                prefs.prefMirrorHeight = p.getInt("MIRROR_H_$key", -1)
-                prefs.prefMirrorAlpha = p.getInt("MIRROR_ALPHA_$key", 200)
+            if (p.contains("MIRROR_X_$effectiveKey")) {
+                prefs.prefMirrorX = p.getInt("MIRROR_X_$effectiveKey", -1)
+                prefs.prefMirrorY = p.getInt("MIRROR_Y_$effectiveKey", 0)
+                prefs.prefMirrorWidth = p.getInt("MIRROR_W_$effectiveKey", -1)
+                prefs.prefMirrorHeight = p.getInt("MIRROR_H_$effectiveKey", -1)
+                prefs.prefMirrorAlpha = p.getInt("MIRROR_ALPHA_$effectiveKey", 200)
                 
                 // Update live window if it exists
                 mirrorManager?.applySettings()

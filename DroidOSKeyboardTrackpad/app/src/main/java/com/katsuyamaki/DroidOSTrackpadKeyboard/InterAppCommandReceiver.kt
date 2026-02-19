@@ -43,7 +43,7 @@ class InterAppCommandReceiver : BroadcastReceiver() {
         if (context == null || intent == null) return
         
         val action = intent.action ?: return
-        Log.d(TAG, "Received inter-app command: $action")
+
         
         // Forward the command to OverlayService via startService
         // The OverlayService will handle the actual logic
@@ -60,7 +60,7 @@ class InterAppCommandReceiver : BroadcastReceiver() {
             // Start the service with the command
             // Using startService because AccessibilityService handles its own lifecycle
             context.startService(serviceIntent)
-            Log.d(TAG, "Forwarded command to OverlayService: $action")
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to forward command to OverlayService", e)
             
@@ -74,7 +74,7 @@ class InterAppCommandReceiver : BroadcastReceiver() {
                     }
                 }
                 context.sendBroadcast(broadcastIntent)
-                Log.d(TAG, "Sent internal broadcast as fallback: $action")
+
             } catch (e2: Exception) {
                 Log.e(TAG, "Fallback broadcast also failed", e2)
             }

@@ -66,9 +66,9 @@ class TrackpadMenuManager(
             
         } catch (e: SecurityException) {
             android.widget.Toast.makeText(context, "Missing Overlay Permission! Open App to Fix.", android.widget.Toast.LENGTH_LONG).show()
-            e.printStackTrace()
+
         } catch (e: Exception) { 
-            e.printStackTrace() 
+ 
         }
     }
 
@@ -122,7 +122,7 @@ class TrackpadMenuManager(
             windowManager.removeView(drawerView)
             windowManager.addView(drawerView, drawerParams)
         } catch (e: Exception) {
-            e.printStackTrace()
+
         }
     }
 
@@ -519,20 +519,20 @@ class TrackpadMenuManager(
             when(command) {
                 "UP" -> {
                     // Both modes: -step (move up / shrink)
-                    android.util.Log.d("MirrorDpad", "UP pressed, isResize=$isMirrorResizeMode, sending deltaY=-$step")
+
                     service.adjustMirrorKeyboard(isMirrorResizeMode, 0, -step)
                 }
                 "DOWN" -> {
                     // Both modes: +step (move down / grow)
-                    android.util.Log.d("MirrorDpad", "DOWN pressed, isResize=$isMirrorResizeMode, sending deltaY=+$step")
+
                     service.adjustMirrorKeyboard(isMirrorResizeMode, 0, step)
                 }
                 "LEFT" -> {
-                    android.util.Log.d("MirrorDpad", "LEFT pressed, isResize=$isMirrorResizeMode")
+
                     service.adjustMirrorKeyboard(isMirrorResizeMode, -step, 0)
                 }
                 "RIGHT" -> {
-                    android.util.Log.d("MirrorDpad", "RIGHT pressed, isResize=$isMirrorResizeMode")
+
                     service.adjustMirrorKeyboard(isMirrorResizeMode, step, 0)
                 }
                 "CENTER" -> service.resetMirrorKeyboardPosition()

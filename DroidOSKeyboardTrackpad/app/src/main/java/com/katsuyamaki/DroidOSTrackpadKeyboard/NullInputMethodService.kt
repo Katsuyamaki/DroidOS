@@ -50,7 +50,7 @@ class NullInputMethodService : InputMethodService() {
                         if (ic != null) {
                             ic.commitText(text, 1)
                         } else {
-                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for text, injection skipped")
+
                         }
                     }
                 }
@@ -71,7 +71,7 @@ class NullInputMethodService : InputMethodService() {
                         if (ic != null) {
                             sendKeyEventWithMeta(ic, code, metaState)
                         } else {
-                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for key=$code")
+
                         }
                     }
                 }
@@ -87,7 +87,7 @@ class NullInputMethodService : InputMethodService() {
                         if (ic != null) {
                             ic.deleteSurroundingText(length, 0)
                         } else {
-                            android.util.Log.w("CoverFlash", "NullIME: No InputConnection for delete, injection skipped")
+
                         }
                     }
                 }
@@ -143,17 +143,11 @@ class NullInputMethodService : InputMethodService() {
         )
         
         // Send both events through the InputConnection
-        android.util.Log.d("CoverFlash", "NullIME sending key: $keyCode flags=${downEvent.flags}")
+
         ic.sendKeyEvent(downEvent)
         ic.sendKeyEvent(upEvent)
         
-        // Debug logging (can be removed after confirming fix works)
-        if (metaState != 0) {
-            android.util.Log.d(TAG, "Sent key $keyCode with metaState=$metaState " +
-                "(SHIFT=${metaState and KeyEvent.META_SHIFT_ON != 0}, " +
-                "CTRL=${metaState and KeyEvent.META_CTRL_ON != 0}, " +
-                "ALT=${metaState and KeyEvent.META_ALT_ON != 0})")
-        }
+
     }
     // =================================================================================
     // END BLOCK: sendKeyEventWithMeta
@@ -161,7 +155,7 @@ class NullInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        android.util.Log.d(TAG, "NullInputMethodService created")
+
         
         // Register receiver for OverlayService communication
         val filter = IntentFilter().apply {
@@ -179,7 +173,7 @@ class NullInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        android.util.Log.d(TAG, "NullInputMethodService destroyed")
+
         try {
             unregisterReceiver(inputReceiver)
         } catch (e: Exception) {

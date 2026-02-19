@@ -31,7 +31,7 @@ class ShizukuInputHandler(
 
     fun updateDisplay(displayId: Int) {
         this.displayId = displayId
-        Log.d(TAG, "Display updated to $displayId")
+
     }
 
     fun updateShellService(shellService: IShellService?) {
@@ -84,7 +84,7 @@ class ShizukuInputHandler(
         executor.execute {
             try {
                 if (keyCode in systemKeys) {
-                    Log.d(TAG, "System key detected ($keyCode), using shell injection")
+
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, displayId, 1)
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)

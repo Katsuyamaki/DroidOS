@@ -70,7 +70,7 @@ class MirrorModeManager(
         override fun run() {
             mirrorRepeatKey?.let { key ->
                 if (isMirrorRepeating) {
-                    Log.d(TAG, "Mirror repeat: $key")
+
                     service.keyboardOverlay?.triggerKeyPress(key)
                     mirrorRepeatHandler.postDelayed(this, MIRROR_REPEAT_INTERVAL)
                 }
@@ -241,7 +241,7 @@ class MirrorModeManager(
             Log.e(TAG, "Failed to reset mirror keyboard layout", e)
         }
 
-        Log.d(TAG, "Mirror keyboard reset to defaults")
+
     }
 
     /**
@@ -273,7 +273,7 @@ class MirrorModeManager(
         physicalKbWidth = service.keyboardOverlay?.getKeyboardView()?.width?.toFloat() ?: physicalKbWidth
         physicalKbHeight = service.keyboardOverlay?.getKeyboardView()?.height?.toFloat() ?: physicalKbHeight
 
-        Log.d(TAG, "Mirror sync: Physical KB now ${physicalKbWidth}x${physicalKbHeight}")
+
     }
 
     /**
@@ -340,7 +340,7 @@ class MirrorModeManager(
             Log.e(TAG, "Failed to apply mirror keyboard settings", e)
         }
 
-        Log.d(TAG, "Mirror keyboard settings applied")
+
     }
 
     /**
@@ -352,7 +352,7 @@ class MirrorModeManager(
                 mirrorWindowManager?.removeView(mirrorKeyboardContainer)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+
         }
 
         mirrorKeyboardContainer = null
@@ -379,7 +379,7 @@ class MirrorModeManager(
     // =================================================================================
 
     private fun enterMirrorMode() {
-        Log.d(TAG, "Entering Virtual Mirror Mode")
+
 
         service.storePreMirrorState()
 
@@ -423,7 +423,7 @@ class MirrorModeManager(
     }
 
     private fun exitMirrorMode() {
-        Log.d(TAG, "Exiting Virtual Mirror Mode")
+
 
         removeMirrorKeyboard()
         service.btMouseManager?.removeBtMouseCaptureOverlay()
@@ -485,7 +485,7 @@ class MirrorModeManager(
             physicalKbWidth = service.keyboardOverlay?.getKeyboardView()?.width?.toFloat() ?: 600f
             physicalKbHeight = service.keyboardOverlay?.getKeyboardView()?.height?.toFloat() ?: 400f
 
-            Log.d(TAG, "Mirror KB init: ${mirrorKbWidth}x${mirrorKbHeight}, Physical KB: ${physicalKbWidth}x${physicalKbHeight}")
+
 
             val savedHeight = service.prefs.prefMirrorHeight
             val mirrorHeight = if (savedHeight != -1 && savedHeight > 0) savedHeight else WindowManager.LayoutParams.WRAP_CONTENT
@@ -522,7 +522,7 @@ class MirrorModeManager(
                 updateMirrorSyncDimensions()
             }
 
-            Log.d(TAG, "Mirror keyboard created on display $displayId")
+
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create mirror keyboard", e)
@@ -542,7 +542,7 @@ class MirrorModeManager(
             mirrorKbHeight = mirrorView.height.toFloat()
         }
 
-        Log.d(TAG, "Mirror sync updated: Physical=${physicalKbWidth}x${physicalKbHeight}, Mirror=${mirrorKbWidth}x${mirrorKbHeight}")
+
     }
 
     private fun showMirrorTemporarily() {
@@ -587,7 +587,7 @@ class MirrorModeManager(
         val newWidth = (currentWidth + deltaX).coerceIn(250, 1500)
         val newHeight = (currentHeight + deltaY).coerceIn(150, 1200)
 
-        Log.d(TAG, "Resize: ${currentWidth}x${currentHeight} -> ${newWidth}x${newHeight}")
+
 
         mirrorKeyboardParams?.width = newWidth
         mirrorKeyboardParams?.height = newHeight
@@ -598,7 +598,7 @@ class MirrorModeManager(
         val heightRatio = newHeight.toFloat() / physicalHeight
         val newScale = (physicalScale * heightRatio).coerceIn(0.5f, 2.0f)
 
-        Log.d(TAG, "Scale: physH=$physicalHeight, physScale=$physicalScale, ratio=$heightRatio, newScale=$newScale")
+
 
         mirrorKeyboardView?.setScale(newScale)
 

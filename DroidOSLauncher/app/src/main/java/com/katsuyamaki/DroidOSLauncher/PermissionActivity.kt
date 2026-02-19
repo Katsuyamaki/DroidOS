@@ -236,7 +236,7 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
                 if (enabledComponent != null && enabledComponent == expectedComponentName) return true
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+
         }
         return false
     }
