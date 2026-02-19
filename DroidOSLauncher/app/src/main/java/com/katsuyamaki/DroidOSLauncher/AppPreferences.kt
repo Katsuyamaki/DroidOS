@@ -124,7 +124,7 @@ object AppPreferences {
     }
 
     fun getLastLayout(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt(getLayoutKey(displayId), 2)
+        return getPrefs(context).getInt(getLayoutKey(displayId), 5)
     }
     
     fun saveLastCustomLayoutName(context: Context, name: String?, displayId: Int) {
@@ -145,7 +145,7 @@ object AppPreferences {
     fun getLastLayout(context: Context, displayId: Int, oSuffix: String): Int? {
         val key = getLayoutKey(displayId) + oSuffix
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 2) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 5) else null
     }
 
     fun saveLastCustomLayoutName(context: Context, name: String?, displayId: Int, oSuffix: String) {
@@ -163,7 +163,7 @@ object AppPreferences {
     fun getTopMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
         val key = "MARGIN_TOP_D$displayId$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 0) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 5) else null
     }
 
     fun setBottomMarginPercent(context: Context, displayId: Int, percent: Int, oSuffix: String) {
@@ -173,7 +173,7 @@ object AppPreferences {
     fun getBottomMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
         val key = "MARGIN_BOTTOM_D$displayId$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 0) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 25) else null
     }
 
     fun setAutoAdjustMarginForIME(context: Context, enable: Boolean, oSuffix: String) {
@@ -183,7 +183,7 @@ object AppPreferences {
     fun getAutoAdjustMarginForIME(context: Context, oSuffix: String): Boolean? {
         val key = "auto_adjust_margin_ime$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getBoolean(key, false) else null
+        return if (prefs.contains(key)) prefs.getBoolean(key, true) else null
     }
 
     // --- PER-DISPLAY SETTINGS ---
@@ -364,7 +364,7 @@ object AppPreferences {
     }
     
     fun getDrawerHeightPercent(context: Context): Int {
-        return getPrefs(context).getInt(KEY_DRAWER_HEIGHT, 70)
+        return getPrefs(context).getInt(KEY_DRAWER_HEIGHT, 55)
     }
     
     fun setDrawerWidthPercent(context: Context, percent: Int) {
@@ -372,7 +372,7 @@ object AppPreferences {
     }
     
     fun getDrawerWidthPercent(context: Context): Int {
-        return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 90)
+        return getPrefs(context).getInt(KEY_DRAWER_WIDTH, 75)
     }
 
     // === PER-DISPLAY + RESOLUTION SETTINGS ===
@@ -384,7 +384,7 @@ object AppPreferences {
     fun getDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
         val key = "DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 70) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 55) else null
     }
 
     fun setDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int, oSuffix: String) {
@@ -394,7 +394,7 @@ object AppPreferences {
     fun getDrawerHeightPercentForConfig(context: Context, displayId: Int, aspectRatio: String, oSuffix: String): Int? {
         val key = "DRAWER_H_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 70) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 55) else null
     }
 
     fun setDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
@@ -404,7 +404,7 @@ object AppPreferences {
     fun getDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String): Int? {
         val key = "DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 90) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 75) else null
     }
 
     fun setDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int, oSuffix: String) {
@@ -414,7 +414,7 @@ object AppPreferences {
     fun getDrawerWidthPercentForConfig(context: Context, displayId: Int, aspectRatio: String, oSuffix: String): Int? {
         val key = "DRAWER_W_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 90) else null
+        return if (prefs.contains(key)) prefs.getInt(key, 75) else null
     }
 
     fun setBubbleSizeForConfig(context: Context, displayId: Int, aspectRatio: String, percent: Int) {
@@ -460,7 +460,7 @@ object AppPreferences {
     }
     
     fun getAutoResizeKeyboard(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, true)
+        return getPrefs(context).getBoolean(KEY_AUTO_RESIZE_KEYBOARD, false)
     }
 
     fun setAutoAdjustMarginForIME(context: Context, enable: Boolean) {
@@ -468,7 +468,7 @@ object AppPreferences {
     }
 
     fun getAutoAdjustMarginForIME(context: Context): Boolean {
-        return getPrefs(context).getBoolean("auto_adjust_margin_ime", false)
+        return getPrefs(context).getBoolean("auto_adjust_margin_ime", true)
     }
 
     // Track when DroidOS IME has been detected via IME_VISIBILITY broadcast.
@@ -709,7 +709,7 @@ object AppPreferences {
     }
 
     fun getBottomMarginPercent(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("MARGIN_BOTTOM_D$displayId", 0)
+        return getPrefs(context).getInt("MARGIN_BOTTOM_D$displayId", 25)
     }
 
     // --- TOP MARGIN (Per Display) ---
@@ -719,7 +719,7 @@ object AppPreferences {
     }
 
     fun getTopMarginPercent(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("MARGIN_TOP_D$displayId", 0)
+        return getPrefs(context).getInt("MARGIN_TOP_D$displayId", 5)
     }
 
     // --- DEFAULT LAYOUT RENAMING ---
