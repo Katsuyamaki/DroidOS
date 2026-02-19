@@ -343,7 +343,7 @@ class OverlayLayoutManager(
                     } else if (isDrag) {
                         service.prefs.prefBubbleX = bubbleParams.x
                         service.prefs.prefBubbleY = bubbleParams.y
-                        service.prefs.save(service)
+                        service.saveCurrentState()
                     }
                     velocityTracker?.recycle()
                     velocityTracker = null

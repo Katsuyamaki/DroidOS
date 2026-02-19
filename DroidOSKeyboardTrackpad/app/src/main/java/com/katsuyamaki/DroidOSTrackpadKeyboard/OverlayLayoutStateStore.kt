@@ -30,6 +30,22 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
         service.trackpadParams.y = p.getInt("Y_$effectiveKey", service.trackpadParams.y)
         service.trackpadParams.width = p.getInt("W_$effectiveKey", service.trackpadParams.width)
         service.trackpadParams.height = p.getInt("H_$effectiveKey", service.trackpadParams.height)
+
+        service.prefs.prefBubbleX = when {
+            p.contains("BUBBLE_X_$effectiveKey") -> p.getInt("BUBBLE_X_$effectiveKey", service.prefs.prefBubbleX)
+            p.contains("bubble_x") -> p.getInt("bubble_x", service.prefs.prefBubbleX)
+            else -> service.prefs.prefBubbleX
+        }
+        service.prefs.prefBubbleY = when {
+            p.contains("BUBBLE_Y_$effectiveKey") -> p.getInt("BUBBLE_Y_$effectiveKey", service.prefs.prefBubbleY)
+            p.contains("bubble_y") -> p.getInt("bubble_y", service.prefs.prefBubbleY)
+            else -> service.prefs.prefBubbleY
+        }
+        service.prefs.prefBubbleSize = when {
+            p.contains("BUBBLE_SIZE_$effectiveKey") -> p.getInt("BUBBLE_SIZE_$effectiveKey", service.prefs.prefBubbleSize)
+            p.contains("bubble_size") -> p.getInt("bubble_size", service.prefs.prefBubbleSize)
+            else -> service.prefs.prefBubbleSize
+        }.coerceIn(50, 200)
     }
 
     fun getSavedProfileList(): List<String> {
@@ -63,6 +79,7 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
         service.savedKbY = service.keyboardOverlay?.getViewY() ?: service.savedKbY
         service.savedKbW = service.keyboardOverlay?.getViewWidth() ?: service.savedKbW
         service.savedKbH = service.keyboardOverlay?.getViewHeight() ?: service.savedKbH
+        service.captureLiveBubbleState()
 
         val p = service.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
         val key = getProfileKey()
@@ -70,6 +87,11 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
         p.putInt("Y_$key", service.trackpadParams.y)
         p.putInt("W_$key", service.trackpadParams.width)
         p.putInt("H_$key", service.trackpadParams.height)
+
+        p.putInt("BUBBLE_X_$key", service.prefs.prefBubbleX)
+        p.putInt("BUBBLE_Y_$key", service.prefs.prefBubbleY)
+        p.putInt("BUBBLE_SIZE_$key", service.prefs.prefBubbleSize)
+
         p.apply()
     }
 
@@ -81,6 +103,7 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
 
         val liveScale = service.keyboardOverlay?.getScale() ?: (service.prefs.prefKeyScale / 100f)
         service.prefs.prefKeyScale = (liveScale * 100).toInt()
+        service.captureLiveBubbleState()
 
         service.savedKbX = currentKbX
         service.savedKbY = currentKbY
@@ -94,6 +117,10 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
         p.putInt("Y_$key", service.trackpadParams.y)
         p.putInt("W_$key", service.trackpadParams.width)
         p.putInt("H_$key", service.trackpadParams.height)
+
+        p.putInt("BUBBLE_X_$key", service.prefs.prefBubbleX)
+        p.putInt("BUBBLE_Y_$key", service.prefs.prefBubbleY)
+        p.putInt("BUBBLE_SIZE_$key", service.prefs.prefBubbleSize)
 
         val settingsStr = StringBuilder()
         settingsStr.append("${service.prefs.cursorSpeed};${service.prefs.scrollSpeed};${if(service.prefs.prefTapScroll) 1 else 0};${if(service.prefs.prefReverseScroll) 1 else 0};${service.prefs.prefAlpha};${service.prefs.prefBgAlpha};${service.prefs.prefKeyboardAlpha};${service.prefs.prefHandleSize};${service.prefs.prefHandleTouchSize};${service.prefs.prefScrollTouchSize};${service.prefs.prefScrollVisualSize};${service.prefs.prefCursorSize};${service.prefs.prefKeyScale};${if(service.prefs.prefAutomationEnabled) 1 else 0};${if(service.prefs.prefAnchored) 1 else 0};${service.prefs.prefBubbleSize};${service.prefs.prefBubbleAlpha};${service.prefs.prefBubbleIconIndex};${service.prefs.prefBubbleX};${service.prefs.prefBubbleY};${service.prefs.hardkeyVolUpTap};${service.prefs.hardkeyVolUpDouble};${service.prefs.hardkeyVolUpHold};${service.prefs.hardkeyVolDownTap};${service.prefs.hardkeyVolDownDouble};${service.prefs.hardkeyVolDownHold};${service.prefs.hardkeyPowerDouble};")

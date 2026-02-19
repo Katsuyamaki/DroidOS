@@ -1550,6 +1550,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         bubbleView?.alpha = prefs.prefBubbleAlpha / 255f
     }
 
+    // =================================================================================
+    // FUNCTION: captureLiveBubbleState
+    // SUMMARY: Captures current floating bubble position and size into prefs fields
+    //          so saveCurrentState/saveLayout persist the live bubble geometry.
+    // =================================================================================
+    internal fun captureLiveBubbleState() {
+        try {
+            layoutManager?.let { lm ->
+                prefs.prefBubbleX = lm.bubbleParams.x
+                prefs.prefBubbleY = lm.bubbleParams.y
+            }
+            // Keep user-selected size stable; never infer from pixel width.
+            prefs.prefBubbleSize = prefs.prefBubbleSize.coerceIn(50, 200)
+        } catch (_: Exception) {
+            // Bubble params may be unavailable during early startup; skip safely.
+        }
+    }
+
     fun forceMoveToCurrentDisplay() { setupUI(currentDisplayId) }
     fun forceMoveToDisplay(displayId: Int) { if (displayId == currentDisplayId) return; saveCurrentState(); setupUI(displayId) }
     fun hideApp() { menuManager?.hide(); if (isTrackpadVisible) toggleTrackpad() }
@@ -2851,7 +2869,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 keyboardOverlay?.updateAlpha(prefs.prefKeyboardAlpha)
                 keyboardOverlay?.setAnchored(prefs.prefAnchored)
                 keyboardOverlay?.setVibrationEnabled(prefs.prefVibrate)
-                applyBubbleAppearance()
+
+                layoutManager?.let { lm ->
+                    lm.bubbleParams.x = prefs.prefBubbleX.coerceIn(0, (uiScreenWidth - 60).coerceAtLeast(0))
+                    lm.bubbleParams.y = prefs.prefBubbleY.coerceIn(0, (uiScreenHeight - 60).coerceAtLeast(0))
+                    try { windowManager?.updateViewLayout(bubbleView, lm.bubbleParams) } catch (_: Exception) {}
+                    lm.applyBubbleAppearance()
+                } ?: applyBubbleAppearance()
             }
         }
     }
@@ -3267,7 +3291,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
                                 saveCurrentState()
                                 setupUI(0)
-                                resetBubblePosition()
                             }
                         } catch(e: Exception) {
                         }
