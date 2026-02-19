@@ -1148,10 +1148,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             val w = metrics.widthPixels; val h = metrics.heightPixels
             if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                 (w != lastKnownScreenW || h != lastKnownScreenH)) {
-                // Save keyboard + trackpad state for the OLD orientation before rebuilding
+                // =================================================================================
+                // FIX: Don't reload full profile on orientation/config change.
+                // Profile should only load on: (1) app restart, (2) manual reload request.
+                // Just save current state and rebuild UI - setupUI loads per-display prefs.
+                // This prevents scale being overwritten by profile defaults on every fold/unfold.
+                // =================================================================================
                 saveLayout()
                 lastKnownScreenW = w; lastKnownScreenH = h
-                handler.post { setupUI(currentDisplayId); loadLayout() }
+                handler.post { setupUI(currentDisplayId) }
             } else {
                 lastKnownScreenW = w; lastKnownScreenH = h
             }
@@ -3406,11 +3411,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val w = metrics.widthPixels; val h = metrics.heightPixels
                 if (lastKnownScreenW != 0 && lastKnownScreenH != 0 &&
                     (w != lastKnownScreenW || h != lastKnownScreenH)) {
-                    // Save keyboard + trackpad state for the OLD orientation before rebuilding
+                    // =================================================================================
+                    // FIX: Don't reload full profile on orientation/display change.
+                    // Profile should only load on: (1) app restart, (2) manual reload request.
+                    // Just save current state and rebuild UI - setupUI loads per-display prefs.
+                    // This prevents scale being overwritten by profile defaults on every fold/unfold.
+                    // =================================================================================
                     logOverlayKbDiag("onDisplayChanged_orientationRebuild", "old=${lastKnownScreenW}x${lastKnownScreenH} new=${w}x${h}")
                     saveLayout()
                     lastKnownScreenW = w; lastKnownScreenH = h
-                    handler.post { setupUI(currentDisplayId); loadLayout() }
+                    handler.post { setupUI(currentDisplayId) }
                 } else {
                     lastKnownScreenW = w; lastKnownScreenH = h
                 }

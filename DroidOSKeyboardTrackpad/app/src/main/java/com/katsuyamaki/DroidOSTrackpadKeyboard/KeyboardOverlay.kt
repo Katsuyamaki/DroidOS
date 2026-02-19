@@ -1300,12 +1300,12 @@ fun setCustomModKey(keyCode: Int) {
         // END BLOCK: APPLY LAUNCHER BLOCKED SHORTCUTS TO NEW KEYBOARDVIEW
         // =================================================================================
 
-        // [FIX] Load saved scale and update Internal State immediately
-        // Use display+orientation key with fallback to legacy orientation/global keys.
+        // NOTE: Scale is set AFTER window is added to WindowManager (see below).
+        // This ensures buildKeyboard() runs when the view has actual dimensions.
         val os0 = orientSuffix()
         val scale = getSavedScalePercent(prefs, os0) / 100f
         internalScale = scale
-        keyboardView?.setScale(scale)
+        // Don't call setScale() here - moved to after windowManager.addView()
         
         keyboardView?.alpha = currentAlpha / 255f
 
@@ -1385,7 +1385,24 @@ fun setCustomModKey(keyCode: Int) {
         keyboardParams?.y = if (useDefaults) defaultY else clampedY
 
 windowManager.addView(keyboardContainer, keyboardParams)
+        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: window added with w=$keyboardWidth h=$keyboardHeight internalScale=$internalScale")
         updateAlpha(currentAlpha)
+        
+        // [FIX] Call setScale() AFTER window is added to WindowManager.
+        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: about to call setScale($internalScale)")
+        keyboardView?.setScale(internalScale)
+        android.util.Log.w("KB_DEBUG", "createKeyboardWindow: setScale done, keyboardView dimensions: ${keyboardView?.width}x${keyboardView?.height}")
+        
+        // [FIX] Post a delayed rebuild after the view is laid out.
+        // The initial buildKeyboard() runs with 0x0 dimensions because the view hasn't been
+        // measured yet. This causes bottomContainer rows to shrink. Post a rebuild that will
+        // run after the layout pass when the view has actual dimensions.
+        keyboardView?.post {
+            android.util.Log.w("KB_DEBUG", "createKeyboardWindow: posted rebuild, dimensions: ${keyboardView?.width}x${keyboardView?.height}")
+            if ((keyboardView?.width ?: 0) > 0 && (keyboardView?.height ?: 0) > 0) {
+                keyboardView?.setScale(internalScale)
+            }
+        }
         
         // [FIX] Initialize Resize Anchors so D-pad/Scaling works immediately
         // This prevents the "Background resizes but Keys don't" bug on fresh load.

@@ -635,16 +635,21 @@ private var customModKeyCode = 0
         orientation = VERTICAL
         setBackgroundColor(Color.parseColor("#1A1A1A"))
         setPadding(4, 0, 4, 0)
-        buildKeyboard()
+        // NOTE: Don't call buildKeyboard() here. It will be called by setScale()
+        // which is invoked in createKeyboardWindow() before the view is added to window.
+        // Calling buildKeyboard() before the view has a parent causes layout issues
+        // with bottomContainer rows (spacebar + arrows) on display switch.
     }
 
     fun setKeyboardListener(l: KeyboardListener) { listener = l }
     fun setVibrationEnabled(enabled: Boolean) { vibrationEnabled = enabled }
     
     fun setScale(scale: Float) {
+        android.util.Log.w("KB_DEBUG", "setScale($scale) called: old scaleFactor=$scaleFactor old keyHeight=$keyHeight")
         this.scaleFactor = scale.coerceIn(0.5f, 2.0f)
         this.keyHeight = (BASE_KEY_HEIGHT * scaleFactor).toInt()
         this.fontSize = BASE_FONT_SIZE * scaleFactor
+        android.util.Log.w("KB_DEBUG", "setScale: new scaleFactor=$scaleFactor new keyHeight=$keyHeight -> calling buildKeyboard()")
         buildKeyboard()
     }
 
@@ -975,6 +980,9 @@ private var customModKeyCode = 0
 
 
 private fun buildKeyboard() {
+        // DEBUG: Log buildKeyboard call with key values
+        android.util.Log.w("KB_DEBUG", "buildKeyboard() called: scaleFactor=$scaleFactor keyHeight=$keyHeight width=$width height=$height measuredW=$measuredWidth measuredH=$measuredHeight")
+        
         // =======================================================================
         // SAVE CURRENT CANDIDATES before rebuilding
         // This preserves the prediction bar when SHIFT/layout changes occur
@@ -1075,13 +1083,20 @@ private fun buildKeyboard() {
             addView(createRow(rowKeys, index))
         }
         
+        // FIX: bottomContainer contains 2 rows (spacebar + arrows). Calculate explicit height
+        // to prevent LinearLayout weight distribution from shrinking it when window is constrained.
+        // Height = 2 rows × (keyHeight + keySpacing margin)
+        val bottomContainerHeight = 2 * (dpToPx(keyHeight) + dpToPx(keySpacing))
+        android.util.Log.w("KB_DEBUG", "bottomContainer: keyHeight=$keyHeight keySpacing=$keySpacing dpToPx(keyHeight)=${dpToPx(keyHeight)} bottomContainerHeight=$bottomContainerHeight")
+        
         val bottomContainer = LinearLayout(context)
         bottomContainer.orientation = HORIZONTAL
-        bottomContainer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, 1f)
+        bottomContainer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, bottomContainerHeight, 0f)
         
         val leftCol = LinearLayout(context)
         leftCol.orientation = VERTICAL
-        val leftParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 8.5f)
+        // leftCol fills bottomContainer's height
+        val leftParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 8.5f)
         leftCol.layoutParams = leftParams
         
         val r4Keys = if (currentState == KeyboardState.LOWERCASE || currentState == KeyboardState.UPPERCASE || currentState == KeyboardState.CAPS_LOCK) row4Lower else row4Sym
