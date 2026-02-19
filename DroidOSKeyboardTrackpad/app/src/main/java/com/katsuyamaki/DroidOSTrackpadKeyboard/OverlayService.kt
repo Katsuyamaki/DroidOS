@@ -1883,12 +1883,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "dock_to_bottom" -> {
                 val newDockMode = parseBoolean(value)
                 val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+                val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
                 if (newDockMode) {
                     if (!dockPrefs.contains("show_kb_above_dock")) {
                         prefs.prefShowKBAboveDock = true
                         prefs.save(this)
                     }
                     dockPrefs.edit()
+                        .putBoolean("dock_mode_d${currentDisplayId}$dockOs", true)
                         .putBoolean("dock_mode_d$currentDisplayId", true)
                         .putBoolean("dock_mode", true)
                         .apply()
@@ -1898,8 +1900,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     }
                 } else {
                     dockPrefs.edit()
+                        .putBoolean("dock_mode_d${currentDisplayId}$dockOs", false)
                         .putBoolean("dock_mode_d$currentDisplayId", false)
                         .putBoolean("dock_mode", false)
+                        .putBoolean("auto_resize$dockOs", false)
                         .putBoolean("auto_resize", false)
                         .apply()
                     lastDockMarginPercent = -1
