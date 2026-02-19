@@ -941,7 +941,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", -1)
         } catch (e: Exception) { -1 }
 
-        val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
+        val finalTarget = when {
+            pendingDisplayId >= 0 -> pendingDisplayId
+            globalTarget >= 0 -> globalTarget
+            else -> currentDisplayId
+        }
         
         // =================================================================================
         // ONE-TIME FIX: Clear stale Samsung preference if Gboard is available
@@ -1025,6 +1029,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // If no explicit displayId was passed, or if the AccessibilityService is not yet ready
             // for the initial setup, we fall back to the existing logic.
             val action = intent?.action
+            val isForceStart = intent?.getBooleanExtra("force_start", false) == true
+            val startupTarget = if (isForceStart) {
+                try {
+                    android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", Display.DEFAULT_DISPLAY)
+                } catch (e: Exception) {
+                    Display.DEFAULT_DISPLAY
+                }
+            } else {
+                Display.DEFAULT_DISPLAY
+            }
             fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
             
             // Handle commands robustly (keeping original intent handling)
@@ -1085,12 +1099,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     forceMoveToDisplay(targetId)
                 }
             } else if (windowManager == null) {
-                setupUI(Display.DEFAULT_DISPLAY)
+                setupUI(startupTarget)
             }
             
             // [CRITICAL] Ensure UI is created if missing
             if (windowManager == null || bubbleView == null) {
-                setupUI(Display.DEFAULT_DISPLAY)
+                setupUI(startupTarget)
             }
 
         } catch (e: Exception) {
@@ -1346,6 +1360,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // =================================================================================
             // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // =================================================================================
+
+            if (prefs.prefBubbleX == -1 || prefs.prefBubbleY == -1) {
+                resetBubblePosition()
+            }
 
             logOverlayKbDiag("setupUI_end", "targetDisplay=$displayId")
 
