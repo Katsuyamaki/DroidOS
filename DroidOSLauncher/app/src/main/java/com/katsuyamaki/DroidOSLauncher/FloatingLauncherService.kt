@@ -593,11 +593,68 @@ private var isSoftKeyboardSupport = false
     private var pendingImeRetileRunnable: Runnable? = null
     private var imeShowRetileCompleted = false // Tracks if show-retile finished (for hide logic)
 
+    private fun isDroidOsImeCurrentlyActive(): Boolean {
+        return try {
+            val currentIme = android.provider.Settings.Secure.getString(
+                contentResolver,
+                android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
+            ) ?: return false
+            currentIme.contains("DroidOSTrackpadKeyboard") || currentIme.contains("DockInputMethodService")
+        } catch (e: Exception) {
+            false
+        }
+    }
 
 
+
+
+    private fun isDockImeToolbarVisible(): Boolean {
+        return getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            .getBoolean("dock_ime_visible", false)
+    }
+
+    private fun isShowKbAboveDockEnabled(): Boolean {
+        val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        return prefs.getBoolean(
+            "show_kb_above_dock$os",
+            prefs.getBoolean("show_kb_above_dock", true)
+        )
+    }
+
+    private fun dockToolbarHeightPercent(): Int {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return 0
+        val display = dm.getDisplay(currentDisplayId) ?: return 0
+        val metrics = DisplayMetrics()
+        display.getRealMetrics(metrics)
+        val screenHeight = metrics.heightPixels
+        if (screenHeight <= 0) return 0
+        val toolbarPx = (40f * resources.displayMetrics.density).toInt()
+        return ((toolbarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
+    }
 
     private fun effectiveBottomMarginPercent(): Int {
-        return if (autoAdjustMarginForIME && !imeMarginOverrideActive) 0 else bottomMarginPercent
+        val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
+        if (!canAutoAdjustForIme) return bottomMarginPercent
+
+        // IME not shown: tiled windows should occupy full height.
+        if (!imeMarginOverrideActive) {
+            return 0
+        }
+
+        // IME shown via bubble/overlay without DockIME toolbar visible.
+        if (!isDockImeToolbarVisible()) {
+            return bottomMarginPercent
+        }
+
+        // DockIME toolbar visible.
+        // If keyboard sits above toolbar, use full margin.
+        // If keyboard overlaps toolbar, remove toolbar height from margin.
+        return if (isShowKbAboveDockEnabled()) {
+            bottomMarginPercent
+        } else {
+            (bottomMarginPercent - dockToolbarHeightPercent()).coerceAtLeast(0)
+        }
     }
 
 
@@ -700,9 +757,18 @@ private var isSoftKeyboardSupport = false
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
                     val isTiled = intent?.getBooleanExtra("IS_TILED", true) ?: true
                     val forceRetile = intent?.getBooleanExtra("FORCE_RETILE", false) ?: false
+                    val manualToggle = intent?.getBooleanExtra("MANUAL_TOGGLE", false) ?: false
 
-                    // [FIX] Ignore isTiled=false broadcasts - they come from OverlayService
-                    if (!isTiled && !forceRetile) {
+                    val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
+                    val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+
+                    Log.d(
+                        TAG,
+                        "IME_VISIBILITY visible=$visible isTiled=$isTiled forceRetile=$forceRetile manualToggle=$manualToggle tiledCount=$activeNonMinimizedCount imeOverride=$imeMarginOverrideActive dockVisible=${isDockImeToolbarVisible()} showAboveDock=${isShowKbAboveDockEnabled()} bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
+                    )
+
+                    // Ignore updates only when there are no launcher-tiled windows and no explicit override.
+                    if (!hasLauncherTiledWindows && !isTiled && !forceRetile && !manualToggle) {
                         return@onReceive
                     }
 
@@ -718,7 +784,7 @@ private var isSoftKeyboardSupport = false
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = System.currentTimeMillis() + 500
                                 setupVisualQueue()
-                                retileExistingWindows()
+                                queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                             }
                             pendingImeRetileRunnable = null
                             imeShowRetileCompleted = true
@@ -727,23 +793,37 @@ private var isSoftKeyboardSupport = false
                         imeShowRetileCompleted = false
                         uiHandler.postDelayed(runnable, 350)
                     } else {
-                        // Keyboard hiding - cancel pending show-retile if exists
+                        // Keyboard hiding - cancel pending show-retile if exists,
+                        // but still apply hidden-state margin immediately.
                         if (pendingImeRetileRunnable != null) {
                             uiHandler.removeCallbacks(pendingImeRetileRunnable!!)
                             pendingImeRetileRunnable = null
                             imeMarginOverrideActive = false
+
+                            val newEffective = effectiveBottomMarginPercent()
+                            val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
+                            if (shouldRetile) {
+                                val now = System.currentTimeMillis()
+                                if (forceRetile || now >= imeRetileCooldownUntil) {
+                                    lastAppliedEffectiveMargin = newEffective
+                                    imeRetileCooldownUntil = now + 500
+                                    setupVisualQueue()
+                                    queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
+                                }
+                            }
+                            imeShowRetileCompleted = false
                             return@onReceive
                         }
                         imeMarginOverrideActive = false
                         val newEffective = effectiveBottomMarginPercent()
                         val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
-                        if (shouldRetile && imeShowRetileCompleted) {
+                        if (shouldRetile) {
                             val now = System.currentTimeMillis()
-                            if (now >= imeRetileCooldownUntil) {
+                            if (forceRetile || now >= imeRetileCooldownUntil) {
                                 lastAppliedEffectiveMargin = newEffective
                                 imeRetileCooldownUntil = now + 500
                                 setupVisualQueue()
-                                retileExistingWindows()
+                                queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                             }
                         }
                         imeShowRetileCompleted = false
@@ -775,7 +855,7 @@ private var isSoftKeyboardSupport = false
                 // [FIX] Always retile when margin changes while IME is visible
                 // This ensures slider changes in DockIME take effect immediately
                 if (autoAdjustMarginForIME && imeMarginOverrideActive) {
-                    retileExistingWindows()
+                    queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                 } else if (isInstantMode) {
                     applyLayoutImmediate()
                 }
@@ -1315,7 +1395,15 @@ private var isSoftKeyboardSupport = false
                         is MainActivity.AppInfo -> addToSelection(item)
                         is LayoutOption -> selectLayout(item)
                         is ActionOption -> { dismissKeyboardAndRestore(); item.action() }
-                        is ToggleOption -> { item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() }
+                        is ToggleOption -> {
+                            if (item.canToggle) {
+                                item.isEnabled = !item.isEnabled
+                                item.onToggle(item.isEnabled)
+                            } else {
+                                safeToast(item.disabledNote ?: "DroidOS Toolbar Keyboard is needed for this function")
+                            }
+                            drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+                        }
                         is RefreshItemOption -> if (item.isAvailable) { dismissKeyboardAndRestore(); applyRefreshRate(item.targetRate) }
                         is ProfileOption -> loadProfile(item.name)
                         is ResolutionOption -> { dismissKeyboardAndRestore(); Thread { try { shellService?.runCommand(item.command) } catch(e: Exception){} }.start(); safeToast("Applied: ${item.name}") }
@@ -2136,6 +2224,9 @@ private var isSoftKeyboardSupport = false
                         // ===================================================================================
                         val isActuallyTiled = activeNonMinimized.size > 1 && isManagedApp
                         if (!isSystemOverlay) {
+                            getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                                .putBoolean("launcher_tiled_active", isActuallyTiled)
+                                .apply()
                             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                                 .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
                                 .putExtra("TILED_ACTIVE", isActuallyTiled))
@@ -2459,6 +2550,7 @@ private var isSoftKeyboardSupport = false
         // The launcher will send correct TILED_STATE broadcasts as apps gain focus.
         getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
             .putBoolean("launcher_has_managed_apps", false)
+            .putBoolean("launcher_tiled_active", false)
             .apply()
         // Also broadcast initial TILED_STATE(false) to reset keyboard
         sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
@@ -6658,20 +6750,9 @@ private var isSoftKeyboardSupport = false
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
-                // [FIX] Improved DroidOS IME detection for Flip 7 cover screen compatibility.
-                // On Samsung Flip cover screen, One UI manages IME per-display and DEFAULT_INPUT_METHOD
-                // may not reflect the actual IME. We use multiple detection methods:
-                // 1. droidOsImeDetected: Set when we receive IME_VISIBILITY broadcast (most reliable)
-                // 2. System default IME check (works on main screen)
-                // 3. Enabled IME check (fallback)
-                val isDroidOsImeActive = droidOsImeDetected || try {
-                    val currentIme = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
-                    val enabledImes = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ENABLED_INPUT_METHODS)
-                    val isDefault = currentIme?.contains("DroidOSTrackpadKeyboard") == true || currentIme?.contains("DockInputMethodService") == true
-                    val isEnabled = enabledImes?.contains("DroidOSTrackpadKeyboard") == true
-                    isDefault || isEnabled
-                } catch (e: Exception) { false }
-                
+                // Toggle availability must follow current active/default IME only.
+                val isDroidOsImeActive = isDroidOsImeCurrentlyActive()
+
                 if (isDroidOsImeActive) {
                     displayList.add(ToggleOption("Auto-Adjust Margin for IME", autoAdjustMarginForIME) {
                         autoAdjustMarginForIME = it
@@ -6680,10 +6761,16 @@ private var isSoftKeyboardSupport = false
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {
-                    // Greyed out option when DroidOS IME not detected
-                    displayList.add(ToggleOption("Auto-Adjust Margin for IME (Requires DroidOS IME)", false) {
-                        safeToast("Enable DroidOS IME in system settings, then show keyboard once")
-                    })
+                    displayList.add(
+                        ToggleOption(
+                            "Auto-Adjust Margin for IME",
+                            false,
+                            canToggle = false,
+                            disabledNote = "DroidOS Toolbar Keyboard is needed for this function",
+                            onToggle = { _ -> }
+                        )
+                    )
+                    displayList.add(LegendOption("NOTE: DroidOS Toolbar Keyboard is needed for this function"))
                 }
 
 
@@ -6791,6 +6878,10 @@ private var isSoftKeyboardSupport = false
 
 
         when (cmd) {
+            "RETILE_IME_MARGIN" -> {
+                // Queue-safe retile path for all IME margin transitions.
+                retileExistingWindows()
+            }
             "OPEN_SWAP" -> {
                 // Trigger the OPEN_SWAP flow via triggerCommand
                 val cmdDef = AVAILABLE_COMMANDS.find { it.id == "OPEN_SWAP" }
@@ -7820,16 +7911,27 @@ private var isSoftKeyboardSupport = false
             // ===================================================================================
             val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
             val hasManagedApps = autoAdjustMarginForIME && activeNonMinimized.isNotEmpty()
+            val isActuallyTiled = if (activePackageName != null) {
+                val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
+                val isManaged = activeNonMinimized.any {
+                    it.getBasePackage() == activePackageName ||
+                        it.packageName == activePackageName ||
+                        (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard")
+                }
+                activeNonMinimized.size > 1 && isManaged
+            } else {
+                // Fallback: if multiple non-minimized managed apps exist, treat as tiled.
+                activeNonMinimized.size > 1
+            }
+
             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                 .putBoolean("launcher_has_managed_apps", hasManagedApps)
+                .putBoolean("launcher_tiled_active", isActuallyTiled)
                 .apply()
 
             // Broadcast tells DockIME if app is actively TILED (2+ apps visible).
             // Single app (even in queue) should behave as fullscreen for proper inset handling.
             if (activePackageName != null) {
-                val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
-                val isManaged = activeNonMinimized.any { it.getBasePackage() == activePackageName || it.packageName == activePackageName || (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard") }
-                val isActuallyTiled = activeNonMinimized.size > 1 && isManaged
                 sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                     .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
                     .putExtra("TILED_ACTIVE", isActuallyTiled))

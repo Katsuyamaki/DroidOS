@@ -92,6 +92,14 @@ class DockInputMethodService : InputMethodService() {
     override fun onWindowShown() {
         super.onWindowShown()
         loadDockPrefs()
+
+        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("dock_ime_visible", true)
+            .apply()
+
+        // Seed tiled state before first insets/resize pass to reduce broadcast timing races.
+        launcherTiledActive = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            .getBoolean("launcher_tiled_active", launcherTiledActive)
         
         // Record show time for stale tiled state detection
         windowShownTime = System.currentTimeMillis()
@@ -149,6 +157,10 @@ class DockInputMethodService : InputMethodService() {
         super.onWindowHidden()
         loadDockPrefs()
         staleTiledHandler.removeCallbacks(staleTiledCheck)
+
+        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("dock_ime_visible", false)
+            .apply()
         
         // Notify Launcher that IME is now hidden
         // [FIX] Add FORCE_RETILE to ensure apps resize when manually hiding via X button
@@ -677,12 +689,6 @@ class DockInputMethodService : InputMethodService() {
             intent.putExtra("auto_resize", prefAutoResize)
             sendBroadcast(intent)
             
-            // Sync auto-adjust margin setting to launcher
-            val launcherIntent = Intent("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN")
-            launcherIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-            launcherIntent.putExtra("ENABLED", prefAutoResize)
-            sendBroadcast(launcherIntent)
-            
 
 
 
@@ -734,12 +740,6 @@ class DockInputMethodService : InputMethodService() {
             intent.setPackage(packageName)
             intent.putExtra("auto_resize", prefAutoResize)
             sendBroadcast(intent)
-            
-            // Sync auto-adjust margin setting to launcher
-            val launcherIntent = Intent("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN")
-            launcherIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-            launcherIntent.putExtra("ENABLED", prefAutoResize)
-            sendBroadcast(launcherIntent)
         }
 
         // Notify OverlayService to temporarily hide keyboard so popup is visible
@@ -804,9 +804,7 @@ class DockInputMethodService : InputMethodService() {
             
             // 4. Calculate IME Window Height
             // Subtract nav height because IME sits ON TOP of nav bar, while margin is from physical bottom.
-            // [FIX] Subtract extra 2px safety buffer to handle rounding errors and ensure
-            // the IME window stays strictly below the Launcher's tiling line.
-            val correctedHeight = (marginHeight - navHeight - 2).coerceAtLeast(0)
+            val correctedHeight = (marginHeight - navHeight).coerceAtLeast(0)
             
 
             
@@ -965,11 +963,16 @@ class DockInputMethodService : InputMethodService() {
             val viewH = window?.window?.decorView?.height ?: 0
             val wrapperH = currentInputWrapper?.height ?: -1
             
-            // launcherTiledActive (from TILED_STATE broadcast) tells us if focused app is managed.
-            // - true: focused app is managed by Launcher, suppress insets (Launcher handles resize)
-            // - false: focused app is fullscreen/independent, use insets (Android handles resize)
-            // SharedPrefs fallback removed - it was causing fullscreen apps to not resize.
-            val shouldSuppressInsets = launcherTiledActive
+            // launcherTiledActive (broadcast) is primary.
+            // Persisted state is only a short bootstrap fallback while first TILED_STATE
+            // broadcast is still in flight after IME opens.
+            val now = System.currentTimeMillis()
+            val persistedTiledActive = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+                .getBoolean("launcher_tiled_active", false)
+            val hasFreshTiledBroadcastForThisShow = lastTiledStateTime >= windowShownTime
+            val withinBootstrapWindow = (now - windowShownTime) <= 650L
+            val shouldUsePersistedFallback = !hasFreshTiledBroadcastForThisShow && withinBootstrapWindow
+            val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
             
 
             

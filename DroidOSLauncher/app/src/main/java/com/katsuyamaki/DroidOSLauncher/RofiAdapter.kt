@@ -580,15 +580,28 @@ class RofiAdapter(
     private fun bindToggleOption(holder: LayoutHolder, item: ToggleOption, position: Int, isKeyboardSelected: Boolean) {
         holder.nameInput.setText(item.name)
         holder.nameInput.isEnabled = false
-        holder.nameInput.setTextColor(Color.WHITE)
         holder.nameInput.setScaledTextSize(handler.currentFontSize, 1.0f)
-        if (item.isEnabled || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) 
+
+        if (!item.canToggle) {
+            holder.nameInput.setTextColor(Color.GRAY)
+            holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
+            holder.itemView.alpha = 0.6f
+            holder.itemView.setOnClickListener {
+                handler.dismissKeyboardAndRestore()
+                handler.safeToast(item.disabledNote ?: "DroidOS Toolbar Keyboard is needed for this function")
+            }
+            return
+        }
+
+        holder.itemView.alpha = 1.0f
+        holder.nameInput.setTextColor(Color.WHITE)
+        if (item.isEnabled || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active)
         else holder.itemView.setBackgroundResource(R.drawable.bg_item_press)
-        holder.itemView.setOnClickListener { 
+        holder.itemView.setOnClickListener {
             handler.dismissKeyboardAndRestore()
             item.isEnabled = !item.isEnabled
             item.onToggle(item.isEnabled)
-            notifyItemChanged(position) 
+            notifyItemChanged(position)
         }
     }
     
@@ -616,7 +629,7 @@ class RofiAdapter(
     
     private fun bindLegendOption(holder: HeaderHolder, item: LegendOption) {
         holder.nameInput.setText(item.text)
-        holder.nameInput.setTextColor(Color.GRAY)
+        holder.nameInput.setTextColor(if (item.text.startsWith("NOTE:")) Color.RED else Color.GRAY)
         holder.nameInput.setScaledTextSize(handler.currentFontSize, 0.75f)
         holder.nameInput.gravity = Gravity.CENTER
         holder.itemView.setBackgroundResource(0)

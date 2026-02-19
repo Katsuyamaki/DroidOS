@@ -32,7 +32,13 @@ data class MarginOption(val type: Int, val currentPercent: Int) // type: 0=Top, 
 data class IconOption(val name: String)
 data class BubbleSizeOption(val currentPercent: Int)
 data class ActionOption(val name: String, val action: () -> Unit)
-data class ToggleOption(val name: String, var isEnabled: Boolean, val onToggle: (Boolean) -> Unit)
+data class ToggleOption(
+    val name: String,
+    var isEnabled: Boolean,
+    val canToggle: Boolean = true,
+    val disabledNote: String? = null,
+    val onToggle: (Boolean) -> Unit
+)
 data class TimeoutOption(val seconds: Int)
 data class RefreshHeaderOption(val text: String)
 data class LegendOption(val text: String)
