@@ -192,6 +192,17 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private var pendingWmRetryScheduled = false
     private var lastWmBindAttemptAt = 0L
     private var consecutiveWmQueueFailures = 0
+    private val WM_QUEUE_ADVANCE_DEFAULT_MS = 400L
+    private val WM_QUEUE_ADVANCE_IME_MS = 45L
+    private val IME_SHOW_COMMIT_DELAY_MS = 120L
+
+    private fun isImeMarginCommand(cmd: String?): Boolean {
+        return when (cmd) {
+            "APPLY_IME_VISIBILITY", "APPLY_IME_VISIBILITY_SHOW_COMMIT", "APPLY_MARGIN_BOTTOM", "RETILE_IME_MARGIN" -> true
+            else -> false
+        }
+    }
+
     private val wmQueueFlushRunnable = Runnable {
         pendingWmRetryScheduled = false
         flushWindowManagerCommandQueue()
@@ -4173,6 +4184,8 @@ private var isSoftKeyboardSupport = false
         }
 
         val nextIntent = wmCommandQueue.removeFirst()
+        val nextCmd = nextIntent.getStringExtra("COMMAND")
+        val advanceDelayMs = if (isImeMarginCommand(nextCmd)) WM_QUEUE_ADVANCE_IME_MS else WM_QUEUE_ADVANCE_DEFAULT_MS
         isProcessingWmCommand = true
         try {
             handleWindowManagerCommand(nextIntent)
@@ -4186,7 +4199,7 @@ private var isSoftKeyboardSupport = false
             return
         }
 
-        uiHandler.postDelayed(wmQueueAdvanceRunnable, 400L)
+        uiHandler.postDelayed(wmQueueAdvanceRunnable, advanceDelayMs)
     }
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
@@ -6811,17 +6824,26 @@ private var isSoftKeyboardSupport = false
             val epoch = imeVisibilityEpoch
             imeMarginOverrideActive = true
 
-            val token = nextImeShowRetileToken++
-            pendingImeShowRetileToken = token
+            // Bubble/manual toggle path should feel immediate.
+            // Keep queue serialization, but skip delayed show-commit.
+            if (manualToggle) {
+                val token = nextImeShowRetileToken++
+                pendingImeShowRetileToken = token
+                applyImeMarginRetileFromQueue(forceRetile = true)
+            } else {
+                val token = nextImeShowRetileToken++
+                pendingImeShowRetileToken = token
+                val showCommitDelayMs = IME_SHOW_COMMIT_DELAY_MS
 
-            uiHandler.postDelayed({
-                queueWindowManagerCommand(
-                    Intent()
-                        .putExtra("COMMAND", "APPLY_IME_VISIBILITY_SHOW_COMMIT")
-                        .putExtra("SHOW_TOKEN", token)
-                        .putExtra("SHOW_EPOCH", epoch)
-                )
-            }, 350L)
+                uiHandler.postDelayed({
+                    queueWindowManagerCommand(
+                        Intent()
+                            .putExtra("COMMAND", "APPLY_IME_VISIBILITY_SHOW_COMMIT")
+                            .putExtra("SHOW_TOKEN", token)
+                            .putExtra("SHOW_EPOCH", epoch)
+                    )
+                }, showCommitDelayMs)
+            }
         } else {
             imeVisibilityEpoch += 1L
             // Invalidate any pending delayed show commit callbacks and apply hidden-state margin now.
