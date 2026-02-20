@@ -183,6 +183,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var currentDisplayId = 0
     var inputTargetDisplayId = 0
     var isTrackpadVisible = false // Changed: Default OFF
+    private val FORCE_HIDE_DEBOUNCE_MS = 350L // Keep small guard against show/hide bounce without visible close lag
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
     private var pendingForceHideRunnable: Runnable? = null
     private var isDockIMEVisible = false
@@ -499,7 +500,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             } else if (isCustomKeyboardVisible) {
                 pendingForceHideRunnable?.let { handler.removeCallbacks(it) }
                 val elapsed = System.currentTimeMillis() - lastForceShowTime
-                val delayMs = (1000L - elapsed).coerceAtLeast(0L)
+                val delayMs = (FORCE_HIDE_DEBOUNCE_MS - elapsed).coerceAtLeast(0L)
                 logOverlayKbDiag("handleKeyboardToggle_forceHide_schedule", "elapsedMs=$elapsed delayMs=$delayMs")
                 val hideRunnable = Runnable {
                     keyboardOverlay?.hide()
