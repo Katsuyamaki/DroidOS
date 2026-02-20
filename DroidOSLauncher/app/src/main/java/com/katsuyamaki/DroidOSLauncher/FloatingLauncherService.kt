@@ -194,13 +194,10 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private var consecutiveWmQueueFailures = 0
     private val WM_QUEUE_ADVANCE_DEFAULT_MS = 400L
     private val WM_QUEUE_ADVANCE_IME_MS = 45L
-    private val IME_SHOW_COMMIT_DELAY_MS = 120L
-    private val IME_SHOW_COMMIT_DELAY_TILED_MS = 220L
-    private val IME_SHOW_VERIFY_DELAY_MS = 140L
 
     private fun isImeMarginCommand(cmd: String?): Boolean {
         return when (cmd) {
-            "APPLY_IME_VISIBILITY", "APPLY_IME_VISIBILITY_SHOW_COMMIT", "APPLY_MARGIN_BOTTOM", "RETILE_IME_MARGIN" -> true
+            "APPLY_IME_VISIBILITY", "APPLY_MARGIN_BOTTOM", "RETILE_IME_MARGIN" -> true
             else -> false
         }
     }
@@ -601,7 +598,6 @@ private var isSoftKeyboardSupport = false
     private var autoAdjustMarginForIME = false
     private var imeMarginOverrideActive = false
     private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
-    private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeShowRetileToken = 0L
     private var nextImeShowRetileToken = 1L
@@ -628,36 +624,29 @@ private var isSoftKeyboardSupport = false
     private fun isDockImeToolbarVisible(): Boolean {
         // Manual bubble session never has DockIME toolbar; keep persisted state untouched.
         if (imeMarginOverrideActive && imeMarginManualSessionActive) {
-            Log.d(TAG, "DOCK_TOOLBAR_VIS: manualSession=true => false")
             return false
         }
 
         // Prefer in-memory state from broadcasts; fallback to SharedPrefs for fresh app launch.
         if (imeMarginOverrideActive) {
-            Log.d(TAG, "DOCK_TOOLBAR_VIS: inMemory lastKnown=$lastKnownDockImeToolbarVisible manualSession=$imeMarginManualSessionActive")
             return lastKnownDockImeToolbarVisible
         }
 
-        val fromPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        return getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
             .getBoolean("dock_ime_visible", false)
-        Log.d(TAG, "DOCK_TOOLBAR_VIS: sharedPrefs=$fromPrefs (imeOverride=false)")
-        return fromPrefs
     }
 
     private fun isShowKbAboveDockEnabled(): Boolean {
         if (imeMarginOverrideActive && !imeMarginManualSessionActive) {
-            Log.d(TAG, "SHOW_ABOVE_DOCK: inMemory lastKnown=$lastKnownShowKbAboveDock")
             return lastKnownShowKbAboveDock
         }
 
         val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val os = orientSuffix()
-        val fromPrefs = prefs.getBoolean(
+        return prefs.getBoolean(
             "show_kb_above_dock$os",
             prefs.getBoolean("show_kb_above_dock", true)
         )
-        Log.d(TAG, "SHOW_ABOVE_DOCK: sharedPrefs=$fromPrefs imeOverride=$imeMarginOverrideActive manualSession=$imeMarginManualSessionActive")
-        return fromPrefs
     }
 
     private fun dockToolbarHeightPercent(): Int {
@@ -673,38 +662,26 @@ private var isSoftKeyboardSupport = false
 
     private fun effectiveBottomMarginPercent(): Int {
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
-        if (!canAutoAdjustForIme) {
-            Log.d(TAG, "MARGIN_CALC: autoAdjustDisabled autoAdjust=$autoAdjustMarginForIME imeActive=${isDroidOsImeCurrentlyActive()} detected=$droidOsImeDetected => $bottomMarginPercent")
-            return bottomMarginPercent
-        }
+        if (!canAutoAdjustForIme) return bottomMarginPercent
 
         // IME not shown: tiled windows should occupy full height.
-        if (!imeMarginOverrideActive) {
-            Log.d(TAG, "MARGIN_CALC: imeHidden imeOverride=$imeMarginOverrideActive => 0")
-            return 0
-        }
+        if (!imeMarginOverrideActive) return 0
 
         val dockToolbarVisible = isDockImeToolbarVisible()
         val showAboveDock = isShowKbAboveDockEnabled()
         val toolbarHeightPct = dockToolbarHeightPercent()
 
         // IME shown via bubble/overlay without DockIME toolbar visible.
-        if (!dockToolbarVisible) {
-            Log.d(TAG, "MARGIN_CALC: imeVisible dockToolbar=false lastKnown=$lastKnownDockImeToolbarVisible => $bottomMarginPercent")
-            return bottomMarginPercent
-        }
+        if (!dockToolbarVisible) return bottomMarginPercent
 
         // DockIME toolbar visible.
         // bottomMarginPercent is the FULL margin setting (includes space for keyboard + toolbar).
         // If keyboard sits above toolbar: use full margin (both visible).
         // If keyboard overlaps toolbar: subtract toolbar height (keyboard covers toolbar).
         return if (showAboveDock) {
-            Log.d(TAG, "MARGIN_CALC: dockVisible showAbove=true => $bottomMarginPercent")
             bottomMarginPercent
         } else {
-            val adjusted = (bottomMarginPercent - toolbarHeightPct).coerceAtLeast(0)
-            Log.d(TAG, "MARGIN_CALC: dockVisible showAbove=false base=$bottomMarginPercent toolbar=$toolbarHeightPct => $adjusted")
-            adjusted
+            (bottomMarginPercent - toolbarHeightPct).coerceAtLeast(0)
         }
     }
 
@@ -5467,23 +5444,14 @@ private var isSoftKeyboardSupport = false
             val boundsSnapshot = boundsList.toIntArray()
             retileExecutor.execute {
                 try {
-                    if (requestId != latestRetileRequestId.get()) {
-                        Log.d(TAG, "IME_RETILE[Q]: skip stale batchResize requestId=$requestId latest=${latestRetileRequestId.get()}")
-                        return@execute
-                    }
+                    if (requestId != latestRetileRequestId.get()) return@execute
 
-                    // Primary apply
-                    Log.d(TAG, "IME_RETILE[Q]: batchResize apply requestId=$requestId packages=${packagesSnapshot.size}")
                     shellService?.batchResize(packagesSnapshot, boundsSnapshot)
 
                     // Guarded settle pass: occasionally WM applies only part of a rapid IME retile.
                     // Reapply identical bounds only if this request is still latest.
                     Thread.sleep(90)
-                    if (requestId != latestRetileRequestId.get()) {
-                        Log.d(TAG, "IME_RETILE[Q]: skip settle stale requestId=$requestId latest=${latestRetileRequestId.get()}")
-                        return@execute
-                    }
-                    Log.d(TAG, "IME_RETILE[Q]: batchResize settle requestId=$requestId")
+                    if (requestId != latestRetileRequestId.get()) return@execute
                     shellService?.batchResize(packagesSnapshot, boundsSnapshot)
                 } catch (e: Exception) {
                 }
@@ -6869,19 +6837,9 @@ private var isSoftKeyboardSupport = false
         // Duplicate hide/show broadcasts can request forceRetile with unchanged effective margin
         // (0->0 or 25->25). Running those no-op passes can trigger redundant WM resize transactions
         // and intermittently produce blank/half-updated bottom-row windows.
-        if (!hasEffectiveChange) {
-            if (forceRetile) {
-                Log.d(TAG, "IME_RETILE[Q]: skip no-op forceRetile newEffective=$newEffective lastApplied=$lastAppliedEffectiveMargin")
-            } else {
-                Log.d(TAG, "IME_RETILE[Q]: skip unchanged newEffective=$newEffective lastApplied=$lastAppliedEffectiveMargin")
-            }
-            return
-        }
+        if (!hasEffectiveChange) return
 
-        val now = System.currentTimeMillis()
-        Log.d(TAG, "IME_RETILE[Q]: apply forceRetile=$forceRetile newEffective=$newEffective prevApplied=$lastAppliedEffectiveMargin")
         lastAppliedEffectiveMargin = newEffective
-        imeRetileCooldownUntil = now + 500
         setupVisualQueue()
         retileExistingWindows()
     }
@@ -6920,7 +6878,6 @@ private var isSoftKeyboardSupport = false
                     dockPrefs.getBoolean("show_kb_above_dock$os", dockPrefs.getBoolean("show_kb_above_dock", true))
                 }
             }
-            Log.d(TAG, "DOCK_STATE_UPDATE: visible=true manual=$manualToggle manualSessionPrev=$prevManualSession manualSessionNow=$imeMarginManualSessionActive hasDockExtra=$hasDockExtra dockVisible=$dockVisible prevDock=$prevDockToolbarState nowDock=$lastKnownDockImeToolbarVisible hasShowAboveExtra=$hasShowAboveDockExtra showAbove=$showAboveDock prevShowAbove=$prevShowAboveDockState nowShowAbove=$lastKnownShowKbAboveDock")
         } else {
             imeMarginManualSessionActive = false
             if (hasDockExtra) {
@@ -6929,7 +6886,6 @@ private var isSoftKeyboardSupport = false
             if (hasShowAboveDockExtra) {
                 lastKnownShowKbAboveDock = showAboveDock
             }
-            Log.d(TAG, "DOCK_STATE_UPDATE: visible=false manual=$manualToggle manualSessionPrev=$prevManualSession manualSessionNow=$imeMarginManualSessionActive hasDockExtra=$hasDockExtra dockVisible=$dockVisible prevDock=$prevDockToolbarState nowDock=$lastKnownDockImeToolbarVisible hasShowAboveExtra=$hasShowAboveDockExtra showAbove=$showAboveDock prevShowAbove=$prevShowAboveDockState nowShowAbove=$lastKnownShowKbAboveDock")
         }
 
         val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
@@ -6945,11 +6901,6 @@ private var isSoftKeyboardSupport = false
         sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
             .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
             .putExtra("TILED_ACTIVE", dockSyncTiledActive))
-
-        Log.d(
-            TAG,
-            "IME_VISIBILITY[Q] visible=$visible isTiled=$isTiled resolvedIsTiled=$resolvedIsTiled forceRetile=$forceRetile manualToggle=$manualToggle manualSession=$imeMarginManualSessionActive dockExtra=$hasDockExtra dockVisible=$dockVisible dockToolbarState=$lastKnownDockImeToolbarVisible showAboveState=$lastKnownShowKbAboveDock tiledCount=$activeNonMinimizedCount syncTiled=$dockSyncTiledActive imeOverride=$imeMarginOverrideActive bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
-        )
 
         // Ignore updates only when there are no launcher-tiled windows and no explicit override.
         if (!hasLauncherTiledWindows && !resolvedIsTiled && !forceRetile && !manualToggle) {
@@ -6967,10 +6918,6 @@ private var isSoftKeyboardSupport = false
             val token = nextImeShowRetileToken++
             pendingImeShowRetileToken = token
             val applyForceRetile = manualToggle || forceRetile
-            Log.d(
-                TAG,
-                "IME_VISIBILITY[Q]: immediate show apply token=$token epoch=$epoch manualToggle=$manualToggle forceRetile=$forceRetile applyForceRetile=$applyForceRetile"
-            )
             applyImeMarginRetileFromQueue(forceRetile = applyForceRetile)
         } else {
             imeVisibilityEpoch += 1L
@@ -6979,24 +6926,6 @@ private var isSoftKeyboardSupport = false
             imeMarginOverrideActive = false
             applyImeMarginRetileFromQueue(forceRetile)
         }
-    }
-
-    private fun applyImeVisibilityShowCommitFromQueue(intent: Intent) {
-        val token = intent.getLongExtra("SHOW_TOKEN", -1L)
-        val epoch = intent.getLongExtra("SHOW_EPOCH", -1L)
-        Log.d(
-            TAG,
-            "IME_SHOW_COMMIT[Q]: ignored (single-path show enabled) token=$token epoch=$epoch pending=$pendingImeShowRetileToken currentEpoch=$imeVisibilityEpoch imeOverride=$imeMarginOverrideActive"
-        )
-    }
-
-    private fun applyImeVisibilityShowVerifyFromQueue(intent: Intent) {
-        val token = intent.getLongExtra("SHOW_TOKEN", -1L)
-        val epoch = intent.getLongExtra("SHOW_EPOCH", -1L)
-        Log.d(
-            TAG,
-            "IME_SHOW_VERIFY[Q]: ignored (single-path show enabled) token=$token epoch=$epoch pending=$pendingImeShowRetileToken currentEpoch=$imeVisibilityEpoch imeOverride=$imeMarginOverrideActive"
-        )
     }
 
     private fun applyBottomMarginFromQueue(intent: Intent) {
@@ -7061,12 +6990,6 @@ private var isSoftKeyboardSupport = false
         when (cmd) {
             "APPLY_IME_VISIBILITY" -> {
                 applyImeVisibilityFromQueue(intent)
-            }
-            "APPLY_IME_VISIBILITY_SHOW_COMMIT" -> {
-                applyImeVisibilityShowCommitFromQueue(intent)
-            }
-            "APPLY_IME_VISIBILITY_SHOW_VERIFY" -> {
-                applyImeVisibilityShowVerifyFromQueue(intent)
             }
             "APPLY_MARGIN_BOTTOM" -> {
                 applyBottomMarginFromQueue(intent)
