@@ -495,6 +495,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val fixIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
                 fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
                 fixIntent.putExtra("VISIBLE", true)
+                fixIntent.putExtra("MANUAL_TOGGLE", true)
                 sendBroadcast(fixIntent)
                 logOverlayKbDiag("handleKeyboardToggle_forceHide_spacebarMouse", "sentVisible=true")
             } else if (isCustomKeyboardVisible) {
@@ -2505,6 +2506,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
             intent.setPackage("com.katsuyamaki.DroidOSLauncher")
             intent.putExtra("VISIBLE", true)
+            intent.putExtra("MANUAL_TOGGLE", true)
             sendBroadcast(intent)
         }
     }

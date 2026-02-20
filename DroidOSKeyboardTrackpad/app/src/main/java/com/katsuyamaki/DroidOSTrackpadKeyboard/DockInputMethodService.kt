@@ -47,6 +47,7 @@ class DockInputMethodService : InputMethodService() {
 
     private var lastImeVisibilityBroadcast: Boolean? = null
     private var lastImeTiledBroadcast: Boolean? = null
+    private var lastImeShowAboveDockBroadcast: Boolean? = null
     private var pendingImeHiddenConfirmRunnable: Runnable? = null
     private val imeVisibilityHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val imeHideConfirmDelayMs = 140L
@@ -71,14 +72,25 @@ class DockInputMethodService : InputMethodService() {
             if (newState != launcherTiledActive) {
                 launcherTiledActive = newState
 
-                // If IME is already visible, publish corrected tiled state immediately.
-                // This keeps launcher and IME in sync when broadcast state changes mid-session.
+                // If IME is already visible, only dispatch show visibility once per session.
+                // This prevents split-path rendering (stale first show + correction show) that causes
+                // double margin/tiling redraw and intermittent half-applied states.
                 if (imeWindowVisible) {
                     pendingInitialImeShowRunnable?.let {
                         imeVisibilityHandler.removeCallbacks(it)
                         pendingInitialImeShowRunnable = null
                     }
-                    dispatchImeShowVisibilityFromSession(reason = "tiledStateReceiver", forceRetile = true)
+
+                    val alreadyDispatchedForSession =
+                        imeShowDispatchedSessionId == imeVisibilitySessionId
+                    if (alreadyDispatchedForSession) {
+                        android.util.Log.d(
+                            TAG,
+                            "IME_VIS: skip secondary show dispatch session=$imeVisibilitySessionId reason=tiledStateReceiver"
+                        )
+                    } else {
+                        dispatchImeShowVisibilityFromSession(reason = "tiledStateReceiver", forceRetile = false)
+                    }
                 }
 
                 // Force the system to recompute insets with the new tiled state
@@ -117,12 +129,14 @@ class DockInputMethodService : InputMethodService() {
     }
 
     private fun sendImeVisibilityBroadcast(visible: Boolean, isTiled: Boolean, forceRetile: Boolean, reason: String) {
+        val showAboveDock = prefShowKBAboveDock && prefDockMode
         val sameVisibility = lastImeVisibilityBroadcast == visible
         val sameTiled = lastImeTiledBroadcast == isTiled
-        if (sameVisibility && sameTiled && !forceRetile) {
+        val sameShowAboveDock = lastImeShowAboveDockBroadcast == showAboveDock
+        if (sameVisibility && sameTiled && sameShowAboveDock && !forceRetile) {
             android.util.Log.d(
                 TAG,
-                "IME_VIS: skip duplicate visible=$visible isTiled=$isTiled reason=$reason"
+                "IME_VIS: skip duplicate visible=$visible isTiled=$isTiled showAboveDock=$showAboveDock reason=$reason"
             )
             return
         }
@@ -131,16 +145,19 @@ class DockInputMethodService : InputMethodService() {
         intent.setPackage("com.katsuyamaki.DroidOSLauncher")
         intent.putExtra("VISIBLE", visible)
         intent.putExtra("IS_TILED", isTiled)
+        intent.putExtra("DOCK_IME_VISIBLE", visible)
+        intent.putExtra("SHOW_KB_ABOVE_DOCK", showAboveDock)
         if (forceRetile) {
             intent.putExtra("FORCE_RETILE", true)
         }
         sendBroadcast(intent)
         lastImeVisibilityBroadcast = visible
         lastImeTiledBroadcast = isTiled
+        lastImeShowAboveDockBroadcast = showAboveDock
 
         android.util.Log.d(
             TAG,
-            "IME_VIS: broadcast visible=$visible isTiled=$isTiled forceRetile=$forceRetile reason=$reason"
+            "IME_VIS: broadcast visible=$visible isTiled=$isTiled dockImeVisible=$visible showAboveDock=$showAboveDock forceRetile=$forceRetile reason=$reason"
         )
     }
 
@@ -317,9 +334,9 @@ class DockInputMethodService : InputMethodService() {
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
             intent.putExtra("nav_bar_height", getActualNavBarHeight())
-            // Slider-driven margin resize is for IME fullscreen auto-resize only.
-            // Tiled paths must use launcher bottom-margin handling.
-            if (prefAutoResize && !launcherTiledActive) {
+            // Always send resize_to_margin when auto-resize is enabled so overlay keyboard
+            // sizes correctly for both fullscreen and tiled paths.
+            if (prefAutoResize) {
                 intent.putExtra("resize_to_margin", prefResizeScale)
             }
             sendBroadcast(intent)
@@ -388,7 +405,6 @@ class DockInputMethodService : InputMethodService() {
     private var prefDockMode = false
     private var prefAutoResize = false
     private var prefResizeScale = 0 // Default 0% (Range 0-50%)
-    private var prefSyncMargin = false
     private var prefShowKBAboveDock = true // Default ON when dock mode is enabled
     
     private val ACTION_MARGIN_CHANGED = "com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED"
@@ -403,7 +419,7 @@ class DockInputMethodService : InputMethodService() {
 
     private val marginReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_MARGIN_CHANGED && prefSyncMargin) {
+            if (intent?.action == ACTION_MARGIN_CHANGED) {
                 val percent = intent.getIntExtra("PERCENT", 0)
                 // Always update if different
                 if (prefResizeScale != percent) {
@@ -484,7 +500,6 @@ class DockInputMethodService : InputMethodService() {
         prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
         prefAutoResize = prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
         prefResizeScale = prefs.getInt("auto_resize_scale$os", prefs.getInt("auto_resize_scale", 0))
-        prefSyncMargin = prefs.getBoolean("sync_margin$os", prefs.getBoolean("sync_margin", false))
         prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock$os", prefs.getBoolean("show_kb_above_dock", true))
     }
     
@@ -501,8 +516,6 @@ class DockInputMethodService : InputMethodService() {
             .putBoolean("auto_resize", prefAutoResize)
             .putInt("auto_resize_scale$os", prefResizeScale)
             .putInt("auto_resize_scale", prefResizeScale)
-            .putBoolean("sync_margin$os", prefSyncMargin)
-            .putBoolean("sync_margin", prefSyncMargin)
             .putBoolean("show_kb_above_dock$os", prefShowKBAboveDock)
             .putBoolean("show_kb_above_dock", prefShowKBAboveDock)
             .apply()
@@ -673,7 +686,6 @@ class DockInputMethodService : InputMethodService() {
         val dividerResize = popupView.findViewById<View>(R.id.divider_resize)
         val textSliderLabel = popupView.findViewById<android.widget.TextView>(R.id.text_resize_label)
         val seekResize = popupView.findViewById<android.widget.SeekBar>(R.id.seekbar_resize_height)
-        val checkSync = popupView.findViewById<android.widget.CheckBox>(R.id.checkbox_sync_margin)
         
         // Option 2b: Show KB Above Dock
         val optionKBAboveDock = popupView.findViewById<View>(R.id.option_kb_above_dock)
@@ -745,22 +757,6 @@ class DockInputMethodService : InputMethodService() {
             onMarginUpdatedCallback = null
         }
 
-        // Setup Sync Checkbox
-        checkSync?.isChecked = prefSyncMargin
-        checkSync?.setOnCheckedChangeListener { _, isChecked ->
-            prefSyncMargin = isChecked
-            saveDockPrefs()
-            
-            // If turned ON, immediately sync values
-            if (isChecked) {
-                // 1. Force Launcher to match IME
-                val intent = Intent(ACTION_SET_MARGIN)
-                intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
-                intent.putExtra("PERCENT", prefResizeScale)
-                sendBroadcast(intent)
-            }
-        }
-
         // Setup Slider
         seekResize?.progress = prefResizeScale
         textSliderLabel?.text = "Bottom Margin: $prefResizeScale%"
@@ -776,14 +772,11 @@ class DockInputMethodService : InputMethodService() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
                 saveDockPrefs()
                 updateInputViewHeight()
-                
-                // Sync to Launcher if enabled
-                if (prefSyncMargin) {
-                    val intent = Intent(ACTION_SET_MARGIN)
-                    intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
-                    intent.putExtra("PERCENT", prefResizeScale)
-                    sendBroadcast(intent)
-                }
+
+                val intent = Intent(ACTION_SET_MARGIN)
+                intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
+                intent.putExtra("PERCENT", prefResizeScale)
+                sendBroadcast(intent)
                 
                 // Notify OverlayService to resize keyboard to fit margin
                 val kbIntent = Intent("DOCK_PREF_CHANGED")

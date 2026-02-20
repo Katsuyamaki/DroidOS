@@ -887,6 +887,12 @@ class RofiAdapter(
                     handler.bottomMarginPercent = progress
                     AppPreferences.setBottomMarginPercent(holder.itemView.context, handler.currentDisplayId, progress)
                     AppPreferences.setBottomMarginPercent(holder.itemView.context, handler.currentDisplayId, progress, handler.orientSuffix())
+
+                    holder.itemView.context.getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                        .putInt("auto_resize_scale${handler.orientSuffix()}", progress)
+                        .putInt("auto_resize_scale", progress)
+                        .apply()
+
                     handler.safeToast("Bottom Margin: $progress% (Display ${handler.currentDisplayId})")
                     
                     val intent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
