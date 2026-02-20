@@ -195,6 +195,8 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private val WM_QUEUE_ADVANCE_DEFAULT_MS = 400L
     private val WM_QUEUE_ADVANCE_IME_MS = 45L
     private val IME_SHOW_COMMIT_DELAY_MS = 120L
+    private val IME_SHOW_COMMIT_DELAY_TILED_MS = 220L
+    private val IME_SHOW_VERIFY_DELAY_MS = 140L
 
     private fun isImeMarginCommand(cmd: String?): Boolean {
         return when (cmd) {
@@ -6787,11 +6789,18 @@ private var isSoftKeyboardSupport = false
     private fun applyImeMarginRetileFromQueue(forceRetile: Boolean) {
         val newEffective = effectiveBottomMarginPercent()
         val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
-        if (!shouldRetile) return
+        if (!shouldRetile) {
+            Log.d(TAG, "IME_RETILE[Q]: skip shouldRetile=false forceRetile=$forceRetile newEffective=$newEffective lastApplied=$lastAppliedEffectiveMargin")
+            return
+        }
 
         val now = System.currentTimeMillis()
-        if (!forceRetile && now < imeRetileCooldownUntil) return
+        if (!forceRetile && now < imeRetileCooldownUntil) {
+            Log.d(TAG, "IME_RETILE[Q]: skip cooldown forceRetile=$forceRetile now=$now cooldownUntil=$imeRetileCooldownUntil newEffective=$newEffective lastApplied=$lastAppliedEffectiveMargin")
+            return
+        }
 
+        Log.d(TAG, "IME_RETILE[Q]: apply forceRetile=$forceRetile newEffective=$newEffective prevApplied=$lastAppliedEffectiveMargin")
         lastAppliedEffectiveMargin = newEffective
         imeRetileCooldownUntil = now + 500
         setupVisualQueue()
@@ -6808,14 +6817,25 @@ private var isSoftKeyboardSupport = false
 
         val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
         val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+        val resolvedIsTiled = isTiled || (visible && hasLauncherTiledWindows && !manualToggle)
+
+        // Keep DockIME tiled state synced from launcher-side truth so IME bootstrap does not
+        // depend on stale/missed keyboard-side broadcasts.
+        val dockSyncTiledActive = hasLauncherTiledWindows
+        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("launcher_tiled_active", dockSyncTiledActive)
+            .apply()
+        sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
+            .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+            .putExtra("TILED_ACTIVE", dockSyncTiledActive))
 
         Log.d(
             TAG,
-            "IME_VISIBILITY[Q] visible=$visible isTiled=$isTiled forceRetile=$forceRetile manualToggle=$manualToggle dockExtra=$hasDockExtra dockVisible=$dockVisible tiledCount=$activeNonMinimizedCount imeOverride=$imeMarginOverrideActive bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
+            "IME_VISIBILITY[Q] visible=$visible isTiled=$isTiled resolvedIsTiled=$resolvedIsTiled forceRetile=$forceRetile manualToggle=$manualToggle dockExtra=$hasDockExtra dockVisible=$dockVisible tiledCount=$activeNonMinimizedCount syncTiled=$dockSyncTiledActive imeOverride=$imeMarginOverrideActive bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
         )
 
         // Ignore updates only when there are no launcher-tiled windows and no explicit override.
-        if (!hasLauncherTiledWindows && !isTiled && !forceRetile && !manualToggle) {
+        if (!hasLauncherTiledWindows && !resolvedIsTiled && !forceRetile && !manualToggle) {
             return
         }
 
@@ -6833,14 +6853,20 @@ private var isSoftKeyboardSupport = false
             } else {
                 val token = nextImeShowRetileToken++
                 pendingImeShowRetileToken = token
-                val showCommitDelayMs = IME_SHOW_COMMIT_DELAY_MS
+                val showCommitDelayMs = if (hasLauncherTiledWindows) {
+                    IME_SHOW_COMMIT_DELAY_TILED_MS
+                } else {
+                    IME_SHOW_COMMIT_DELAY_MS
+                }
 
+                val isTiledShowPath = hasLauncherTiledWindows && !manualToggle
                 uiHandler.postDelayed({
                     queueWindowManagerCommand(
                         Intent()
                             .putExtra("COMMAND", "APPLY_IME_VISIBILITY_SHOW_COMMIT")
                             .putExtra("SHOW_TOKEN", token)
                             .putExtra("SHOW_EPOCH", epoch)
+                            .putExtra("SHOW_TILED_PATH", isTiledShowPath)
                     )
                 }, showCommitDelayMs)
             }
@@ -6856,12 +6882,63 @@ private var isSoftKeyboardSupport = false
     private fun applyImeVisibilityShowCommitFromQueue(intent: Intent) {
         val token = intent.getLongExtra("SHOW_TOKEN", -1L)
         val epoch = intent.getLongExtra("SHOW_EPOCH", -1L)
-        if (token <= 0L || epoch <= 0L) return
-        if (token != pendingImeShowRetileToken) return
-        if (epoch != imeVisibilityEpoch) return
-        if (!imeMarginOverrideActive) return
+        if (token <= 0L || epoch <= 0L) {
+            Log.d(TAG, "IME_SHOW_COMMIT[Q]: drop invalid token=$token epoch=$epoch")
+            return
+        }
+        if (token != pendingImeShowRetileToken) {
+            Log.d(TAG, "IME_SHOW_COMMIT[Q]: drop token mismatch token=$token pending=$pendingImeShowRetileToken")
+            return
+        }
+        if (epoch != imeVisibilityEpoch) {
+            Log.d(TAG, "IME_SHOW_COMMIT[Q]: drop epoch mismatch epoch=$epoch currentEpoch=$imeVisibilityEpoch")
+            return
+        }
+        if (!imeMarginOverrideActive) {
+            Log.d(TAG, "IME_SHOW_COMMIT[Q]: drop imeMarginOverrideActive=false token=$token epoch=$epoch")
+            return
+        }
 
+        Log.d(TAG, "IME_SHOW_COMMIT[Q]: apply token=$token epoch=$epoch")
         applyImeMarginRetileFromQueue(forceRetile = false)
+
+        val isTiledShowPath = intent.getBooleanExtra("SHOW_TILED_PATH", false)
+        if (isTiledShowPath) {
+            Log.d(TAG, "IME_SHOW_COMMIT[Q]: schedule verify token=$token epoch=$epoch delayMs=$IME_SHOW_VERIFY_DELAY_MS")
+            uiHandler.postDelayed({
+                queueWindowManagerCommand(
+                    Intent()
+                        .putExtra("COMMAND", "APPLY_IME_VISIBILITY_SHOW_VERIFY")
+                        .putExtra("SHOW_TOKEN", token)
+                        .putExtra("SHOW_EPOCH", epoch)
+                )
+            }, IME_SHOW_VERIFY_DELAY_MS)
+        }
+    }
+
+    private fun applyImeVisibilityShowVerifyFromQueue(intent: Intent) {
+        val token = intent.getLongExtra("SHOW_TOKEN", -1L)
+        val epoch = intent.getLongExtra("SHOW_EPOCH", -1L)
+        if (token <= 0L || epoch <= 0L) {
+            Log.d(TAG, "IME_SHOW_VERIFY[Q]: drop invalid token=$token epoch=$epoch")
+            return
+        }
+        if (token != pendingImeShowRetileToken) {
+            Log.d(TAG, "IME_SHOW_VERIFY[Q]: drop token mismatch token=$token pending=$pendingImeShowRetileToken")
+            return
+        }
+        if (epoch != imeVisibilityEpoch) {
+            Log.d(TAG, "IME_SHOW_VERIFY[Q]: drop epoch mismatch epoch=$epoch currentEpoch=$imeVisibilityEpoch")
+            return
+        }
+        if (!imeMarginOverrideActive) {
+            Log.d(TAG, "IME_SHOW_VERIFY[Q]: drop imeMarginOverrideActive=false token=$token epoch=$epoch")
+            return
+        }
+
+        Log.d(TAG, "IME_SHOW_VERIFY[Q]: apply correction token=$token epoch=$epoch")
+        // Correction pass after insets/focus settle to avoid occasional bottom-row overshift.
+        applyImeMarginRetileFromQueue(forceRetile = true)
     }
 
     private fun applyBottomMarginFromQueue(intent: Intent) {
@@ -6929,6 +7006,9 @@ private var isSoftKeyboardSupport = false
             }
             "APPLY_IME_VISIBILITY_SHOW_COMMIT" -> {
                 applyImeVisibilityShowCommitFromQueue(intent)
+            }
+            "APPLY_IME_VISIBILITY_SHOW_VERIFY" -> {
+                applyImeVisibilityShowVerifyFromQueue(intent)
             }
             "APPLY_MARGIN_BOTTOM" -> {
                 applyBottomMarginFromQueue(intent)

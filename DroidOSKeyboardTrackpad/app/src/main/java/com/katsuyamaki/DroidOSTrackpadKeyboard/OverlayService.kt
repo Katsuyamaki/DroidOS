@@ -128,6 +128,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private val TAG = "OverlayService"
 
     private fun logOverlayKbDiag(event: String, extra: String = "") {
+        val ts = SystemClock.uptimeMillis()
+        val suffix = if (extra.isNotBlank()) " $extra" else ""
+        Log.d(TAG, "[KB_DIAG][$ts] $event$suffix")
     }
 
     // Command dispatcher for broadcast receiver logic
@@ -181,6 +184,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var inputTargetDisplayId = 0
     var isTrackpadVisible = false // Changed: Default OFF
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
+    private var pendingForceHideRunnable: Runnable? = null
     private var isDockIMEVisible = false
     private var dockNavBarHeight: Int = -1
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
@@ -476,6 +480,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val forceShow = intent.getBooleanExtra("FORCE_SHOW", false)
         val forceHide = intent.getBooleanExtra("FORCE_HIDE", false)
 
+        logOverlayKbDiag(
+            "handleKeyboardToggle_enter",
+            "forceShow=$forceShow forceHide=$forceHide currentlyVisible=$isCustomKeyboardVisible dockVisible=$isDockIMEVisible"
+        )
+
         if (forceShow) isDockIMEVisible = true
         if (forceHide) isDockIMEVisible = false
 
@@ -486,13 +495,40 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 fixIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
                 fixIntent.putExtra("VISIBLE", true)
                 sendBroadcast(fixIntent)
-            } else if (isCustomKeyboardVisible && System.currentTimeMillis() - lastForceShowTime > 1000) {
-                keyboardOverlay?.hide()
-                isCustomKeyboardVisible = false
-                pendingRestoreKeyboard = true
-                hasPendingRestore = true
+                logOverlayKbDiag("handleKeyboardToggle_forceHide_spacebarMouse", "sentVisible=true")
+            } else if (isCustomKeyboardVisible) {
+                pendingForceHideRunnable?.let { handler.removeCallbacks(it) }
+                val elapsed = System.currentTimeMillis() - lastForceShowTime
+                val delayMs = (1000L - elapsed).coerceAtLeast(0L)
+                logOverlayKbDiag("handleKeyboardToggle_forceHide_schedule", "elapsedMs=$elapsed delayMs=$delayMs")
+                val hideRunnable = Runnable {
+                    keyboardOverlay?.hide()
+                    isCustomKeyboardVisible = false
+                    pendingRestoreKeyboard = true
+                    hasPendingRestore = true
+
+                    // Guarantee launcher clears IME margin override on actual hide.
+                    val imeIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+                    imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                    imeIntent.putExtra("VISIBLE", false)
+                    imeIntent.putExtra("IS_TILED", false)
+                    imeIntent.putExtra("MANUAL_TOGGLE", true)
+                    imeIntent.putExtra("FORCE_RETILE", true)
+                    sendBroadcast(imeIntent)
+
+                    logOverlayKbDiag("handleKeyboardToggle_forceHide_run", "sentVisible=false forceRetile=true")
+                    pendingForceHideRunnable = null
+                }
+                pendingForceHideRunnable = hideRunnable
+                if (delayMs <= 0L) {
+                    hideRunnable.run()
+                } else {
+                    handler.postDelayed(hideRunnable, delayMs)
+                }
             }
         } else if (forceShow) {
+            pendingForceHideRunnable?.let { handler.removeCallbacks(it) }
+            pendingForceHideRunnable = null
             lastForceShowTime = System.currentTimeMillis()
             isDockIMEVisible = true
             if (keyboardOverlay == null) initCustomKeyboard()
@@ -500,6 +536,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             keyboardOverlay?.show()
             isCustomKeyboardVisible = true
             enforceZOrder()
+            logOverlayKbDiag("handleKeyboardToggle_forceShow_apply", "visible=true")
         } else {
             toggleCustomKeyboard()
         }
@@ -3355,6 +3392,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     
     override fun onDestroy() {
         super.onDestroy()
+        pendingForceHideRunnable?.let { handler.removeCallbacks(it) }
+        pendingForceHideRunnable = null
         try {
             unregisterReceiver(commandReceiver)
         } catch (e: Exception) {

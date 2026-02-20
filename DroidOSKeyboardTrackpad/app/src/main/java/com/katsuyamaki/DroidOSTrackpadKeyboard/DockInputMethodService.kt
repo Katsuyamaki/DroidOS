@@ -45,14 +45,41 @@ class DockInputMethodService : InputMethodService() {
         // Stale check removed - it caused race conditions forcing fullscreen insets on tiled apps.
     }
 
+    private var lastImeVisibilityBroadcast: Boolean? = null
+    private var lastImeTiledBroadcast: Boolean? = null
+    private var pendingImeHiddenConfirmRunnable: Runnable? = null
+    private val imeVisibilityHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val imeHideConfirmDelayMs = 140L
+    private val imeHideBounceGuardMs = 260L
+    private val tiledStateFreshWindowMs = 1200L
+    private val imeInitialShowDelayMs = 120L
+    private var imeVisibilitySessionId = 0L
+    private var lastConfirmedHideSessionId = -1L
+    private var imeWindowVisible = false
+    private var imeShowDispatchedSessionId = -1L
+    private var pendingInitialImeShowRunnable: Runnable? = null
+
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
 
-
             lastTiledStateTime = System.currentTimeMillis()
+            android.util.Log.d(
+                TAG,
+                "tiledStateReceiver: newState=$newState prev=$launcherTiledActive lastTiledStateTime=$lastTiledStateTime"
+            )
             if (newState != launcherTiledActive) {
                 launcherTiledActive = newState
+
+                // If IME is already visible, publish corrected tiled state immediately.
+                // This keeps launcher and IME in sync when broadcast state changes mid-session.
+                if (imeWindowVisible) {
+                    pendingInitialImeShowRunnable?.let {
+                        imeVisibilityHandler.removeCallbacks(it)
+                        pendingInitialImeShowRunnable = null
+                    }
+                    dispatchImeShowVisibilityFromSession(reason = "tiledStateReceiver", forceRetile = true)
+                }
 
                 // Force the system to recompute insets with the new tiled state
                 window?.window?.decorView?.requestLayout()
@@ -89,30 +116,183 @@ class DockInputMethodService : InputMethodService() {
         }
     }
 
+    private fun sendImeVisibilityBroadcast(visible: Boolean, isTiled: Boolean, forceRetile: Boolean, reason: String) {
+        val sameVisibility = lastImeVisibilityBroadcast == visible
+        val sameTiled = lastImeTiledBroadcast == isTiled
+        if (sameVisibility && sameTiled && !forceRetile) {
+            android.util.Log.d(
+                TAG,
+                "IME_VIS: skip duplicate visible=$visible isTiled=$isTiled reason=$reason"
+            )
+            return
+        }
+
+        val intent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        intent.putExtra("VISIBLE", visible)
+        intent.putExtra("IS_TILED", isTiled)
+        if (forceRetile) {
+            intent.putExtra("FORCE_RETILE", true)
+        }
+        sendBroadcast(intent)
+        lastImeVisibilityBroadcast = visible
+        lastImeTiledBroadcast = isTiled
+
+        android.util.Log.d(
+            TAG,
+            "IME_VIS: broadcast visible=$visible isTiled=$isTiled forceRetile=$forceRetile reason=$reason"
+        )
+    }
+
+    private fun runConfirmedImeHiddenEffects(reason: String, sessionId: Long) {
+        if (sessionId != imeVisibilitySessionId) {
+            android.util.Log.d(
+                TAG,
+                "IME_VIS: drop stale hide confirm session=$sessionId activeSession=$imeVisibilitySessionId reason=$reason"
+            )
+            return
+        }
+
+        if (lastConfirmedHideSessionId == sessionId) {
+            android.util.Log.d(TAG, "IME_VIS: skip duplicate hide confirm session=$sessionId reason=$reason")
+            return
+        }
+
+        if (isInputViewShown) {
+            android.util.Log.d(TAG, "IME_VIS: cancel hide; input view still shown reason=$reason session=$sessionId")
+            return
+        }
+
+        lastConfirmedHideSessionId = sessionId
+
+        sendImeVisibilityBroadcast(
+            visible = false,
+            isTiled = launcherTiledActive,
+            forceRetile = true,
+            reason = "$reason/confirmed"
+        )
+
+        if (prefAutoResize && prefDockMode) {
+            window?.window?.decorView?.requestLayout()
+        }
+
+        if (prefAutoShowOverlay) {
+            val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
+            intent.setPackage(packageName)
+            intent.putExtra("FORCE_HIDE", true)
+            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            sendBroadcast(intent)
+        }
+    }
+
+    private fun scheduleConfirmedImeHidden(reason: String) {
+        pendingImeHiddenConfirmRunnable?.let { imeVisibilityHandler.removeCallbacks(it) }
+
+        val sessionId = imeVisibilitySessionId
+        val elapsedSinceShow = System.currentTimeMillis() - windowShownTime
+        val bounceDelay = (imeHideBounceGuardMs - elapsedSinceShow).coerceAtLeast(0L)
+        val delayMs = maxOf(imeHideConfirmDelayMs, bounceDelay)
+
+        val runnable = Runnable {
+            pendingImeHiddenConfirmRunnable = null
+            runConfirmedImeHiddenEffects(reason, sessionId)
+        }
+        pendingImeHiddenConfirmRunnable = runnable
+
+        android.util.Log.d(
+            TAG,
+            "IME_VIS: schedule hide confirm session=$sessionId elapsedSinceShow=$elapsedSinceShow delayMs=$delayMs reason=$reason"
+        )
+        imeVisibilityHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun dispatchImeShowVisibilityFromSession(reason: String, forceRetile: Boolean) {
+        if (!forceRetile && imeShowDispatchedSessionId == imeVisibilitySessionId) {
+            android.util.Log.d(TAG, "IME_VIS: skip duplicate show dispatch session=$imeVisibilitySessionId reason=$reason")
+            return
+        }
+
+        sendImeVisibilityBroadcast(
+            visible = true,
+            isTiled = launcherTiledActive,
+            forceRetile = forceRetile,
+            reason = reason
+        )
+        imeShowDispatchedSessionId = imeVisibilitySessionId
+    }
+
     override fun onWindowShown() {
         super.onWindowShown()
         loadDockPrefs()
 
-        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+        if (imeWindowVisible) {
+            android.util.Log.d(TAG, "IME_VIS: ignore duplicate onWindowShown session=$imeVisibilitySessionId")
+            return
+        }
+        imeWindowVisible = true
+
+        pendingImeHiddenConfirmRunnable?.let {
+            imeVisibilityHandler.removeCallbacks(it)
+            pendingImeHiddenConfirmRunnable = null
+        }
+        pendingInitialImeShowRunnable?.let {
+            imeVisibilityHandler.removeCallbacks(it)
+            pendingInitialImeShowRunnable = null
+        }
+        imeVisibilitySessionId += 1L
+        imeShowDispatchedSessionId = -1L
+
+        val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        dockPrefs.edit()
             .putBoolean("dock_ime_visible", true)
             .apply()
 
-        // Start each IME show from broadcast authority (false until proven true).
-        // Persisted tiled state is still used as a short bootstrap fallback in onComputeInsets.
-        launcherTiledActive = false
+        // Keep tiled state stable through IME bootstrap:
+        // - If we have a recent TILED_STATE broadcast, trust broadcast value.
+        // - Otherwise seed from persisted launcher_tiled_active fallback.
+        val now = System.currentTimeMillis()
+        val persistedTiledActive = dockPrefs.getBoolean("launcher_tiled_active", false)
+        val hasFreshTiledBroadcast = (now - lastTiledStateTime) <= tiledStateFreshWindowMs
+        if (!hasFreshTiledBroadcast) {
+            launcherTiledActive = persistedTiledActive
+        }
 
         // Record show time for bootstrap fallback window
-        windowShownTime = System.currentTimeMillis()
+        windowShownTime = now
         staleTiledHandler.removeCallbacks(staleTiledCheck)
-        
 
-        
-        // Notify Launcher that IME is now visible
-        val imeShowIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
-        imeShowIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-        imeShowIntent.putExtra("VISIBLE", true)
-        imeShowIntent.putExtra("IS_TILED", launcherTiledActive)
-        sendBroadcast(imeShowIntent)
+        android.util.Log.d(
+            TAG,
+            "onWindowShown: bootstrap tiledActive=$launcherTiledActive hasFreshBroadcast=$hasFreshTiledBroadcast persisted=$persistedTiledActive lastTiledStateTime=$lastTiledStateTime"
+        )
+
+        if (hasFreshTiledBroadcast) {
+            dispatchImeShowVisibilityFromSession(reason = "onWindowShown", forceRetile = false)
+        } else {
+            val sessionId = imeVisibilitySessionId
+            val showRunnable = Runnable {
+                pendingInitialImeShowRunnable = null
+                if (!imeWindowVisible || sessionId != imeVisibilitySessionId) {
+                    android.util.Log.d(
+                        TAG,
+                        "IME_VIS: drop delayed show session=$sessionId activeSession=$imeVisibilitySessionId imeWindowVisible=$imeWindowVisible"
+                    )
+                    return@Runnable
+                }
+                dispatchImeShowVisibilityFromSession(reason = "onWindowShown_delayed", forceRetile = false)
+            }
+            pendingInitialImeShowRunnable = showRunnable
+            imeVisibilityHandler.postDelayed(showRunnable, imeInitialShowDelayMs)
+            android.util.Log.d(
+                TAG,
+                "IME_VIS: schedule delayed show session=$sessionId delayMs=$imeInitialShowDelayMs"
+            )
+        }
+
+        android.util.Log.d(
+            TAG,
+            "onWindowShown: autoShow=$prefAutoShowOverlay autoResize=$prefAutoResize dockMode=$prefDockMode windowShownTime=$windowShownTime"
+        )
         
         // Auto-show overlay keyboard if enabled
         if (prefAutoShowOverlay) {
@@ -160,35 +340,25 @@ class DockInputMethodService : InputMethodService() {
         loadDockPrefs()
         staleTiledHandler.removeCallbacks(staleTiledCheck)
 
-        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-            .putBoolean("dock_ime_visible", false)
-            .apply()
-        
-        // Notify Launcher that IME is now hidden
-        // [FIX] Add FORCE_RETILE to ensure apps resize when manually hiding via X button
-        val imeHideIntent = Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
-        imeHideIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-        imeHideIntent.putExtra("VISIBLE", false)
-        imeHideIntent.putExtra("IS_TILED", launcherTiledActive)
-        imeHideIntent.putExtra("FORCE_RETILE", true)
-        sendBroadcast(imeHideIntent)
-        
-        // [FIX] Force inset recomputation when window hidden
-        if (prefAutoResize && prefDockMode) {
-            window?.window?.decorView?.requestLayout()
+        if (!imeWindowVisible) {
+            android.util.Log.d(TAG, "IME_VIS: ignore duplicate onWindowHidden session=$imeVisibilitySessionId")
+            return
         }
-        
-        // Auto-hide overlay keyboard if enabled
+        imeWindowVisible = false
 
-
-        if (prefAutoShowOverlay) {
-
-            val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
-            intent.setPackage(packageName)
-            intent.putExtra("FORCE_HIDE", true)
-            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-            sendBroadcast(intent)
+        pendingInitialImeShowRunnable?.let {
+            imeVisibilityHandler.removeCallbacks(it)
+            pendingInitialImeShowRunnable = null
         }
+
+        scheduleConfirmedImeHidden("onWindowHidden")
+        
+        android.util.Log.d(
+            TAG,
+            "onWindowHidden: queued confirm session=$imeVisibilitySessionId autoShow=$prefAutoShowOverlay autoResize=$prefAutoResize dockMode=$prefDockMode"
+        )
+        
+
     }
 
     override fun onCreateInputView(): View {
@@ -975,9 +1145,13 @@ class DockInputMethodService : InputMethodService() {
             val withinBootstrapWindow = (now - windowShownTime) <= 650L
             val shouldUsePersistedFallback = !hasFreshTiledBroadcastForThisShow && withinBootstrapWindow
             val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
-            
 
-            
+            val inputPkg = currentInputEditorInfo?.packageName ?: "null"
+            android.util.Log.d(
+                TAG,
+                "onComputeInsets: inputPkg=$inputPkg tiledBroadcast=$launcherTiledActive persisted=$persistedTiledActive usePersistedFallback=$shouldUsePersistedFallback hasFreshBroadcast=$hasFreshTiledBroadcastForThisShow withinBootstrap=$withinBootstrapWindow shouldSuppress=$shouldSuppressInsets autoResize=$prefAutoResize dockMode=$prefDockMode viewH=$viewH wrapperH=$wrapperH"
+            )
+
             if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
                 // TILED/MANAGED: Launcher handles resize via retileExistingWindows().
                 // Suppress insets so Android's ADJUST_RESIZE doesn't ALSO resize = double margin.
