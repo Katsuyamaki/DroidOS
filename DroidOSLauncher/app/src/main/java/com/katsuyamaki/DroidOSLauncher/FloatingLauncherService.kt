@@ -32,6 +32,7 @@ import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.*
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -590,6 +591,7 @@ private var isSoftKeyboardSupport = false
     private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeRetileRunnable: Runnable? = null
+    private var imeShowRetileCompleted = false // Tracks if show-retile finished (for hide logic)
 
     private fun isDroidOsImeCurrentlyActive(): Boolean {
         return try {
@@ -760,7 +762,10 @@ private var isSoftKeyboardSupport = false
                     val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
                     val hasLauncherTiledWindows = activeNonMinimizedCount > 1
 
-
+                    Log.d(
+                        TAG,
+                        "IME_VISIBILITY visible=$visible isTiled=$isTiled forceRetile=$forceRetile manualToggle=$manualToggle tiledCount=$activeNonMinimizedCount imeOverride=$imeMarginOverrideActive dockVisible=${isDockImeToolbarVisible()} showAboveDock=${isShowKbAboveDockEnabled()} bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
+                    )
 
                     // Ignore updates only when there are no launcher-tiled windows and no explicit override.
                     if (!hasLauncherTiledWindows && !isTiled && !forceRetile && !manualToggle) {
@@ -782,8 +787,10 @@ private var isSoftKeyboardSupport = false
                                 queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                             }
                             pendingImeRetileRunnable = null
+                            imeShowRetileCompleted = true
                         }
                         pendingImeRetileRunnable = runnable
+                        imeShowRetileCompleted = false
                         uiHandler.postDelayed(runnable, 350)
                     } else {
                         // Keyboard hiding - cancel pending show-retile if exists,
@@ -804,6 +811,7 @@ private var isSoftKeyboardSupport = false
                                     queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                                 }
                             }
+                            imeShowRetileCompleted = false
                             return@onReceive
                         }
                         imeMarginOverrideActive = false
@@ -818,6 +826,7 @@ private var isSoftKeyboardSupport = false
                                 queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
                             }
                         }
+                        imeShowRetileCompleted = false
                     }
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING") {
@@ -831,6 +840,12 @@ private var isSoftKeyboardSupport = false
                     val minimizeIntent = Intent().putExtra("COMMAND", "MINIMIZE_ALL")
                     queueWindowManagerCommand(minimizeIntent)
                 }
+            } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") {
+                val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
+                autoAdjustMarginForIME = enabled
+                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled)
+                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled, orientSuffix())
+                if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
                 bottomMarginPercent = percent
@@ -862,11 +877,6 @@ private var isSoftKeyboardSupport = false
                         }
                     }
                 }
-                val marginIntent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
-                marginIntent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                marginIntent.putExtra("PERCENT", percent)
-                sendBroadcast(marginIntent)
-
                 safeToast("Margin Updated: $percent%")
             }
         }
@@ -2213,21 +2223,13 @@ private var isSoftKeyboardSupport = false
                         // 2. Open 1 app (even if in queue), tap text field - app should resize for keyboard
                         // ===================================================================================
                         val isActuallyTiled = activeNonMinimized.size > 1
-                        val managedPackagesCsv = activeNonMinimized
-                            .map { it.getBasePackage() }
-                            .distinct()
-                            .joinToString(",")
                         if (!isSystemOverlay) {
                             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                                 .putBoolean("launcher_tiled_active", isActuallyTiled)
-                                .putBoolean("launcher_focus_managed", isManagedApp)
-                                .putString("launcher_managed_packages_csv", managedPackagesCsv)
                                 .apply()
                             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                                 .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                                .putExtra("TILED_ACTIVE", isActuallyTiled)
-                                .putExtra("FOCUSED_MANAGED", isManagedApp)
-                                .putExtra("MANAGED_PACKAGES", managedPackagesCsv))
+                                .putExtra("TILED_ACTIVE", isActuallyTiled))
                         }
                         // [FULLSCREEN] Skip auto-minimize during cooldown after explicit tiled app launch.
                         // This prevents newly launched tiled apps from being immediately hidden.
@@ -2547,16 +2549,13 @@ private var isSoftKeyboardSupport = false
         // [STATE SYNC] Reset DockIMEPrefs on startup to prevent stale state.
         // The launcher will send correct TILED_STATE broadcasts as apps gain focus.
         getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("launcher_has_managed_apps", false)
             .putBoolean("launcher_tiled_active", false)
-            .putBoolean("launcher_focus_managed", false)
-            .putString("launcher_managed_packages_csv", "")
             .apply()
         // Also broadcast initial TILED_STATE(false) to reset keyboard
         sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
             .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-            .putExtra("TILED_ACTIVE", false)
-            .putExtra("FOCUSED_MANAGED", false)
-            .putExtra("MANAGED_PACKAGES", ""))
+            .putExtra("TILED_ACTIVE", false))
 
         // Initialize WindowManager
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -2577,6 +2576,7 @@ private var isSoftKeyboardSupport = false
             addAction("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
             addAction("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") // [FIX] Sync Margin
             addAction("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") // Auto-adjust margin
+            addAction("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") // Sync from DockIME
             addAction("com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING") // Auto-minimize tiled apps
 
         }
@@ -7913,34 +7913,16 @@ private var isSoftKeyboardSupport = false
             // Authoritative tiled state: number of visible launcher-managed windows.
             // Do not gate by transient accessibility focus, which can flip during IME transitions.
             val isActuallyTiled = activeNonMinimized.size > 1
-            val managedPackagesCsv = activeNonMinimized
-                .map { it.getBasePackage() }
-                .distinct()
-                .joinToString(",")
-            val focusIsManaged = if (activePackageName != null) {
-                val isGeminiFocused = activePackageName == "com.google.android.googlequicksearchbox"
-                activeNonMinimized.any {
-                    it.getBasePackage() == activePackageName ||
-                        it.packageName == activePackageName ||
-                        (isGeminiFocused && it.getBasePackage() == "com.google.android.apps.bard")
-                }
-            } else {
-                false
-            }
 
             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                 .putBoolean("launcher_tiled_active", isActuallyTiled)
-                .putBoolean("launcher_focus_managed", focusIsManaged)
-                .putString("launcher_managed_packages_csv", managedPackagesCsv)
                 .apply()
 
             // Broadcast tells DockIME if app is actively TILED (2+ apps visible).
             // Single app (even in queue) should behave as fullscreen for proper inset handling.
             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                 .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                .putExtra("TILED_ACTIVE", isActuallyTiled)
-                .putExtra("FOCUSED_MANAGED", focusIsManaged)
-                .putExtra("MANAGED_PACKAGES", managedPackagesCsv))
+                .putExtra("TILED_ACTIVE", isActuallyTiled))
 
             safeToast(msg)
 

@@ -193,7 +193,16 @@
             android:progressTint="#3DDC84"
             android:thumbTint="#3DDC84"/>
 
-
+        <CheckBox
+            android:id="@+id/checkbox_sync_margin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sync with DroidOS Bottom Margin"
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:buttonTint="#3DDC84"
+            android:paddingStart="8dp"
+            android:layout_marginTop="4dp"/>
     </LinearLayout>
 
 </LinearLayout>

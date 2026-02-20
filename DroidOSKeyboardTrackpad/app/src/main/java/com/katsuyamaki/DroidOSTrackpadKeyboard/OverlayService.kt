@@ -186,36 +186,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
     private var manualKeyScaleBeforeMargin = -1 // Save manual key scale before margin adjustment
 
-    private fun isLauncherTiledActive(): Boolean {
-        return getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-            .getBoolean("launcher_tiled_active", false)
-    }
-
-    private fun isLauncherFocusedManaged(): Boolean {
-        return getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-            .getBoolean("launcher_focus_managed", false)
-    }
-
-    private fun shouldUseImeMarginResize(): Boolean {
-        return isDockIMEVisible && !isLauncherTiledActive() && !isLauncherFocusedManaged()
-    }
-
-    private fun restoreManualDockScaleIfNeeded() {
-        if (manualKeyScaleBeforeMargin <= 0) return
-        val restoreScale = manualKeyScaleBeforeMargin
-        manualKeyScaleBeforeMargin = -1
-        prefs.prefKeyScale = restoreScale
-
-        if (isCustomKeyboardVisible) {
-            val density = resources.displayMetrics.density
-            val navBarHeight = getNavBarHeight()
-            val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
-            val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
-            val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
-            keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
-            saveKeyboardHeightForDock(kbHeight)
-        }
-    }
 
     var isCustomKeyboardVisible = true // Changed: Default ON
     var isScreenOff = false
@@ -546,25 +516,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             prefs.save(this)
             if (isCustomKeyboardVisible) {
                 val margin = intent.getIntExtra("resize_to_margin", -1)
-                val canUseMarginResize = shouldUseImeMarginResize() && margin >= 0
-                if (canUseMarginResize) {
-                    applyDockModeWithMargin(margin)
-                } else {
-                    restoreManualDockScaleIfNeeded()
-                    applyDockMode()
-                }
+                if (margin >= 0) applyDockModeWithMargin(margin) else applyDockMode()
             }
         }
         if (intent.hasExtra("resize_to_margin")) {
             val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-            // Slider-driven margin resize only for fullscreen IME sessions.
-            if (marginPercent >= 0 && isCustomKeyboardVisible && shouldUseImeMarginResize()) {
-                applyDockModeWithMargin(marginPercent)
-            } else if (marginPercent >= 0 && isCustomKeyboardVisible) {
-                lastDockMarginPercent = -1
-                restoreManualDockScaleIfNeeded()
-                applyDockMode()
-            }
+            if (marginPercent >= 0 && isCustomKeyboardVisible) applyDockModeWithMargin(marginPercent)
         }
         if (intent.hasExtra("auto_resize")) {
             val autoResize = intent.getBooleanExtra("auto_resize", false)
@@ -592,12 +549,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
         if (intent.getBooleanExtra("enabled", false)) {
             val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-            if (marginPercent >= 0 && shouldUseImeMarginResize()) {
+            if (marginPercent >= 0) {
                 lastDockMarginPercent = marginPercent
                 applyDockModeWithMargin(marginPercent)
             } else {
-                lastDockMarginPercent = -1
-                restoreManualDockScaleIfNeeded()
                 applyDockMode()
             }
         }
@@ -2049,8 +2004,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             isCustomKeyboardVisible = true
         }
         
-        // Capture baseline manual scale before entering IME margin mode.
-        if (manualKeyScaleBeforeMargin <= 0) {
+        // Save manual key scale before overwriting (for restore when auto resize is turned off)
+        if (manualKeyScaleBeforeMargin < 0) {
             manualKeyScaleBeforeMargin = prefs.prefKeyScale
         }
         
@@ -2074,9 +2029,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Use atomic method that sets BOTH window bounds AND key scale together
         // This prevents desync between window size and key scale
         keyboardOverlay?.setWindowBoundsWithScale(0, targetY, targetW, kbHeight)
-
-        // Keep IME slider scale transient; manual/default keyboard scale stays in prefs.prefKeyScale.
-
+        
+        // Update local prefs to match (base height is 300dp)
+        val baseKbHeight = 300f * density
+        prefs.prefKeyScale = ((kbHeight.toFloat() / baseKbHeight) * 100).toInt().coerceIn(30, 150)
+        
         // Save keyboard height for Dock IME auto-resize feature
         saveKeyboardHeightForDock(kbHeight)
         
@@ -2340,10 +2297,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val dockModePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false))
         if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
-            // Manual/bubble open path: use standard dock behavior, not slider margin mode.
-            restoreManualDockScaleIfNeeded()
-            logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock_manual")
-            applyDockMode()
+            if (lastDockMarginPercent >= 0) {
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$lastDockMarginPercent")
+                applyDockModeWithMargin(lastDockMarginPercent)
+            } else {
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock")
+                applyDockMode()
+            }
         } else {
             logOverlayKbDiag(
                 "toggleCustomKeyboard_dockDecision",
@@ -2501,6 +2461,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (prefs.prefBubbleIncludeTrackpad && !isTrackpadVisible) toggleTrackpad()
         if (prefs.prefBubbleIncludeKeyboard && !isCustomKeyboardVisible) toggleCustomKeyboard()
         hasPendingRestore = false
+
+        // Notify launcher that overlay KB is back (for auto-adjust margin)
+        if (isCustomKeyboardVisible) {
+            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            intent.putExtra("VISIBLE", true)
+            sendBroadcast(intent)
+        }
     }
 
 

@@ -37,8 +37,6 @@ class DockInputMethodService : InputMethodService() {
     // The slight delay before receiving the broadcast is acceptable - fullscreen (default)
     // behavior is safer than breaking fullscreen apps entirely.
     private var launcherTiledActive = false
-    private var launcherFocusedManaged = false
-    private var launcherManagedPackages: Set<String> = emptySet()
     private var forceFullUpdate = false // Flag to force full setInputView() on next update
     private var lastTiledStateTime = 0L // Timestamp of last TILED_STATE broadcast
     private var windowShownTime = 0L // Timestamp of last onWindowShown
@@ -50,17 +48,7 @@ class DockInputMethodService : InputMethodService() {
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
-            val newFocusedManaged = intent?.getBooleanExtra("FOCUSED_MANAGED", launcherFocusedManaged) ?: launcherFocusedManaged
-            val managedCsv = intent?.getStringExtra("MANAGED_PACKAGES")
 
-            launcherFocusedManaged = newFocusedManaged
-            if (managedCsv != null) {
-                launcherManagedPackages = managedCsv
-                    .split(',')
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .toSet()
-            }
 
             lastTiledStateTime = System.currentTimeMillis()
             if (newState != launcherTiledActive) {
@@ -112,8 +100,6 @@ class DockInputMethodService : InputMethodService() {
         // Start each IME show from broadcast authority (false until proven true).
         // Persisted tiled state is still used as a short bootstrap fallback in onComputeInsets.
         launcherTiledActive = false
-        launcherFocusedManaged = false
-        launcherManagedPackages = emptySet()
 
         // Record show time for bootstrap fallback window
         windowShownTime = System.currentTimeMillis()
@@ -151,8 +137,9 @@ class DockInputMethodService : InputMethodService() {
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
             intent.putExtra("nav_bar_height", getActualNavBarHeight())
-            // IME slider margin/scale only for true fullscreen Android input targets.
-            if (shouldUseImeSliderMarginForCurrentInput()) {
+            // Slider-driven margin resize is for IME fullscreen auto-resize only.
+            // Tiled paths must use launcher bottom-margin handling.
+            if (prefAutoResize && !launcherTiledActive) {
                 intent.putExtra("resize_to_margin", prefResizeScale)
             }
             sendBroadcast(intent)
@@ -231,6 +218,7 @@ class DockInputMethodService : InputMethodService() {
     private var prefDockMode = false
     private var prefAutoResize = false
     private var prefResizeScale = 0 // Default 0% (Range 0-50%)
+    private var prefSyncMargin = false
     private var prefShowKBAboveDock = true // Default ON when dock mode is enabled
     
     private val ACTION_MARGIN_CHANGED = "com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED"
@@ -245,14 +233,14 @@ class DockInputMethodService : InputMethodService() {
 
     private val marginReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_MARGIN_CHANGED) {
+            if (intent?.action == ACTION_MARGIN_CHANGED && prefSyncMargin) {
                 val percent = intent.getIntExtra("PERCENT", 0)
                 // Always update if different
                 if (prefResizeScale != percent) {
                     prefResizeScale = percent
                     saveDockPrefs()
                     updateInputViewHeight()
-
+                    
                     // Update UI if visible
                     onMarginUpdatedCallback?.invoke(percent)
                 }
@@ -326,6 +314,7 @@ class DockInputMethodService : InputMethodService() {
         prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
         prefAutoResize = prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
         prefResizeScale = prefs.getInt("auto_resize_scale$os", prefs.getInt("auto_resize_scale", 0))
+        prefSyncMargin = prefs.getBoolean("sync_margin$os", prefs.getBoolean("sync_margin", false))
         prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock$os", prefs.getBoolean("show_kb_above_dock", true))
     }
     
@@ -342,35 +331,11 @@ class DockInputMethodService : InputMethodService() {
             .putBoolean("auto_resize", prefAutoResize)
             .putInt("auto_resize_scale$os", prefResizeScale)
             .putInt("auto_resize_scale", prefResizeScale)
+            .putBoolean("sync_margin$os", prefSyncMargin)
+            .putBoolean("sync_margin", prefSyncMargin)
             .putBoolean("show_kb_above_dock$os", prefShowKBAboveDock)
             .putBoolean("show_kb_above_dock", prefShowKBAboveDock)
             .apply()
-    }
-
-    private fun currentInputTargetsManagedApp(): Boolean {
-        val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val inputPkg = currentInputEditorInfo?.packageName?.trim()
-        if (!inputPkg.isNullOrEmpty()) {
-            val managedCsv = prefs.getString("launcher_managed_packages_csv", "") ?: ""
-            if (managedCsv.isNotEmpty()) {
-                val managedSet = managedCsv
-                    .split(',')
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .toSet()
-                if (managedSet.contains(inputPkg)) return true
-            }
-        }
-        return prefs.getBoolean("launcher_focus_managed", false)
-    }
-
-    private fun shouldUseImeSliderMarginForCurrentInput(): Boolean {
-        if (!prefAutoResize) return false
-        val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val launcherTiled = prefs.getBoolean("launcher_tiled_active", false)
-        if (launcherTiled) return false
-        if (currentInputTargetsManagedApp()) return false
-        return true
     }
     // =================================================================================
 
@@ -538,6 +503,7 @@ class DockInputMethodService : InputMethodService() {
         val dividerResize = popupView.findViewById<View>(R.id.divider_resize)
         val textSliderLabel = popupView.findViewById<android.widget.TextView>(R.id.text_resize_label)
         val seekResize = popupView.findViewById<android.widget.SeekBar>(R.id.seekbar_resize_height)
+        val checkSync = popupView.findViewById<android.widget.CheckBox>(R.id.checkbox_sync_margin)
         
         // Option 2b: Show KB Above Dock
         val optionKBAboveDock = popupView.findViewById<View>(R.id.option_kb_above_dock)
@@ -609,6 +575,22 @@ class DockInputMethodService : InputMethodService() {
             onMarginUpdatedCallback = null
         }
 
+        // Setup Sync Checkbox
+        checkSync?.isChecked = prefSyncMargin
+        checkSync?.setOnCheckedChangeListener { _, isChecked ->
+            prefSyncMargin = isChecked
+            saveDockPrefs()
+            
+            // If turned ON, immediately sync values
+            if (isChecked) {
+                // 1. Force Launcher to match IME
+                val intent = Intent(ACTION_SET_MARGIN)
+                intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
+                intent.putExtra("PERCENT", prefResizeScale)
+                sendBroadcast(intent)
+            }
+        }
+
         // Setup Slider
         seekResize?.progress = prefResizeScale
         textSliderLabel?.text = "Bottom Margin: $prefResizeScale%"
@@ -625,18 +607,18 @@ class DockInputMethodService : InputMethodService() {
                 saveDockPrefs()
                 updateInputViewHeight()
                 
-                // Always mirror to Launcher
-                val intent = Intent(ACTION_SET_MARGIN)
-                intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
-                intent.putExtra("PERCENT", prefResizeScale)
-                sendBroadcast(intent)
+                // Sync to Launcher if enabled
+                if (prefSyncMargin) {
+                    val intent = Intent(ACTION_SET_MARGIN)
+                    intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Explicit Target
+                    intent.putExtra("PERCENT", prefResizeScale)
+                    sendBroadcast(intent)
+                }
                 
-                // Notify OverlayService. Only include resize_to_margin for true fullscreen input targets.
+                // Notify OverlayService to resize keyboard to fit margin
                 val kbIntent = Intent("DOCK_PREF_CHANGED")
                 kbIntent.setPackage(packageName)
-                if (shouldUseImeSliderMarginForCurrentInput()) {
-                    kbIntent.putExtra("resize_to_margin", prefResizeScale)
-                }
+                kbIntent.putExtra("resize_to_margin", prefResizeScale)
                 kbIntent.putExtra("show_kb_above_dock", prefShowKBAboveDock)
                 sendBroadcast(kbIntent)
             }
@@ -992,16 +974,7 @@ class DockInputMethodService : InputMethodService() {
             val hasFreshTiledBroadcastForThisShow = lastTiledStateTime >= windowShownTime
             val withinBootstrapWindow = (now - windowShownTime) <= 650L
             val shouldUsePersistedFallback = !hasFreshTiledBroadcastForThisShow && withinBootstrapWindow
-
-            val inputPkg = currentInputEditorInfo?.packageName?.trim()
-            val inputTargetsManagedApp = when {
-                !inputPkg.isNullOrEmpty() -> launcherManagedPackages.contains(inputPkg)
-                else -> launcherFocusedManaged
-            }
-
-            val liveTiledForInput = launcherTiledActive && inputTargetsManagedApp
-            val bootstrapTiledForInput = shouldUsePersistedFallback && persistedTiledActive && inputTargetsManagedApp
-            val shouldSuppressInsets = liveTiledForInput || bootstrapTiledForInput
+            val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
             
 
             
