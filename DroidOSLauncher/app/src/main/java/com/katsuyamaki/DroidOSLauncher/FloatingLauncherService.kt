@@ -590,8 +590,9 @@ private var isSoftKeyboardSupport = false
     private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
     private var imeRetileCooldownUntil = 0L
     private var lastAppliedEffectiveMargin = -1
-    private var pendingImeRetileRunnable: Runnable? = null
-    private var imeShowRetileCompleted = false // Tracks if show-retile finished (for hide logic)
+    private var pendingImeShowRetileToken = 0L
+    private var nextImeShowRetileToken = 1L
+    private var imeVisibilityEpoch = 0L
 
     private fun isDroidOsImeCurrentlyActive(): Boolean {
         return try {
@@ -758,76 +759,19 @@ private var isSoftKeyboardSupport = false
                     val isTiled = intent?.getBooleanExtra("IS_TILED", true) ?: true
                     val forceRetile = intent?.getBooleanExtra("FORCE_RETILE", false) ?: false
                     val manualToggle = intent?.getBooleanExtra("MANUAL_TOGGLE", false) ?: false
+                    val hasDockExtra = intent?.hasExtra("DOCK_IME_VISIBLE") == true
+                    val dockVisible = intent?.getBooleanExtra("DOCK_IME_VISIBLE", false) ?: false
 
-                    val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
-                    val hasLauncherTiledWindows = activeNonMinimizedCount > 1
-
-                    Log.d(
-                        TAG,
-                        "IME_VISIBILITY visible=$visible isTiled=$isTiled forceRetile=$forceRetile manualToggle=$manualToggle tiledCount=$activeNonMinimizedCount imeOverride=$imeMarginOverrideActive dockVisible=${isDockImeToolbarVisible()} showAboveDock=${isShowKbAboveDockEnabled()} bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
+                    queueWindowManagerCommand(
+                        Intent()
+                            .putExtra("COMMAND", "APPLY_IME_VISIBILITY")
+                            .putExtra("VISIBLE", visible)
+                            .putExtra("IS_TILED", isTiled)
+                            .putExtra("FORCE_RETILE", forceRetile)
+                            .putExtra("MANUAL_TOGGLE", manualToggle)
+                            .putExtra("HAS_DOCK_IME_VISIBLE", hasDockExtra)
+                            .putExtra("DOCK_IME_VISIBLE", dockVisible)
                     )
-
-                    // Ignore updates only when there are no launcher-tiled windows and no explicit override.
-                    if (!hasLauncherTiledWindows && !isTiled && !forceRetile && !manualToggle) {
-                        return@onReceive
-                    }
-
-                    // [FIX] Debounced show: delay retile 350ms on VISIBLE=true.
-                    // If VISIBLE=false arrives before timer fires, cancel it.
-                    // Prevents focus-loss loops on Zillow/Google Voice.
-                    if (visible) {
-                        pendingImeRetileRunnable?.let { uiHandler.removeCallbacks(it) }
-                        imeMarginOverrideActive = true
-                        val runnable = Runnable {
-                            val newEffective = effectiveBottomMarginPercent()
-                            if (newEffective != lastAppliedEffectiveMargin) {
-                                lastAppliedEffectiveMargin = newEffective
-                                imeRetileCooldownUntil = System.currentTimeMillis() + 500
-                                setupVisualQueue()
-                                queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
-                            }
-                            pendingImeRetileRunnable = null
-                            imeShowRetileCompleted = true
-                        }
-                        pendingImeRetileRunnable = runnable
-                        imeShowRetileCompleted = false
-                        uiHandler.postDelayed(runnable, 350)
-                    } else {
-                        // Keyboard hiding - cancel pending show-retile if exists,
-                        // but still apply hidden-state margin immediately.
-                        if (pendingImeRetileRunnable != null) {
-                            uiHandler.removeCallbacks(pendingImeRetileRunnable!!)
-                            pendingImeRetileRunnable = null
-                            imeMarginOverrideActive = false
-
-                            val newEffective = effectiveBottomMarginPercent()
-                            val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
-                            if (shouldRetile) {
-                                val now = System.currentTimeMillis()
-                                if (forceRetile || now >= imeRetileCooldownUntil) {
-                                    lastAppliedEffectiveMargin = newEffective
-                                    imeRetileCooldownUntil = now + 500
-                                    setupVisualQueue()
-                                    queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
-                                }
-                            }
-                            imeShowRetileCompleted = false
-                            return@onReceive
-                        }
-                        imeMarginOverrideActive = false
-                        val newEffective = effectiveBottomMarginPercent()
-                        val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
-                        if (shouldRetile) {
-                            val now = System.currentTimeMillis()
-                            if (forceRetile || now >= imeRetileCooldownUntil) {
-                                lastAppliedEffectiveMargin = newEffective
-                                imeRetileCooldownUntil = now + 500
-                                setupVisualQueue()
-                                queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
-                            }
-                        }
-                        imeShowRetileCompleted = false
-                    }
                 }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING") {
                 // [FULLSCREEN] External request to minimize tiled apps (e.g. keyboard opening Settings).
@@ -848,36 +792,11 @@ private var isSoftKeyboardSupport = false
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
-                bottomMarginPercent = percent
-                AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent)
-                AppPreferences.setBottomMarginPercent(this@FloatingLauncherService, currentDisplayId, percent, orientSuffix())
-                setupVisualQueue() // Recalc HUD pos
-                // [FIX] Always retile when margin changes while IME is visible
-                // This ensures slider changes in DockIME take effect immediately
-                if (autoAdjustMarginForIME && imeMarginOverrideActive) {
-                    queueWindowManagerCommand(Intent().putExtra("COMMAND", "RETILE_IME_MARGIN"))
-                } else if (isInstantMode) {
-                    applyLayoutImmediate()
-                }
-                
-                // Update UI if in settings mode - TARGETED UPDATE
-                if (currentMode == MODE_SETTINGS) {
-                    uiHandler.post {
-                        val adapter = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter
-                        if (adapter != null) {
-                            for (i in displayList.indices) {
-                                val item = displayList[i]
-                                if (item is MarginOption && item.type == 1) { // 1 = Bottom Margin
-                                    // Replace immutable data object
-                                    displayList[i] = MarginOption(1, percent)
-                                    adapter.notifyItemChanged(i)
-                                    break
-                                }
-                            }
-                        }
-                    }
-                }
-                safeToast("Margin Updated: $percent%")
+                queueWindowManagerCommand(
+                    Intent()
+                        .putExtra("COMMAND", "APPLY_MARGIN_BOTTOM")
+                        .putExtra("PERCENT", percent)
+                )
             }
         }
     }
@@ -6852,6 +6771,111 @@ private var isSoftKeyboardSupport = false
 
     // SelectedAppsAdapter extracted to SelectedAppsAdapter.kt
 
+    private fun applyImeMarginRetileFromQueue(forceRetile: Boolean) {
+        val newEffective = effectiveBottomMarginPercent()
+        val shouldRetile = (newEffective != lastAppliedEffectiveMargin) || forceRetile
+        if (!shouldRetile) return
+
+        val now = System.currentTimeMillis()
+        if (!forceRetile && now < imeRetileCooldownUntil) return
+
+        lastAppliedEffectiveMargin = newEffective
+        imeRetileCooldownUntil = now + 500
+        setupVisualQueue()
+        retileExistingWindows()
+    }
+
+    private fun applyImeVisibilityFromQueue(intent: Intent) {
+        val visible = intent.getBooleanExtra("VISIBLE", false)
+        val isTiled = intent.getBooleanExtra("IS_TILED", true)
+        val forceRetile = intent.getBooleanExtra("FORCE_RETILE", false)
+        val manualToggle = intent.getBooleanExtra("MANUAL_TOGGLE", false)
+        val hasDockExtra = intent.getBooleanExtra("HAS_DOCK_IME_VISIBLE", false)
+        val dockVisible = intent.getBooleanExtra("DOCK_IME_VISIBLE", false)
+
+        val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
+        val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+
+        Log.d(
+            TAG,
+            "IME_VISIBILITY[Q] visible=$visible isTiled=$isTiled forceRetile=$forceRetile manualToggle=$manualToggle dockExtra=$hasDockExtra dockVisible=$dockVisible tiledCount=$activeNonMinimizedCount imeOverride=$imeMarginOverrideActive bottomMargin=$bottomMarginPercent effective=${effectiveBottomMarginPercent()}"
+        )
+
+        // Ignore updates only when there are no launcher-tiled windows and no explicit override.
+        if (!hasLauncherTiledWindows && !isTiled && !forceRetile && !manualToggle) {
+            return
+        }
+
+        if (visible) {
+            imeVisibilityEpoch += 1L
+            val epoch = imeVisibilityEpoch
+            imeMarginOverrideActive = true
+
+            val token = nextImeShowRetileToken++
+            pendingImeShowRetileToken = token
+
+            uiHandler.postDelayed({
+                queueWindowManagerCommand(
+                    Intent()
+                        .putExtra("COMMAND", "APPLY_IME_VISIBILITY_SHOW_COMMIT")
+                        .putExtra("SHOW_TOKEN", token)
+                        .putExtra("SHOW_EPOCH", epoch)
+                )
+            }, 350L)
+        } else {
+            imeVisibilityEpoch += 1L
+            // Invalidate any pending delayed show commit callbacks and apply hidden-state margin now.
+            pendingImeShowRetileToken = nextImeShowRetileToken++
+            imeMarginOverrideActive = false
+            applyImeMarginRetileFromQueue(forceRetile)
+        }
+    }
+
+    private fun applyImeVisibilityShowCommitFromQueue(intent: Intent) {
+        val token = intent.getLongExtra("SHOW_TOKEN", -1L)
+        val epoch = intent.getLongExtra("SHOW_EPOCH", -1L)
+        if (token <= 0L || epoch <= 0L) return
+        if (token != pendingImeShowRetileToken) return
+        if (epoch != imeVisibilityEpoch) return
+        if (!imeMarginOverrideActive) return
+
+        applyImeMarginRetileFromQueue(forceRetile = false)
+    }
+
+    private fun applyBottomMarginFromQueue(intent: Intent) {
+        val percent = intent.getIntExtra("PERCENT", 0)
+        bottomMarginPercent = percent
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent)
+        AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent, orientSuffix())
+        setupVisualQueue() // Recalc HUD pos
+
+        // Margin mutation + retile stays queue-serialized with IME transitions.
+        if (autoAdjustMarginForIME && imeMarginOverrideActive) {
+            applyImeMarginRetileFromQueue(forceRetile = true)
+        } else if (isInstantMode) {
+            applyLayoutImmediate()
+        }
+
+        // Update UI if in settings mode - TARGETED UPDATE
+        if (currentMode == MODE_SETTINGS) {
+            uiHandler.post {
+                val adapter = drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter
+                if (adapter != null) {
+                    for (i in displayList.indices) {
+                        val item = displayList[i]
+                        if (item is MarginOption && item.type == 1) { // 1 = Bottom Margin
+                            // Replace immutable data object
+                            displayList[i] = MarginOption(1, percent)
+                            adapter.notifyItemChanged(i)
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        safeToast("Margin Updated: $percent%")
+    }
+
     // =================================================================================
     // WINDOW MANAGER COMMAND PROCESSOR (v2)
     // SUMMARY: Handles headless commands with 1-BASED INDEXING.
@@ -6878,9 +6902,18 @@ private var isSoftKeyboardSupport = false
 
 
         when (cmd) {
+            "APPLY_IME_VISIBILITY" -> {
+                applyImeVisibilityFromQueue(intent)
+            }
+            "APPLY_IME_VISIBILITY_SHOW_COMMIT" -> {
+                applyImeVisibilityShowCommitFromQueue(intent)
+            }
+            "APPLY_MARGIN_BOTTOM" -> {
+                applyBottomMarginFromQueue(intent)
+            }
             "RETILE_IME_MARGIN" -> {
                 // Queue-safe retile path for all IME margin transitions.
-                retileExistingWindows()
+                applyImeMarginRetileFromQueue(forceRetile = true)
             }
             "OPEN_SWAP" -> {
                 // Trigger the OPEN_SWAP flow via triggerCommand
