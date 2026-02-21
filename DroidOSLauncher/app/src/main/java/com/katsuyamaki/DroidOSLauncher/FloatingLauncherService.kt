@@ -730,11 +730,10 @@ private var isSoftKeyboardSupport = false
 
         // DockIME toolbar visible - it sits ON TOP of nav bar.
         // Do NOT add systemInsetPct here - nav bar space is covered by DockIME.
-        return if (showAboveDock) {
-            bottomMarginPercent
-        } else {
-            (bottomMarginPercent - toolbarHeightPct).coerceAtLeast(0)
-        }
+        // Both toggle ON and OFF use full margin:
+        // - Toggle ON: keyboard above toolbar, both in margin space
+        // - Toggle OFF: keyboard covers toolbar, fills margin space
+        return bottomMarginPercent
     }
 
 

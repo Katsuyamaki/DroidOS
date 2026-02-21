@@ -2049,6 +2049,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val kbHeight: Int
         val targetY: Int
         
+        // Calculate toolbar as percentage (same truncation as Launcher's dockToolbarHeightPercent)
+        // This ensures pixel-perfect alignment between tiled app bottom and keyboard top
+        val toolbarPct = ((dockToolbarHeight.toFloat() / screenHeight.toFloat()) * 100f).toInt()
+        val toolbarFromPct = (screenHeight * toolbarPct / 100f).toInt()
+        
         if (prefs.prefShowKBAboveDock && isDockIMEVisible) {
             // Case 1: Toggle ON + DockIME visible
             // Keyboard above toolbar, toolbar above nav bar
@@ -2062,11 +2067,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             targetY = screenHeight - kbHeight - navBarHeight
         } else if (!prefs.prefShowKBAboveDock && isDockIMEVisible) {
             // Case 3: Toggle OFF + DockIME visible
-            // Keyboard covers toolbar, sits on nav bar
-            // Launcher returns (margin - toolbar), so tiled apps end at:
-            //   screenHeight - marginHeight + toolbarHeight
-            kbHeight = (marginHeight - dockToolbarHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
-            targetY = screenHeight - marginHeight + dockToolbarHeight
+            // Keyboard covers toolbar - Launcher keeps full margin for tiled apps
+            // Keyboard top aligns with tiled bottom, covers DroidOS toolbar
+            kbHeight = (marginHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
+            targetY = screenHeight - marginHeight
         } else {
             // Case 4: Toggle OFF + DockIME not visible (manual KB open)
             // No toolbar, keyboard fills margin space above nav bar
