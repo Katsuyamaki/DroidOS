@@ -37,6 +37,7 @@ growth_stats.png
 droid_stats_graph.py
 DroidOS_Repomix_*.md
 log.md
+playstore.md
 # Ignore all files in the project root
 /*
 # Do NOT ignore directories (this allows Git to see your app folders)

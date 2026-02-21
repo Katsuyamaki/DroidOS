@@ -114,6 +114,16 @@
                 android:src="@android:drawable/checkbox_off_background"/>
         </LinearLayout>
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Microphone Disclosure: Voice input features may use microphone access only when user-triggered. Audio is handled through system voice input flows. DroidOS does not transmit personal data to external servers."
+            android:textColor="#DDDDDD"
+            android:textSize="12sp"
+            android:background="#222222"
+            android:padding="10dp"
+            android:layout_marginBottom="12dp"/>
+
         <!-- STEP 3: SHIZUKU -->
         <LinearLayout
             android:id="@+id/btn_start_check"
