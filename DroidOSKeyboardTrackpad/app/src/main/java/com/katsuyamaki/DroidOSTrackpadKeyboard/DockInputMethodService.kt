@@ -143,6 +143,12 @@ class DockInputMethodService : InputMethodService() {
         if (forceRetile) {
             intent.putExtra("FORCE_RETILE", true)
         }
+        // Send actual measured heights in pixels for accurate margin calculation
+        // on displays with different densities and nav bar configurations
+        val toolbarHeightPx = getActualToolbarHeightPx()
+        val navBarHeightPx = getActualNavBarHeight()
+        intent.putExtra("TOOLBAR_HEIGHT_PX", toolbarHeightPx)
+        intent.putExtra("NAV_BAR_HEIGHT_PX", navBarHeightPx)
         sendBroadcast(intent)
         lastImeVisibilityBroadcast = visible
         lastImeTiledBroadcast = isTiled
@@ -1035,6 +1041,19 @@ class DockInputMethodService : InputMethodService() {
             android.view.WindowInsets.Type.displayCutout()
         )
         return insets.bottom
+    }
+
+    /**
+     * Get actual toolbar height in pixels using the IME's display density.
+     * This is sent to Launcher for accurate margin percentage calculation on
+     * displays with different DPIs.
+     */
+    private fun getActualToolbarHeightPx(): Int {
+        // Use IME display's actual density, not default display
+        val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val metrics = android.util.DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(metrics)
+        return (40f * metrics.density).toInt()
     }
 
     // Helper: Send key with meta state

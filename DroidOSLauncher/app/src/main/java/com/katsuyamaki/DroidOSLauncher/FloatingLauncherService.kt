@@ -599,6 +599,8 @@ private var isSoftKeyboardSupport = false
     private var autoAdjustMarginForIME = false
     private var imeMarginOverrideActive = false
     private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
+    private var receivedToolbarHeightPx: Int = -1 // Actual toolbar height from DockIME (-1 = not received)
+    private var receivedNavBarHeightPx: Int = -1 // Actual nav bar height from DockIME (-1 = not received)
     private var overlayKeyboardVisible = false // Track overlay keyboard state for drawer open preservation
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeShowRetileToken = 0L
@@ -658,8 +660,17 @@ private var isSoftKeyboardSupport = false
         display.getRealMetrics(metrics)
         val screenHeight = metrics.heightPixels
         if (screenHeight <= 0) return 0
-        val toolbarPx = (40f * resources.displayMetrics.density).toInt()
-        return ((toolbarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
+        // Use received toolbar height from DockIME when available for accurate cross-display DPI
+        val toolbarPx = if (receivedToolbarHeightPx > 0) {
+            receivedToolbarHeightPx
+        } else {
+            // Fallback: use target display density (not default display)
+            (40f * metrics.density).toInt()
+        }
+        // Include nav bar/system bottom UI height when provided by DockIME.
+        val navBarPx = if (receivedNavBarHeightPx >= 0) receivedNavBarHeightPx else 0
+        val totalBottomUiPx = toolbarPx + navBarPx
+        return ((totalBottomUiPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
     }
 
     private fun effectiveBottomMarginPercent(): Int {
@@ -819,6 +830,16 @@ private var isSoftKeyboardSupport = false
                 if (!droidOsImeDetected) {
                     droidOsImeDetected = true
                     AppPreferences.setDroidOsImeDetected(this@FloatingLauncherService, true)
+                }
+                // Store actual heights from DockIME for accurate margin calculation
+                // Toolbar: DockIME toolbar; Nav bar: system bottom UI (3-button/gesture/IME switcher)
+                val toolbarPx = intent?.getIntExtra("TOOLBAR_HEIGHT_PX", -1) ?: -1
+                val navBarPx = intent?.getIntExtra("NAV_BAR_HEIGHT_PX", -1) ?: -1
+                if (toolbarPx > 0) {
+                    receivedToolbarHeightPx = toolbarPx
+                }
+                if (navBarPx >= 0) {
+                    receivedNavBarHeightPx = navBarPx
                 }
                 if (autoAdjustMarginForIME) {
                     val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
