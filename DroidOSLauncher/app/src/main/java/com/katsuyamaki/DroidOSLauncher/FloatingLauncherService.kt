@@ -823,7 +823,7 @@ private var isSoftKeyboardSupport = false
                 val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
                 autoAdjustMarginForIME = enabled
                 AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled)
-                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled, orientSuffix())
+                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, currentDisplayId, enabled, orientSuffix())
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
@@ -2553,7 +2553,9 @@ private var isSoftKeyboardSupport = false
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
-        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, orientSuffix())
+        val startupDisplayId = targetDisplayIndex
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, startupDisplayId, orientSuffix())
+            ?: AppPreferences.getAutoAdjustMarginForIME(this, orientSuffix())
             ?: AppPreferences.getAutoAdjustMarginForIME(this)
         droidOsImeDetected = AppPreferences.getDroidOsImeDetected(this)
         // Margins now loaded in loadDisplaySettings()
@@ -2577,6 +2579,7 @@ private var isSoftKeyboardSupport = false
         // Build UI
         val targetDisplayId = targetDisplayIndex
         setupDisplayContext(targetDisplayId)
+        loadDisplaySettings(currentDisplayId)
         setupBubble()
         setupDrawer()
 
@@ -2587,7 +2590,6 @@ private var isSoftKeyboardSupport = false
 
         updateGlobalFontSize()
         updateBubbleIcon()
-        loadDisplaySettings(currentDisplayId) // Layout loading is now inside here
 
         safeToast("Launcher Ready")
     }
@@ -2617,10 +2619,10 @@ private var isSoftKeyboardSupport = false
                 } catch (e: Exception) {
                 }
                 setupDisplayContext(targetDisplayId)
+                loadDisplaySettings(currentDisplayId)
                 setupBubble()
                 setupDrawer()
                 updateBubbleIcon()
-                loadDisplaySettings(currentDisplayId)
                 isExpanded = false
                 safeToast("Recalled to Display $targetDisplayId")
 
@@ -2633,12 +2635,12 @@ private var isSoftKeyboardSupport = false
             // First time initialization
             try {
                 setupDisplayContext(targetDisplayId)
+                loadDisplaySettings(currentDisplayId)
                 setupBubble()
                 setupDrawer()
                 
                 updateGlobalFontSize()
                 updateBubbleIcon()
-                loadDisplaySettings(currentDisplayId) // Layout loading is now inside here
 
                 if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku()
             } catch (e: Exception) {
@@ -2695,6 +2697,7 @@ private var isSoftKeyboardSupport = false
         }
         
         currentOrientationMode = AppPreferences.getOrientationMode(this, displayId)
+        selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId)
         
         // [FIX] On fresh install, grab the CURRENT system DPI instead of defaulting to -1 (Reset).
         // This prevents the "everything got huge" issue where "reset" reverts to a factory default
@@ -2904,7 +2907,7 @@ private var isSoftKeyboardSupport = false
     private fun saveOrientationState(os: String = orientSuffix()) {
         AppPreferences.setTopMarginPercent(this, currentDisplayId, topMarginPercent, os)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, bottomMarginPercent, os)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoAdjustMarginForIME, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, autoAdjustMarginForIME, os)
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
         AppPreferences.saveLastCustomLayoutName(this, activeCustomLayoutName, currentDisplayId, os)
         AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent, os)
@@ -2918,7 +2921,8 @@ private var isSoftKeyboardSupport = false
             ?: AppPreferences.getTopMarginPercent(this, currentDisplayId)
         bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, currentDisplayId, os)
             ?: AppPreferences.getBottomMarginPercent(this, currentDisplayId)
-        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, os)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, currentDisplayId, os)
+            ?: AppPreferences.getAutoAdjustMarginForIME(this, os)
             ?: AppPreferences.getAutoAdjustMarginForIME(this)
         selectedLayoutType = AppPreferences.getLastLayout(this, currentDisplayId, os)
             ?: AppPreferences.getLastLayout(this, currentDisplayId)
@@ -4410,10 +4414,10 @@ private var isSoftKeyboardSupport = false
      */
     private fun initWindow() {
         setupDisplayContext(currentDisplayId)
+        loadDisplaySettings(currentDisplayId)
         setupBubble()
         setupDrawer()
         updateBubbleIcon()
-        loadDisplaySettings(currentDisplayId)
 
         // [FIX] Apply layout immediately if in Instant Mode
         if (isInstantMode) {
@@ -5365,10 +5369,10 @@ private var isSoftKeyboardSupport = false
         }
 
         // 3. REBUILD
+        loadDisplaySettings(currentDisplayId)
         setupBubble()
         setupDrawer()
         
-        loadDisplaySettings(currentDisplayId)
         updateBubbleIcon()
         isExpanded = false
         safeToast("Switched to Display $currentDisplayId (${targetDisplay.name})")
@@ -5944,7 +5948,7 @@ private var isSoftKeyboardSupport = false
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
         AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
@@ -6035,7 +6039,7 @@ private var isSoftKeyboardSupport = false
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
         AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar, os)
+        AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId, os)
@@ -6740,7 +6744,7 @@ private var isSoftKeyboardSupport = false
                     displayList.add(ToggleOption("Auto-Adjust Margin for Keyboard (Tiled Apps)", autoAdjustMarginForIME) {
                         autoAdjustMarginForIME = it
                         AppPreferences.setAutoAdjustMarginForIME(this, it)
-                        AppPreferences.setAutoAdjustMarginForIME(this, it, orientSuffix())
+                        AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, it, orientSuffix())
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {

@@ -157,27 +157,61 @@ object AppPreferences {
     }
 
     fun setTopMarginPercent(context: Context, displayId: Int, percent: Int, oSuffix: String) {
-        getPrefs(context).edit().putInt("MARGIN_TOP_D$displayId$oSuffix", percent).apply()
+        getPrefs(context).edit().putInt("MARGIN_TOP_${getDisplayCategory(displayId)}$oSuffix", percent).apply()
     }
 
     fun getTopMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
-        val key = "MARGIN_TOP_D$displayId$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 5) else null
+        val categoryKey = "MARGIN_TOP_${getDisplayCategory(displayId)}$oSuffix"
+        if (prefs.contains(categoryKey)) return prefs.getInt(categoryKey, 5)
+
+        val legacyExactKey = "MARGIN_TOP_D$displayId$oSuffix"
+        if (prefs.contains(legacyExactKey)) return prefs.getInt(legacyExactKey, 5)
+
+        if (displayId > 1) {
+            val legacyVirtual = prefs.all.keys
+                .asSequence()
+                .filter { it.startsWith("MARGIN_TOP_D") && it.endsWith(oSuffix) }
+                .mapNotNull { key -> key.removePrefix("MARGIN_TOP_D").removeSuffix(oSuffix).toIntOrNull() }
+                .firstOrNull { it > 1 }
+            if (legacyVirtual != null) return prefs.getInt("MARGIN_TOP_D$legacyVirtual$oSuffix", 5)
+        }
+
+        return null
     }
 
     fun setBottomMarginPercent(context: Context, displayId: Int, percent: Int, oSuffix: String) {
-        getPrefs(context).edit().putInt("MARGIN_BOTTOM_D$displayId$oSuffix", percent).apply()
+        getPrefs(context).edit().putInt("MARGIN_BOTTOM_${getDisplayCategory(displayId)}$oSuffix", percent).apply()
     }
 
     fun getBottomMarginPercent(context: Context, displayId: Int, oSuffix: String): Int? {
-        val key = "MARGIN_BOTTOM_D$displayId$oSuffix"
         val prefs = getPrefs(context)
-        return if (prefs.contains(key)) prefs.getInt(key, 25) else null
+        val categoryKey = "MARGIN_BOTTOM_${getDisplayCategory(displayId)}$oSuffix"
+        if (prefs.contains(categoryKey)) return prefs.getInt(categoryKey, 25)
+
+        val legacyExactKey = "MARGIN_BOTTOM_D$displayId$oSuffix"
+        if (prefs.contains(legacyExactKey)) return prefs.getInt(legacyExactKey, 25)
+
+        if (displayId > 1) {
+            val legacyVirtual = prefs.all.keys
+                .asSequence()
+                .filter { it.startsWith("MARGIN_BOTTOM_D") && it.endsWith(oSuffix) }
+                .mapNotNull { key -> key.removePrefix("MARGIN_BOTTOM_D").removeSuffix(oSuffix).toIntOrNull() }
+                .firstOrNull { it > 1 }
+            if (legacyVirtual != null) return prefs.getInt("MARGIN_BOTTOM_D$legacyVirtual$oSuffix", 25)
+        }
+
+        return null
     }
 
-    fun setAutoAdjustMarginForIME(context: Context, enable: Boolean, oSuffix: String) {
-        getPrefs(context).edit().putBoolean("auto_adjust_margin_ime$oSuffix", enable).apply()
+    fun setAutoAdjustMarginForIME(context: Context, displayId: Int, enable: Boolean, oSuffix: String) {
+        getPrefs(context).edit().putBoolean("auto_adjust_margin_ime_${getDisplayCategory(displayId)}$oSuffix", enable).apply()
+    }
+
+    fun getAutoAdjustMarginForIME(context: Context, displayId: Int, oSuffix: String): Boolean? {
+        val key = "auto_adjust_margin_ime_${getDisplayCategory(displayId)}$oSuffix"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) prefs.getBoolean(key, true) else null
     }
 
     fun getAutoAdjustMarginForIME(context: Context, oSuffix: String): Boolean? {
@@ -719,25 +753,57 @@ object AppPreferences {
         return list
     }
 
-    // --- BOTTOM MARGIN (Per Display) ---
-    // Keys format: MARGIN_BOTTOM_D0, MARGIN_BOTTOM_D1, etc.
+    // --- BOTTOM MARGIN (Per Display Category) ---
+    // Keys format: MARGIN_BOTTOM_D0, MARGIN_BOTTOM_D1, MARGIN_BOTTOM_VIRTUAL
     
     fun setBottomMarginPercent(context: Context, displayId: Int, percent: Int) {
-        getPrefs(context).edit().putInt("MARGIN_BOTTOM_D$displayId", percent).apply()
+        getPrefs(context).edit().putInt("MARGIN_BOTTOM_${getDisplayCategory(displayId)}", percent).apply()
     }
 
     fun getBottomMarginPercent(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("MARGIN_BOTTOM_D$displayId", 25)
+        val prefs = getPrefs(context)
+        val categoryKey = "MARGIN_BOTTOM_${getDisplayCategory(displayId)}"
+        if (prefs.contains(categoryKey)) return prefs.getInt(categoryKey, 25)
+
+        val legacyExactKey = "MARGIN_BOTTOM_D$displayId"
+        if (prefs.contains(legacyExactKey)) return prefs.getInt(legacyExactKey, 25)
+
+        if (displayId > 1) {
+            val legacyVirtual = prefs.all.keys
+                .asSequence()
+                .filter { it.startsWith("MARGIN_BOTTOM_D") }
+                .mapNotNull { key -> key.removePrefix("MARGIN_BOTTOM_D").toIntOrNull() }
+                .firstOrNull { it > 1 }
+            if (legacyVirtual != null) return prefs.getInt("MARGIN_BOTTOM_D$legacyVirtual", 25)
+        }
+
+        return 25
     }
 
-    // --- TOP MARGIN (Per Display) ---
+    // --- TOP MARGIN (Per Display Category) ---
     
     fun setTopMarginPercent(context: Context, displayId: Int, percent: Int) {
-        getPrefs(context).edit().putInt("MARGIN_TOP_D$displayId", percent).apply()
+        getPrefs(context).edit().putInt("MARGIN_TOP_${getDisplayCategory(displayId)}", percent).apply()
     }
 
     fun getTopMarginPercent(context: Context, displayId: Int): Int {
-        return getPrefs(context).getInt("MARGIN_TOP_D$displayId", 5)
+        val prefs = getPrefs(context)
+        val categoryKey = "MARGIN_TOP_${getDisplayCategory(displayId)}"
+        if (prefs.contains(categoryKey)) return prefs.getInt(categoryKey, 5)
+
+        val legacyExactKey = "MARGIN_TOP_D$displayId"
+        if (prefs.contains(legacyExactKey)) return prefs.getInt(legacyExactKey, 5)
+
+        if (displayId > 1) {
+            val legacyVirtual = prefs.all.keys
+                .asSequence()
+                .filter { it.startsWith("MARGIN_TOP_D") }
+                .mapNotNull { key -> key.removePrefix("MARGIN_TOP_D").toIntOrNull() }
+                .firstOrNull { it > 1 }
+            if (legacyVirtual != null) return prefs.getInt("MARGIN_TOP_D$legacyVirtual", 5)
+        }
+
+        return 5
     }
 
     // --- DEFAULT LAYOUT RENAMING ---
