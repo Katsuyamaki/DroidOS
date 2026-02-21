@@ -958,23 +958,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(
-                commandReceiver,
-                filter,
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND",
-                null,
-                Context.RECEIVER_EXPORTED
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(
-                commandReceiver,
-                filter,
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND",
-                null
-            )
-        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
 
         // [FIX] Removed incompatible Shizuku listeners that belong to Launcher
         
