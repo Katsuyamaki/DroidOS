@@ -1,192 +1,264 @@
-DroidOS 📱🚀
-<br>
-<br>
+# DroidOS
 
----
+DroidOS is a two-app Android productivity suite:
+- `DroidOS Launcher`: floating launcher, queue-based tiling window manager, display control, and automation hotkeys.
+- `DroidOS Trackpad Keyboard`: overlay trackpad + keyboard + Dock IME toolbar for keyboard/mouse control and typing workflows.
 
-DroidOS is a suite of advanced system tools designed to give "superpowers" to the standard Android experience.
-It functions as a universal Samsung DeX replacement, a tiling window manager, and an unrestricted app launcher that works on any Android device. Whether you are using a Foldable, a Flip phone, AR Glasses, or a secondary monitor, DroidOS unlocks the full potential of your hardware.
+It is designed for phones, foldables, cover displays, external monitors, and AR glasses.
 
 ![Screenshot_20251130_185618_Discord](https://github.com/user-attachments/assets/dca14a11-21e6-439c-b653-7ce9f8e73a87)
 
-Video Demonstration : https://youtu.be/aOzkV3t7wFM
-
-<br>
-<br>
+Video demo: https://youtu.be/aOzkV3t7wFM
 
 ---
 
-✨ Core Features
+## Project Layout (Monorepo)
 
-🖥️ Universal Desktop Mode (DeX Replacement)
-Unlike proprietary solutions locked to specific brands, DroidOS provides a desktop-class experience on any Android phone:
- * Window Management: Force apps into specific tiling layouts (Split-screen, Quadrants, Tri-split) on external displays.
- * Input Control: Turn your phone screen into a fully functional trackpad and keyboard while viewing content on a larger screen.
-🕶️ AR Glasses & Virtual Screens
-Optimized for users of XREAL, Rokid, Viture, and other AR glasses:
- * "Headless" Mode: Turn off your phone's physical screen to save battery and reduce heat while the system continues running on the glasses.
- * Blind Navigation: The Keyboard/Trackpad module allows you to control the AR interface without looking at your phone.
- * Keyboard Navigation: Use your keyboard and set custom keybinds to to open, move, hide, kill, any app, plus more.
-📱 Foldable & Cover Screen Enhancements
-Unleash the full power of your Galaxy Z Flip, Fold, or other foldable devices:
- * Unrestricted Launching: Launch any app on a flip phone covercreen (tested with Samsung Flip 7), bypassing system "Good Lock" allowlists.
- * Orientation Control: Force landscape or portrait orientations on screens that don't natively support them.
+- `DroidOSLauncher`: Launcher app (window/display management)
+- `DroidOSKeyboardTrackpad`: Trackpad + keyboard app (input and typing)
 
-<br>
-<br>
+Important: open each app folder separately in Android Studio. Do not open the monorepo root as a single Android Studio project.
 
 ---
 
-🛠️ How It Works
+## Core Requirements
 
-DroidOS utilizes Shizuku to access elevated system APIs without requiring root access. This allows it to:
- * Inject raw input events (Mouse/Keyboard) directly into the system input stream.
- * Manage window sizes, positions, and display power states via hidden Android APIs (Reflection).
- * Launch activities on specific display IDs (Cover screens, Virtual displays).
-
-<br>
-<br>
+- Shizuku installed and running
+- Accessibility permissions granted to both apps as prompted
+- Recommended Android developer options:
+  - Force activities to be resizable
+  - Enable freeform windows
 
 ---
 
-🚀 Getting Started
+## Install and First Run
 
-Prerequisites
- * Shizuku: Must be installed and running on your device.
- * Developer Options: "Force activities to be resizable" and "Enable freeform windows" must be enabled.
-
-Installation
-You can download the latest APKs for both modules from the Releases page.
- * Install DroidOS Launcher to manage your apps and windows.
- * Install DroidOS Trackpad Keyboard to control the cursor.
- * Grant Shizuku permissions when prompted in each app.
- * I recommend this fork of shizuku https://github.com/thedjchi/Shizuku once you set it up. It has a watchdog feature to autorestart whenever it gets turned off. Once you turn it on, even if you lose wireless adb you can still turn shizuku back on without it. Also has an auto start on boot feature. Does not require root.
- * Grant accessibility permissions to the trackpad when prompted.
-
- * DroidOS Launcher can be exited by swiping the bubble icon away.
-
-<br>
-<br>
+1. Install both APKs from Releases.
+2. Open `DroidOS Launcher` and grant required permissions.
+3. Open `DroidOS Trackpad Keyboard` and complete the setup steps (Accessibility, overlay, keyboard/IME related steps).
+4. Use Launcher `Launch/Reset Trackpad` in Settings if the input overlay needs to be reattached.
 
 ---
 
-🤝 Contributing
+## Launcher Overview
 
-We welcome contributions! 
+### Bubble and Drawer
 
-Please note that this is a Monorepo.
- * If you are fixing a bug in the Launcher, make your Pull Request against the DroidOSLauncher directory.
- * If you are improving the Trackpad, work within the Cover-Screen-Trackpad directory.
+- Tap bubble: open launcher drawer
+- Drag bubble: reposition
+- Fling bubble: close/restart launcher service
 
-<br>
-<br>
+### Queue-Based Tiling (Always Instant)
 
----
+Launcher now runs in instant behavior only.
 
-🚀 DroidOS Launcher Usage Guide
+There is no separate Execute mode anymore. Queue/layout changes apply immediately.
 
-The DroidOS Launcher is designed to manage multi-window tiling and control display resolutions, primarily using Shizuku for elevated permissions.
-1. The Two Operational Modes
-The Launcher operates primarily using an app queue combined with your selected window layout. The core difference lies in how aggressively the launcher manages apps after initialization.
->
-| Mode | Key Feature | Execution Action | Ideal For |
-|---|---|---|---|
-| Instant Mode | Live, dynamic window management. | Windows are launched/resized automatically every time you adjust the queue (add/remove/hide apps). The Green Play/Execute button is hidden. | Quick adjustments, experimental resizing, or when fine-tuning a small layout. |
-| Launcher Mode | Traditional "batch" execution. | Changes to the queue or layout only take effect when you explicitly press the Green Play/Execute button. | Large, complex setups (3+ apps) where manual timing is better, or minimizing system resource drain. |
-> Switch Mode: Go to the Settings tab (Gear Icon) and toggle "Instant Mode (Live Changes)".
-> 
-2. Managing the App Queue (The Dock)
-The App Queue (the horizontal list of icons at the top of the main drawer) determines which apps are launched and where they are placed in your chosen layout.
->
-| Action | How To | Result |
-|---|---|---|
-| Adding an App | 1. Navigate to the Search tab. 2. Tap an app listed in the main recycler view. | The app is added to the right end of the App Queue. If in Instant Mode, the layout is applied immediately. |
-| Adding a Spacer | Tap "(Blank Space)" in the search list. | Inserts a blank placeholder into the queue. This ensures an empty tile space in your final layout (e.g., in a 4-Quadrant layout, you can use 2 apps and 2 blanks). |
-| Reordering/Moving | Drag and drop an app icon horizontally within the queue. | Changes the app's position in the queue, which dictates its screen placement (Tiling order). |
-| Toggling Hide/Minimize | Tap an app icon in the App Queue. | The app's icon turns slightly transparent (minimized). The app is moved to the background using its Task ID. The app is skipped during subsequent tiling calculations. |
-| Closing/Killing App | Swipe the app icon up or down in the App Queue. | The app is removed from the queue and a force-stop shell command is executed to kill the app. |
-| Favoriting (Global) | Long-press an app in the main search list or swipe the app left/right in the search list. | Toggles the star icon and adds/removes the app from your global favorites list. |
-3. Tiling Position & Order
-Tiling positions are determined strictly from left-to-right in the App Queue to top-to-bottom, left-to-right in the selected screen layout.
- * The leftmost app in your queue corresponds to the first defined window tile in your layout.
- * The second app corresponds to the second tile, and so on.
-Example: 4-Quadrant Layout
- * Tile 1 (Top-Left): Corresponds to the 1st app in the queue.
- * Tile 2 (Top-Right): Corresponds to the 2nd app in the queue.
- * Tile 3 (Bottom-Left): Corresponds to the 3rd app in the queue.
- * Tile 4 (Bottom-Right): Corresponds to the 4th app in the queue.
-You can ensure an app lands in a specific tile by dragging it to the corresponding position in the App Queue.
+### Queue Operations
 
-<br>
-<br>
+- Add app: tap app in search list
+- Reorder: drag in queue
+- Minimize toggle: tap queue icon
+- Remove/close: swipe queue icon
+- Spacer item: use blank slot entry when needed to keep layout gaps
+
+### Queue Order -> Tile Placement
+
+Tile placement follows queue order.
+
+- Apps are mapped left-to-right from the queue into the active layout tiles in layout order.
+- The 1st queue item goes to tile 1, the 2nd goes to tile 2, and so on.
+- If you want a specific app in a specific tile, drag that app to the matching queue position.
+
+Example with a 4-tile layout:
+- tile 1 = queue item 1
+- tile 2 = queue item 2
+- tile 3 = queue item 3
+- tile 4 = queue item 4
+
+### Favorites and Blacklist
+
+- In Search tab:
+  - Swipe left on app to add to blacklist
+  - Favorite controls remain available from app list interactions
+- In Blacklist tab:
+  - Review blacklisted entries
+  - Swipe to remove from blacklist
 
 ---
 
-🕶️ DroidOS Virtual Display Setup
+## Display and Window Management
 
-This guide outlines the steps to activate and control a virtual, tiled desktop environment when using AR glasses (such as XREAL) connected to your Android device. This process relies on having Shizuku running with permissions granted to both the DroidOS Launcher and DroidOS Keyboard Trackpad applications.
+### Display Controls
 
-Part 1: Create and Switch to Virtual Display (Launcher App)
-The goal of this phase is to create a new virtual screen and move the Launcher's target focus from your physical phone screen to that new screen.
- * Set Initial Resolution (Optional but Recommended):
-   * Open the DroidOS Launcher floating bubble.
-   * Navigate to the Resolution Mode (Icon: Rectangle with dots) tab.
-   * Select "Default (Reset)".
-   * Note: The developer often sets a custom resolution (like 1080p) here to ensure the display from the glasses (e.g., Beam Pro) is usable, as the physical screen itself may be too tiny for the mirrored content.
- * Enable Virtual Display:
-   * Navigate to the Settings Mode (Icon: Gear/Preferences) tab.
-   * Toggle the "Virtual Display (1080p)" option.
- * Switch Launch Target:
-   * Press the "Switch Display (Current [ID])" button immediately below the Virtual Display toggle.
-   * Result: Your physical phone screen should become mostly blank, showing only the Launcher bubble (or the main screen if still open). The virtual screen on the glasses should now show the output.
+Launcher Settings includes:
+- `Screen Off (Standard)`
+- `Screen Off (Alternate)`
+- `Switch Display (Current X)`
+- `Virtual Display (1080p)`
+- resolution controls
+- DPI controls
+- orientation controls
+- refresh rate controls
 
-Part 2: Gaining Cursor Control (Trackpad App)
-Now that the system is outputting to the glasses, you must redirect your phone's touch input to control the cursor on the remote screen.
- * Launch Trackpad App:
-   * Open the DroidOS Keyboard Trackpad application on your physical phone screen.
-   * Note: The trackpad functions as an overlay on your physical phone screen, allowing you to use your phone's surface to control the larger remote display.
- * Redirect Input:
-   * Press the "Target: Switch Local/Remote" button.
-   * Result: You should now see a cursor moving on the glasses display corresponding to your touch input on the phone.
- * Activate Headless/Extinguish Mode (Optional):
-   * Return to the DroidOS Launcher (Settings Tab).
-   * Toggle "Display Off (Touch on)" to turn off the physical screen entirely.
-🖱️ Trackpad Overlay Controls
-The Trackpad overlay provides dedicated controls accessible through its corners and edges:
-| Control Point | Action | Result | Source |
-|---|---|---|---|
-| Top-Right Corner Handle | Drag finger | Moves (repositions) the trackpad overlay on the physical screen. |  |
-| Bottom-Right Corner Handle | Drag finger | Resizes the trackpad overlay. |  |
-| Bottom-Left Corner | Tap (Click) | Opens the manual adjust menu, allowing you to resize and reposition using a controller instead of dragging. |  |
-| Edges (Top/Bottom) | Finger near edge + Move Up/Down | Performs Vertical Scrolling in the remote screen. |  |
-| Edges (Left/Right) | Finger near edge + Move Left/Right | Performs Horizontal Scrolling in the remote screen. |  |
-Scrolling Note: Ensure the trackpad overlay is not positioned too close to the edges of your phone's physical screen for the scrolling zones to work reliably.
+### Virtual Display Quick Setup (Recommended)
 
-<br>
-<br>
+1. Enable `Virtual Display (1080p)` in Launcher Settings.
+2. Tap `Switch Display` to move launcher targeting to the virtual display.
+3. Start/reset Trackpad from launcher if needed.
+4. Use trackpad keyboard mirror features if running headless or on AR glasses.
+
+### Manual Virtual Display Path
+
+Advanced/manual users can still use shell-style display workflows, but the in-app toggle flow above is the easiest and most reliable path for normal use.
+
+### Tiled and Full Screen Integration
+
+DroidOS coordinates tiled windows with normal full-screen apps:
+- Tiled apps can auto-minimize when a full-screen app takes focus.
+- Tiled apps restore when returning to managed/tiled context.
+- This avoids tiled overlays blocking normal full-screen workflows.
 
 ---
 
-Want to donate to support the development of this project? https://ko-fi.com/katsuyamaki
+## Keyboard and Margin Integration
 
-📂 Project Structure (Monorepo)
-This repository is a Monorepo containing two distinct but complementary Android applications.
-> ⚠️ Developer Note: Do not open this root folder directly in Android Studio. You must open each project folder individually.
-> 
-| Project | Description | Path |
-|---|---|---|
-| DroidOS Launcher | An advanced tiling window manager and app launcher. Bypasses cover screen restrictions and manages multi-window layouts. | /DroidOSLauncher |
-| DroidOS Trackpad Keyboard | A virtual mouse trackpad and custom keyboard overlay. Turns your phone into a precision input device for external displays. | /DroidOSKeyboardTrackpad |
+### Margin Controls (Launcher)
 
+Launcher Settings contains:
+- top/bottom manual margins
+- `Auto-Adjust Margin for Keyboard (Tiled Apps)`
+- `Auto-Shrink for Keyboard`
 
-📄 License
-This project is licensed under the GNU General Public License v3.0 (GPLv3).
-You are free to use, modify, and distribute this software, but all modifications must remain open source. See the LICENSE file for details.
+When DroidOS toolbar keyboard/IME is active, launcher can adjust tiled app space dynamically based on keyboard visibility and dock/toolbar state.
 
-<br>
-<br>
+### Why This Matters
+
+This integration prevents overlap between:
+- tiled app windows
+- keyboard UI
+- dock/toolbar area
+
+Result: more stable typing layouts in multi-window use.
 
 ---
+
+## Trackpad Keyboard Overview
+
+### Core Input Features
+
+- On-screen trackpad with tap, right-click, drag, and edge scrolling
+- Overlay keyboard for typing on local or remote displays
+- Dock IME toolbar mode for bottom-docked keyboard workflows
+
+### Mirror Mode
+
+Mirror mode is for remote/virtual usage where you need to type without directly viewing the phone display.
+
+Typical use cases:
+- external monitor
+- AR glasses
+- screen-off/headless workflows
+
+### Spacebar Mouse Modes
+
+- Normal: hold spacebar to move cursor, release to return to typing
+- Extended: toggle `Spacebar Mouse Extended Mode` to keep mouse mode active until turned off
+- Click actions come from trackpad gestures or mapped keys/hardkeys
+
+### Keyboard Blocking
+
+Keyboard blocking is for devices that force OEM keyboards in unwanted situations (for example some cover-screen Samsung flows).
+
+Use it when the system keyboard interrupts DroidOS keyboard workflows.
+
+### Prediction and Swipe Typing
+
+The keyboard supports:
+- swipe prediction
+- tap prediction
+- learned/custom dictionary words
+- prediction updates in both normal and mirror workflows
+
+### User Dictionary
+
+Add words:
+- tap new-word predictions to learn/save into custom dictionary
+
+Delete learned words:
+- touch and hold a prediction, then use trash/delete action
+
+Persistence behavior:
+- kept during app upgrades
+- deleted if app storage is cleared or app is uninstalled
+
+---
+
+## Virtual Mirror + Display Switching Behavior
+
+Trackpad keyboard and launcher coordinate display state with broadcasts.
+
+In virtual workflows, display/mode-aware settings (position/size and related layout preferences) are remembered by display/resolution/orientation/mode, with shared handling for remote display IDs (display `2+`) to keep behavior consistent across reconnects.
+
+---
+
+## Automation and Broadcast Integration
+
+### Launcher Hotkey Security Toggle
+
+In Launcher Hotkeys tab:
+- `Allow External App Broadcast Access`
+
+When ON, third-party automation tools can trigger launcher commands.
+When OFF, external launcher command access is blocked (except trusted internal app coordination as designed).
+
+### Inter-App Coordination
+
+Launcher and Keyboard exchange broadcast state for:
+- keybind updates
+- remote key forwarding
+- IME visibility/tiled state sync
+- margin and display coordination
+- virtual/physical display transitions
+
+### Third-Party Automation
+
+DroidOS can be integrated with automation apps (for example Tasker or MacroDroid) and with ADB broadcast commands.
+
+This supports advanced workflows such as:
+- one-tap virtual workspace startup
+- mirror/display mode switching
+- scripted launcher command execution
+
+---
+
+## Other Useful Notes
+
+- If trackpad/cursor appears on wrong display after big display changes, use Launcher `Launch/Reset Trackpad`.
+- If UI overlays feel out of order, restart the relevant service from app settings.
+- For launcher recovery, fling the launcher bubble.
+
+---
+
+## Contributing
+
+Contributions are welcome.
+
+- Launcher changes: submit against `DroidOSLauncher`
+- Keyboard/trackpad changes: submit against `DroidOSKeyboardTrackpad`
+
+---
+
+## License
+
+GPLv3. See `LICENSE.txt`.
+
+---
+
+## Support
+
+If you want to support development: https://ko-fi.com/katsuyamaki
+
 
 ![Screenshot_20251130_125934_Reddit](https://github.com/user-attachments/assets/a4644964-8371-4f39-9a03-df88e4a8524a)
 
@@ -208,4 +280,5 @@ You are free to use, modify, and distribute this software, but all modifications
 <br>
 
 ---
+
 
