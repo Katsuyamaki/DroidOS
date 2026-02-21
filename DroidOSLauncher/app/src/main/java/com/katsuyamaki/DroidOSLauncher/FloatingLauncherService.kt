@@ -588,6 +588,7 @@ private var isSoftKeyboardSupport = false
     private val isInstantMode = true // [DEPRECATED] Execute mode removed - always instant mode
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
+    private var allowExternalBroadcastCommands = true
     
     private var isVirtualDisplayActive = false
     override var currentDrawerHeightPercent = 70
@@ -726,6 +727,40 @@ private var isSoftKeyboardSupport = false
 
     private val commandReceiver = object : BroadcastReceiver() {        override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action
+
+            // External command access gate (automation/ADB command protection).
+            // Only blocks explicit launcher COMMAND actions that could be abused.
+            // Does NOT block keyboard-essential actions (IME_VISIBILITY, REMOTE_KEY, etc.)
+            if (!allowExternalBroadcastCommands && action != null) {
+                val blockedExternalActions = setOf(
+                    ACTION_OPEN_DRAWER,
+                    ACTION_UPDATE_ICON,
+                    ACTION_CYCLE_DISPLAY,
+                    ACTION_TOGGLE_VIRTUAL,
+                    "KEEP_SCREEN_ON",
+                    "com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER",
+                    "com.katsuyamaki.DroidOSLauncher.UPDATE_ICON",
+                    "com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY",
+                    "com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL",
+                    "com.katsuyamaki.DroidOSLauncher.KEEP_SCREEN_ON"
+                )
+
+                if (action in blockedExternalActions) {
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        val uid = getSentFromUid()
+                        val fromUid = if (uid >= 0) packageManager.getPackagesForUid(uid)?.toSet() ?: emptySet() else emptySet()
+                        val fromPkg = getSentFromPackage()?.let { setOf(it) } ?: emptySet()
+                        val senderPackages = fromUid + fromPkg
+                        val allowedPackages = setOf(this@FloatingLauncherService.packageName, PACKAGE_TRACKPAD)
+                        val senderAllowed = senderPackages.isEmpty() || senderPackages.any { it in allowedPackages }
+                        if (!senderAllowed) return
+                    } else {
+                        // API < 34: Cannot identify sender. Block these actions when toggle is OFF.
+                        return
+                    }
+                }
+            }
+
             if (action == ACTION_OPEN_DRAWER) { 
                 if (isScreenOffState) wakeUp() else if (!isExpanded) toggleDrawer() 
             } 
@@ -2551,6 +2586,7 @@ private var isSoftKeyboardSupport = false
         // [DEPRECATED] isInstantMode = AppPreferences.getInstantMode(this) - now always true
         showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
+        allowExternalBroadcastCommands = AppPreferences.getAllowExternalBroadcastCommands(this)
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
         val startupDisplayId = targetDisplayIndex
@@ -6701,6 +6737,16 @@ private var isSoftKeyboardSupport = false
             }
             MODE_KEYBINDS -> {
                 searchBar.hint = "Configure Hotkeys"
+
+                displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
+                    allowExternalBroadcastCommands = it
+                    AppPreferences.setAllowExternalBroadcastCommands(this, it)
+                    switchMode(MODE_KEYBINDS) // Refresh to show/hide warning
+                })
+                if (allowExternalBroadcastCommands) {
+                    displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
+                }
+
                 displayList.add(ActionOption("How to use: Set modifier + key. Press to trigger.") {})
                 
                 // Add Custom Modifier Config Row

@@ -22,6 +22,7 @@ object AppPreferences {
     private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
     private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
     private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
+    private const val KEY_ALLOW_EXTERNAL_BROADCAST_CMDS = "KEY_ALLOW_EXTERNAL_BROADCAST_CMDS"
 
     // === BLACKLIST STORAGE - START ===
     // Stores blacklisted apps using "packageName:activityName" format
@@ -609,6 +610,14 @@ object AppPreferences {
     fun getUseAltScreenOff(context: Context): Boolean {
         // Default false (use standard SurfaceControl method)
         return getPrefs(context).getBoolean(KEY_USE_ALT_SCREEN_OFF, false)
+    }
+
+    fun setAllowExternalBroadcastCommands(context: Context, enable: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_ALLOW_EXTERNAL_BROADCAST_CMDS, enable).apply()
+    }
+
+    fun getAllowExternalBroadcastCommands(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_ALLOW_EXTERNAL_BROADCAST_CMDS, true)
     }
     
     // --- REORDER PREFERENCES ---
