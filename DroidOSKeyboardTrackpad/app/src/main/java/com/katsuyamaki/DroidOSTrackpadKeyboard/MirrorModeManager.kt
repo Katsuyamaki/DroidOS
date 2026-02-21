@@ -151,9 +151,16 @@ class MirrorModeManager(
      * Toggles Virtual Mirror Mode on/off.
      */
     fun toggle() {
-        service.saveCurrentState()
-
         val wasEnabled = service.prefs.prefVirtualMirrorMode
+
+        // Mirror OFF path must persist full profile (including DockIME/margin fields)
+        // before flipping mode, otherwise next mirror session falls back to defaults.
+        if (wasEnabled) {
+            service.saveLayout()
+        } else {
+            service.saveCurrentState()
+        }
+
         service.prefs.prefVirtualMirrorMode = !wasEnabled
 
         if (service.prefs.prefVirtualMirrorMode) {
@@ -410,9 +417,11 @@ class MirrorModeManager(
 
             service.btMouseManager?.createBtMouseCaptureOverlay()
 
-            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
-            service.sendBroadcast(intentCycle)
+            // Deterministic launcher sync: ON always move launcher bubble to the target virtual display.
+            val intentMove = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
+            intentMove.setPackage("com.katsuyamaki.DroidOSLauncher")
+            intentMove.putExtra("displayId", targetDisplay.displayId)
+            service.sendBroadcast(intentMove)
         } else {
             service.prefs.prefVirtualMirrorMode = false
             service.showToast("No virtual display found.")
@@ -431,9 +440,12 @@ class MirrorModeManager(
 
         service.showToast("Mirror Mode OFF")
 
-        val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-        intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
-        service.sendBroadcast(intentCycle)
+        // Deterministic launcher sync: OFF always move launcher bubble to a physical display.
+        val physicalDisplayId = if (service.currentDisplayId >= 2) Display.DEFAULT_DISPLAY else service.currentDisplayId
+        val intentMove = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
+        intentMove.setPackage("com.katsuyamaki.DroidOSLauncher")
+        intentMove.putExtra("displayId", physicalDisplayId)
+        service.sendBroadcast(intentMove)
     }
 
     private fun createMirrorKeyboard(displayId: Int) {
