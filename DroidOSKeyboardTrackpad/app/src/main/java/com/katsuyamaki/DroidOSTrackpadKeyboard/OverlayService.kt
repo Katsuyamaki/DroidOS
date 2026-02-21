@@ -182,7 +182,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     var isTrackpadVisible = false // Changed: Default OFF
     private val FORCE_HIDE_DEBOUNCE_MS = 350L // Keep small guard against show/hide bounce without visible close lag
     private var lastForceShowTime = 0L // Debounce IME FORCE_SHOW/FORCE_HIDE flicker
-    private var preserveKeyboardUntil = 0L // Ignore FORCE_HIDE until this timestamp (launcher drawer transition)
+    internal var preserveKeyboardUntil = 0L // Ignore FORCE_HIDE until this timestamp (launcher drawer transition)
     private var pendingForceHideRunnable: Runnable? = null
     private var isDockIMEVisible = false
     private var dockNavBarHeight: Int = -1
@@ -485,8 +485,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         if (forceHide) {
             // Ignore FORCE_HIDE if within preserve window (launcher drawer transition)
-            if (System.currentTimeMillis() < preserveKeyboardUntil) {
-                logOverlayKbDiag("handleKeyboardToggle_forceHide_preserved", "ignoring FORCE_HIDE during preserve window")
+            val now = System.currentTimeMillis()
+            android.util.Log.d("OverlayService", "FORCE_HIDE: received now=$now preserveUntil=$preserveKeyboardUntil inWindow=${now < preserveKeyboardUntil}")
+            if (now < preserveKeyboardUntil) {
+                android.util.Log.d("OverlayService", "FORCE_HIDE: BLOCKED by preserve window")
                 return
             }
             val inSpacebarMouse = keyboardOverlay?.getKeyboardView()?.isInSpacebarMouseMode() == true
@@ -1106,7 +1108,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     action == "RESET_CURSOR" -> resetCursorCenter()
                     action == "TOGGLE_DEBUG" -> toggleDebugMode()
                     action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
-                    action == "PRESERVE_KEYBOARD" -> { preserveKeyboardUntil = System.currentTimeMillis() + 1000L }
+                    action == "PRESERVE_KEYBOARD" -> {
+                        preserveKeyboardUntil = System.currentTimeMillis() + 1000L
+                        android.util.Log.d("OverlayService", "PRESERVE_KB: received, set until=$preserveKeyboardUntil")
+                    }
                     action == "OPEN_MENU" -> menuManager?.show()
                     
                     // ADB / Launcher Commands (Suffix Matching)

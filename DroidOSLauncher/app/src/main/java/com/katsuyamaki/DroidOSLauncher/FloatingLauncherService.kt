@@ -4498,6 +4498,7 @@ private var isSoftKeyboardSupport = false
             val preserveIntent = Intent("PRESERVE_KEYBOARD")
             preserveIntent.setPackage(PACKAGE_TRACKPAD)
             sendBroadcast(preserveIntent)
+            android.util.Log.d(TAG, "DRAWER: sent PRESERVE_KEYBOARD")
             
             val et = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
             et?.setText("")

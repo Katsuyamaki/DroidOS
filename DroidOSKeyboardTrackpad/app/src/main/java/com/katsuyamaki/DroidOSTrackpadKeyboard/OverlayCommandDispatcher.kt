@@ -153,6 +153,11 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                 service.handleKeyboardToggle(intent)
             }
 
+            action == "PRESERVE_KEYBOARD" -> {
+                service.preserveKeyboardUntil = System.currentTimeMillis() + 1000L
+                android.util.Log.d("OverlayService", "PRESERVE_KB: received via dispatcher, set until=${service.preserveKeyboardUntil}")
+            }
+
             action == "DOCK_PREF_CHANGED" -> {
                 service.handleDockPrefChanged(intent)
             }
