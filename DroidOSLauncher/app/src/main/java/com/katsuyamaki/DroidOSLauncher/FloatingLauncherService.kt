@@ -4493,18 +4493,18 @@ private var isSoftKeyboardSupport = false
             
             switchMode(MODE_SEARCH)
             
+            // [FIX] Tell OverlayService to preserve keyboard during drawer transition.
+            // This prevents FORCE_HIDE from DockIME cycling from hiding the overlay.
+            val preserveIntent = Intent("PRESERVE_KEYBOARD")
+            preserveIntent.setPackage(PACKAGE_TRACKPAD)
+            sendBroadcast(preserveIntent)
+            
             val et = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
             et?.setText("")
             et?.requestFocus() // Auto-focus for immediate typing
-            
-            // [FIX] Only activate system IME if overlay keyboard is NOT already visible.
-            // Calling showSoftInput triggers DockIME which sends FORCE_HIDE to overlay.
-            // If overlay is visible, skip system IME - overlay can type into EditText directly.
-            if (!overlayKeyboardVisible) {
-                et?.post {
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT)
-                }
+            et?.post {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT)
             }
             
             updateSelectedAppsDock()
