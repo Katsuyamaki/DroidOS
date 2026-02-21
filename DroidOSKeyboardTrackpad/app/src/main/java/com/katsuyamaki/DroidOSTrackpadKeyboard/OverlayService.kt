@@ -1479,22 +1479,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             "reset_cursor" -> if (isUp) resetCursorCenter()
             "display_wake" -> if (isUp && isScreenOff) { isScreenOff = false; Thread { try { shellService?.setBrightness(128); shellService?.setScreenOff(0, false) } catch (e: Exception) {} }.start(); showToast("Display Woken") }
             
-            // "Launcher Bubble" Keybind Action - Force Toggle/Swap
-            "toggle_bubble" -> if (isUp) {
-                // Simply toggle between 0 and 1. 
-                // If we are on 1, go to 0. If on 0, go to 1.
-                // This guarantees movement if the user presses it.
-                val targetId = if (currentDisplayId == 0) 1 else 0
-                
+            // "Launcher Bubble" keybind should open Launcher drawer, not switch trackpad display.
+            "toggle_bubble", "launcher_bubble" -> if (isUp) {
                 try {
-                    saveCurrentState()
-                    showToast("Force Switch to $targetId")
-                    setupUI(targetId)
-                    resetBubblePosition()
-                    menuManager?.show()
-                    enforceZOrder()
+                    val launcherIntent = Intent("com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER")
+                    launcherIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                    sendBroadcast(launcherIntent)
                 } catch (e: Exception) {
-                    showToast("Error: ${e.message}")
+                    showToast("Launcher Bubble failed")
                 }
             }
         }

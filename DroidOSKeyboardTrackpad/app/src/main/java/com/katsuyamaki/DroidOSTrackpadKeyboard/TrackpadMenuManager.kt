@@ -898,33 +898,116 @@ class TrackpadMenuManager(
 
     private fun getHelpItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        
+
         list.add(TrackpadMenuAdapter.MenuItem("INSTRUCTIONS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
-        val text = 
-            "TRACKPAD CONTROLS\n" +
-            "• Tap: Left Click\n" +
-            "• 2-Finger Tap: Right Click\n" +
-            "• Hold + Slide: Drag & Drop\n" +
-            "• Edge (Top/Bottom): V-Scroll\n" +
-            "• Edge (Left/Right): H-Scroll\n\n" +
-            "KEYBOARD OVERLAY\n" +
-            "• Drag Top Bar: Move Window\n" +
-            "• Drag Bottom-Right: Resize\n" +
-            "• Hold Corner: Toggle Key/Mouse\n\n" +
-            "HARDWARE KEYS\n" +
-            "• Use the 'Hardkeys' tab to map\n" +
-            "  Volume Up/Down to clicks,\n" +
-            "  scrolling, or screen controls."
-            
-        list.add(TrackpadMenuAdapter.MenuItem(text, 0, TrackpadMenuAdapter.Type.INFO))
-        
-        list.add(TrackpadMenuAdapter.MenuItem("LAUNCHER & APP", 0, TrackpadMenuAdapter.Type.HEADER))
-        val text2 = 
-            "• Floating Bubble: Tap to open this menu. Drag to move.\n" +
-            "• Setup App: Open 'DroidOS Trackpad' from your Android App Drawer to adjust permissions or restart the service."
-        list.add(TrackpadMenuAdapter.MenuItem(text2, 0, TrackpadMenuAdapter.Type.INFO))
-        
+
+        val quickStart =
+            "QUICK BASICS\n" +
+            "• Bubble: Tap to open menu. Drag to move.\n" +
+            "• Trackpad tap = left click. 2-finger tap = right click.\n" +
+            "• Hold + move = drag and drop.\n" +
+            "• Top/bottom edge = vertical scroll. Left/right edge = horizontal scroll."
+        list.add(TrackpadMenuAdapter.MenuItem(quickStart, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("VIRTUAL DISPLAY MODE", 0, TrackpadMenuAdapter.Type.HEADER))
+        val virtualDisplay =
+            "What it is:\n" +
+            "• Creates an extra Android display (display 2+) so you can run apps off-screen or on external targets.\n\n" +
+            "How to use:\n" +
+            "• Enable virtual display from Launcher settings.\n" +
+            "• Use 'Move to Virtual' to send the keyboard/trackpad UI there.\n" +
+            "• Use 'Return to Physical' to come back to your normal display.\n\n" +
+            "Tip:\n" +
+            "• Display 2+ is treated as remote/virtual behavior for mirror features."
+        list.add(TrackpadMenuAdapter.MenuItem(virtualDisplay, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("SPACEBAR MOUSE MODES", 0, TrackpadMenuAdapter.Type.HEADER))
+        val spacebarMouse =
+            "Normal Spacebar Mouse:\n" +
+            "• Hold spacebar and move finger to move cursor/mouse.\n" +
+            "• Release to return to normal typing.\n\n" +
+            "Extended Mode:\n" +
+            "• Enable 'Spacebar Mouse Extended' to keep mouse mode active until you turn it off.\n" +
+            "• Use the same movement gestures while active.\n\n" +
+            "Clicking with spacebar mouse:\n" +
+            "• Tap/click actions still come from trackpad click gestures or mapped keys in Hardkeys."
+        list.add(TrackpadMenuAdapter.MenuItem(spacebarMouse, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("KEYBOARD BLOCKING", 0, TrackpadMenuAdapter.Type.HEADER))
+        val keyboardBlocking =
+            "What it is:\n" +
+            "• Prevents forced system keyboards (for example Samsung One UI on cover displays) from taking over.\n\n" +
+            "When to use:\n" +
+            "• Fold/flip phones or devices that force a stock keyboard when text fields focus.\n\n" +
+            "Behavior:\n" +
+            "• Cover display can be blocked while main/virtual displays stay usable for your custom input flow."
+        list.add(TrackpadMenuAdapter.MenuItem(keyboardBlocking, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("MIRROR KEYBOARD", 0, TrackpadMenuAdapter.Type.HEADER))
+        val mirrorKeyboard =
+            "What it is:\n" +
+            "• Duplicates the keyboard to a remote/virtual target display while you type from the phone.\n\n" +
+            "Use cases:\n" +
+            "• External monitor\n" +
+            "• AR glasses\n" +
+            "• Screen-off workflows where you cannot view the main phone screen\n\n" +
+            "How to control:\n" +
+            "• Enable mirror mode, then use the Mirror tab to move/resize/reset the mirrored keyboard."
+        list.add(TrackpadMenuAdapter.MenuItem(mirrorKeyboard, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("LAUNCHER BROADCAST COMMANDS", 0, TrackpadMenuAdapter.Type.HEADER))
+        val launcherBroadcasts =
+            "How Launcher and Keyboard coordinate:\n" +
+            "• Launcher -> Keyboard: toggle custom keyboard, apply dock mode, show/hide commands, display switch commands.\n" +
+            "• Keyboard -> Launcher: IME visibility + tiled state updates so Launcher can retile and apply margin correctly.\n\n" +
+            "Why this matters:\n" +
+            "• Keeps tiled apps, dock, and IME layout synchronized across display changes.\n" +
+            "• Prevents stale layout states when keyboard opens/closes."
+        list.add(TrackpadMenuAdapter.MenuItem(launcherBroadcasts, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("PREDICTION BAR", 0, TrackpadMenuAdapter.Type.HEADER))
+        val predictionBar =
+            "Add a word to dictionary:\n" +
+            "• Tap a prediction marked as a new word to learn/save it to your custom dictionary.\n" +
+            "• Learned words are reused in future suggestions.\n\n" +
+            "Delete a word:\n" +
+            "• Touch and hold a prediction word, then use the trash/backspace delete action to remove it.\n" +
+            "• This removes learned/custom entries from prediction data."
+        list.add(TrackpadMenuAdapter.MenuItem(predictionBar, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("DICTIONARY & APP DATA", 0, TrackpadMenuAdapter.Type.HEADER))
+        val dictionaryData =
+            "Data persistence:\n" +
+            "• Custom dictionary and learned words are stored in app data.\n" +
+            "• App upgrades keep this data.\n" +
+            "• Clearing app storage or uninstalling the app deletes this data."
+        list.add(TrackpadMenuAdapter.MenuItem(dictionaryData, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("AUTO MARGIN", 0, TrackpadMenuAdapter.Type.HEADER))
+        val autoMargin =
+            "What it does:\n" +
+            "• Automatically adjusts bottom margin for tiled/fullscreen behavior when IME + dock are visible.\n\n" +
+            "Why it matters:\n" +
+            "• Helps prevent overlap between keyboard, dock/toolbar, and app content.\n" +
+            "• Keeps tiled apps usable while typing."
+        list.add(TrackpadMenuAdapter.MenuItem(autoMargin, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("LAYOUT MEMORY & PROFILES", 0, TrackpadMenuAdapter.Type.HEADER))
+        val layoutMemory =
+            "What is remembered automatically:\n" +
+            "• Position, size, and related preferences are remembered by display, resolution, orientation, and mode.\n" +
+            "• Virtual display state is tracked automatically.\n\n" +
+            "Manual save/recall:\n" +
+            "• You can also save a layout profile and reload it later for specific setups."
+        list.add(TrackpadMenuAdapter.MenuItem(layoutMemory, 0, TrackpadMenuAdapter.Type.INFO))
+
+        list.add(TrackpadMenuAdapter.MenuItem("BUBBLE FLING TO CLOSE", 0, TrackpadMenuAdapter.Type.HEADER))
+        val bubbleClose =
+            "Close quickly:\n" +
+            "• Fling the floating bubble icon to close/exit the overlay app state.\n" +
+            "• Use this when you want to dismiss DroidOS controls fast without opening menus."
+        list.add(TrackpadMenuAdapter.MenuItem(bubbleClose, 0, TrackpadMenuAdapter.Type.INFO))
+
         return list
     }
 }
