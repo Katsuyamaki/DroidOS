@@ -598,6 +598,7 @@ private var isSoftKeyboardSupport = false
     private var autoAdjustMarginForIME = false
     private var imeMarginOverrideActive = false
     private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
+    private var overlayKeyboardVisible = false // Track overlay keyboard state for drawer open preservation
     private var lastAppliedEffectiveMargin = -1
     private var pendingImeShowRetileToken = 0L
     private var nextImeShowRetileToken = 1L
@@ -775,6 +776,9 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") {
                 broadcastKeybindsToKeyboard()
             } else if (action == "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
+                // Track overlay keyboard visibility for drawer open preservation
+                val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
+                overlayKeyboardVisible = visible
                 // [FIX] Mark DroidOS IME as detected. This proves it's active even on cover screen
                 // where system settings may not reflect the actual IME in use.
                 if (!droidOsImeDetected) {
@@ -4492,21 +4496,16 @@ private var isSoftKeyboardSupport = false
             val et = drawerView?.findViewById<EditText>(R.id.rofi_search_bar)
             et?.setText("")
             et?.requestFocus() // Auto-focus for immediate typing
-            et?.post {
-                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT)
-            }
             
-            // [FIX] Ensure overlay keyboard stays visible when drawer opens.
-            // The drawer's focus change can cause the DockIME to cycle (hidden->shown),
-            // which triggers FORCE_HIDE on the overlay. Send FORCE_SHOW after a delay
-            // to beat the race and update the debounce timestamp in OverlayService.
-            uiHandler.postDelayed({
-                val keepKbIntent = Intent("TOGGLE_CUSTOM_KEYBOARD")
-                keepKbIntent.setPackage(PACKAGE_TRACKPAD)
-                keepKbIntent.putExtra("FORCE_SHOW", true)
-                sendBroadcast(keepKbIntent)
-            }, 300)
+            // [FIX] Only activate system IME if overlay keyboard is NOT already visible.
+            // Calling showSoftInput triggers DockIME which sends FORCE_HIDE to overlay.
+            // If overlay is visible, skip system IME - overlay can type into EditText directly.
+            if (!overlayKeyboardVisible) {
+                et?.post {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
             
             updateSelectedAppsDock()
             
