@@ -33,7 +33,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Disclosure: This app uses the AccessibilityService API to function as a trackpad. It simulates touch inputs (clicks and swipes) on the cover screen on your behalf. This app does not collect, store, or transmit any personal user data through this service."
+            android:text="Disclosure: This app uses AccessibilityService for trackpad/overlay control, window focus detection, key routing, and input automation. DroidOS does not transmit personal data to external servers. Some user-input-derived data (such as learned dictionary words and local usage stats) is stored locally on-device to power keyboard prediction features."
             android:textColor="#DDDDDD"
             android:textSize="12sp"
             android:background="#222222"

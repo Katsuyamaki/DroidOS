@@ -120,8 +120,8 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
     private fun showAccessibilityDisclosure() {
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Accessibility Service Required")
-            .setMessage("DroidOS Launcher uses the AccessibilityService API to detect the currently active app package and perform global actions (like Home/Back) for window management.\n\n" +
-                        "This data is processed locally to enable the 'Window Tiling' and 'Taskbar' features. DroidOS does not collect, store, or transmit any personal user data or keystrokes through this service.")
+            .setMessage("DroidOS Launcher uses AccessibilityService for active-window detection, hotkey handling, and window automation actions used by tiling/taskbar workflows (including global actions such as Home/Back).\n\n" +
+                        "DroidOS does not transmit personal data to external servers. Configuration and automation state are stored locally on-device.")
             .setPositiveButton("Agree & Go to Settings") { _, _ ->
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK

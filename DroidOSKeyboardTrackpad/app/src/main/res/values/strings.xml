@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">DroidOS Trackpad</string>
-    <string name="accessibility_service_description">Enables DroidOS to perform window management and inject mouse cursor inputs. Required for Desktop Mode functionality.</string>
+    <string name="accessibility_service_description">Enables DroidOS Trackpad overlay/input automation, window focus monitoring, and key routing. No personal data is transmitted externally; prediction learned words/stats are stored locally on-device.</string>
 
 </resources>

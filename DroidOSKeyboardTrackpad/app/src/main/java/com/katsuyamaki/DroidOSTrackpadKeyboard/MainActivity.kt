@@ -373,8 +373,8 @@ override fun onCreate(savedInstanceState: Bundle?) {
     private fun showAccessibilityDisclosure() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Accessibility Service Disclosure")
-            .setMessage("DroidOS Trackpad uses the AccessibilityService API to inject touch gestures (clicks and swipes) onto the screen and to monitor window focus for the 'Mouse Cursor' overlay.\n\n" +
-                        "This allows you to control remote displays and apps using your phone as a trackpad. No personal data, keystrokes, or screen content is stored or transmitted.")
+            .setMessage("DroidOS Trackpad uses AccessibilityService for overlay control, window focus/state detection, key-event routing, and input automation workflows (cursor movement, clicks, swipes, and related actions).\n\n" +
+                        "DroidOS does not transmit personal data to external servers. Some user-input-derived data (such as learned dictionary words and local usage stats) is stored locally on-device to power keyboard prediction features.")
             .setPositiveButton("Agree") { _, _ ->
                 openAccessibilitySettings()
             }
