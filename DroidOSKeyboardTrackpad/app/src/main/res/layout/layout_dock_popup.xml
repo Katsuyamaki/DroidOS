@@ -30,7 +30,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Auto-show Overlay KB"
+            android:text="Auto-show Overlay Keyboard"
             android:textColor="#FFFFFF"
             android:textSize="13sp"/>
 
@@ -68,7 +68,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Dock KB to Bottom"
+            android:text="Dock Keyboard to Bottom"
             android:textColor="#FFFFFF"
             android:textSize="13sp"/>
 
@@ -105,7 +105,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Show KB Above Toolbar"
+            android:text="Show Keyboard Above Toolbar"
             android:textColor="#CCCCCC"
             android:textSize="12sp"/>
 
@@ -144,7 +144,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Auto Resize Apps"
+            android:text="Auto Resize Full Screen Apps"
             android:textColor="#FFFFFF"
             android:textSize="13sp"/>
 

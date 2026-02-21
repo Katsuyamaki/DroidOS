@@ -2531,7 +2531,20 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                 
                                         // SCREEN key reused as TAB
                 
-                                        "TAB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.TAB, meta) }            "HIDE_KB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.HIDE_KEYBOARD, meta) }
+                                        "TAB" -> {
+                                            if (!fromRepeat) {
+                                                val tabMeta = if (
+                                                    currentState == KeyboardState.UPPERCASE ||
+                                                    currentState == KeyboardState.CAPS_LOCK
+                                                ) {
+                                                    meta or KeyEvent.META_SHIFT_ON
+                                                } else {
+                                                    meta
+                                                }
+                                                listener?.onSpecialKey(SpecialKey.TAB, tabMeta)
+                                            }
+                                        }
+                                        "HIDE_KB" -> { if (!fromRepeat) listener?.onSpecialKey(SpecialKey.HIDE_KEYBOARD, meta) }
                 
                 "PGUP" -> listener?.onSpecialKey(SpecialKey.PAGE_UP, meta)
                 "PGDN" -> listener?.onSpecialKey(SpecialKey.PAGE_DOWN, meta)
@@ -2720,6 +2733,15 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
     private var dragStartY = 0f
     private var isCandidateDragging = false
     private var activeDragCandidate: String? = null
+    private var isCandidateHoldActive = false
+    private val candidateHoldDelayMs = 450L
+    private val candidateHoldRunnable = Runnable {
+        if (activeDragCandidate != null && !isCandidateDragging) {
+            isCandidateHoldActive = true
+            setBackspaceTrashVisual(true)
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     fun setSuggestions(candidates: List<Candidate>) {
@@ -2776,13 +2798,13 @@ for (i in 0 until 3) {
                         view.typeface = android.graphics.Typeface.DEFAULT_BOLD
                     }
                     item.source == PredictionSource.PRECISE -> {
-                        // PRECISE ALGORITHM - Green, bold (slow swipe)
-                        view.setTextColor(PRECISE_GREEN)
+                        // PRECISE ALGORITHM - White, bold
+                        view.setTextColor(Color.WHITE)
                         view.typeface = android.graphics.Typeface.DEFAULT_BOLD
                     }
                     item.source == PredictionSource.SHAPE_CONTEXT -> {
-                        // SHAPE/CONTEXT ALGORITHM - Blue, bold (fast swipe)
-                        view.setTextColor(SHAPE_BLUE)
+                        // SHAPE/CONTEXT ALGORITHM - White, bold
+                        view.setTextColor(Color.WHITE)
                         view.typeface = android.graphics.Typeface.DEFAULT_BOLD
                     }
                     item.isCustom -> {
@@ -2817,14 +2839,30 @@ for (i in 0 until 3) {
     //          Dragging to backspace triggers word deletion (block from dictionary).
     //          DEBUG: Comprehensive logging to trace touch flow.
     // =================================================================================
+    private fun setBackspaceTrashVisual(active: Boolean) {
+        val bkspKey = findViewWithTag<View>("BKSP") ?: return
+        val tv = (bkspKey as? ViewGroup)?.getChildAt(0) as? TextView ?: return
+        if (active) {
+            tv.text = "🗑"
+            tv.setTextColor(Color.RED)
+            setKeyVisual(bkspKey, false, "BKSP", overrideColor = Color.RED)
+        } else {
+            tv.text = getDisplayText("BKSP")
+            tv.setTextColor(Color.WHITE)
+            setKeyVisual(bkspKey, false, "BKSP")
+        }
+    }
+
     private fun handleCandidateTouch(view: View, event: MotionEvent, item: Candidate): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-
                 dragStartX = event.rawX
                 dragStartY = event.rawY
                 isCandidateDragging = false
                 activeDragCandidate = item.text
+                isCandidateHoldActive = false
+                handler.removeCallbacks(candidateHoldRunnable)
+                handler.postDelayed(candidateHoldRunnable, candidateHoldDelayMs)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -2833,8 +2871,12 @@ for (i in 0 until 3) {
                 val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
 
                 // Threshold to start dragging (20px)
-if (!isCandidateDragging && dist > 20) {
+                if (!isCandidateDragging && dist > 20) {
                     isCandidateDragging = true
+                    handler.removeCallbacks(candidateHoldRunnable)
+                    if (!isCandidateHoldActive) {
+                        setBackspaceTrashVisual(false)
+                    }
 
                     // Visual feedback: Keep White (No Dimming)
                     view.alpha = 1.0f
@@ -2858,7 +2900,7 @@ if (!isCandidateDragging && dist > 20) {
                         if (isOverBksp) {
                             // HOVERING: Turn Red
                             setKeyVisual(bkspKey, false, "BKSP", overrideColor = Color.RED)
-                        } else {
+                        } else if (!isCandidateHoldActive) {
                             // NORMAL
                             setKeyVisual(bkspKey, false, "BKSP")
                         }
@@ -2867,11 +2909,11 @@ if (!isCandidateDragging && dist > 20) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-
+                handler.removeCallbacks(candidateHoldRunnable)
                 view.alpha = 1.0f
-                val bkspKey = findViewWithTag<View>("BKSP")
-                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP") // Reset color
+                setBackspaceTrashVisual(false)
 
+                val bkspKey = findViewWithTag<View>("BKSP")
                 if (isCandidateDragging) {
                     // Check Drop Target
                     if (bkspKey != null) {
@@ -2880,11 +2922,8 @@ if (!isCandidateDragging && dist > 20) {
                         val isOverBksp = event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
                                          event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height
 
-
-
                         if (isOverBksp) {
                             // DROPPED ON BACKSPACE -> DELETE
-
                             listener?.onSuggestionDropped(item.text)
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
@@ -2893,21 +2932,21 @@ if (!isCandidateDragging && dist > 20) {
                     }
                 } else {
                     // CLICK -> SELECT
-
                     listener?.onSuggestionClick(item.text, item.isNew)
                     view.performClick()
                 }
                 isCandidateDragging = false
+                isCandidateHoldActive = false
                 activeDragCandidate = null
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-
+                handler.removeCallbacks(candidateHoldRunnable)
                 view.alpha = 1.0f
                 isCandidateDragging = false
+                isCandidateHoldActive = false
                 activeDragCandidate = null
-                val bkspKey = findViewWithTag<View>("BKSP")
-                if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP")
+                setBackspaceTrashVisual(false)
                 return true
             }
         }

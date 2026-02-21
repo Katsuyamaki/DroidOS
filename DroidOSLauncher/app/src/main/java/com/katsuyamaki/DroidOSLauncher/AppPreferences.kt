@@ -454,6 +454,24 @@ object AppPreferences {
             Pair((parts[0].toInt() / 1000f * screenW).toInt(), (parts[1].toInt() / 1000f * screenH).toInt())
         } catch (e: Exception) { null }
     }
+
+    fun setBubblePositionForConfig(context: Context, displayId: Int, aspectRatio: String,
+                                    xPx: Int, yPx: Int, screenW: Int, screenH: Int, oSuffix: String) {
+        val xPermille = (xPx.toFloat() / screenW * 1000).toInt().coerceIn(0, 1000)
+        val yPermille = (yPx.toFloat() / screenH * 1000).toInt().coerceIn(0, 1000)
+        getPrefs(context).edit().putString("BUBBLE_POS_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix", "$xPermille|$yPermille").apply()
+    }
+
+    fun getBubblePositionForConfig(context: Context, displayId: Int, aspectRatio: String,
+                                    screenW: Int, screenH: Int, oSuffix: String): Pair<Int, Int>? {
+        val key = "BUBBLE_POS_${getDisplayCategory(displayId)}_$aspectRatio$oSuffix"
+        val data = getPrefs(context).getString(key, null) ?: return null
+        return try {
+            val parts = data.split("|")
+            if (parts.size != 2) return null
+            Pair((parts[0].toInt() / 1000f * screenW).toInt(), (parts[1].toInt() / 1000f * screenH).toInt())
+        } catch (e: Exception) { null }
+    }
     
     fun setAutoResizeKeyboard(context: Context, enable: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_AUTO_RESIZE_KEYBOARD, enable).apply()

@@ -478,6 +478,7 @@ private var isSoftKeyboardSupport = false
     private var lastKnownScreenH = 0
 
     override fun orientSuffix(): String = if (lastKnownScreenW > lastKnownScreenH) "_L" else "_P"
+    private fun bubbleConfigKey(): String = "${currentAspectRatio}_R$selectedResolutionIndex"
 
     private var bubbleView: View? = null
     private var drawerView: View? = null
@@ -2690,7 +2691,6 @@ private var isSoftKeyboardSupport = false
             }
         }
         
-        selectedResolutionIndex = AppPreferences.getDisplayResolution(this, displayId)
         currentOrientationMode = AppPreferences.getOrientationMode(this, displayId)
         
         // [FIX] On fresh install, grab the CURRENT system DPI instead of defaulting to -1 (Reset).
@@ -2906,7 +2906,7 @@ private var isSoftKeyboardSupport = false
         AppPreferences.saveLastCustomLayoutName(this, activeCustomLayoutName, currentDisplayId, os)
         AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent, os)
         AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent, os)
-        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, bubbleSizePercent, os)
+        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, bubbleConfigKey(), bubbleSizePercent, os)
     }
 
     private fun loadOrientationState() {
@@ -2927,7 +2927,9 @@ private var isSoftKeyboardSupport = false
         currentDrawerWidthPercent = AppPreferences.getDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, os)
             ?: AppPreferences.getDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio)
             ?: AppPreferences.getDrawerWidthPercent(this)
-        bubbleSizePercent = AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, os)
+        bubbleSizePercent = AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, bubbleConfigKey(), os)
+            ?: AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, bubbleConfigKey())
+            ?: AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, os)
             ?: AppPreferences.getBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio)
             ?: AppPreferences.getBubbleSize(this)
         if (selectedLayoutType == LAYOUT_CUSTOM_DYNAMIC && activeCustomLayoutName != null) {
@@ -3024,9 +3026,13 @@ private var isSoftKeyboardSupport = false
         val centerY = topPx + (effectiveH / 2)
         
         val screenW = metrics.widthPixels
+        val os = orientSuffix()
         bubbleParams.gravity = Gravity.TOP or Gravity.START
-        // Load saved position for this display+resolution, or use default
-        val savedPos = AppPreferences.getBubblePositionForConfig(this, currentDisplayId, currentAspectRatio, screenW, h)
+        // Load saved position for this display + resolution + orientation, with legacy fallback.
+        val savedPos = AppPreferences.getBubblePositionForConfig(this, currentDisplayId, bubbleConfigKey(), screenW, h, os)
+            ?: AppPreferences.getBubblePositionForConfig(this, currentDisplayId, bubbleConfigKey(), screenW, h)
+            ?: AppPreferences.getBubblePositionForConfig(this, currentDisplayId, currentAspectRatio, screenW, h, os)
+            ?: AppPreferences.getBubblePositionForConfig(this, currentDisplayId, currentAspectRatio, screenW, h)
         if (savedPos != null) { bubbleParams.x = savedPos.first; bubbleParams.y = savedPos.second }
         else { bubbleParams.x = (screenW / 2) - 80; bubbleParams.y = centerY }
         
@@ -3064,9 +3070,11 @@ private var isSoftKeyboardSupport = false
                         }
 
                         if (isDrag) {
-                            // Save bubble position for this display+resolution
+                            // Save bubble position for this display + resolution + orientation
                             val dm = DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
-                            AppPreferences.setBubblePositionForConfig(this@FloatingLauncherService, currentDisplayId, currentAspectRatio, bubbleParams.x, bubbleParams.y, dm.widthPixels, dm.heightPixels)
+                            val os = orientSuffix()
+                            AppPreferences.setBubblePositionForConfig(this@FloatingLauncherService, currentDisplayId, bubbleConfigKey(), bubbleParams.x, bubbleParams.y, dm.widthPixels, dm.heightPixels, os)
+                            AppPreferences.setBubblePositionForConfig(this@FloatingLauncherService, currentDisplayId, bubbleConfigKey(), bubbleParams.x, bubbleParams.y, dm.widthPixels, dm.heightPixels)
                         } else {
                             if (!isBound && showShizukuWarning) {
                                 if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
@@ -3107,7 +3115,9 @@ private var isSoftKeyboardSupport = false
     
     override fun changeBubbleSize(delta: Int) {
         bubbleSizePercent = (bubbleSizePercent + delta).coerceIn(50, 200)
-        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, currentAspectRatio, bubbleSizePercent)
+        val os = orientSuffix()
+        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, bubbleConfigKey(), bubbleSizePercent, os)
+        AppPreferences.setBubbleSizeForConfig(this, currentDisplayId, bubbleConfigKey(), bubbleSizePercent)
         AppPreferences.saveBubbleSize(this, bubbleSizePercent) // Global fallback
         applyBubbleSize()
         if (currentMode == MODE_SETTINGS) switchMode(MODE_SETTINGS)
@@ -6721,8 +6731,6 @@ private var isSoftKeyboardSupport = false
                 })
 
 
-                displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { switchDisplay() })
-                displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 displayList.add(HeightOption(currentDrawerHeightPercent))
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
@@ -6731,7 +6739,7 @@ private var isSoftKeyboardSupport = false
                 val isDroidOsImeActive = isDroidOsImeCurrentlyActive()
 
                 if (isDroidOsImeActive) {
-                    displayList.add(ToggleOption("Auto-Adjust Margin for IME", autoAdjustMarginForIME) {
+                    displayList.add(ToggleOption("Auto-Adjust Margin for Keyboard (Tiled Apps)", autoAdjustMarginForIME) {
                         autoAdjustMarginForIME = it
                         AppPreferences.setAutoAdjustMarginForIME(this, it)
                         AppPreferences.setAutoAdjustMarginForIME(this, it, orientSuffix())
@@ -6740,7 +6748,7 @@ private var isSoftKeyboardSupport = false
                 } else {
                     displayList.add(
                         ToggleOption(
-                            "Auto-Adjust Margin for IME",
+                            "Auto-Adjust Margin for Keyboard (Tiled Apps)",
                             false,
                             canToggle = false,
                             disabledNote = "DroidOS Toolbar Keyboard is needed for this function",
@@ -6789,6 +6797,9 @@ private var isSoftKeyboardSupport = false
                         wakeUp()
                     }
                 })
+
+                displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { switchDisplay() })
+                displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
                 
                 displayList.add(ToggleOption("Auto-Start Trackpad", autoRestartTrackpad) { autoRestartTrackpad = it; AppPreferences.setAutoRestartTrackpad(this, it); if (it) safeToast("Trackpad will restart on next Launcher startup") })
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })

@@ -193,7 +193,10 @@ class RofiAdapter(
         if (holder is LayoutHolder) holder.nameInput.setScaledTextSize(handler.currentFontSize, 1.0f)
         if (holder is ProfileRichHolder) holder.name.setScaledTextSize(handler.currentFontSize, 1.0f)
 
-        val isKeyboardSelected = (position == handler.selectedListIndex)
+        val isKeyboardSelected = (
+            handler.currentFocusArea == FocusAreas.FOCUS_LIST &&
+            position == handler.selectedListIndex
+        )
         val bgRes = if (isKeyboardSelected) R.drawable.bg_item_active else R.drawable.bg_item_press
         
         if (holder !is ProfileRichHolder && holder !is ActionHolder && holder !is LayoutHolder) {
