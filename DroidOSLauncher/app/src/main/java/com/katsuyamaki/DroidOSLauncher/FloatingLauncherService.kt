@@ -660,37 +660,76 @@ private var isSoftKeyboardSupport = false
         display.getRealMetrics(metrics)
         val screenHeight = metrics.heightPixels
         if (screenHeight <= 0) return 0
-        // Use received toolbar height from DockIME when available for accurate cross-display DPI
+        // Toolbar-only height from DockIME (system inset handled separately).
         val toolbarPx = if (receivedToolbarHeightPx > 0) {
             receivedToolbarHeightPx
         } else {
             // Fallback: use target display density (not default display)
             (40f * metrics.density).toInt()
         }
-        // Include nav bar/system bottom UI height when provided by DockIME.
-        val navBarPx = if (receivedNavBarHeightPx >= 0) receivedNavBarHeightPx else 0
-        val totalBottomUiPx = toolbarPx + navBarPx
-        return ((totalBottomUiPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
+        return ((toolbarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
+    }
+
+    private fun systemBottomInsetPercent(): Int {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return 0
+        val display = dm.getDisplay(currentDisplayId) ?: return 0
+        val metrics = DisplayMetrics()
+        display.getRealMetrics(metrics)
+        val screenHeight = metrics.heightPixels
+        if (screenHeight <= 0) return 0
+
+        val navBarPx = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                    android.view.WindowInsets.Type.navigationBars() or
+                        android.view.WindowInsets.Type.displayCutout()
+                )
+                insets.bottom
+            } else {
+                val resId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+                if (resId > 0) resources.getDimensionPixelSize(resId) else 0
+            }
+        } catch (e: Exception) {
+            val resId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            if (resId > 0) resources.getDimensionPixelSize(resId) else 0
+        }
+
+        return ((navBarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
     }
 
     private fun effectiveBottomMarginPercent(): Int {
+        val systemInsetPct = systemBottomInsetPercent()
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
-        if (!canAutoAdjustForIme) return bottomMarginPercent
 
-        // IME not shown: tiled windows should occupy full height.
-        if (!imeMarginOverrideActive) return 0
+        if (!canAutoAdjustForIme) {
+            // Manual/base margin mode still needs persistent system inset reserve.
+            return (bottomMarginPercent + systemInsetPct).coerceAtMost(100)
+        }
+
+        // Check if we have launcher-managed tiled windows (2+ non-minimized apps).
+        // Fullscreen/independent apps should NOT get launcher margins - let Android ADJUST_RESIZE handle it.
+        val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
+        val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+
+        // IME hidden: reserve persistent system inset only for tiled apps.
+        if (!imeMarginOverrideActive) {
+            return if (hasLauncherTiledWindows) systemInsetPct else 0
+        }
+
+        // Fullscreen app with IME open: return 0, let DockIME insets handle resize.
+        if (!hasLauncherTiledWindows) return 0
 
         val dockToolbarVisible = isDockImeToolbarVisible()
         val showAboveDock = isShowKbAboveDockEnabled()
         val toolbarHeightPct = dockToolbarHeightPercent()
 
         // IME shown via bubble/overlay without DockIME toolbar visible.
+        // Nav bar is still visible under keyboard, so add systemInsetPct.
         if (!dockToolbarVisible) return bottomMarginPercent
 
-        // DockIME toolbar visible.
-        // bottomMarginPercent is the FULL margin setting (includes space for keyboard + toolbar).
-        // If keyboard sits above toolbar: use full margin (both visible).
-        // If keyboard overlaps toolbar: subtract toolbar height (keyboard covers toolbar).
+        // DockIME toolbar visible - it sits ON TOP of nav bar.
+        // Do NOT add systemInsetPct here - nav bar space is covered by DockIME.
         return if (showAboveDock) {
             bottomMarginPercent
         } else {
@@ -6803,7 +6842,8 @@ private var isSoftKeyboardSupport = false
                 displayList.add(HeightOption(currentDrawerHeightPercent))
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
-                displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom
+                displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom (base)
+                displayList.add(LegendOption("NOTE: Android bottom gesture/nav inset is auto-reserved"))
                 // Toggle availability must follow current active/default IME only.
                 val isDroidOsImeActive = isDroidOsImeCurrentlyActive()
 

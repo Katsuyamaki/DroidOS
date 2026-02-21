@@ -853,7 +853,7 @@ class RofiAdapter(
     }
     
     private fun bindMarginHolder(holder: MarginHolder, item: MarginOption, position: Int) {
-        holder.label.text = if (item.type == 0) "Top Margin:" else "Bottom Margin:"
+        holder.label.text = if (item.type == 0) "Top Margin:" else "Base Bottom Margin:"
         holder.label.setScaledTextSize(handler.currentFontSize, 1.0f)
         holder.text.text = "${item.currentPercent}%"
         holder.text.setScaledTextSize(handler.currentFontSize, 1.125f)
@@ -896,7 +896,7 @@ class RofiAdapter(
                         .putInt("auto_resize_scale", progress)
                         .apply()
 
-                    handler.safeToast("Bottom Margin: $progress% (Display ${handler.currentDisplayId})")
+                    handler.safeToast("Base Bottom Margin: $progress% (Display ${handler.currentDisplayId})")
                     
                     val intent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
                     intent.putExtra("PERCENT", progress)
