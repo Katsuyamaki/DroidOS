@@ -50,7 +50,11 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
             }
 
             matches("MOVE_TO_DISPLAY") -> {
-                val targetId = intent.getIntExtra("displayId", 0)
+                val targetId = when {
+                    intent.hasExtra("displayId") -> intent.getIntExtra("displayId", service.currentDisplayId)
+                    intent.hasExtra("DISPLAY_ID") -> intent.getIntExtra("DISPLAY_ID", service.currentDisplayId)
+                    else -> service.currentDisplayId
+                }
 
                 service.handler.post {
                     service.saveCurrentState()

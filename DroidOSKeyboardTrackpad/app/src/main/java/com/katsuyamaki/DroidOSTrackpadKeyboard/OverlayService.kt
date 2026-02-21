@@ -3228,7 +3228,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     internal fun switchToRemoteDisplay(displayId: Int) {
-        inputTargetDisplayId = displayId
+        val validDisplay = displayManager?.getDisplay(displayId)
+        if (validDisplay == null) {
+            showToast("Display $displayId unavailable; staying on current display")
+            switchToLocalDisplay()
+            return
+        }
+
+        inputTargetDisplayId = validDisplay.displayId
         updateTargetMetrics(inputTargetDisplayId)
         createRemoteCursor(inputTargetDisplayId)
         cursorX = targetScreenWidth / 2f
@@ -3236,6 +3243,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         layoutManager?.updateRemoteCursorPosition(cursorX.toInt(), cursorY.toInt())
         cursorView?.visibility = View.GONE
         updateBorderColor(0xFFFF00FF.toInt())
+        updateWakeLockState()
     }
 
     internal fun switchToLocalDisplay() {
@@ -3263,7 +3271,55 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // END BLOCK: MIRROR MODE HELPER METHODS
     // =================================================================================
     override fun onDisplayAdded(displayId: Int) {}
-    override fun onDisplayRemoved(displayId: Int) {}
+
+    override fun onDisplayRemoved(displayId: Int) {
+        logOverlayKbDiag("onDisplayRemoved", "removedDisplay=$displayId current=$currentDisplayId target=$inputTargetDisplayId")
+
+        val displays = displayManager?.displays ?: emptyArray()
+        val hasCurrent = displays.any { it.displayId == currentDisplayId }
+        val hasTarget = displays.any { it.displayId == inputTargetDisplayId }
+
+        // If both current UI display and input target are still valid, no recovery needed.
+        if (hasCurrent && hasTarget) return
+
+        // Prefer physical displays for recovery; otherwise use any remaining display.
+        val fallbackDisplayId = when {
+            displays.any { it.displayId == 0 } -> 0
+            displays.any { it.displayId == 1 } -> 1
+            displays.isNotEmpty() -> displays.first().displayId
+            else -> Display.DEFAULT_DISPLAY
+        }
+
+        handler.post {
+            try {
+                if (!hasCurrent) {
+                    saveCurrentState()
+                    setupUI(fallbackDisplayId)
+                }
+
+                if (!hasTarget) {
+                    inputTargetDisplayId = currentDisplayId
+                    targetScreenWidth = uiScreenWidth
+                    targetScreenHeight = uiScreenHeight
+                    removeRemoteCursor()
+                    mirrorManager?.removeMirrorKeyboard()
+                    btMouseManager?.removeBtMouseCaptureOverlay()
+                    cursorX = uiScreenWidth / 2f
+                    cursorY = uiScreenHeight / 2f
+                    cursorParams.x = cursorX.toInt()
+                    cursorParams.y = cursorY.toInt()
+                    try { windowManager?.updateViewLayout(cursorLayout, cursorParams) } catch (_: Exception) {}
+                    cursorView?.visibility = View.VISIBLE
+                    updateBorderColor(0x55FFFFFF.toInt())
+                    updateWakeLockState()
+                }
+            } catch (_: Exception) {
+                // Safe fallback path if granular recovery fails.
+                try { setupUI(fallbackDisplayId) } catch (_: Exception) {}
+            }
+        }
+    }
+
     override fun onDisplayChanged(displayId: Int) {
         logOverlayKbDiag("onDisplayChanged_enter", "eventDisplay=$displayId")
         // =================================================================================

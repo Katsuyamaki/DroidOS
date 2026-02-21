@@ -433,7 +433,14 @@ class MirrorModeManager(
 
         removeMirrorKeyboard()
         service.btMouseManager?.removeBtMouseCaptureOverlay()
-        service.switchToLocalDisplay()
+
+        // Deterministic trackpad recovery: OFF always move UI/target to a physical display.
+        val physicalDisplayId = when {
+            service.preMirrorTargetDisplayId in listOf(0, 1) -> service.preMirrorTargetDisplayId
+            service.currentDisplayId in listOf(0, 1) -> service.currentDisplayId
+            else -> Display.DEFAULT_DISPLAY
+        }
+        service.returnToPhysicalDisplay(physicalDisplayId)
 
         service.loadLayout()
         service.restorePreMirrorVisibility()
@@ -441,7 +448,6 @@ class MirrorModeManager(
         service.showToast("Mirror Mode OFF")
 
         // Deterministic launcher sync: OFF always move launcher bubble to a physical display.
-        val physicalDisplayId = if (service.currentDisplayId >= 2) Display.DEFAULT_DISPLAY else service.currentDisplayId
         val intentMove = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
         intentMove.setPackage("com.katsuyamaki.DroidOSLauncher")
         intentMove.putExtra("displayId", physicalDisplayId)
