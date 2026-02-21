@@ -300,7 +300,9 @@ class DockInputMethodService : InputMethodService() {
             val intent = Intent("APPLY_DOCK_MODE")
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
-            intent.putExtra("nav_bar_height", getActualNavBarHeight())
+            // Send combined system bottom UI height (nav bar + IME switcher)
+            // This is more accurate than just nav bar for keyboard positioning
+            intent.putExtra("nav_bar_height", getSystemBottomUiHeight())
             // Always send resize_to_margin when auto-resize is enabled so overlay keyboard
             // sizes correctly for both fullscreen and tiled paths.
             if (prefAutoResize) {
@@ -1054,6 +1056,41 @@ class DockInputMethodService : InputMethodService() {
         val metrics = android.util.DisplayMetrics()
         wm.defaultDisplay.getRealMetrics(metrics)
         return (40f * metrics.density).toInt()
+    }
+
+    /**
+     * Get the total system bottom UI height combining two detection methods:
+     * 1. WindowInsets - catches nav bar and gesture hint (but NOT IME switcher)
+     * 2. Gap measurement - catches IME switcher (but may miss gesture hint since window extends behind it)
+     * 
+     * Use MAX of both to ensure we catch everything.
+     */
+    private fun getSystemBottomUiHeight(): Int {
+        // Method 1: WindowInsets (catches gesture hint, nav bar)
+        val insetsHeight = getActualNavBarHeight()
+        
+        // Method 2: Gap measurement (catches IME switcher)
+        val gapHeight = try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val metrics = android.util.DisplayMetrics()
+            wm.defaultDisplay.getRealMetrics(metrics)
+            val screenHeight = metrics.heightPixels
+            
+            val decorView = window?.window?.decorView
+            if (decorView != null) {
+                val location = IntArray(2)
+                decorView.getLocationOnScreen(location)
+                val windowBottom = location[1] + decorView.height
+                val gap = screenHeight - windowBottom
+                
+                // Sanity check: gap should be reasonable (0 to ~200dp)
+                val maxGap = (200 * resources.displayMetrics.density).toInt()
+                if (gap in 0..maxGap) gap else 0
+            } else 0
+        } catch (e: Exception) { 0 }
+        
+        // Return MAX to catch both gesture hint and IME switcher
+        return maxOf(insetsHeight, gapHeight)
     }
 
     // Helper: Send key with meta state

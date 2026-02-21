@@ -2050,19 +2050,28 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val targetY: Int
         
         if (prefs.prefShowKBAboveDock && isDockIMEVisible) {
-            // ON: Keyboard sits ABOVE toolbar, toolbar sits above nav bar
-            // Keyboard height = margin - toolbar - navBar
+            // Case 1: Toggle ON + DockIME visible
+            // Keyboard above toolbar, toolbar above nav bar
             kbHeight = (marginHeight - dockToolbarHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
             targetY = screenHeight - kbHeight - dockToolbarHeight - navBarHeight
-        } else {
-            // OFF: Keyboard covers toolbar area, sits on top of nav bar
-            // Launcher returns effectiveMargin = (margin - toolbar), so tiled apps end at:
+        } else if (prefs.prefShowKBAboveDock && !isDockIMEVisible) {
+            // Case 2: Toggle ON + DockIME not visible (manual KB open)
+            // No toolbar to position above, just nav bar
+            // Tiled apps use full bottomMarginPercent when dock not visible
+            kbHeight = (marginHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
+            targetY = screenHeight - kbHeight - navBarHeight
+        } else if (!prefs.prefShowKBAboveDock && isDockIMEVisible) {
+            // Case 3: Toggle OFF + DockIME visible
+            // Keyboard covers toolbar, sits on nav bar
+            // Launcher returns (margin - toolbar), so tiled apps end at:
             //   screenHeight - marginHeight + toolbarHeight
-            // Keyboard should fill from there to nav bar top:
-            //   kbHeight = marginHeight - toolbarHeight - navBarHeight
-            //   targetY = screenHeight - marginHeight + toolbarHeight (where tiled app ends)
             kbHeight = (marginHeight - dockToolbarHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
             targetY = screenHeight - marginHeight + dockToolbarHeight
+        } else {
+            // Case 4: Toggle OFF + DockIME not visible (manual KB open)
+            // No toolbar, keyboard fills margin space above nav bar
+            kbHeight = (marginHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
+            targetY = screenHeight - kbHeight - navBarHeight
         }
         
         val targetW = screenWidth
@@ -2089,15 +2098,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
     // =================================================================================
     internal fun getNavBarHeight(): Int {
-        // Use systemBars() to capture ALL bottom system UI including:
-        // - Navigation bar (3-button, 2-button, gesture hint)
-        // - IME switcher bar (when multiple keyboards installed)
-        // This is critical because IME switcher is NOT part of navigationBars()
+        // Prefer DockIME broadcast value - it measures actual gap below IME window
+        // which includes nav bar + IME switcher (more accurate than WindowInsets)
+        if (dockNavBarHeight >= 0) return dockNavBarHeight
+        
+        // Fallback to WindowInsets if no broadcast received yet
         val insetsHeight = try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
                 val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                    android.view.WindowInsets.Type.systemBars()
+                    android.view.WindowInsets.Type.navigationBars()
                 )
                 insets.bottom
             } else {
@@ -2106,7 +2116,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         } catch (e: Exception) { -1 }
         
         if (insetsHeight >= 0) return insetsHeight
-        if (dockNavBarHeight >= 0) return dockNavBarHeight
         val navResId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
         return if (navResId > 0) resources.getDimensionPixelSize(navResId) else 0
     }
