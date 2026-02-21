@@ -23,7 +23,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.roundToInt
 import android.annotation.SuppressLint
-import android.util.Log
 
 class KeyboardView @JvmOverloads constructor(
     context: Context,
@@ -1396,7 +1395,6 @@ private fun buildKeyboard() {
 
                         // Check if listener exists
                         if (listener == null) {
-                            android.util.Log.e("DroidOS_Swipe", "DISPATCH FAIL: listener is NULL!")
                         } else {
                             // NEW: Send timed path for dwell detection
                             listener?.onSwipeDetectedTimed(ArrayList(currentPath))
@@ -2783,14 +2781,11 @@ for (i in 0 until 3) {
                 // VISUAL STYLING BASED ON WORD TYPE AND PREDICTION SOURCE
                 // Priority order:
                 //   1. isNew = RED (word not in dictionary)
-                //   2. PRECISE source = GREEN (slow swipe winner)
-                //   3. SHAPE_CONTEXT source = BLUE (fast swipe winner)
+                //   2. PRECISE source = WHITE BOLD
+                //   3. SHAPE_CONTEXT source = WHITE BOLD
                 //   4. isCustom = WHITE ITALIC (user dictionary)
                 //   5. Default = WHITE BOLD (main dictionary)
                 // =======================================================================
-                val PRECISE_GREEN = Color.parseColor("#4CAF50")   // Material Green 500
-                val SHAPE_BLUE = Color.parseColor("#2196F3")      // Material Blue 500
-                
                 when {
                     item.isNew -> {
                         // NOT IN DICTIONARY - Red, bold
@@ -2928,7 +2923,6 @@ for (i in 0 until 3) {
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
                     } else {
-                        android.util.Log.e("DroidOS_Drag", "ERROR: bkspKey is NULL!")
                     }
                 } else {
                     // CLICK -> SELECT

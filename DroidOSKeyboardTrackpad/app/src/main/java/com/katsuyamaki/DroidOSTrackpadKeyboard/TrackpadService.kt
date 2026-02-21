@@ -11,7 +11,6 @@ import android.widget.Button
 import android.widget.Toast
 import android.hardware.display.DisplayManager
 import android.os.Build
-import android.util.Log
 import android.content.Context
 
 class TrackpadService : Service() {
@@ -42,7 +41,6 @@ class TrackpadService : Service() {
                 try {
                     windowManager.removeView(trackpadView)
                 } catch (e: Exception) {
-                    android.util.Log.e("TrackpadService", "Migration removeView failed", e)
                 }
                 trackpadView = null
                 setupUI(targetDisplayId)

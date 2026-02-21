@@ -3,7 +3,6 @@ package com.katsuyamaki.DroidOSTrackpadKeyboard
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -138,7 +137,6 @@ class ShizukuInputHandler(
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Key injection failed", e)
             }
         }
     }
@@ -170,7 +168,6 @@ class ShizukuInputHandler(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Bulk delete failed", e)
             }
         }
     }
@@ -198,7 +195,6 @@ class ShizukuInputHandler(
                     shellService?.runCommand(cmd)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Text injection failed", e)
             }
         }
     }
@@ -219,7 +215,6 @@ class ShizukuInputHandler(
             try {
                 shellService?.injectMouse(action, x, y, targetDisplayId, source, button, time)
             } catch (e: Exception) {
-                Log.e(TAG, "Mouse injection failed", e)
             }
         }
     }
@@ -238,7 +233,6 @@ class ShizukuInputHandler(
             try {
                 shellService?.injectScroll(x, y, vScroll / 10f, hScroll / 10f, targetDisplayId)
             } catch (e: Exception) {
-                Log.e(TAG, "Scroll injection failed", e)
             }
         }
     }
@@ -260,7 +254,6 @@ class ShizukuInputHandler(
                     shellService?.execClick(x, y, targetDisplayId)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Click injection failed", e)
             }
         }
     }
@@ -288,7 +281,6 @@ class ShizukuInputHandler(
                 }
                 shellService?.injectMouse(MotionEvent.ACTION_UP, endX, endY, targetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.BUTTON_PRIMARY, now + 100)
             } catch (e: Exception) {
-                Log.e(TAG, "Swipe injection failed", e)
             }
         }
     }

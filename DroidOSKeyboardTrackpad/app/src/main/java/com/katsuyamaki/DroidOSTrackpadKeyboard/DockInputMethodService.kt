@@ -65,10 +65,6 @@ class DockInputMethodService : InputMethodService() {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
 
             lastTiledStateTime = System.currentTimeMillis()
-            android.util.Log.d(
-                TAG,
-                "tiledStateReceiver: newState=$newState prev=$launcherTiledActive lastTiledStateTime=$lastTiledStateTime"
-            )
             if (newState != launcherTiledActive) {
                 launcherTiledActive = newState
 
@@ -84,10 +80,6 @@ class DockInputMethodService : InputMethodService() {
                     val alreadyDispatchedForSession =
                         imeShowDispatchedSessionId == imeVisibilitySessionId
                     if (alreadyDispatchedForSession) {
-                        android.util.Log.d(
-                            TAG,
-                            "IME_VIS: skip secondary show dispatch session=$imeVisibilitySessionId reason=tiledStateReceiver"
-                        )
                     } else {
                         dispatchImeShowVisibilityFromSession(reason = "tiledStateReceiver", forceRetile = false)
                     }
@@ -128,16 +120,17 @@ class DockInputMethodService : InputMethodService() {
         }
     }
 
-    private fun sendImeVisibilityBroadcast(visible: Boolean, isTiled: Boolean, forceRetile: Boolean, reason: String) {
+    private fun sendImeVisibilityBroadcast(
+        visible: Boolean,
+        isTiled: Boolean,
+        forceRetile: Boolean,
+        @Suppress("UNUSED_PARAMETER") reason: String
+    ) {
         val showAboveDock = prefShowKBAboveDock && prefDockMode
         val sameVisibility = lastImeVisibilityBroadcast == visible
         val sameTiled = lastImeTiledBroadcast == isTiled
         val sameShowAboveDock = lastImeShowAboveDockBroadcast == showAboveDock
         if (sameVisibility && sameTiled && sameShowAboveDock && !forceRetile) {
-            android.util.Log.d(
-                TAG,
-                "IME_VIS: skip duplicate visible=$visible isTiled=$isTiled showAboveDock=$showAboveDock reason=$reason"
-            )
             return
         }
 
@@ -155,28 +148,18 @@ class DockInputMethodService : InputMethodService() {
         lastImeTiledBroadcast = isTiled
         lastImeShowAboveDockBroadcast = showAboveDock
 
-        android.util.Log.d(
-            TAG,
-            "IME_VIS: broadcast visible=$visible isTiled=$isTiled dockImeVisible=$visible showAboveDock=$showAboveDock forceRetile=$forceRetile reason=$reason"
-        )
     }
 
     private fun runConfirmedImeHiddenEffects(reason: String, sessionId: Long) {
         if (sessionId != imeVisibilitySessionId) {
-            android.util.Log.d(
-                TAG,
-                "IME_VIS: drop stale hide confirm session=$sessionId activeSession=$imeVisibilitySessionId reason=$reason"
-            )
             return
         }
 
         if (lastConfirmedHideSessionId == sessionId) {
-            android.util.Log.d(TAG, "IME_VIS: skip duplicate hide confirm session=$sessionId reason=$reason")
             return
         }
 
         if (isInputViewShown) {
-            android.util.Log.d(TAG, "IME_VIS: cancel hide; input view still shown reason=$reason session=$sessionId")
             return
         }
 
@@ -216,16 +199,11 @@ class DockInputMethodService : InputMethodService() {
         }
         pendingImeHiddenConfirmRunnable = runnable
 
-        android.util.Log.d(
-            TAG,
-            "IME_VIS: schedule hide confirm session=$sessionId elapsedSinceShow=$elapsedSinceShow delayMs=$delayMs reason=$reason"
-        )
         imeVisibilityHandler.postDelayed(runnable, delayMs)
     }
 
     private fun dispatchImeShowVisibilityFromSession(reason: String, forceRetile: Boolean) {
         if (!forceRetile && imeShowDispatchedSessionId == imeVisibilitySessionId) {
-            android.util.Log.d(TAG, "IME_VIS: skip duplicate show dispatch session=$imeVisibilitySessionId reason=$reason")
             return
         }
 
@@ -243,7 +221,6 @@ class DockInputMethodService : InputMethodService() {
         loadDockPrefs()
 
         if (imeWindowVisible) {
-            android.util.Log.d(TAG, "IME_VIS: ignore duplicate onWindowShown session=$imeVisibilitySessionId")
             return
         }
         imeWindowVisible = true
@@ -278,10 +255,6 @@ class DockInputMethodService : InputMethodService() {
         windowShownTime = now
         staleTiledHandler.removeCallbacks(staleTiledCheck)
 
-        android.util.Log.d(
-            TAG,
-            "onWindowShown: bootstrap tiledActive=$launcherTiledActive hasFreshBroadcast=$hasFreshTiledBroadcast persisted=$persistedTiledActive lastTiledStateTime=$lastTiledStateTime"
-        )
 
         if (hasFreshTiledBroadcast) {
             dispatchImeShowVisibilityFromSession(reason = "onWindowShown", forceRetile = false)
@@ -290,26 +263,14 @@ class DockInputMethodService : InputMethodService() {
             val showRunnable = Runnable {
                 pendingInitialImeShowRunnable = null
                 if (!imeWindowVisible || sessionId != imeVisibilitySessionId) {
-                    android.util.Log.d(
-                        TAG,
-                        "IME_VIS: drop delayed show session=$sessionId activeSession=$imeVisibilitySessionId imeWindowVisible=$imeWindowVisible"
-                    )
                     return@Runnable
                 }
                 dispatchImeShowVisibilityFromSession(reason = "onWindowShown_delayed", forceRetile = false)
             }
             pendingInitialImeShowRunnable = showRunnable
             imeVisibilityHandler.postDelayed(showRunnable, imeInitialShowDelayMs)
-            android.util.Log.d(
-                TAG,
-                "IME_VIS: schedule delayed show session=$sessionId delayMs=$imeInitialShowDelayMs"
-            )
         }
 
-        android.util.Log.d(
-            TAG,
-            "onWindowShown: autoShow=$prefAutoShowOverlay autoResize=$prefAutoResize dockMode=$prefDockMode windowShownTime=$windowShownTime"
-        )
         
         // Auto-show overlay keyboard if enabled
         if (prefAutoShowOverlay) {
@@ -358,7 +319,6 @@ class DockInputMethodService : InputMethodService() {
         staleTiledHandler.removeCallbacks(staleTiledCheck)
 
         if (!imeWindowVisible) {
-            android.util.Log.d(TAG, "IME_VIS: ignore duplicate onWindowHidden session=$imeVisibilitySessionId")
             return
         }
         imeWindowVisible = false
@@ -370,10 +330,6 @@ class DockInputMethodService : InputMethodService() {
 
         scheduleConfirmedImeHidden("onWindowHidden")
         
-        android.util.Log.d(
-            TAG,
-            "onWindowHidden: queued confirm session=$imeVisibilitySessionId autoShow=$prefAutoShowOverlay autoResize=$prefAutoResize dockMode=$prefDockMode"
-        )
         
 
     }
@@ -389,7 +345,6 @@ class DockInputMethodService : InputMethodService() {
 
         } catch (e: Exception) {
             // Safety Fallback: Return 0-size view if XML fails (prevents OverlayService crash)
-            android.util.Log.e(TAG, "Failed to inflate Dock UI", e)
             return View(this).apply { 
                 layoutParams = android.view.ViewGroup.LayoutParams(0, 0)
                 visibility = View.GONE
@@ -1140,10 +1095,6 @@ class DockInputMethodService : InputMethodService() {
             val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
 
             val inputPkg = currentInputEditorInfo?.packageName ?: "null"
-            android.util.Log.d(
-                TAG,
-                "onComputeInsets: inputPkg=$inputPkg tiledBroadcast=$launcherTiledActive persisted=$persistedTiledActive usePersistedFallback=$shouldUsePersistedFallback hasFreshBroadcast=$hasFreshTiledBroadcastForThisShow withinBootstrap=$withinBootstrapWindow shouldSuppress=$shouldSuppressInsets autoResize=$prefAutoResize dockMode=$prefDockMode viewH=$viewH wrapperH=$wrapperH"
-            )
 
             if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
                 // TILED/MANAGED: Launcher handles resize via retileExistingWindows().

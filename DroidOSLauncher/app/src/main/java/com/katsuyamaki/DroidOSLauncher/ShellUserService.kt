@@ -6,7 +6,6 @@ import android.content.ContextWrapper
 import android.os.Binder
 import android.os.IBinder
 import android.provider.Settings
-import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.ArrayList
@@ -293,13 +292,10 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     // === REPOSITION TASK - START ===
     // Repositions a task window to specified bounds using am task commands
     override fun repositionTask(packageName: String, className: String?, left: Int, top: Int, right: Int, bottom: Int) {
-        // Log.d(TAG, "repositionTask: pkg=$packageName cls=$className bounds=[$left,$top,$right,$bottom]")
 
         val tid = getTaskId(packageName, className)
-        // Log.d(TAG, "repositionTask: getTaskId returned $tid")
 
         if (tid == -1) {
-            // Log.w(TAG, "repositionTask: No task found for $packageName / $className")
             return
         }
 
@@ -336,16 +332,13 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         
         // [EFFICIENCY] Return cached result if valid
         if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty()) {
-            // Log.d("EFFICIENCY", "getVisiblePackages: CACHE HIT (Age: ${now - lastVisibleCacheTime}ms)")
             return ArrayList(cachedVisiblePackages)
         }
         
-        // Log.d("EFFICIENCY", "getVisiblePackages: CACHE MISS - Running dumpsys...")
 
         val list = ArrayList<String>()
         val token = Binder.clearCallingIdentity()
         try {
-            // Log.d(TAG, "getVisiblePackages: Checking display $displayId")
             val p = Runtime.getRuntime().exec("dumpsys window windows")
             val r = BufferedReader(InputStreamReader(p.inputStream))
             var line: String?
@@ -382,7 +375,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
                         val left = frameMatcher.group(1)?.toIntOrNull() ?: 0
                         if (left >= 10000) {
                             isOffScreen = true
-                            // Log.d(TAG, "getVisiblePackages: $currentPkg is off-screen (left=$left)")
                         }
                     } catch (e: Exception) {}
                 }
@@ -524,7 +516,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         
         val token = Binder.clearCallingIdentity()
         try {
-            // Log.d(TAG, "getTaskId: Looking for pkg=$packageName cls=$className")
             
             // === GEMINI DETECTION ===
             val isGemini = packageName == "com.google.android.apps.bard" || 

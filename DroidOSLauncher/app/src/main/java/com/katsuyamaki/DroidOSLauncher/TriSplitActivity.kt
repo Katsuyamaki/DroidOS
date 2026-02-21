@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Bundle
-import android.util.Log
 import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -161,7 +160,6 @@ class TriSplitActivity : AppCompatActivity() {
             val options = ActivityOptions.makeBasic().setLaunchBounds(bounds)
             startActivity(intent, options.toBundle())
         } catch (e: Exception) {
-            Log.e("TriSplitActivity", "Failed to launch $packageName", e)
         }
     }
 }

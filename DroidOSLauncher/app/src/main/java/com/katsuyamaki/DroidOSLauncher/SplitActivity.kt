@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.IBinder
-import android.util.Log
 import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -134,7 +133,6 @@ class SplitActivity : AppCompatActivity() {
             ShizukuBinder.bind(component, userServiceConnection, true, 1)
             launchButton.text = "Binding..."
         } catch (e: Exception) {
-            Log.e(TAG, "Bind Failed", e)
             launchButton.text = "Bind Failed"
         }
     }
@@ -182,7 +180,6 @@ class SplitActivity : AppCompatActivity() {
                         launchButton.text = "LAUNCH SPLIT"
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Remote Call Failed", e)
                 }
             }.start()
         } else {
@@ -201,7 +198,6 @@ class SplitActivity : AppCompatActivity() {
             val options = ActivityOptions.makeBasic().setLaunchBounds(bounds)
             startActivity(intent, options.toBundle())
         } catch (e: Exception) {
-            Log.e(TAG, "Launch error", e)
         }
     }
 }

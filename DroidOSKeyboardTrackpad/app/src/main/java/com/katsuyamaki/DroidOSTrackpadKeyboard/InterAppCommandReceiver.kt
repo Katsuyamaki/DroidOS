@@ -3,7 +3,6 @@ package com.katsuyamaki.DroidOSTrackpadKeyboard
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 
 /**
  * =================================================================================
@@ -62,7 +61,6 @@ class InterAppCommandReceiver : BroadcastReceiver() {
             context.startService(serviceIntent)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to forward command to OverlayService", e)
             
             // If service start fails, try broadcasting directly
             // The OverlayService's dynamic receiver might pick it up
@@ -76,7 +74,6 @@ class InterAppCommandReceiver : BroadcastReceiver() {
                 context.sendBroadcast(broadcastIntent)
 
             } catch (e2: Exception) {
-                Log.e(TAG, "Fallback broadcast also failed", e2)
             }
         }
     }

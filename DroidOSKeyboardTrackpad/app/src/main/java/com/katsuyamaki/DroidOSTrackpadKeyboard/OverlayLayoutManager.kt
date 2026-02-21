@@ -240,7 +240,6 @@ class OverlayLayoutManager(
             try {
                 handleTrackpadTouch(event)
             } catch (e: Exception) {
-                android.util.Log.e("TrackpadDebug", "handleTrackpadTouch CRASHED", e)
             }
             
             true

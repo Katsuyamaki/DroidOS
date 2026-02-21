@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -211,7 +210,6 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
 
                 return
             } catch (e: Exception) {
-                Log.e(BT_TAG, "├─ Shizuku cursor hide failed", e)
             }
         }
         try {
@@ -229,7 +227,6 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
                 systemCursorHidden = true
 
             } catch (e2: Exception) {
-                Log.e(BT_TAG, "├─ Failed to hide cursor: ${e2.message}")
             }
         }
     }
@@ -263,7 +260,6 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
                 systemCursorHidden = false
 
             } catch (e2: Exception) {
-                Log.e(BT_TAG, "├─ Failed to show cursor: ${e2.message}")
             }
         }
     }
@@ -282,7 +278,6 @@ class BluetoothMouseManager(private val service: OverlayService, private val win
                 windowManager.addView(btMouseCaptureLayout, btMouseCaptureParams)
 
             } catch (e: Exception) {
-                Log.e(BT_TAG, "Z-Order: Failed to move BT Capture", e)
             }
         }
     }

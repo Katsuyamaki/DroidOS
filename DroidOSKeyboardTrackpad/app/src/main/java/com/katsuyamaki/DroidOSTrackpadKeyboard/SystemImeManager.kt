@@ -67,7 +67,6 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                             }
                             
                         } catch (e: Exception) {
-                            android.util.Log.e(TAG, "Samsung fight error: ${e.message}")
                         }
                     }.start()
                 }
@@ -95,7 +94,6 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                             Thread.sleep(500)
                             
                         } catch (e: Exception) {
-                            android.util.Log.e(TAG, "NullKB restore error: ${e.message}")
                         }
                     }.start()
                 }

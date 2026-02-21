@@ -406,7 +406,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
             }
         } catch (e: Exception) {
-            android.util.Log.e("DroidOS_Prediction", "Failed to load user stats", e)
         }
     }
 
@@ -444,7 +443,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
 
     fun recordSelection(context: Context, word: String) {
-        // android.util.Log.d("DroidOS_Debug", "SELECT: recordSelection called for '$word'")
         if (word.isBlank()) return
         val clean = word.lowercase(Locale.ROOT)
         
@@ -456,11 +454,9 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
         // NEW: Spatial Learning
         // If we have the swipe path that generated this word, learn the offsets.
         if (lastSwipePath != null) {
-             // android.util.Log.d("DroidOS_Heatmap", "LEARN: Learning triggered for '$clean'. Path points: ${lastSwipePath!!.size}")
              learnKeyOffsets(context, clean, lastSwipePath!!)
              lastSwipePath = null // Consumed
         } else {
-             // android.util.Log.d("DroidOS_Debug", "FAIL: lastSwipePath was NULL when selecting '$clean'")
         }
         
         saveUserStats(context)
@@ -525,7 +521,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("DroidOS_Prediction", "Failed to load user lists", e)
                 }
 
                 // 2. Load Main Dictionary (Assets) - Filtering Blocked words
@@ -556,7 +551,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("DroidOS_Prediction", "Dictionary asset load failed: ${e.message}")
                 }
 
                 // 3. Merge Custom Words
@@ -773,7 +767,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             file.writeText(content)
 
         } catch (e: Exception) {
-            android.util.Log.e("DroidOS_Prediction", "SAVEFILE FAILED: $filename - ${e.message}", e)
         }
     }
     // =================================================================================
@@ -2832,7 +2825,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
 
             } catch (e: Exception) {
-                android.util.Log.e("DroidOS_Prediction", "Block failed", e)
             }
         }.start()
     }
@@ -3217,7 +3209,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
             loadDefaults()
             if (wordList.isEmpty()) {
-                android.util.Log.e("DroidOS_Dual", "Failed to load dictionary!")
                 return emptyList()
             }
         }
@@ -3245,7 +3236,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             })
 
         } catch (e: Exception) {
-            android.util.Log.e("DroidOS_Dual", "Precise error: ${e.message}")
               // Print full stack trace to logcat
         }
         
@@ -3256,7 +3246,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
             shapeResults.addAll(shapeRaw)
 
         } catch (e: Exception) {
-            android.util.Log.e("DroidOS_Dual", "Shape error: ${e.message}")
               // Print full stack trace to logcat
         }
 
@@ -3576,7 +3565,6 @@ enum class POSTag { NOUN, VERB, ADJECTIVE, PRONOUN, DETERMINER, PREPOSITION, CON
 
             }
         } catch (e: Exception) {
-            android.util.Log.e("DroidOS_Heatmap", "Failed to load offsets", e)
         }
     }
 

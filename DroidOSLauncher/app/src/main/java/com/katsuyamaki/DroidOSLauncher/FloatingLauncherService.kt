@@ -32,7 +32,6 @@ import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.util.DisplayMetrics
-import android.util.Log
 import android.view.*
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -6314,7 +6313,6 @@ private var isSoftKeyboardSupport = false
                     try {
                         shellService?.runCommand(cmd)
                     } catch (e: Exception) {
-                        // Log.e(TAG, "Tile[$i]: Launch failed", e)
                     }
 
                     val isGeminiApp = basePkg.contains("bard") || basePkg.contains("gemini")

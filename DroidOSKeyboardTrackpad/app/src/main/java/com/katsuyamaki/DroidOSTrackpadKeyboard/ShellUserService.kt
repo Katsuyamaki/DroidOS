@@ -4,7 +4,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.Process
 import android.os.SystemClock
-import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.KeyEvent
@@ -49,7 +48,6 @@ class ShellUserService : IShellService.Stub() {
             inputManager = getInstance.invoke(null)!!
             injectInputEventMethod = imClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup reflection", e)
             isReflectionBroken = true
         }
     }
@@ -139,7 +137,6 @@ class ShellUserService : IShellService.Stub() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Critical failure getting display tokens", e)
         }
         return tokens
     }
@@ -163,7 +160,6 @@ class ShellUserService : IShellService.Stub() {
             )
             method.invoke(null, token, mode)
         } catch (e: Exception) {
-            Log.e(TAG, "setDisplayPowerMode failed for token $token", e)
         }
     }
 
@@ -199,7 +195,6 @@ class ShellUserService : IShellService.Stub() {
         try {
             Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd)).waitFor()
         } catch (e: Exception) {
-            Log.e(TAG, "Shell command failed", e)
         }
     }
 
@@ -235,7 +230,6 @@ class ShellUserService : IShellService.Stub() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in setBrightness", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -254,7 +248,6 @@ class ShellUserService : IShellService.Stub() {
                 setPowerModeOnToken(t, mode)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "setScreenOff failed", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -272,7 +265,6 @@ class ShellUserService : IShellService.Stub() {
                 method.invoke(inputManager, visible)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to set cursor visibility", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -389,7 +381,7 @@ class ShellUserService : IShellService.Stub() {
             method.invoke(event, displayId)
             injectInputEventMethod.invoke(inputManager, event, INJECT_MODE_ASYNC)
             event.recycle()
-        } catch (e: Exception) { Log.e(TAG, "Injection failed", e) }
+        } catch (e: Exception) { }
     }
 
     override fun setWindowingMode(taskId: Int, mode: Int) {}
@@ -407,7 +399,6 @@ class ShellUserService : IShellService.Stub() {
             reader.close()
             process.waitFor()
         } catch (e: Exception) {
-            Log.e(TAG, "runCommand failed: $cmd", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }

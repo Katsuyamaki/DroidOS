@@ -28,7 +28,6 @@ import android.os.Process
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.util.Log
 import android.view.Display
 import android.view.GestureDetector
 import android.view.Gravity
@@ -127,10 +126,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     private val TAG = "OverlayService"
 
+    @Suppress("UNUSED_PARAMETER")
     private fun logOverlayKbDiag(event: String, extra: String = "") {
-        val ts = SystemClock.uptimeMillis()
-        val suffix = if (extra.isNotBlank()) " $extra" else ""
-        Log.d(TAG, "[KB_DIAG][$ts] $event$suffix")
     }
 
     // Command dispatcher for broadcast receiver logic
@@ -260,7 +257,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             return
         }
         
-        // Log.v(TAG, "onAccessibilityEvent: ${event.eventType} pkg=${event.packageName}")
 
         // [MODIFIED] MAIN SCREEN GUARD REMOVED
         // We now allow blocking logic to run on the Main Screen if configured.
@@ -304,10 +300,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
-            // DEBUG: Log accessibility events on cover screen
-            if (currentDisplayId == 1) {
-                val timeSinceInject = System.currentTimeMillis() - lastInjectionTime
-            }
+
 
             // GUARD: Only run blocking logic on Cover Screen (display 1)
             // Skip during active typing to prevent overlay flashing with DroidOS IME
@@ -1033,17 +1026,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try { createNotification() } catch(e: Exception){  }
         
-        // === DEBUG LOGGING START ===
         if (intent != null) {
             val dId = intent.getIntExtra("displayId", -999)
-            val action = intent.action
-            val force = intent.getBooleanExtra("force_start", false)
             if (dId != -999) {
                 handler.post { Toast.makeText(this, "Service Started on D:$dId", Toast.LENGTH_SHORT).show() }
             }
-        } else {
         }
-        // === DEBUG LOGGING END ===
 
         try {
             checkAndBindShizuku()
@@ -1362,19 +1350,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             //          On Cover Screen (1+), apply blocking if enabled.
             //          Samsung takeover is handled by the Content Observer, not here.
             // =================================================================================
-            // android.util.Log.w(TAG, "╔══════════════════════════════════════════════════════════╗")
-            // android.util.Log.w(TAG, "║ KEYBOARD LOGIC START - setupUI($displayId)              ║")
-            // android.util.Log.w(TAG, "╚══════════════════════════════════════════════════════════╝")
             
-            val preCurrentIme = try {
-                android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: "null"
-            } catch (e: Exception) { "error: ${e.message}" }
-            val preShowMode = if (Build.VERSION.SDK_INT >= 24) {
-                try { softKeyboardController.showMode.toString() } catch (e: Exception) { "error" }
-            } else { "N/A (API < 24)" }
-            
-            /*
-            */
+
 
             // =================================================================================
             // KEYBOARD BLOCKING: ONLY on Cover Screen (display 1)
@@ -1395,7 +1372,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // END BLOCK: KEYBOARD BLOCKING LOGIC
             // =================================================================================
             
-            // android.util.Log.w(TAG, "└─ KEYBOARD LOGIC END")
             // =================================================================================
             // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // =================================================================================
@@ -2555,9 +2531,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (now - lastMouseMoveTime < 8) return
         lastMouseMoveTime = now
 
-        // Log.d(BT_TAG, "handleExternalMouseMove: dx=$dx, dy=$dy, isDragging=$isDragging")
-        // Log.d(BT_TAG, "├─ inputTargetDisplayId=$inputTargetDisplayId, currentDisplayId=$currentDisplayId")
-        // Log.d(BT_TAG, "├─ cursorX=$cursorX, cursorY=$cursorY (before update)")
 
         // Calculate safe bounds based on target display
         val safeW = if (inputTargetDisplayId != currentDisplayId) targetScreenWidth.toFloat() else uiScreenWidth.toFloat()

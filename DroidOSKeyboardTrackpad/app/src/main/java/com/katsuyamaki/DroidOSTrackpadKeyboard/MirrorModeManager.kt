@@ -8,7 +8,6 @@ import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
 import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
@@ -238,7 +237,6 @@ class MirrorModeManager(
             mirrorWindowManager?.updateViewLayout(mirrorKeyboardContainer, mirrorKeyboardParams)
             service.handler.postDelayed({ updateMirrorSyncDimensions() }, 100)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to reset mirror keyboard layout", e)
         }
 
 
@@ -337,7 +335,6 @@ class MirrorModeManager(
             mirrorWindowManager?.updateViewLayout(mirrorKeyboardContainer, mirrorKeyboardParams)
             service.handler.post { updateMirrorSyncDimensions() }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to apply mirror keyboard settings", e)
         }
 
 
@@ -525,7 +522,6 @@ class MirrorModeManager(
 
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create mirror keyboard", e)
         }
     }
 

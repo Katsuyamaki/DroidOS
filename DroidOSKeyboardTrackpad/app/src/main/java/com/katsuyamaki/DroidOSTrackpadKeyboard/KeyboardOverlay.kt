@@ -10,7 +10,6 @@ import android.media.AudioRecordingConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.view.Gravity
 import android.view.InputDevice // <--- ADD THIS LINE
 import android.view.KeyEvent
@@ -1677,7 +1676,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
     //   - Properly clears prediction bar on space/enter
     // =================================================================================
     override fun onKeyPress(keyCode: Int, char: Char?, metaState: Int) {
-        // android.util.Log.d("DroidOS_Key", "Press: keyCode=$keyCode char='$char' meta=$metaState")
 
         // --- SHIFT KEY: Ignore completely, don't affect composition ---
         if (keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || 
@@ -1763,13 +1761,11 @@ windowManager.addView(keyboardContainer, keyboardParams)
             
             isSentenceStart = false
             updateSuggestions()
-            // android.util.Log.d("DroidOS_Compose", "Composing: '$originalCaseWord' (lookup: '$currentComposingWord')")
             return
         }
 
         // 7. Any other character - ignore, don't clear composition
         // This prevents random symbols from breaking the composition
-        // android.util.Log.d("DroidOS_Key", "Ignored char: '$char'")
     }
     // =================================================================================
     // END BLOCK: onKeyPress with proper clearing and case tracking

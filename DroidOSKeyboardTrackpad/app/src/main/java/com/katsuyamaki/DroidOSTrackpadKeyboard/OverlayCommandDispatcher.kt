@@ -1,7 +1,6 @@
 package com.katsuyamaki.DroidOSTrackpadKeyboard
 
 import android.content.Intent
-import android.util.Log
 
 /**
  * OverlayCommandDispatcher
