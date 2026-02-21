@@ -19,9 +19,6 @@ class ShellUserService : IShellService.Stub() {
     companion object {
         const val POWER_MODE_OFF = 0
         const val POWER_MODE_NORMAL = 2
-
-        @Volatile private var displayControlClass: Class<*>? = null
-        @Volatile private var displayControlClassLoaded = false
     }
 
     // === EFFICIENCY CACHE ===
@@ -42,43 +39,9 @@ class ShellUserService : IShellService.Stub() {
     }
 
     private fun getDisplayControlClass(): Class<*>? {
-        if (displayControlClassLoaded && displayControlClass != null) return displayControlClass
-        
-        return try {
-            val classLoaderFactoryClass = Class.forName("com.android.internal.os.ClassLoaderFactory")
-            val createClassLoaderMethod = classLoaderFactoryClass.getDeclaredMethod(
-                "createClassLoader",
-                String::class.java,
-                String::class.java,
-                String::class.java,
-                ClassLoader::class.java,
-                Int::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType,
-                String::class.java
-            )
-            val classLoader = createClassLoaderMethod.invoke(
-                null, "/system/framework/services.jar", null, null,
-                ClassLoader.getSystemClassLoader(), 0, true, null
-            ) as ClassLoader
-
-            val loadedClass = classLoader.loadClass("com.android.server.display.DisplayControl").also {
-                val loadMethod = Runtime::class.java.getDeclaredMethod(
-                    "loadLibrary0",
-                    Class::class.java,
-                    String::class.java
-                )
-                loadMethod.isAccessible = true
-                loadMethod.invoke(Runtime.getRuntime(), it, "android_servers")
-            }
-            
-            displayControlClass = loadedClass
-            displayControlClassLoaded = true
-            loadedClass
-        } catch (e: Throwable) {
-            // [STABILITY] Catch Throwable to handle NoClassDefFoundError/LinkageError
-            displayControlClassLoaded = true // Stop retrying if it fails
-            null
-        }
+        // API 35+: private reflection into ClassLoaderFactory/Runtime.loadLibrary0
+        // is blocked by non-SDK interface restrictions. Keep safe fallback path only.
+        return null
     }
 
     private fun getAllPhysicalDisplayTokens(): List<IBinder> {

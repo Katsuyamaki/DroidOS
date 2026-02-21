@@ -2532,7 +2532,23 @@ private var isSoftKeyboardSupport = false
         }
 
 
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                commandReceiver,
+                filter,
+                "com.katsuyamaki.DroidOSLauncher.permission.INTERNAL_COMMAND",
+                null,
+                Context.RECEIVER_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(
+                commandReceiver,
+                filter,
+                "com.katsuyamaki.DroidOSLauncher.permission.INTERNAL_COMMAND",
+                null
+            )
+        }
 
 
         // Shizuku setup

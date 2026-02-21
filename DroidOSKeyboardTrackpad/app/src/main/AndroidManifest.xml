@@ -2,12 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="com.katsuyamaki.DroidOSLauncher.permission.INTERNAL_COMMAND" />
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
@@ -132,7 +137,11 @@
                       without requiring the Activity to be in foreground.
              USAGE (ADB): adb shell am broadcast -a com.example.coverscreentester.SOFT_RESTART
              ================================================================================= -->
-                <receiver android:name=".InterAppCommandReceiver" android:enabled="true" android:exported="true">
+                <receiver
+                    android:name=".InterAppCommandReceiver"
+                    android:enabled="true"
+                    android:exported="true"
+                    android:permission="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND">
                     <intent-filter>
                         <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.SOFT_RESTART" />
                         <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_VIRTUAL" />
