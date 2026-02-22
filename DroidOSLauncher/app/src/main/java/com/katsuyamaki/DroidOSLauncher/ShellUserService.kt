@@ -649,23 +649,39 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // === DEBUG DUMP TASKS - END ===
 
     // === MOVE TASK TO BACK / MINIMIZE TASK - START ===
-    // Minimizes a task using Samsung APIs used by freeform titlebar minimize button.
+    // Minimizes a task using Samsung's IMultiTaskingBinder from ActivityTaskManager
+    // This is what Android's freeform minimize button uses on Samsung devices
     override fun moveTaskToBack(taskId: Int) {
         val token = Binder.clearCallingIdentity()
         try {
             var success = false
 
-            // Android 14+ Samsung path on some One UI builds.
-            if (!success) {
-                success = trySamsungMultiWindowManagerMinimize(taskId)
+            try {
+                // Get ActivityTaskManager service
+                val atmClass = Class.forName("android.app.ActivityTaskManager")
+                val getServiceMethod = atmClass.getMethod("getService")
+                val atm = getServiceMethod.invoke(null)
+
+                // Call getMultiTaskingBinder()
+                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
+                val multiTaskingBinder = getMultiTaskingBinder.invoke(atm)
+
+                if (multiTaskingBinder != null) {
+                    // Call minimizeTaskById(taskId)
+                    val minimizeMethod = multiTaskingBinder.javaClass.getMethod(
+                        "minimizeTaskById",
+                        Int::class.javaPrimitiveType
+                    )
+                    minimizeMethod.invoke(multiTaskingBinder, taskId)
+
+                    success = true
+                } else {
+                }
+
+            } catch (e: Exception) {
             }
 
-            // v4.0 path (kept): ActivityTaskManager -> MultiTaskingBinder -> minimizeTaskById(int)
-            if (!success) {
-                success = tryAtmMultiTaskingBinderMinimize(taskId)
-            }
-
-            // FALLBACK: Off-screen positioning (only if Samsung APIs failed)
+            // FALLBACK: Off-screen positioning (only if Samsung API failed)
             if (!success) {
                 val modeCmd = "am task set-windowing-mode $taskId 5"
                 Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
@@ -674,115 +690,12 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
             }
 
-        } catch (_: Exception) {
+        } catch (e: Exception) {
         } finally {
             Binder.restoreCallingIdentity(token)
         }
     }
     // === MOVE TASK TO BACK / MINIMIZE TASK - END ===
-
-    private fun trySamsungMultiWindowManagerMinimize(taskId: Int): Boolean {
-        return try {
-            val mwmClass = Class.forName("com.samsung.android.multiwindow.MultiWindowManager")
-            val instance = resolveSamsungMultiWindowManagerInstance(mwmClass) ?: return false
-
-            // minimizeTaskById(int)
-            try {
-                val m = mwmClass.getMethod("minimizeTaskById", Int::class.javaPrimitiveType)
-                return isMinimizeCallSuccess(m.invoke(instance, taskId))
-            } catch (_: NoSuchMethodException) {
-            }
-
-            // minimizeTaskById(int, boolean)
-            try {
-                val m = mwmClass.getMethod(
-                    "minimizeTaskById",
-                    Int::class.javaPrimitiveType,
-                    Boolean::class.javaPrimitiveType
-                )
-                return isMinimizeCallSuccess(m.invoke(instance, taskId, false))
-            } catch (_: NoSuchMethodException) {
-            }
-
-            // minimizeTaskById(int, int)
-            try {
-                val m = mwmClass.getMethod(
-                    "minimizeTaskById",
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType
-                )
-                return isMinimizeCallSuccess(m.invoke(instance, taskId, 0))
-            } catch (_: NoSuchMethodException) {
-            }
-
-            // Alternate method name on some builds.
-            try {
-                val m = mwmClass.getMethod("minimizeTask", Int::class.javaPrimitiveType)
-                return isMinimizeCallSuccess(m.invoke(instance, taskId))
-            } catch (_: NoSuchMethodException) {
-            }
-
-            false
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun resolveSamsungMultiWindowManagerInstance(mwmClass: Class<*>): Any? {
-        // Preferred signature
-        try {
-            return mwmClass.getMethod("getInstance").invoke(null)
-        } catch (_: NoSuchMethodException) {
-        } catch (_: Exception) {
-        }
-
-        // Some One UI builds expose getInstance(Context)
-        try {
-            val ctx = resolveReflectionContext() ?: return null
-            return mwmClass.getMethod("getInstance", Context::class.java).invoke(null, ctx)
-        } catch (_: Exception) {
-        }
-
-        return null
-    }
-
-    private fun resolveReflectionContext(): Context? {
-        return try {
-            val atClass = Class.forName("android.app.ActivityThread")
-            val currentApplication = atClass.getMethod("currentApplication").invoke(null)
-            currentApplication as? Context
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun isMinimizeCallSuccess(result: Any?): Boolean {
-        return when (result) {
-            null -> true
-            is Boolean -> result
-            is Number -> result.toInt() == 0
-            else -> true
-        }
-    }
-
-    private fun tryAtmMultiTaskingBinderMinimize(taskId: Int): Boolean {
-        return try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val getServiceMethod = atmClass.getMethod("getService")
-            val atm = getServiceMethod.invoke(null)
-
-            val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
-            val multiTaskingBinder = getMultiTaskingBinder.invoke(atm) ?: return false
-
-            val minimizeMethod = multiTaskingBinder.javaClass.getMethod(
-                "minimizeTaskById",
-                Int::class.javaPrimitiveType
-            )
-            isMinimizeCallSuccess(minimizeMethod.invoke(multiTaskingBinder, taskId))
-        } catch (_: Exception) {
-            false
-        }
-    }
 
     // === MOVE TASK TO FRONT / FOCUS TASK - START ===
     // Brings a task to front using ActivityTaskManager.moveTaskToFront() via reflection.

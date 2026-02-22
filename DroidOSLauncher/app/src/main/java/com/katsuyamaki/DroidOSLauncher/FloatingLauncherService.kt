@@ -5340,6 +5340,105 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+    // === HIDDEN DISPLAY FOR MINIMIZE (A14 API 35 fallback) ===
+    private var hiddenMinimizeDisplay: android.hardware.display.VirtualDisplay? = null
+    private var hiddenMinimizeImageReader: android.media.ImageReader? = null
+    private var hiddenMinimizeDisplayId: Int = -1
+
+    private fun ensureHiddenMinimizeDisplay(): Int {
+        if (hiddenMinimizeDisplayId > 0 && hiddenMinimizeDisplay != null) {
+            return hiddenMinimizeDisplayId
+        }
+        try {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            hiddenMinimizeImageReader = android.media.ImageReader.newInstance(100, 100, PixelFormat.RGBA_8888, 1)
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+            hiddenMinimizeDisplay = dm.createVirtualDisplay(
+                "DroidOS-Hidden-Minimize",
+                100, 100, 160,
+                hiddenMinimizeImageReader?.surface,
+                flags
+            )
+            if (hiddenMinimizeDisplay != null) {
+                hiddenMinimizeDisplayId = hiddenMinimizeDisplay!!.display.displayId
+            }
+        } catch (e: Exception) {
+        }
+        return hiddenMinimizeDisplayId
+    }
+
+    // Minimize task using hidden display (for A14 fallback)
+    // Tries move-task-to-display first, then am start --display as fallback
+    private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
+        val targetId = ensureHiddenMinimizeDisplay()
+        if (targetId <= 0) return false
+        
+        try {
+            // ATTEMPT 1: Move existing task to hidden display (preserves state)
+            shellService?.runCommand("am task move-task-to-display $taskId $targetId")
+            
+            // ATTEMPT 2: If move doesn't work, relaunch on hidden display
+            // This is more aggressive but ensures the app moves
+            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+                "$packageName/$className"
+            } else null
+            
+            val startCmd = if (component != null) {
+                "am start -n $component --display $targetId --windowingMode 5 --user 0"
+            } else {
+                "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --user 0"
+            }
+            shellService?.runCommand(startCmd)
+            
+            return true
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    // === TEST: Programmatic Virtual Display Creation ===
+    // Tests if createVirtualDisplay() works without external display
+    private var testVirtualDisplay: android.hardware.display.VirtualDisplay? = null
+    private var testImageReader: android.media.ImageReader? = null
+    
+    private fun testCreateVirtualDisplay() {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        
+        // Show current displays first
+        val displaysBefore = dm.displays.map { it.displayId }.joinToString(", ")
+        
+        try {
+            // Clean up previous test display if exists
+            testVirtualDisplay?.release()
+            testImageReader?.close()
+            
+            // Create ImageReader as surface target
+            testImageReader = android.media.ImageReader.newInstance(1920, 1080, PixelFormat.RGBA_8888, 2)
+            
+            // Try different flag combinations
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or 
+                       DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                       DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+            
+            testVirtualDisplay = dm.createVirtualDisplay(
+                "DroidOS-Test-Virtual",
+                1920, 1080, 320,
+                testImageReader?.surface,
+                flags
+            )
+            
+            if (testVirtualDisplay != null) {
+                val newDisplayId = testVirtualDisplay!!.display.displayId
+                val displaysAfter = dm.displays.map { it.displayId }.joinToString(", ")
+                safeToast("SUCCESS! Created Display #$newDisplayId\nBefore: [$displaysBefore]\nAfter: [$displaysAfter]")
+            } else {
+                safeToast("FAILED: createVirtualDisplay returned null\nDisplays: [$displaysBefore]")
+            }
+        } catch (e: Exception) {
+            safeToast("ERROR: ${e.javaClass.simpleName}\n${e.message}\nDisplays: [$displaysBefore]")
+        }
+    }
+
     fun switchDisplay() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         
@@ -6908,6 +7007,7 @@ private var isSoftKeyboardSupport = false
 
                 displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { switchDisplay() })
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
+                displayList.add(ActionOption("TEST: Create Virtual Display (API)") { testCreateVirtualDisplay() })
                 
                 displayList.add(ToggleOption("Auto-Start Trackpad", autoRestartTrackpad) { autoRestartTrackpad = it; AppPreferences.setAutoRestartTrackpad(this, it); if (it) safeToast("Trackpad will restart on next Launcher startup") })
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
@@ -7677,12 +7777,26 @@ private var isSoftKeyboardSupport = false
                                                  } else {
                                                      // NOT LAST: Standard minimize works fine (focus transfers to app behind)
                                                      val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                                     if (tid != -1) shellService?.moveTaskToBack(tid)
+                                                     if (tid != -1) {
+                                                         // A14 (SDK 34-35): Samsung API blocked, use hidden display
+                                                         if (Build.VERSION.SDK_INT < 36) {
+                                                             minimizeToHiddenDisplay(tid, basePkg, cls)
+                                                         } else {
+                                                             shellService?.moveTaskToBack(tid)
+                                                         }
+                                                     }
                                                  }
                                              } else {
                                                  // Standard Display (Phone/Cover)
                                                  val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                                 if (tid != -1) shellService?.moveTaskToBack(tid)
+                                                 if (tid != -1) {
+                                                     // A14 (SDK 34-35): Samsung API blocked, use hidden display
+                                                     if (Build.VERSION.SDK_INT < 36) {
+                                                         minimizeToHiddenDisplay(tid, basePkg, cls)
+                                                     } else {
+                                                         shellService?.moveTaskToBack(tid)
+                                                     }
+                                                 }
                                              }
                                          } catch(e: Exception){}
                                      }.start()
