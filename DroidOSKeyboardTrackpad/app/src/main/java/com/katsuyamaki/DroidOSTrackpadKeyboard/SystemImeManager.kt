@@ -108,11 +108,8 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 }
             }
             
-            val isTtsVoice = current.contains("com.google.android.tts") || current.contains("VoiceInputMethodService")
-
             val shouldSave = when {
                 isSamsung -> false
-                isTtsVoice -> false
                 isDock && service.prefs.prefBlockSoftKeyboard -> false
                 isDock && !service.prefs.prefBlockSoftKeyboard -> true
                 !isOnMainScreen -> false
@@ -191,46 +188,17 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
 
                 if (enabled) {
                     log("setSoftKeyboardBlocking: BLOCKING - running ime enable/set...")
+                    val r1 = shellService.runCommand("ime enable $myImeId")
+                    log("setSoftKeyboardBlocking: ime enable result: $r1")
+                    val r2 = shellService.runCommand("ime set $myImeId")
+                    log("setSoftKeyboardBlocking: ime set result: $r2")
+                    shellService.runCommand("settings put secure show_ime_with_hard_keyboard 0")
                     
-                    // Find and disable Samsung KB - keep it disabled on cover screen!
-                    val samsungId = allImes.lines().find { 
-                        it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
-                    }?.trim()
+                    // Verify
+                    val currentIme = shellService.runCommand("settings get secure default_input_method")?.trim()
+                    log("setSoftKeyboardBlocking: VERIFY - current IME after set: $currentIme")
                     
-                    // Retry loop - Samsung fights back aggressively after One UI update
-                    var success = false
-                    for (attempt in 1..5) {
-                        log("setSoftKeyboardBlocking: attempt $attempt/5")
-                        
-                        if (!samsungId.isNullOrEmpty()) {
-                            log("setSoftKeyboardBlocking: disabling Samsung KB: $samsungId")
-                            shellService.runCommand("ime disable $samsungId")
-                            Thread.sleep(200)
-                        }
-                        
-                        val r1 = shellService.runCommand("ime enable $myImeId")
-                        log("setSoftKeyboardBlocking: ime enable result: $r1")
-                        shellService.runCommand("settings put secure default_input_method $myImeId")
-                        val r2 = shellService.runCommand("ime set $myImeId")
-                        log("setSoftKeyboardBlocking: ime set result: $r2")
-                        shellService.runCommand("settings put secure show_ime_with_hard_keyboard 0")
-                        
-                        Thread.sleep(150)
-                        
-                        // Verify
-                        val currentIme = shellService.runCommand("settings get secure default_input_method")?.trim()
-                        log("setSoftKeyboardBlocking: VERIFY attempt $attempt - current IME: $currentIme")
-                        
-                        success = currentIme?.contains("DroidOS") == true || currentIme?.contains("DockInputMethodService") == true || currentIme?.contains("NullInputMethodService") == true
-                        if (success) {
-                            log("setSoftKeyboardBlocking: SUCCESS on attempt $attempt")
-                            break
-                        }
-                        
-                        log("setSoftKeyboardBlocking: FAILED attempt $attempt, Samsung still active")
-                    }
-                    
-                    handler.post { service.showToast(if (success) "KB Blocked" else "KB Block Failed") }
+                    handler.post { service.showToast("Keyboard Blocked (Cover Screen)") }
                 } else {
                     isKeyboardRestoreInProgress = true
                     
@@ -484,11 +452,7 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 log("forceRefreshIme: userPref = $userPref")
                 
                 val targetIme = when {
-                    userPref != null &&
-                        !userPref.contains("NullInputMethodService") &&
-                        !userPref.contains("DockInputMethodService") &&
-                        !userPref.contains("com.google.android.tts") &&
-                        !userPref.contains("VoiceInputMethodService") -> userPref
+                    userPref != null && !userPref.contains("NullInputMethodService") && !userPref.contains("DockInputMethodService") -> userPref
                     else -> dockIme
                 }
                 log("forceRefreshIme: targetIme = $targetIme")
@@ -510,16 +474,6 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 // Step 3: Re-enable NullInputMethodService for future cover screen use
                 log("forceRefreshIme: re-enabling NullIME...")
                 shellService.runCommand("ime enable $nullIme")
-                
-                // Step 4: Re-enable Samsung KB (was disabled on cover screen)
-                val allImes = shellService.runCommand("ime list -a -s") ?: ""
-                val samsungId = allImes.lines().find { 
-                    it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
-                }?.trim()
-                if (!samsungId.isNullOrEmpty()) {
-                    log("forceRefreshIme: re-enabling Samsung KB: $samsungId")
-                    shellService.runCommand("ime enable $samsungId")
-                }
                 
                 // Verify
                 val finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""

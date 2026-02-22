@@ -299,7 +299,6 @@ class DockInputMethodService : InputMethodService() {
             val intent = Intent("APPLY_DOCK_MODE")
             intent.setPackage(packageName)
             intent.putExtra("enabled", true)
-            intent.putExtra("toolbar_height", getActualToolbarHeightPx())
             // Send combined system bottom UI height (nav bar + IME switcher)
             // This is more accurate than just nav bar for keyboard positioning
             intent.putExtra("nav_bar_height", getSystemBottomUiHeight())

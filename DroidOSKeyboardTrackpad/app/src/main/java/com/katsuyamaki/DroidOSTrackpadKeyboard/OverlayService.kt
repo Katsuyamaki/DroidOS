@@ -186,7 +186,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var pendingForceHideRunnable: Runnable? = null
     private var isDockIMEVisible = false
     private var dockNavBarHeight: Int = -1
-    private var dockToolbarHeight: Int = -1
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
     private var manualKeyScaleBeforeMargin = -1 // Save manual key scale before margin adjustment
 
@@ -583,8 +582,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     val density = resources.displayMetrics.density
                     val navBarHeight = getNavBarHeight()
                     val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
-                    val toolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) getDockToolbarHeight() else 0
-                    val targetY = uiScreenHeight - kbHeight - toolbarHeight - navBarHeight
+                    val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
+                    val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
                     keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
                     saveKeyboardHeightForDock(kbHeight)
                 } else {
@@ -596,7 +595,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     internal fun handleApplyDockMode(intent: Intent) {
         dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
-        dockToolbarHeight = intent.getIntExtra("toolbar_height", -1)
         if (intent.getBooleanExtra("enabled", false)) {
             val marginPercent = intent.getIntExtra("resize_to_margin", -1)
             if (marginPercent >= 0) {
@@ -2031,8 +2029,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // When ON: Above DroidOS toolbar and nav bar
         // When OFF: Covers toolbar but respects nav bar (for 3-button nav users)
         if (prefs.prefShowKBAboveDock && isDockIMEVisible) {
-            val toolbarHeight = getDockToolbarHeight()
-            targetY = screenHeight - kbHeight - toolbarHeight - navBarHeight
+            val dockToolbarHeight = (40 * density).toInt()
+            targetY = screenHeight - kbHeight - dockToolbarHeight - navBarHeight
         } else {
             // Respect nav bar even when covering toolbar
             targetY = screenHeight - kbHeight - navBarHeight
@@ -2075,7 +2073,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Calculate keyboard height and position based on "show KB above dock" setting
         // When ON: Keyboard above DroidOS toolbar, toolbar above nav bar
         // When OFF: Keyboard covers DroidOS toolbar, but still respects nav bar (user may need 3-button nav)
-        val toolbarHeight = getDockToolbarHeight()
+        val dockToolbarHeight = (40 * density).toInt()
         val marginHeight = (screenHeight * (marginPercent / 100f)).toInt()
         
         val kbHeight: Int
@@ -2084,8 +2082,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (prefs.prefShowKBAboveDock && isDockIMEVisible) {
             // Case 1: Toggle ON + DockIME visible
             // Keyboard above toolbar, toolbar above nav bar
-            kbHeight = (marginHeight - toolbarHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
-            targetY = screenHeight - kbHeight - toolbarHeight - navBarHeight
+            kbHeight = (marginHeight - dockToolbarHeight - navBarHeight).coerceAtLeast((90 * density).toInt())
+            targetY = screenHeight - kbHeight - dockToolbarHeight - navBarHeight
         } else if (prefs.prefShowKBAboveDock && !isDockIMEVisible) {
             // Case 2: Toggle ON + DockIME not visible (manual KB open)
             // No toolbar to position above, just nav bar
@@ -2113,7 +2111,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             else -> 4
         }
         val expectedTiledBottom = screenHeight - marginHeight
-        android.util.Log.d("OverlayKB", "CASE$caseNum: margin%=$marginPercent marginH=$marginHeight navH=$navBarHeight toolbarH=$toolbarHeight")
+        android.util.Log.d("OverlayKB", "CASE$caseNum: margin%=$marginPercent marginH=$marginHeight navH=$navBarHeight toolbarH=$dockToolbarHeight")
         android.util.Log.d("OverlayKB", "CASE$caseNum: screenH=$screenHeight kbH=$kbHeight targetY=$targetY")
         android.util.Log.d("OverlayKB", "CASE$caseNum: expectedTiledBottom=$expectedTiledBottom kbTop=$targetY gap=${targetY - expectedTiledBottom}")
         android.util.Log.d("OverlayKB", "CASE$caseNum: showAbove=${prefs.prefShowKBAboveDock} dockVisible=$isDockIMEVisible")
@@ -2141,11 +2139,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // FUNCTION: saveKeyboardHeightForDock
     // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
     // =================================================================================
-    internal fun getDockToolbarHeight(): Int {
-        if (dockToolbarHeight >= 0) return dockToolbarHeight
-        return (40 * resources.displayMetrics.density).toInt()
-    }
-
     internal fun getNavBarHeight(): Int {
         // Prefer DockIME broadcast value - it measures actual gap below IME window
         // which includes nav bar + IME switcher (more accurate than WindowInsets)
