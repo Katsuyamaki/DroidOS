@@ -2321,7 +2321,13 @@ windowManager.addView(keyboardContainer, keyboardParams)
 
 
     private fun injectKey(keyCode: Int, metaState: Int) {
-        (context as? OverlayService)?.injectKeyFromKeyboard(keyCode, metaState)
+        android.util.Log.d("KBOverlay", "injectKey: keyCode=$keyCode context=${context?.javaClass?.simpleName}")
+        val service = context as? OverlayService
+        if (service == null) {
+            android.util.Log.e("KBOverlay", "injectKey: context is NOT OverlayService!")
+        } else {
+            service.injectKeyFromKeyboard(keyCode, metaState)
+        }
     }
 
     // --- Voice Logic & Mic Check Loop ---

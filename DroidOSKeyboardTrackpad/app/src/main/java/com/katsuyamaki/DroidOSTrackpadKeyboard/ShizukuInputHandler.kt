@@ -93,6 +93,12 @@ class ShizukuInputHandler(
                 val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
                 val isDockActive = currentIme.contains(context.packageName) &&
                     (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
+                
+                // COVER SCREEN FIX: On display 1, DockIME is set as "active" but the service
+                // never actually starts (because showMode=HIDDEN). Broadcasts go nowhere.
+                // Force shell injection on cover screen since DockIME isn't running.
+                val useBroadcast = isDockActive && displayId != 1
+                android.util.Log.d("ShizukuInput", "sendKey: currentIme=$currentIme isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
 
                 // =================================================================================
                 // COVER SCREEN (Display 1) FLASH ISSUE - DOCUMENTED TESTING RESULTS
@@ -123,8 +129,8 @@ class ShizukuInputHandler(
                 // CURRENT BEHAVIOR: Typing works on cover screen but with visual flash.
                 // =================================================================================
 
-                if (isDockActive) {
-                    // DroidOS IME active - use broadcast path (no flash)
+                if (useBroadcast) {
+                    // DroidOS IME active on main screen - use broadcast path (no flash)
                     val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY")
                     intent.setPackage(context.packageName)
                     intent.putExtra("keyCode", keyCode)
@@ -154,8 +160,10 @@ class ShizukuInputHandler(
                 val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
                 val isDockActive = currentIme.contains(context.packageName) &&
                     (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
+                val useBroadcast = isDockActive && displayId != 1
+                android.util.Log.d("ShizukuInput", "bulkDelete: isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
 
-                if (isDockActive) {
+                if (useBroadcast) {
                     val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE")
                     intent.setPackage(context.packageName)
                     intent.putExtra("length", length)
@@ -183,8 +191,10 @@ class ShizukuInputHandler(
                 val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
                 val isDockActive = currentIme.contains(context.packageName) &&
                     (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
+                val useBroadcast = isDockActive && displayId != 1
+                android.util.Log.d("ShizukuInput", "injectText: isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
 
-                if (isDockActive) {
+                if (useBroadcast) {
                     val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT")
                     intent.setPackage(context.packageName)
                     intent.putExtra("text", text)

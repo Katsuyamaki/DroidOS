@@ -100,7 +100,9 @@ class DockInputMethodService : InputMethodService() {
     // Receiver to handle text injection from the Overlay Trackpad
     private val inputReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val ic = currentInputConnection ?: return
+            val ic = currentInputConnection
+            android.util.Log.d("DockIME", "inputReceiver: action=${intent?.action} ic=${if (ic != null) "OK" else "NULL"}")
+            if (ic == null) return
             
             when (intent?.action) {
                 BROADCAST_ACTION_TEXT -> {
@@ -409,6 +411,7 @@ class DockInputMethodService : InputMethodService() {
     
     override fun onCreate() {
         super.onCreate()
+        android.util.Log.d("DockIME", "onCreate: service starting, registering receivers")
         val filter = IntentFilter().apply {
             addAction(BROADCAST_ACTION_TEXT)
             addAction(BROADCAST_ACTION_KEY)
@@ -428,9 +431,11 @@ class DockInputMethodService : InputMethodService() {
             registerReceiver(tiledStateReceiver, tiledFilter)
             registerReceiver(hideDockReceiver, hideFilter)
         }
+        android.util.Log.d("DockIME", "onCreate: receivers registered OK")
     }
 
     override fun onDestroy() {
+        android.util.Log.d("DockIME", "onDestroy: service stopping")
         super.onDestroy()
         staleTiledHandler.removeCallbacks(staleTiledCheck)
         try { unregisterReceiver(inputReceiver) } catch (e: Exception) {}

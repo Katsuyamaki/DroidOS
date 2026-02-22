@@ -3559,6 +3559,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // Delegates to ShizukuInputHandler - dismiss voice first then inject
     // =================================================================================
     fun injectKeyFromKeyboard(keyCode: Int, metaState: Int) {
+        android.util.Log.d("OverlaySvc", "injectKeyFromKeyboard: keyCode=$keyCode inputHandler=${if (::inputHandler.isInitialized) "OK" else "NOT_INIT"}")
         lastInjectionTime = System.currentTimeMillis()
         checkAndDismissVoice()
         inputHandler.injectKeyFromKeyboard(keyCode, metaState)
