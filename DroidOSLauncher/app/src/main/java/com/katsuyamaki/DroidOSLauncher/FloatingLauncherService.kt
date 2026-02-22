@@ -4153,11 +4153,13 @@ private var isSoftKeyboardSupport = false
             val insertIdx = targetIdx.coerceIn(0, selectedAppsQueue.size)
             selectedAppsQueue.add(insertIdx, savedApp)
             
+            // Set grace period for ALL newly added apps (prevents visibility cache lag issues)
+            val basePkg = savedApp.getBasePackage()
+            manualStateOverrides[basePkg] = System.currentTimeMillis()
+            
             // If minimized, move to back immediately after launch
             if (!isTargetActive) {
-                val basePkg = savedApp.getBasePackage()
                 val cls = savedApp.className
-                manualStateOverrides[basePkg] = System.currentTimeMillis()
                 minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
                 uiHandler.postDelayed({
                     Thread {
@@ -5368,7 +5370,7 @@ private var isSoftKeyboardSupport = false
     }
 
     // Minimize task using hidden display (for A14 fallback)
-    // Tries move-task-to-display first, then am start --display as fallback
+    // Tries move-task-to-display first, then am start as fallback
     private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
         val targetId = ensureHiddenMinimizeDisplay()
         if (targetId <= 0) return false
@@ -5377,8 +5379,7 @@ private var isSoftKeyboardSupport = false
             // ATTEMPT 1: Move existing task to hidden display (preserves state)
             shellService?.runCommand("am task move-task-to-display $taskId $targetId")
             
-            // ATTEMPT 2: If move doesn't work, relaunch on hidden display
-            // This is more aggressive but ensures the app moves
+            // ATTEMPT 2: Fallback relaunch on hidden display
             val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
                 "$packageName/$className"
             } else null
@@ -5391,6 +5392,17 @@ private var isSoftKeyboardSupport = false
             shellService?.runCommand(startCmd)
             
             return true
+        } catch (e: Exception) {
+            return false
+        }
+    }
+    
+    // Check if a package is on the hidden minimize display
+    private fun isOnHiddenMinimizeDisplay(packageName: String): Boolean {
+        if (hiddenMinimizeDisplayId <= 0) return false
+        try {
+            val visibleOnHidden = shellService?.getVisiblePackages(hiddenMinimizeDisplayId) ?: emptyList()
+            return visibleOnHidden.any { it == packageName || it.startsWith("$packageName:") }
         } catch (e: Exception) {
             return false
         }
@@ -5744,8 +5756,8 @@ private var isSoftKeyboardSupport = false
                                     val isRecentOverride = (System.currentTimeMillis() - lastManualTime) < 5000
 
                                     if (!isRecentOverride) {
+                                        // Simple: visible on current display = active, else minimized
                                         appInfo.isMinimized = !isVisible
-                                    } else {
                                     }
 
                                     selectedAppsQueue.add(appInfo)
@@ -7788,6 +7800,7 @@ private var isSoftKeyboardSupport = false
                                      if (!queuePkgs.contains(fullscreenApp.getBasePackage())) {
                                          fullscreenApp.isMinimized = false
                                          selectedAppsQueue.add(0, fullscreenApp.copy())
+                                         manualStateOverrides[fullscreenApp.getBasePackage()] = System.currentTimeMillis()
                                      }
                                  }
                              } catch (e: Exception) { }
@@ -7803,6 +7816,7 @@ private var isSoftKeyboardSupport = false
                                  if (fsApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized || it == app }) {
                                      for (fsApp in fsApps) {
                                          selectedAppsQueue.add(fsApp.copy())
+                                         manualStateOverrides[fsApp.getBasePackage()] = System.currentTimeMillis()
                                      }
                                      uiHandler.post { updateAllUIs() }
                                  }
