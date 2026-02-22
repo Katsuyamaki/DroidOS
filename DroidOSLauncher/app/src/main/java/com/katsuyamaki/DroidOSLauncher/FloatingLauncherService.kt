@@ -5396,49 +5396,6 @@ private var isSoftKeyboardSupport = false
         }
     }
 
-    // === TEST: Programmatic Virtual Display Creation ===
-    // Tests if createVirtualDisplay() works without external display
-    private var testVirtualDisplay: android.hardware.display.VirtualDisplay? = null
-    private var testImageReader: android.media.ImageReader? = null
-    
-    private fun testCreateVirtualDisplay() {
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        
-        // Show current displays first
-        val displaysBefore = dm.displays.map { it.displayId }.joinToString(", ")
-        
-        try {
-            // Clean up previous test display if exists
-            testVirtualDisplay?.release()
-            testImageReader?.close()
-            
-            // Create ImageReader as surface target
-            testImageReader = android.media.ImageReader.newInstance(1920, 1080, PixelFormat.RGBA_8888, 2)
-            
-            // Try different flag combinations
-            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or 
-                       DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
-                       DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-            
-            testVirtualDisplay = dm.createVirtualDisplay(
-                "DroidOS-Test-Virtual",
-                1920, 1080, 320,
-                testImageReader?.surface,
-                flags
-            )
-            
-            if (testVirtualDisplay != null) {
-                val newDisplayId = testVirtualDisplay!!.display.displayId
-                val displaysAfter = dm.displays.map { it.displayId }.joinToString(", ")
-                safeToast("SUCCESS! Created Display #$newDisplayId\nBefore: [$displaysBefore]\nAfter: [$displaysAfter]")
-            } else {
-                safeToast("FAILED: createVirtualDisplay returned null\nDisplays: [$displaysBefore]")
-            }
-        } catch (e: Exception) {
-            safeToast("ERROR: ${e.javaClass.simpleName}\n${e.message}\nDisplays: [$displaysBefore]")
-        }
-    }
-
     fun switchDisplay() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         
@@ -7007,7 +6964,6 @@ private var isSoftKeyboardSupport = false
 
                 displayList.add(ActionOption("Switch Display (Current $currentDisplayId)") { switchDisplay() })
                 displayList.add(ToggleOption("Virtual Display (1080p)", isVirtualDisplayActive) { toggleVirtualDisplay(it) })
-                displayList.add(ActionOption("TEST: Create Virtual Display (API)") { testCreateVirtualDisplay() })
                 
                 displayList.add(ToggleOption("Auto-Start Trackpad", autoRestartTrackpad) { autoRestartTrackpad = it; AppPreferences.setAutoRestartTrackpad(this, it); if (it) safeToast("Trackpad will restart on next Launcher startup") })
                 displayList.add(ToggleOption("Shizuku Warning (Icon Alert)", showShizukuWarning) { showShizukuWarning = it; AppPreferences.setShowShizukuWarning(this, it); updateBubbleIcon() })
