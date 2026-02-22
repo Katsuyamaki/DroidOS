@@ -2078,6 +2078,19 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             targetY = screenHeight - kbHeight - navBarHeight
         }
         
+        // Debug logging for gap diagnosis
+        val caseNum = when {
+            prefs.prefShowKBAboveDock && isDockIMEVisible -> 1
+            prefs.prefShowKBAboveDock && !isDockIMEVisible -> 2
+            !prefs.prefShowKBAboveDock && isDockIMEVisible -> 3
+            else -> 4
+        }
+        val expectedTiledBottom = screenHeight - marginHeight
+        android.util.Log.d("OverlayKB", "CASE$caseNum: margin%=$marginPercent marginH=$marginHeight navH=$navBarHeight toolbarH=$dockToolbarHeight")
+        android.util.Log.d("OverlayKB", "CASE$caseNum: screenH=$screenHeight kbH=$kbHeight targetY=$targetY")
+        android.util.Log.d("OverlayKB", "CASE$caseNum: expectedTiledBottom=$expectedTiledBottom kbTop=$targetY gap=${targetY - expectedTiledBottom}")
+        android.util.Log.d("OverlayKB", "CASE$caseNum: showAbove=${prefs.prefShowKBAboveDock} dockVisible=$isDockIMEVisible")
+        
         val targetW = screenWidth
         
         // Use atomic method that sets BOTH window bounds AND key scale together

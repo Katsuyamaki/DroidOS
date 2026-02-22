@@ -71,6 +71,13 @@ class KeyboardPickerActivity : Activity() {
     private fun showPickerFromShell(allImeStr: String, enabledImeStr: String) {
         try {
             val pm = packageManager
+            val density = resources.displayMetrics.density
+            val rowHorizontalPaddingPx = (16f * density).toInt()
+            val rowVerticalPaddingPx = (10f * density).toInt()
+            val rowMinHeightPx = (48f * density).toInt()
+            val rowCheckmarkGapPx = (12f * density).toInt()
+            val listInsetHorizontalPx = (12f * density).toInt()
+            val listInsetVerticalPx = (8f * density).toInt()
             val enabledSet = enabledImeStr.lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
             // Parse "ime list -a -s" output: one IME id per line
@@ -133,12 +140,18 @@ class KeyboardPickerActivity : Activity() {
                     val view = super.getView(position, convertView, parent)
                     val textView = view.findViewById<TextView>(android.R.id.text1)
 
-                    // Compact: smaller text and reduced padding
+                    // Use dp-based spacing for consistent rendering across device densities.
                     textView.textSize = 13f
-                    textView.setPadding(8, 4, 8, 4)
-                    textView.minHeight = 0
-                    textView.minimumHeight = 0
-                    view.setPadding(view.paddingLeft, 2, view.paddingRight, 2)
+                    textView.setPaddingRelative(
+                        rowHorizontalPaddingPx,
+                        rowVerticalPaddingPx,
+                        rowHorizontalPaddingPx,
+                        rowVerticalPaddingPx
+                    )
+                    textView.compoundDrawablePadding = rowCheckmarkGapPx
+                    textView.minHeight = rowMinHeightPx
+                    textView.minimumHeight = rowMinHeightPx
+                    view.minimumHeight = rowMinHeightPx
 
                     // Scale down the radio button drawable so it doesn't clip
                     if (textView is android.widget.CheckedTextView) {
@@ -223,6 +236,16 @@ class KeyboardPickerActivity : Activity() {
                 dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             }
             dialog.show()
+            dialog.listView?.apply {
+                setPadding(
+                    listInsetHorizontalPx,
+                    listInsetVerticalPx,
+                    listInsetHorizontalPx,
+                    listInsetVerticalPx
+                )
+                clipToPadding = false
+                dividerHeight = listInsetVerticalPx / 2
+            }
 
         } catch (e: Exception) {
 
