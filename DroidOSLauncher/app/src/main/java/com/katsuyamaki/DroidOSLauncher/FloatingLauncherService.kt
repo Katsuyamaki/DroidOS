@@ -6010,7 +6010,51 @@ private var isSoftKeyboardSupport = false
 
     private fun applyOrientation() { Thread { try { when (currentOrientationMode) { 1 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 0") }; 2 -> { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand("settings put system user_rotation 1") }; else -> { shellService?.runCommand("settings put system accelerometer_rotation 1") } } } catch (e: Exception) {  } }.start() }
     override fun applyResolution(opt: ResolutionOption) { dismissKeyboardAndRestore(); if (opt.index != -1) { selectedResolutionIndex = opt.index; AppPreferences.saveDisplayResolution(this, currentDisplayId, opt.index) }; drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged(); if (isInstantMode && opt.index != -1) { Thread {     if (currentOrientationMode != 0) { shellService?.runCommand("settings put system accelerometer_rotation 0"); shellService?.runCommand(when (currentOrientationMode) { 1 -> "settings put system user_rotation 0"; 2 -> "settings put system user_rotation 1"; else -> "" }) }; val resCmd = getResolutionCommand(selectedResolutionIndex); shellService?.runCommand(resCmd); Thread.sleep(1500); uiHandler.post { applyLayoutImmediate() } }.start() } }
-    override fun selectDpi(value: Int) { currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600); AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting); Thread { try { if (currentDpiSetting == -1) { shellService?.runCommand("wm density reset -d $currentDisplayId") } else { val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"; shellService?.runCommand(dpiCmd) } } catch(e: Exception) {  } }.start() }
+    override fun selectDpi(value: Int) {
+        currentDpiSetting = if (value == -1) -1 else value.coerceIn(50, 600)
+        AppPreferences.saveDisplayDpi(this, currentDisplayId, currentDpiSetting)
+
+        // Keep UI model in sync immediately so RecyclerView rebinds do not snap back.
+        val uiDpi = if (currentDpiSetting > 0) {
+            currentDpiSetting
+        } else {
+            displayContext?.resources?.configuration?.densityDpi ?: 160
+        }
+
+        fun updateDpiOption(list: MutableList<Any>): Int {
+            for (i in list.indices) {
+                if (list[i] is DpiOption) {
+                    list[i] = DpiOption(uiDpi)
+                    return i
+                }
+            }
+            return -1
+        }
+
+        val displayIndex = updateDpiOption(displayList)
+        updateDpiOption(unfilteredDisplayList)
+
+        if (currentMode == MODE_DPI && displayIndex >= 0) {
+            uiHandler.post {
+                drawerView
+                    ?.findViewById<RecyclerView>(R.id.rofi_recycler_view)
+                    ?.adapter
+                    ?.notifyItemChanged(displayIndex)
+            }
+        }
+
+        Thread {
+            try {
+                if (currentDpiSetting == -1) {
+                    shellService?.runCommand("wm density reset -d $currentDisplayId")
+                } else {
+                    val dpiCmd = "wm density $currentDpiSetting -d $currentDisplayId"
+                    shellService?.runCommand(dpiCmd)
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
     override fun changeFontSize(newSize: Float) { currentFontSize = newSize.coerceIn(10f, 30f); AppPreferences.saveFontSize(this, currentFontSize); updateGlobalFontSize(); if (currentMode == MODE_SETTINGS) { switchMode(MODE_SETTINGS) } }
     override fun changeDrawerHeight(delta: Int) { currentDrawerHeightPercent = (currentDrawerHeightPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerHeightPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerHeightPercent); AppPreferences.setDrawerHeightPercent(this, currentDrawerHeightPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
     override fun changeDrawerWidth(delta: Int) { currentDrawerWidthPercent = (currentDrawerWidthPercent + delta).coerceIn(30, 100); AppPreferences.setDrawerWidthPercentForConfig(this, currentDisplayId, currentAspectRatio, currentDrawerWidthPercent); AppPreferences.setDrawerWidthPercent(this, currentDrawerWidthPercent); updateDrawerHeight(false); if (currentMode == MODE_SETTINGS) { drawerView!!.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged() } }
@@ -6915,7 +6959,6 @@ private var isSoftKeyboardSupport = false
                 displayList.add(WidthOption(currentDrawerWidthPercent))
                 displayList.add(MarginOption(0, topMarginPercent)) // 0 = Top
                 displayList.add(MarginOption(1, bottomMarginPercent)) // 1 = Bottom (base)
-                displayList.add(LegendOption("NOTE: Android bottom gesture/nav inset is auto-reserved"))
                 // Toggle availability must follow current active/default IME only.
                 val isDroidOsImeActive = isDroidOsImeCurrentlyActive()
 
