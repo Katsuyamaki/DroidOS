@@ -1107,7 +1107,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     action == "CYCLE_INPUT_TARGET" -> cycleInputTarget()
                     action == "RESET_CURSOR" -> resetCursorCenter()
                     action == "TOGGLE_DEBUG" -> toggleDebugMode()
-                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> toggleCustomKeyboard()
+                    action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> {
+                        // Extract nav_bar_height if present (sent by DockIME on auto-show)
+                        val navH = intent.getIntExtra("nav_bar_height", -1)
+                        if (navH >= 0) dockNavBarHeight = navH
+                        toggleCustomKeyboard()
+                    }
                     action == "PRESERVE_KEYBOARD" -> {
                         preserveKeyboardUntil = System.currentTimeMillis() + 1000L
                         android.util.Log.d("OverlayService", "PRESERVE_KB: received, set until=$preserveKeyboardUntil")
@@ -2048,11 +2053,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         val kbHeight: Int
         val targetY: Int
-        
-        // Calculate toolbar as percentage (same truncation as Launcher's dockToolbarHeightPercent)
-        // This ensures pixel-perfect alignment between tiled app bottom and keyboard top
-        val toolbarPct = ((dockToolbarHeight.toFloat() / screenHeight.toFloat()) * 100f).toInt()
-        val toolbarFromPct = (screenHeight * toolbarPct / 100f).toInt()
         
         if (prefs.prefShowKBAboveDock && isDockIMEVisible) {
             // Case 1: Toggle ON + DockIME visible

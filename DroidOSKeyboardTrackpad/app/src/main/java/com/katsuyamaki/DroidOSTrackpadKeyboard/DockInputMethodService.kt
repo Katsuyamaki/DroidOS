@@ -280,16 +280,15 @@ class DockInputMethodService : InputMethodService() {
         
         // Auto-show overlay keyboard if enabled
         if (prefAutoShowOverlay) {
-
-
-
-
+            // Always send nav bar height so overlay keyboard positions correctly
+            // on first IME show (before any APPLY_DOCK_MODE broadcast)
 
 
 
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
             intent.setPackage(packageName)
             intent.putExtra("FORCE_SHOW", true)
+            intent.putExtra("nav_bar_height", getSystemBottomUiHeight())
             intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             sendBroadcast(intent)
         }
@@ -528,6 +527,7 @@ class DockInputMethodService : InputMethodService() {
             val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
             intent.setPackage(packageName)
             intent.putExtra("FORCE_SHOW", true)
+            intent.putExtra("nav_bar_height", getSystemBottomUiHeight())
             intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             sendBroadcast(intent)
         }
