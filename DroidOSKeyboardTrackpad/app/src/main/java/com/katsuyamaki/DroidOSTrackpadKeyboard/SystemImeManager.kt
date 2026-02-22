@@ -18,12 +18,18 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
     private val handler: Handler = service.handler
     private val TAG = "SystemImeManager"
 
+    private fun log(msg: String) {
+        android.util.Log.d(TAG, msg)
+    }
+
     private val imeObserver = object : ContentObserver(handler) {
         private var lastObservedIme: String = ""
         private var lastFightTime: Long = 0
 
         override fun onChange(selfChange: Boolean) {
             val current = Settings.Secure.getString(service.contentResolver, "default_input_method") ?: ""
+            
+            log("IME_OBSERVER: onChange - current=$current, last=$lastObservedIme, displayId=${service.currentDisplayId}")
             
             if (current.isEmpty()) {
                 lastObservedIme = current
@@ -35,8 +41,11 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
             val wasGboard = lastObservedIme.contains("com.google.android.inputmethod.latin")
             val wasDock = lastObservedIme.contains("DockInputMethodService") || lastObservedIme.contains("NullInputMethodService")
             val isOnMainScreen = service.currentDisplayId == 0
+            
+            log("IME_OBSERVER: isDock=$isDock, isSamsung=$isSamsung, wasGboard=$wasGboard, wasDock=$wasDock, isOnMainScreen=$isOnMainScreen")
 
             if (isSamsung && wasGboard && isOnMainScreen && !wasDock) {
+                log("IME_OBSERVER: FIGHT - Samsung took over from Gboard on main screen")
                 val now = System.currentTimeMillis()
                 if (now - lastFightTime > 1000) {
                     lastFightTime = now
@@ -142,32 +151,53 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
     }
 
     fun setSoftKeyboardBlocking(enabled: Boolean) {
-        if (shellService == null) return
+        log("setSoftKeyboardBlocking($enabled) called, displayId=${service.currentDisplayId}, shellService=${shellService != null}")
+        
+        if (shellService == null) {
+            log("setSoftKeyboardBlocking: ABORT - shellService is null")
+            return
+        }
         
         if (enabled && service.currentDisplayId != 1) {
+            log("setSoftKeyboardBlocking: ABORT - enabled but displayId=${service.currentDisplayId} != 1")
             return
         }
         
         if (!enabled && isKeyboardRestoreInProgress) {
+            log("setSoftKeyboardBlocking: ABORT - restore already in progress")
             return
         }
 
         Thread {
             try {
+                log("setSoftKeyboardBlocking: querying IMEs...")
                 val allImes = shellService.runCommand("ime list -a -s") ?: ""
+                log("setSoftKeyboardBlocking: all IMEs = ${allImes.replace("\n", " | ")}")
+                
                 val myImeId = allImes.lines().firstOrNull { 
                     it.contains(service.packageName) && (it.contains("DockInputMethodService") || it.contains("NullInputMethodService")) 
                 }?.trim()
 
                 if (myImeId.isNullOrEmpty()) {
+                    log("setSoftKeyboardBlocking: ERROR - DroidOS IME not found in list")
                     handler.post { service.showToast("Error: DroidOS Keyboard not found.") }
                     return@Thread
                 }
+                
+                log("setSoftKeyboardBlocking: found myImeId=$myImeId")
 
                 if (enabled) {
-                    shellService.runCommand("ime enable $myImeId")
-                    shellService.runCommand("ime set $myImeId")
+                    log("setSoftKeyboardBlocking: BLOCKING - running ime enable/set...")
+                    val r1 = shellService.runCommand("ime enable $myImeId")
+                    log("setSoftKeyboardBlocking: ime enable result: $r1")
+                    val r2 = shellService.runCommand("ime set $myImeId")
+                    log("setSoftKeyboardBlocking: ime set result: $r2")
                     shellService.runCommand("settings put secure show_ime_with_hard_keyboard 0")
+                    
+                    // Verify
+                    val currentIme = shellService.runCommand("settings get secure default_input_method")?.trim()
+                    log("setSoftKeyboardBlocking: VERIFY - current IME after set: $currentIme")
+                    
                     handler.post { service.showToast("Keyboard Blocked (Cover Screen)") }
                 } else {
                     isKeyboardRestoreInProgress = true
@@ -293,18 +323,33 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
     }
 
     fun ensureKeyboardBlocked() {
-        if (service.currentDisplayId != 1) return
+        log("ensureKeyboardBlocked() called, displayId=${service.currentDisplayId}")
         
-        if (System.currentTimeMillis() - lastCoverCheck < 2000) return
+        if (service.currentDisplayId != 1) {
+            log("ensureKeyboardBlocked: SKIP - not on cover screen (displayId=${service.currentDisplayId})")
+            return
+        }
+        
+        if (System.currentTimeMillis() - lastCoverCheck < 2000) {
+            log("ensureKeyboardBlocked: THROTTLED - last check was recent")
+            return
+        }
         lastCoverCheck = System.currentTimeMillis()
 
         Thread {
             try {
                 val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
+                log("ensureKeyboardBlocked: current IME = $current")
+                
                 if (!current.contains("NullInputMethodService") && !current.contains("DockInputMethodService")) {
+                    log("ensureKeyboardBlocked: IME is NOT DroidOS - calling setSoftKeyboardBlocking(true)")
                     handler.post { setSoftKeyboardBlocking(true) }
+                } else {
+                    log("ensureKeyboardBlocked: IME is already DroidOS - OK")
                 }
-            } catch(e: Exception) {}
+            } catch(e: Exception) {
+                log("ensureKeyboardBlocked: ERROR - ${e.message}")
+            }
         }.start()
     }
 
@@ -349,19 +394,26 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
     }
 
     fun triggerAggressiveBlocking() {
+        log("triggerAggressiveBlocking() called, displayId=${service.currentDisplayId}")
+        
         // GUARD: Only block keyboard on Cover Screen (display 1)
         if (service.currentDisplayId != 1) {
+            log("triggerAggressiveBlocking: SKIP - not on cover screen")
             return
         }
 
         // Rely on standard Android API to suppress keyboard
         if (Build.VERSION.SDK_INT >= 24) {
             try {
-                if (service.softKeyboardController.showMode != AccessibilityService.SHOW_MODE_HIDDEN) {
+                val currentMode = service.softKeyboardController.showMode
+                log("triggerAggressiveBlocking: current showMode=$currentMode")
+                
+                if (currentMode != AccessibilityService.SHOW_MODE_HIDDEN) {
                     service.softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
+                    log("triggerAggressiveBlocking: set showMode to HIDDEN")
                 }
             } catch (e: Exception) {
-                // Controller might not be connected yet
+                log("triggerAggressiveBlocking: ERROR - ${e.message}")
             }
         }
     }
@@ -372,5 +424,69 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
             lastBlockTime = currentTime
             triggerAggressiveBlocking()
         }
+    }
+
+    /**
+     * Force-refresh the IME when leaving cover screen.
+     * Disables NullIME first to force system fallback, then sets target IME.
+     */
+    fun forceRefreshIme() {
+        log("forceRefreshIme() called, shellService=${shellService != null}")
+        
+        if (shellService == null) {
+            log("forceRefreshIme: ABORT - shellService is null")
+            return
+        }
+
+        Thread {
+            try {
+                val nullIme = "${service.packageName}/com.katsuyamaki.DroidOSTrackpadKeyboard.NullInputMethodService"
+                val dockIme = "${service.packageName}/com.katsuyamaki.DroidOSTrackpadKeyboard.DockInputMethodService"
+                
+                val currentIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                log("forceRefreshIme: current IME = $currentIme")
+                
+                // Get user's preferred IME
+                val sharedPrefs = service.getSharedPreferences("TrackpadPrefs", android.content.Context.MODE_PRIVATE)
+                val userPref = sharedPrefs.getString("user_preferred_ime", null)
+                log("forceRefreshIme: userPref = $userPref")
+                
+                val targetIme = when {
+                    userPref != null && !userPref.contains("NullInputMethodService") && !userPref.contains("DockInputMethodService") -> userPref
+                    else -> dockIme
+                }
+                log("forceRefreshIme: targetIme = $targetIme")
+                
+                // Step 1: Disable NullInputMethodService to force system to switch
+                log("forceRefreshIme: disabling NullIME...")
+                shellService.runCommand("ime disable $nullIme")
+                Thread.sleep(100)
+                
+                // Step 2: Enable and set target IME
+                log("forceRefreshIme: enabling and setting target IME...")
+                shellService.runCommand("ime enable $targetIme")
+                val r1 = shellService.runCommand("settings put secure default_input_method $targetIme")
+                log("forceRefreshIme: settings put result = $r1")
+                val r2 = shellService.runCommand("ime set $targetIme")
+                log("forceRefreshIme: ime set result = $r2")
+                Thread.sleep(200)
+                
+                // Step 3: Re-enable NullInputMethodService for future cover screen use
+                log("forceRefreshIme: re-enabling NullIME...")
+                shellService.runCommand("ime enable $nullIme")
+                
+                // Verify
+                val finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                log("forceRefreshIme: VERIFY final IME = $finalIme")
+                
+                val success = finalIme == targetIme || finalIme.contains("DockInputMethodService") || finalIme.contains(targetIme.substringAfterLast("/"))
+                handler.post { 
+                    service.showToast(if (success) "KB Ready" else "KB: $finalIme")
+                }
+            } catch (e: Exception) {
+                log("forceRefreshIme: ERROR - ${e.message}")
+                handler.post { service.showToast("KB Error: ${e.message}") }
+            }
+        }.start()
     }
 }

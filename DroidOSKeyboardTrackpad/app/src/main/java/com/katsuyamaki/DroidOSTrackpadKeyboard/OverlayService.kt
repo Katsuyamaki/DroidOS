@@ -301,13 +301,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
-
+            val eventTypeName = when(event.eventType) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE"
+                AccessibilityEvent.TYPE_VIEW_FOCUSED -> "VIEW_FOCUSED"
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED -> "WINDOWS_CHANGED"
+                else -> "OTHER"
+            }
 
             // GUARD: Only run blocking logic on Cover Screen (display 1)
             // Skip during active typing to prevent overlay flashing with DroidOS IME
             val isActivelyTyping = System.currentTimeMillis() - lastInjectionTime < 300
+            android.util.Log.d("KBBlocker", "Event=$eventTypeName displayId=$currentDisplayId prefBlock=${prefs.prefBlockSoftKeyboard} voiceActive=$isVoiceActive typing=$isActivelyTyping")
+            
             if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive && !isActivelyTyping) {
                  // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
+                 android.util.Log.d("KBBlocker", "BLOCKING: calling ensureKeyboardBlocked + triggerAggressiveBlocking")
                  imeManager?.ensureKeyboardBlocked()
                  imeManager?.triggerAggressiveBlockingWithThrottle()
             } else if (currentDisplayId != 1) {
@@ -1318,6 +1326,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal fun setupUI(displayId: Int) {
         logOverlayKbDiag("setupUI_start", "targetDisplay=$displayId")
 
+        // [FIX] Capture previous display before it's overwritten
+        val previousDisplayId = currentDisplayId
+        android.util.Log.d("KBBlocker", "setupUI: previousDisplayId=$previousDisplayId targetDisplayId=$displayId prefBlock=${prefs.prefBlockSoftKeyboard}")
+
         // 1. Force complete removal of all views using the current WindowManager
         removeOldViews()
 
@@ -1362,6 +1374,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             enforceZOrder()
             showToast("Trackpad active on Display $displayId")
 
+            // [FIX] Force-refresh IME when leaving cover screen with KB blocker enabled
+            android.util.Log.d("KBBlocker", "setupUI KB switch check: prev=$previousDisplayId target=$displayId prefBlock=${prefs.prefBlockSoftKeyboard}")
+            if (previousDisplayId == 1 && displayId != 1 && prefs.prefBlockSoftKeyboard) {
+                android.util.Log.d("KBBlocker", "setupUI: TRIGGERING forceRefreshIme in 300ms")
+                handler.postDelayed({
+                    android.util.Log.d("KBBlocker", "setupUI: calling forceRefreshIme NOW")
+                    imeManager?.forceRefreshIme()
+                }, 300)
+            }
+
             // =================================================================================
             // KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // SUMMARY: On Main Screen (0), ensure showMode is AUTO so keyboards can appear.
@@ -1377,11 +1399,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // =================================================================================
             if (displayId == 1) {
                 // COVER SCREEN - Apply blocking if enabled
+                android.util.Log.d("KBBlocker", "setupUI: ON COVER SCREEN, prefBlock=${prefs.prefBlockSoftKeyboard}")
                 if (prefs.prefBlockSoftKeyboard) {
+                    android.util.Log.d("KBBlocker", "setupUI: calling triggerAggressiveBlocking for cover screen")
                     imeManager?.triggerAggressiveBlocking()
                 }
             } else {
                 // MAIN SCREEN (0) or VIRTUAL DISPLAY (2+) - Never block, ensure AUTO mode
+                android.util.Log.d("KBBlocker", "setupUI: NOT cover screen, setting showMode=AUTO")
                 if (Build.VERSION.SDK_INT >= 24) {
                     try { softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO } catch (e: Exception) {}
                 }
