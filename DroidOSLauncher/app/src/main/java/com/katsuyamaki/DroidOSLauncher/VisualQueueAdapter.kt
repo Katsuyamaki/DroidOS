@@ -56,16 +56,8 @@ class VisualQueueAdapter(
                 holder.icon.setImageResource(R.drawable.ic_launcher_bubble)
             }
             
-            val isVisibleOnScreen = visiblePackages.contains(app.getBasePackage()) || 
-                                  (app.getBasePackage() == "com.google.android.apps.bard" && visiblePackages.contains("com.google.android.googlequicksearchbox"))
-
-            val isActuallyActive = if (visiblePackages.isNotEmpty()) {
-                isVisibleOnScreen
-            } else {
-                !app.isMinimized
-            }
-            
-            holder.icon.alpha = if (isActuallyActive) 1.0f else 0.4f
+            // Use isMinimized flag directly (syncs with app drawer)
+            holder.icon.alpha = if (!app.isMinimized) 1.0f else 0.4f
         }
 
         val isCurrentSelection = (position == highlightIndex)
