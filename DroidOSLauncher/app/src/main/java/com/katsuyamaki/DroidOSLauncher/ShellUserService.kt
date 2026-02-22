@@ -24,6 +24,7 @@ class ShellUserService : IShellService.Stub() {
     // === EFFICIENCY CACHE ===
     private var cachedVisiblePackages: List<String> = emptyList()
     private var lastVisibleCacheTime: Long = 0
+    private var cachedDisplayId: Int = -1 // Track which display the cache is for
     private val VISIBLE_CACHE_TTL = 800L // 800ms Cache Validity
     // Cache for Gemini task ID since it trampolines and becomes invisible
     // The BardEntryPointActivity creates a task, then immediately redirects to Google QSB
@@ -293,8 +294,8 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     override fun getVisiblePackages(displayId: Int): List<String> {
         val now = System.currentTimeMillis()
         
-        // [EFFICIENCY] Return cached result if valid
-        if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty()) {
+        // [EFFICIENCY] Return cached result if valid AND for same display
+        if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty() && cachedDisplayId == displayId) {
             return ArrayList(cachedVisiblePackages)
         }
         
@@ -355,6 +356,8 @@ override fun setBrightness(displayId: Int, brightness: Int) {
             // [EFFICIENCY] Update Cache
             cachedVisiblePackages = ArrayList(list)
             lastVisibleCacheTime = now
+            cachedDisplayId = displayId
+            cachedDisplayId = displayId
             
         } catch (e: Exception) {
         } finally {

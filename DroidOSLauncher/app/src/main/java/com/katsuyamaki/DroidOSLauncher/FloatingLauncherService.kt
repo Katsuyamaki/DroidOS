@@ -5756,8 +5756,13 @@ private var isSoftKeyboardSupport = false
                                     val isRecentOverride = (System.currentTimeMillis() - lastManualTime) < 5000
 
                                     if (!isRecentOverride) {
-                                        // Simple: visible on current display = active, else minimized
-                                        appInfo.isMinimized = !isVisible
+                                        // Check if on hidden display - always minimized if so
+                                        val onHiddenDisplay = isOnHiddenMinimizeDisplay(basePkg)
+                                        if (onHiddenDisplay) {
+                                            appInfo.isMinimized = true
+                                        } else {
+                                            appInfo.isMinimized = !isVisible
+                                        }
                                     }
 
                                     selectedAppsQueue.add(appInfo)
@@ -7705,13 +7710,14 @@ private var isSoftKeyboardSupport = false
                                                                 app.isMinimized = newState
                                                                 
                                                                 val basePkg = app.getBasePackage()
-                                                                // [FIX] Record manual override timestamp
-                                                                manualStateOverrides[basePkg] = System.currentTimeMillis()
                                                                 
                                                                 // Track minimization timestamp for queue ordering (newest first)
                                                                 if (newState) {
                                                                     minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
                                                                 } else {
+                                                                    // [FIX] Only set grace period on RESTORE (not minimize)
+                                                                    // This prevents minimized apps from showing as active
+                                                                    manualStateOverrides[basePkg] = System.currentTimeMillis()
                                                                     minimizedAtTimestamps.remove(basePkg)
                                                                 }
                                                                 
