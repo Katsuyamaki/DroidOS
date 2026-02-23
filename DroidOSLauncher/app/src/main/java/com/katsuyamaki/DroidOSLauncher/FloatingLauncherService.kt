@@ -7235,8 +7235,9 @@ private var isSoftKeyboardSupport = false
         setupVisualQueue() // Recalc HUD pos
         // Ensure queue loaded (may be empty on cover screen startup)
         ensureQueueLoadedForCommands()
-        // Use exact same path as manual slider
-        applyLayoutImmediate()
+        // [FIX] Use retileExistingWindows to just resize in place without relaunching apps
+        // applyLayoutImmediate calls executeLaunch which runs am start and restarts activities
+        retileExistingWindows()
 
         // Update UI if in settings mode - TARGETED UPDATE
         if (currentMode == MODE_SETTINGS) {
