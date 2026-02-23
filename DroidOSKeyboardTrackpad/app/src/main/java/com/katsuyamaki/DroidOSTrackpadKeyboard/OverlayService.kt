@@ -1018,6 +1018,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             addAction("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON")
             addAction("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
             addAction("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
+            addAction("com.katsuyamaki.DroidOSLauncher.AUTO_RESIZE_CHANGED")
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }

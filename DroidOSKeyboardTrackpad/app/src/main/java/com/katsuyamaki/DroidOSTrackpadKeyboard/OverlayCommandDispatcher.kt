@@ -226,6 +226,19 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                     .apply()
             }
 
+            matches("AUTO_RESIZE_CHANGED") -> {
+                // Save auto-resize toggle to DockIMEPrefs with per-display key
+                val enabled = intent.getBooleanExtra("ENABLED", false)
+                val displayId = intent.getIntExtra("DISPLAY_ID", service.currentDisplayId)
+                val orientation = intent.getStringExtra("ORIENTATION") ?: "_P"
+                val displaySuffix = "_d$displayId"
+                android.util.Log.d("KBBlocker", "AUTO_RESIZE_CHANGED: enabled=$enabled displayId=$displayId orient=$orientation")
+                service.getSharedPreferences("DockIMEPrefs", android.content.Context.MODE_PRIVATE).edit()
+                    .putBoolean("auto_resize$displaySuffix$orientation", enabled)
+                    .putBoolean("auto_resize$displaySuffix", enabled)
+                    .apply()
+            }
+
             matches("MOVE_TO_VIRTUAL") -> {
 
                 val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)

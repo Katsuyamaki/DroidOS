@@ -2777,6 +2777,8 @@ private var isSoftKeyboardSupport = false
             bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId, os)
                 ?: AppPreferences.getBottomMarginPercent(this, displayId)
         }
+        // Load auto-adjust toggle per-display (prevents cover screen toggle affecting main screen)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, displayId, os) ?: false
 
         
         // 2. Layout & Custom Rects (Per Display + Orientation)
@@ -7015,13 +7017,13 @@ private var isSoftKeyboardSupport = false
                         autoAdjustMarginForIME = it
                         // Only save per-display (no global) to isolate cover screen from main screen
                         AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, it, orientSuffix())
-                        // Sync to DockIMEPrefs WITH display ID for keyboard to read
-                        val displaySuffix = "_d$currentDisplayId"
-                        val os = orientSuffix()
-                        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-                            .putBoolean("auto_resize$displaySuffix$os", it)
-                            .putBoolean("auto_resize$displaySuffix", it)
-                            .apply()
+                        // Broadcast to Keyboard app so it can save to its own prefs with display ID
+                        val toggleIntent = Intent("com.katsuyamaki.DroidOSLauncher.AUTO_RESIZE_CHANGED")
+                        toggleIntent.putExtra("ENABLED", it)
+                        toggleIntent.putExtra("DISPLAY_ID", currentDisplayId)
+                        toggleIntent.putExtra("ORIENTATION", orientSuffix())
+                        toggleIntent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+                        sendBroadcast(toggleIntent)
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {
