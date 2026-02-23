@@ -638,13 +638,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             
             android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: enabled=$autoResizeEnabled margin=$marginPercent")
             
-            // Cover screen: apply margin if set, don't require autoResizeEnabled since DockIME can't toggle it there
-            if (marginPercent > 0) {
+            // Cover screen: respect the autoResizeEnabled toggle (now synced from Launcher)
+            if (autoResizeEnabled && marginPercent > 0) {
                 android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: APPLYING margin=$marginPercent")
                 lastDockMarginPercent = marginPercent
                 applyDockModeWithMargin(marginPercent)
             } else {
-                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: SKIPPED margin=$marginPercent")
+                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: SKIPPED enabled=$autoResizeEnabled margin=$marginPercent")
             }
         } catch (e: Exception) {
             android.util.Log.e("KBBlocker", "triggerCoverScreenAutoMargin error: ${e.message}")
@@ -2499,11 +2499,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 dockPrefs.getInt("auto_resize_scale$displaySuffix",
                 dockPrefs.getInt("auto_resize_scale$orientation",
                 dockPrefs.getInt("auto_resize_scale", 0))))
-            android.util.Log.d("KBBlocker", "toggleKB: coverMargin=$coverMargin from prefs (displaySuffix=$displaySuffix orient=$orientation)")
-            val marginValue = if (isNowVisible && coverMargin > 0) coverMargin else 0
-            marginIntent.putExtra("PERCENT", marginValue)
-            sendBroadcast(marginIntent)
-            android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN sent SET_MARGIN_BOTTOM percent=$marginValue (from prefs d$currentDisplayId)")
+            val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$displaySuffix$orientation",
+                dockPrefs.getBoolean("auto_resize$displaySuffix",
+                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))))
+            android.util.Log.d("KBBlocker", "toggleKB: coverMargin=$coverMargin autoResize=$autoResizeEnabled (displaySuffix=$displaySuffix orient=$orientation)")
+            // Only apply auto margin if toggle is ON, otherwise don't change margin
+            val marginValue = if (isNowVisible && autoResizeEnabled && coverMargin > 0) coverMargin else if (!isNowVisible && autoResizeEnabled) 0 else -1
+            // Only send if auto-resize is enabled (marginValue >= 0)
+            if (marginValue >= 0) {
+                marginIntent.putExtra("PERCENT", marginValue)
+                sendBroadcast(marginIntent)
+                android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN sent SET_MARGIN_BOTTOM percent=$marginValue (from prefs d$currentDisplayId)")
+            } else {
+                android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN auto-resize OFF, not changing margin")
+            }
             // Skip IME_VISIBILITY on cover screen - not needed, causes issues
         } else {
             // Main screen: use normal IME_VISIBILITY path
