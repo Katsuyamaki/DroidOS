@@ -602,16 +602,30 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
     }
 
+    private fun isDockModeEnabledForCurrentDisplay(prefs: android.content.SharedPreferences): Boolean {
+        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        return prefs.getBoolean(
+            "dock_mode_d${currentDisplayId}$dockOs",
+            prefs.getBoolean("dock_mode_d$currentDisplayId", false)
+        )
+    }
+
     internal fun handleApplyDockMode(intent: Intent) {
         dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
-        if (intent.getBooleanExtra("enabled", false)) {
-            val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-            if (marginPercent >= 0) {
-                lastDockMarginPercent = marginPercent
-                applyDockModeWithMargin(marginPercent)
-            } else {
-                applyDockMode()
-            }
+        if (!intent.getBooleanExtra("enabled", false)) return
+
+        val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        if (!isDockModeEnabledForCurrentDisplay(dockPrefs)) {
+            android.util.Log.d("KBBlocker", "handleApplyDockMode: IGNORE (dock disabled for display=$currentDisplayId)")
+            return
+        }
+
+        val marginPercent = intent.getIntExtra("resize_to_margin", -1)
+        if (marginPercent >= 0) {
+            lastDockMarginPercent = marginPercent
+            applyDockModeWithMargin(marginPercent)
+        } else {
+            applyDockMode()
         }
     }
 
@@ -626,6 +640,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         try {
             val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            val dockModeEnabled = isDockModeEnabledForCurrentDisplay(dockPrefs)
             val orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "_L" else "_P"
             val displaySuffix = "_d$currentDisplayId"
             // Read per-display prefs first, fallback to non-display-specific for backwards compat
@@ -636,15 +651,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 dockPrefs.getBoolean("auto_resize$displaySuffix",
                 dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))))
             
-            android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: enabled=$autoResizeEnabled margin=$marginPercent")
+            android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: dockMode=$dockModeEnabled enabled=$autoResizeEnabled margin=$marginPercent")
             
-            // Cover screen: respect the autoResizeEnabled toggle (now synced from Launcher)
-            if (autoResizeEnabled && marginPercent > 0) {
+            // Cover screen: apply auto margin only when dock mode is enabled for this display.
+            if (dockModeEnabled && autoResizeEnabled && marginPercent > 0) {
                 android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: APPLYING margin=$marginPercent")
                 lastDockMarginPercent = marginPercent
                 applyDockModeWithMargin(marginPercent)
             } else {
-                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: SKIPPED enabled=$autoResizeEnabled margin=$marginPercent")
+                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: SKIPPED dockMode=$dockModeEnabled enabled=$autoResizeEnabled margin=$marginPercent")
             }
         } catch (e: Exception) {
             android.util.Log.e("KBBlocker", "triggerCoverScreenAutoMargin error: ${e.message}")
@@ -2457,8 +2472,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val currentIme = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
         val isDockIMEConfigured = currentIme?.contains("DroidOSTrackpadKeyboard") == true
         val dockModePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
-        val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d${currentDisplayId}$dockOs", dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false)))
+        val isDockModeEnabled = isDockModeEnabledForCurrentDisplay(dockModePrefs)
         android.util.Log.d("KBBlocker", "toggleKB: isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled displayId=$currentDisplayId lastMargin=$lastDockMarginPercent")
         // Respect dock_mode toggle on all displays (including cover screen)
         if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
