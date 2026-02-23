@@ -1981,15 +1981,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 val newDockMode = parseBoolean(value)
                 val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
                 val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+                val displaySuffix = "_d$currentDisplayId"
                 if (newDockMode) {
-                    if (!dockPrefs.contains("show_kb_above_dock")) {
+                    val hasShowAbovePref = dockPrefs.contains("show_kb_above_dock$displaySuffix$dockOs") ||
+                        dockPrefs.contains("show_kb_above_dock$displaySuffix")
+                    if (!hasShowAbovePref) {
                         prefs.prefShowKBAboveDock = true
                         prefs.save(this)
                     }
                     dockPrefs.edit()
                         .putBoolean("dock_mode_d${currentDisplayId}$dockOs", true)
                         .putBoolean("dock_mode_d$currentDisplayId", true)
-                        .putBoolean("dock_mode", true)
                         .apply()
                     if (isCustomKeyboardVisible) {
                         if (lastDockMarginPercent >= 0) applyDockModeWithMargin(lastDockMarginPercent)
@@ -1999,9 +2001,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     dockPrefs.edit()
                         .putBoolean("dock_mode_d${currentDisplayId}$dockOs", false)
                         .putBoolean("dock_mode_d$currentDisplayId", false)
-                        .putBoolean("dock_mode", false)
-                        .putBoolean("auto_resize$dockOs", false)
-                        .putBoolean("auto_resize", false)
+                        .putBoolean("auto_resize$displaySuffix$dockOs", false)
+                        .putBoolean("auto_resize$displaySuffix", false)
                         .apply()
                     lastDockMarginPercent = -1
                     showToast("Dock mode disabled")
@@ -2189,6 +2190,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // SUMMARY: Saves the current keyboard height so Dock IME can use it for auto-resize.
     // =================================================================================
     internal fun getNavBarHeight(): Int {
+        // Cover screen should dock to true physical bottom without gesture/nav reserve.
+        if (currentDisplayId == 1) return 0
+
         // Prefer DockIME broadcast value - it measures actual gap below IME window
         // which includes nav bar + IME switcher (more accurate than WindowInsets)
         if (dockNavBarHeight >= 0) return dockNavBarHeight
@@ -2453,7 +2457,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val currentIme = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
         val isDockIMEConfigured = currentIme?.contains("DroidOSTrackpadKeyboard") == true
         val dockModePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
-        val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false))
+        val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+        val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d${currentDisplayId}$dockOs", dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false)))
         android.util.Log.d("KBBlocker", "toggleKB: isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled displayId=$currentDisplayId lastMargin=$lastDockMarginPercent")
         // Respect dock_mode toggle on all displays (including cover screen)
         if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
@@ -2957,12 +2962,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // If no saved profile for this orientation, apply landscape defaults
         if (settings == null && uiScreenWidth > uiScreenHeight) {
             val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            val displaySuffix = "_d$currentDisplayId"
             dockPrefs.edit()
                 .putBoolean("dock_mode_d${currentDisplayId}_L", true)
                 .putBoolean("dock_mode_d$currentDisplayId", true)
-                .putBoolean("dock_mode", true)
-                .putBoolean("auto_resize_L", true)
-                .putBoolean("auto_resize", true)
+                .putBoolean("auto_resize${displaySuffix}_L", true)
+                .putBoolean("auto_resize$displaySuffix", true)
                 .apply()
         }
 
@@ -3052,10 +3057,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     try {
                         val profileDockMode = parts[kbIndex + 4] == "1"
                         val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
+                        val displaySuffix = "_d$currentDisplayId"
                         val dockEdit = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                             .putBoolean("dock_mode_d${currentDisplayId}$dockOs", profileDockMode)
                             .putBoolean("dock_mode_d$currentDisplayId", profileDockMode)
-                            .putBoolean("dock_mode", profileDockMode)
                         // Restore extended dock prefs if present (new profile format)
                         if (parts.size > kbIndex + 9) {
                             val pAutoShow = parts[kbIndex + 5] == "1"
@@ -3063,16 +3068,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             val pResizeScale = parts[kbIndex + 7].toIntOrNull() ?: 0
                             val pSyncMargin = parts[kbIndex + 8] == "1"
                             val pKBAboveDock = parts[kbIndex + 9] == "1"
-                            dockEdit.putBoolean("auto_show_overlay$dockOs", pAutoShow)
-                                .putBoolean("auto_show_overlay", pAutoShow)
-                                .putBoolean("auto_resize$dockOs", pAutoResize)
-                                .putBoolean("auto_resize", pAutoResize)
-                                .putInt("auto_resize_scale$dockOs", pResizeScale)
-                                .putInt("auto_resize_scale", pResizeScale)
-                                .putBoolean("sync_margin$dockOs", pSyncMargin)
-                                .putBoolean("sync_margin", pSyncMargin)
-                                .putBoolean("show_kb_above_dock$dockOs", pKBAboveDock)
-                                .putBoolean("show_kb_above_dock", pKBAboveDock)
+                            dockEdit.putBoolean("auto_show_overlay$displaySuffix$dockOs", pAutoShow)
+                                .putBoolean("auto_show_overlay$displaySuffix", pAutoShow)
+                                .putBoolean("auto_resize$displaySuffix$dockOs", pAutoResize)
+                                .putBoolean("auto_resize$displaySuffix", pAutoResize)
+                                .putInt("auto_resize_scale$displaySuffix$dockOs", pResizeScale)
+                                .putInt("auto_resize_scale$displaySuffix", pResizeScale)
+                                .putBoolean("sync_margin$displaySuffix$dockOs", pSyncMargin)
+                                .putBoolean("sync_margin$displaySuffix", pSyncMargin)
+                                .putBoolean("show_kb_above_dock$displaySuffix$dockOs", pKBAboveDock)
+                                .putBoolean("show_kb_above_dock$displaySuffix", pKBAboveDock)
                             prefs.prefShowKBAboveDock = pKBAboveDock
                         }
                         dockEdit.apply()

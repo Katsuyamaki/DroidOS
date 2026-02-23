@@ -463,28 +463,57 @@ class DockInputMethodService : InputMethodService() {
         val prefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val displayId = getImeDisplayId()
         val os = dockOrientSuffix()
-        prefAutoShowOverlay = prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", false))
+        val displaySuffix = "_d$displayId"
+        prefAutoShowOverlay = prefs.getBoolean(
+            "auto_show_overlay$displaySuffix$os",
+            prefs.getBoolean(
+                "auto_show_overlay$displaySuffix",
+                // Legacy fallback: orientation/global keys from older builds.
+                prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", false))
+            )
+        )
         prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
-        prefAutoResize = prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
-        prefResizeScale = prefs.getInt("auto_resize_scale$os", prefs.getInt("auto_resize_scale", 0))
-        prefShowKBAboveDock = prefs.getBoolean("show_kb_above_dock$os", prefs.getBoolean("show_kb_above_dock", true))
+        prefAutoResize = prefs.getBoolean(
+            "auto_resize$displaySuffix$os",
+            prefs.getBoolean(
+                "auto_resize$displaySuffix",
+                // Legacy fallback: orientation/global keys from older builds.
+                prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
+            )
+        )
+        prefResizeScale = prefs.getInt(
+            "auto_resize_scale$displaySuffix$os",
+            prefs.getInt(
+                "auto_resize_scale$displaySuffix",
+                // Legacy fallback: orientation/global keys from older builds.
+                prefs.getInt("auto_resize_scale$os", prefs.getInt("auto_resize_scale", 0))
+            )
+        )
+        prefShowKBAboveDock = prefs.getBoolean(
+            "show_kb_above_dock$displaySuffix$os",
+            prefs.getBoolean(
+                "show_kb_above_dock$displaySuffix",
+                // Legacy fallback: orientation/global keys from older builds.
+                prefs.getBoolean("show_kb_above_dock$os", prefs.getBoolean("show_kb_above_dock", true))
+            )
+        )
     }
     
     private fun saveDockPrefs() {
         val displayId = getImeDisplayId()
         val os = dockOrientSuffix()
+        val displaySuffix = "_d$displayId"
         getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-            .putBoolean("auto_show_overlay$os", prefAutoShowOverlay)
-            .putBoolean("auto_show_overlay", prefAutoShowOverlay)
+            .putBoolean("auto_show_overlay$displaySuffix$os", prefAutoShowOverlay)
+            .putBoolean("auto_show_overlay$displaySuffix", prefAutoShowOverlay)
             .putBoolean("dock_mode_d${displayId}$os", prefDockMode)
             .putBoolean("dock_mode_d$displayId", prefDockMode)
-            .putBoolean("dock_mode", prefDockMode)
-            .putBoolean("auto_resize$os", prefAutoResize)
-            .putBoolean("auto_resize", prefAutoResize)
-            .putInt("auto_resize_scale$os", prefResizeScale)
-            .putInt("auto_resize_scale", prefResizeScale)
-            .putBoolean("show_kb_above_dock$os", prefShowKBAboveDock)
-            .putBoolean("show_kb_above_dock", prefShowKBAboveDock)
+            .putBoolean("auto_resize$displaySuffix$os", prefAutoResize)
+            .putBoolean("auto_resize$displaySuffix", prefAutoResize)
+            .putInt("auto_resize_scale$displaySuffix$os", prefResizeScale)
+            .putInt("auto_resize_scale$displaySuffix", prefResizeScale)
+            .putBoolean("show_kb_above_dock$displaySuffix$os", prefShowKBAboveDock)
+            .putBoolean("show_kb_above_dock$displaySuffix", prefShowKBAboveDock)
             .apply()
     }
     // =================================================================================

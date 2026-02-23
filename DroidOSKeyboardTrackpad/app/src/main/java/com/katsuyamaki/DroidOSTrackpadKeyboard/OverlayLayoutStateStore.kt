@@ -130,12 +130,13 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
 
         val dockSavePrefs = service.getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val dockOs = if (service.uiScreenWidth > service.uiScreenHeight) "_L" else "_P"
+        val displaySuffix = "_d${service.currentDisplayId}"
         val saveDockMode = dockSavePrefs.getBoolean("dock_mode_d${service.currentDisplayId}$dockOs", dockSavePrefs.getBoolean("dock_mode_d${service.currentDisplayId}", dockSavePrefs.getBoolean("dock_mode", false)))
-        val saveAutoShow = dockSavePrefs.getBoolean("auto_show_overlay$dockOs", dockSavePrefs.getBoolean("auto_show_overlay", false))
-        val saveAutoResize = dockSavePrefs.getBoolean("auto_resize$dockOs", dockSavePrefs.getBoolean("auto_resize", false))
-        val saveResizeScale = dockSavePrefs.getInt("auto_resize_scale$dockOs", dockSavePrefs.getInt("auto_resize_scale", 0))
-        val saveSyncMargin = dockSavePrefs.getBoolean("sync_margin$dockOs", dockSavePrefs.getBoolean("sync_margin", false))
-        val saveKBAboveDock = dockSavePrefs.getBoolean("show_kb_above_dock$dockOs", dockSavePrefs.getBoolean("show_kb_above_dock", true))
+        val saveAutoShow = dockSavePrefs.getBoolean("auto_show_overlay$displaySuffix$dockOs", dockSavePrefs.getBoolean("auto_show_overlay$displaySuffix", dockSavePrefs.getBoolean("auto_show_overlay$dockOs", dockSavePrefs.getBoolean("auto_show_overlay", false))))
+        val saveAutoResize = dockSavePrefs.getBoolean("auto_resize$displaySuffix$dockOs", dockSavePrefs.getBoolean("auto_resize$displaySuffix", dockSavePrefs.getBoolean("auto_resize$dockOs", dockSavePrefs.getBoolean("auto_resize", false))))
+        val saveResizeScale = dockSavePrefs.getInt("auto_resize_scale$displaySuffix$dockOs", dockSavePrefs.getInt("auto_resize_scale$displaySuffix", dockSavePrefs.getInt("auto_resize_scale$dockOs", dockSavePrefs.getInt("auto_resize_scale", 0))))
+        val saveSyncMargin = dockSavePrefs.getBoolean("sync_margin$displaySuffix$dockOs", dockSavePrefs.getBoolean("sync_margin$displaySuffix", dockSavePrefs.getBoolean("sync_margin$dockOs", dockSavePrefs.getBoolean("sync_margin", false))))
+        val saveKBAboveDock = dockSavePrefs.getBoolean("show_kb_above_dock$displaySuffix$dockOs", dockSavePrefs.getBoolean("show_kb_above_dock$displaySuffix", dockSavePrefs.getBoolean("show_kb_above_dock$dockOs", dockSavePrefs.getBoolean("show_kb_above_dock", true))))
         settingsStr.append("${if(saveDockMode) 1 else 0};${if(saveAutoShow) 1 else 0};${if(saveAutoResize) 1 else 0};$saveResizeScale;${if(saveSyncMargin) 1 else 0};${if(saveKBAboveDock) 1 else 0}")
 
         p.putString("SETTINGS_$key", settingsStr.toString())

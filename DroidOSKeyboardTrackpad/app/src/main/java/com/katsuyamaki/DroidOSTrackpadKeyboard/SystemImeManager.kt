@@ -113,8 +113,9 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
             val shouldSave = when {
                 isSamsung -> false
                 isTtsVoice -> false
-                isDock && service.prefs.prefBlockSoftKeyboard -> false
-                isDock && !service.prefs.prefBlockSoftKeyboard -> true
+                // Save Dock as user preference only on main screen. This allows intentional
+                // DroidOS Dock usage on main to persist, while avoiding cover-screen pollution.
+                isDock -> isOnMainScreen
                 !isOnMainScreen -> false
                 else -> true
             }
@@ -490,13 +491,14 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 val userPref = sharedPrefs.getString("user_preferred_ime", null)
                 log("forceRefreshIme: userPref = $userPref")
                 
-                // Fallback to Gboard if userPref is invalid
+                // Fallback to Gboard only when preference is invalid.
+                // Keep DockInputMethodService if user intentionally prefers DroidOS Dock.
                 val gboardIme = "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"
                 
                 val targetIme = when {
+                    userPref != null && userPref.contains("DockInputMethodService") -> dockIme
                     userPref != null &&
                         !userPref.contains("NullInputMethodService") &&
-                        !userPref.contains("DockInputMethodService") &&
                         !userPref.contains("com.google.android.tts") &&
                         !userPref.contains("VoiceInputMethodService") -> userPref
                     else -> gboardIme

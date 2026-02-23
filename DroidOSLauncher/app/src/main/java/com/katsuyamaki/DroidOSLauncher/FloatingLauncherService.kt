@@ -704,8 +704,14 @@ private var isSoftKeyboardSupport = false
         val systemInsetPct = systemBottomInsetPercent()
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
 
-        // Cover screen (displayId=1): always use base margin, IME logic doesn't apply there
-        if (!canAutoAdjustForIme || currentDisplayId == 1) {
+        // Cover screen (displayId=1):
+        // - Keyboard hidden (bottomMarginPercent=0): keep persistent system inset reserve.
+        // - Keyboard shown (bottomMarginPercent>0): use raw margin so tile bottom aligns to overlay KB top.
+        if (currentDisplayId == 1) {
+            return if (bottomMarginPercent > 0) bottomMarginPercent else systemInsetPct
+        }
+
+        if (!canAutoAdjustForIme) {
             // Manual/base margin mode still needs persistent system inset reserve.
             return (bottomMarginPercent + systemInsetPct).coerceAtMost(100)
         }
@@ -920,7 +926,6 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") {
                 val enabled = intent?.getBooleanExtra("ENABLED", false) ?: false
                 autoAdjustMarginForIME = enabled
-                AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, enabled)
                 AppPreferences.setAutoAdjustMarginForIME(this@FloatingLauncherService, currentDisplayId, enabled, orientSuffix())
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
@@ -2654,9 +2659,7 @@ private var isSoftKeyboardSupport = false
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
         val startupDisplayId = targetDisplayIndex
-        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, startupDisplayId, orientSuffix())
-            ?: AppPreferences.getAutoAdjustMarginForIME(this, orientSuffix())
-            ?: AppPreferences.getAutoAdjustMarginForIME(this)
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, startupDisplayId, orientSuffix()) ?: false
         droidOsImeDetected = AppPreferences.getDroidOsImeDetected(this)
         // Margins now loaded in loadDisplaySettings()
 
@@ -6208,7 +6211,6 @@ private var isSoftKeyboardSupport = false
         AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
         AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
@@ -6299,7 +6301,6 @@ private var isSoftKeyboardSupport = false
         AppPreferences.setTopMarginPercent(this, currentDisplayId, topMar, os)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, botMar, os)
-        AppPreferences.setAutoAdjustMarginForIME(this, autoMar)
         AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, autoMar, os)
         
         AppPreferences.saveLastLayout(this, selectedLayoutType, currentDisplayId)
