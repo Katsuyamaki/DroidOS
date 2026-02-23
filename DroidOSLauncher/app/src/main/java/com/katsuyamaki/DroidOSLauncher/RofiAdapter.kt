@@ -891,15 +891,19 @@ class RofiAdapter(
                     AppPreferences.setBottomMarginPercent(holder.itemView.context, handler.currentDisplayId, progress)
                     AppPreferences.setBottomMarginPercent(holder.itemView.context, handler.currentDisplayId, progress, handler.orientSuffix())
 
+                    // Save with display ID to isolate cover screen from main screen
+                    val displaySuffix = "_d${handler.currentDisplayId}"
                     holder.itemView.context.getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-                        .putInt("auto_resize_scale${handler.orientSuffix()}", progress)
-                        .putInt("auto_resize_scale", progress)
+                        .putInt("auto_resize_scale$displaySuffix${handler.orientSuffix()}", progress)
+                        .putInt("auto_resize_scale$displaySuffix", progress)
                         .apply()
 
                     handler.safeToast("Base Bottom Margin: $progress% (Display ${handler.currentDisplayId})")
                     
                     val intent = Intent("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
                     intent.putExtra("PERCENT", progress)
+                    intent.putExtra("DISPLAY_ID", handler.currentDisplayId)
+                    intent.putExtra("ORIENTATION", handler.orientSuffix())
                     intent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
                     handler.handlerContext.sendBroadcast(intent)
                 }

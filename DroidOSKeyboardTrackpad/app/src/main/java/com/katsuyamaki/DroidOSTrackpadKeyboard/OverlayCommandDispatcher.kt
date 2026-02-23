@@ -213,6 +213,19 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                 }
             }
 
+            matches("MARGIN_CHANGED") -> {
+                // Save margin to DockIMEPrefs with per-display key so keyboard reads correct value
+                val percent = intent.getIntExtra("PERCENT", 0)
+                val displayId = intent.getIntExtra("DISPLAY_ID", service.currentDisplayId)
+                val orientation = intent.getStringExtra("ORIENTATION") ?: "_P"
+                val displaySuffix = "_d$displayId"
+                android.util.Log.d("KBBlocker", "MARGIN_CHANGED: percent=$percent displayId=$displayId orient=$orientation")
+                service.getSharedPreferences("DockIMEPrefs", android.content.Context.MODE_PRIVATE).edit()
+                    .putInt("auto_resize_scale$displaySuffix$orientation", percent)
+                    .putInt("auto_resize_scale$displaySuffix", percent)
+                    .apply()
+            }
+
             matches("MOVE_TO_VIRTUAL") -> {
 
                 val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)

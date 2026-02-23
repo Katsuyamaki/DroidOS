@@ -597,6 +597,8 @@ private var isSoftKeyboardSupport = false
     override var autoResizeEnabled = true
     override var bottomMarginPercent = 0
     private var autoAdjustMarginForIME = false
+    // Lock to prevent loadOrientationState from overwriting margin set by SET_MARGIN_BOTTOM
+    private var coverScreenMarginLockUntil = 0L
     private var imeMarginOverrideActive = false
     private var droidOsImeDetected = false // Set true when we receive IME_VISIBILITY from DroidOS IME
     private var receivedToolbarHeightPx: Int = -1 // Actual toolbar height from DockIME (-1 = not received)
@@ -861,6 +863,7 @@ private var isSoftKeyboardSupport = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") {
                 broadcastKeybindsToKeyboard()
             } else if (action == "com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") {
+                android.util.Log.d("LauncherMargin", "RECV IME_VISIBILITY displayId=$currentDisplayId visible=${intent?.getBooleanExtra("VISIBLE", false)} bottomMargin=$bottomMarginPercent")
                 // Track overlay keyboard visibility for drawer open preservation
                 val visible = intent?.getBooleanExtra("VISIBLE", false) ?: false
                 overlayKeyboardVisible = visible
@@ -2767,8 +2770,13 @@ private var isSoftKeyboardSupport = false
         val os = orientSuffix()
         topMarginPercent = AppPreferences.getTopMarginPercent(this, displayId, os)
             ?: AppPreferences.getTopMarginPercent(this, displayId)
-        bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId, os)
-            ?: AppPreferences.getBottomMarginPercent(this, displayId)
+        // Skip bottom margin reload if cover screen lock is active (prevents SET_MARGIN_BOTTOM from being overwritten)
+        if (displayId == 1 && System.currentTimeMillis() < coverScreenMarginLockUntil) {
+            android.util.Log.d("LauncherMargin", "loadDisplaySettings: SKIPPING bottomMarginPercent reload (cover screen locked)")
+        } else {
+            bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, displayId, os)
+                ?: AppPreferences.getBottomMarginPercent(this, displayId)
+        }
 
         
         // 2. Layout & Custom Rects (Per Display + Orientation)
@@ -3016,11 +3024,15 @@ private var isSoftKeyboardSupport = false
         val os = orientSuffix()
         topMarginPercent = AppPreferences.getTopMarginPercent(this, currentDisplayId, os)
             ?: AppPreferences.getTopMarginPercent(this, currentDisplayId)
-        bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, currentDisplayId, os)
-            ?: AppPreferences.getBottomMarginPercent(this, currentDisplayId)
-        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, currentDisplayId, os)
-            ?: AppPreferences.getAutoAdjustMarginForIME(this, os)
-            ?: AppPreferences.getAutoAdjustMarginForIME(this)
+        // Skip bottom margin reload if cover screen lock is active (prevents SET_MARGIN_BOTTOM from being overwritten)
+        if (currentDisplayId == 1 && System.currentTimeMillis() < coverScreenMarginLockUntil) {
+            android.util.Log.d("LauncherMargin", "loadOrientationState: SKIPPING bottomMarginPercent reload (cover screen locked)")
+        } else {
+            bottomMarginPercent = AppPreferences.getBottomMarginPercent(this, currentDisplayId, os)
+                ?: AppPreferences.getBottomMarginPercent(this, currentDisplayId)
+        }
+        // Per-display only - no global fallback to prevent cross-display pollution
+        autoAdjustMarginForIME = AppPreferences.getAutoAdjustMarginForIME(this, currentDisplayId, os) ?: false
         selectedLayoutType = AppPreferences.getLastLayout(this, currentDisplayId, os)
             ?: AppPreferences.getLastLayout(this, currentDisplayId)
         activeCustomLayoutName = AppPreferences.getLastCustomLayoutName(this, currentDisplayId, os)
@@ -6978,6 +6990,7 @@ private var isSoftKeyboardSupport = false
                 }
             }
             MODE_SETTINGS -> {
+                android.util.Log.d("LauncherMargin", "switchMode(MODE_SETTINGS) called, bottomMarginPercent=$bottomMarginPercent displayId=$currentDisplayId")
                 searchBar.hint = "Settings"
                 // [FIX] Use restartTrackpad() (Hard Kill) to ensure Z-Order is reset properly.
                 // launchTrackpad() alone is too gentle and doesn't reset the window stack.
@@ -7000,8 +7013,15 @@ private var isSoftKeyboardSupport = false
                 if (isDroidOsImeActive) {
                     displayList.add(ToggleOption("Auto-Adjust Margin for Keyboard (Tiled Apps)", autoAdjustMarginForIME) {
                         autoAdjustMarginForIME = it
-                        AppPreferences.setAutoAdjustMarginForIME(this, it)
+                        // Only save per-display (no global) to isolate cover screen from main screen
                         AppPreferences.setAutoAdjustMarginForIME(this, currentDisplayId, it, orientSuffix())
+                        // Sync to DockIMEPrefs WITH display ID for keyboard to read
+                        val displaySuffix = "_d$currentDisplayId"
+                        val os = orientSuffix()
+                        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+                            .putBoolean("auto_resize$displaySuffix$os", it)
+                            .putBoolean("auto_resize$displaySuffix", it)
+                            .apply()
                         if (!it) imeMarginOverrideActive = false
                     })
                 } else {
@@ -7100,6 +7120,7 @@ private var isSoftKeyboardSupport = false
     // SelectedAppsAdapter extracted to SelectedAppsAdapter.kt
 
     private fun applyImeMarginRetileFromQueue(forceRetile: Boolean) {
+        android.util.Log.d("LauncherMargin", "applyImeMarginRetileFromQueue: displayId=$currentDisplayId bottomMarginPercent=$bottomMarginPercent")
         val newEffective = effectiveBottomMarginPercent()
         val hasEffectiveChange = newEffective != lastAppliedEffectiveMargin
 
@@ -7202,6 +7223,11 @@ private var isSoftKeyboardSupport = false
         val percent = intent.getIntExtra("PERCENT", 0)
         android.util.Log.d("LauncherMargin", "applyBottomMarginFromQueue: percent=$percent displayId=$currentDisplayId queueSize=${selectedAppsQueue.size}")
         bottomMarginPercent = percent
+        // Lock margin on cover screen to prevent loadOrientationState from overwriting
+        if (currentDisplayId == 1) {
+            coverScreenMarginLockUntil = System.currentTimeMillis() + 2000
+            android.util.Log.d("LauncherMargin", "Cover screen margin LOCKED at $percent% for 2s")
+        }
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent, orientSuffix())
         setupVisualQueue() // Recalc HUD pos

@@ -627,8 +627,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try {
             val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
             val orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "_L" else "_P"
-            val marginPercent = dockPrefs.getInt("auto_resize_scale$orientation", dockPrefs.getInt("auto_resize_scale", 0))
-            val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))
+            val displaySuffix = "_d$currentDisplayId"
+            // Read per-display prefs first, fallback to non-display-specific for backwards compat
+            val marginPercent = dockPrefs.getInt("auto_resize_scale$displaySuffix$orientation", 
+                dockPrefs.getInt("auto_resize_scale$displaySuffix", 
+                dockPrefs.getInt("auto_resize_scale$orientation", dockPrefs.getInt("auto_resize_scale", 0))))
+            val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$displaySuffix$orientation",
+                dockPrefs.getBoolean("auto_resize$displaySuffix",
+                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))))
             
             android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: enabled=$autoResizeEnabled margin=$marginPercent")
             
@@ -1011,6 +1017,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             addAction("com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER")
             addAction("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON")
             addAction("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+            addAction("com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED")
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }
@@ -2449,7 +2456,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         android.util.Log.d("KBBlocker", "toggleKB: isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled displayId=$currentDisplayId lastMargin=$lastDockMarginPercent")
         // Cover screen (displayId=1): bypass isDockModeEnabled since DockIME doesn't run there
         if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && (isDockModeEnabled || currentDisplayId == 1)) {
-            if (lastDockMarginPercent >= 0) {
+            if (currentDisplayId == 1) {
+                // COVER SCREEN: Skip lastDockMarginPercent (persists main screen value).
+                // Load per-display prefs directly.
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=coverScreenAutoMargin")
+                triggerCoverScreenAutoMargin()
+            } else if (lastDockMarginPercent >= 0) {
                 logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$lastDockMarginPercent")
                 applyDockModeWithMargin(lastDockMarginPercent)
             } else if (currentDisplayId == 1) {
@@ -2477,10 +2489,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (currentDisplayId == 1) {
             val marginIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM")
             marginIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-            val marginValue = if (isNowVisible && lastDockMarginPercent > 0) lastDockMarginPercent else 0
+            // Read margin from per-display prefs, NOT lastDockMarginPercent (has main screen value)
+            // Fallback chain: per-display+orient -> per-display -> old orient -> old global
+            val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            val orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "_L" else "_P"
+            val displaySuffix = "_d$currentDisplayId"
+            val coverMargin = dockPrefs.getInt("auto_resize_scale$displaySuffix$orientation", 
+                dockPrefs.getInt("auto_resize_scale$displaySuffix",
+                dockPrefs.getInt("auto_resize_scale$orientation",
+                dockPrefs.getInt("auto_resize_scale", 0))))
+            android.util.Log.d("KBBlocker", "toggleKB: coverMargin=$coverMargin from prefs (displaySuffix=$displaySuffix orient=$orientation)")
+            val marginValue = if (isNowVisible && coverMargin > 0) coverMargin else 0
             marginIntent.putExtra("PERCENT", marginValue)
             sendBroadcast(marginIntent)
-            android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN sent SET_MARGIN_BOTTOM percent=$marginValue")
+            android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN sent SET_MARGIN_BOTTOM percent=$marginValue (from prefs d$currentDisplayId)")
             // Skip IME_VISIBILITY on cover screen - not needed, causes issues
         } else {
             // Main screen: use normal IME_VISIBILITY path
