@@ -2455,8 +2455,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val dockModePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false))
         android.util.Log.d("KBBlocker", "toggleKB: isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled displayId=$currentDisplayId lastMargin=$lastDockMarginPercent")
-        // Cover screen (displayId=1): bypass isDockModeEnabled since DockIME doesn't run there
-        if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && (isDockModeEnabled || currentDisplayId == 1)) {
+        // Respect dock_mode toggle on all displays (including cover screen)
+        if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
             if (currentDisplayId == 1) {
                 // COVER SCREEN: Skip lastDockMarginPercent (persists main screen value).
                 // Load per-display prefs directly.
