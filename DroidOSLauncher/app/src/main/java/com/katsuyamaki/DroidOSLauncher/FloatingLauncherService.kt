@@ -702,7 +702,8 @@ private var isSoftKeyboardSupport = false
         val systemInsetPct = systemBottomInsetPercent()
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
 
-        if (!canAutoAdjustForIme) {
+        // Cover screen (displayId=1): always use base margin, IME logic doesn't apply there
+        if (!canAutoAdjustForIme || currentDisplayId == 1) {
             // Manual/base margin mode still needs persistent system inset reserve.
             return (bottomMarginPercent + systemInsetPct).coerceAtMost(100)
         }
@@ -921,6 +922,7 @@ private var isSoftKeyboardSupport = false
                 if (!enabled) imeMarginOverrideActive = false
             } else if (action == "com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM") {
                 val percent = intent?.getIntExtra("PERCENT", 0) ?: 0
+                android.util.Log.d("LauncherMargin", "RECV SET_MARGIN_BOTTOM percent=$percent")
                 queueWindowManagerCommand(
                     Intent()
                         .putExtra("COMMAND", "APPLY_MARGIN_BOTTOM")
@@ -5596,6 +5598,39 @@ private var isSoftKeyboardSupport = false
     private val retileExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val latestRetileRequestId = java.util.concurrent.atomic.AtomicLong(0L)
 
+    // Retile ALL visible windows on current display (for cover screen where queue may be empty)
+    private fun retileVisibleWindows() {
+        if (!isBound || shellService == null) return
+        try {
+            val visiblePackages = shellService?.getVisiblePackages(currentDisplayId)
+                ?.filter { it != packageName && it != PACKAGE_TRACKPAD }
+                ?: return
+            if (visiblePackages.isEmpty()) return
+            
+            val rects = getLayoutRects()
+            if (rects.isEmpty()) return
+            
+            val packages = mutableListOf<String>()
+            val boundsList = mutableListOf<Int>()
+            for (i in 0 until minOf(visiblePackages.size, rects.size)) {
+                val pkg = visiblePackages[i]
+                val bounds = rects[i]
+                packages.add(pkg)
+                boundsList.addAll(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
+            }
+            if (packages.isEmpty()) return
+            
+            android.util.Log.d("LauncherMargin", "retileVisibleWindows: displayId=$currentDisplayId packages=$packages margin=$bottomMarginPercent")
+            retileExecutor.execute {
+                try {
+                    shellService?.batchResize(packages, boundsList.toIntArray())
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LauncherMargin", "retileVisibleWindows error: ${e.message}")
+        }
+    }
+
     private fun retileExistingWindows() {
         if (!isBound || shellService == null) return
 
@@ -7165,17 +7200,15 @@ private var isSoftKeyboardSupport = false
 
     private fun applyBottomMarginFromQueue(intent: Intent) {
         val percent = intent.getIntExtra("PERCENT", 0)
+        android.util.Log.d("LauncherMargin", "applyBottomMarginFromQueue: percent=$percent displayId=$currentDisplayId queueSize=${selectedAppsQueue.size}")
         bottomMarginPercent = percent
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent)
         AppPreferences.setBottomMarginPercent(this, currentDisplayId, percent, orientSuffix())
         setupVisualQueue() // Recalc HUD pos
-
-        // Margin mutation + retile stays queue-serialized with IME transitions.
-        if (autoAdjustMarginForIME && imeMarginOverrideActive) {
-            applyImeMarginRetileFromQueue(forceRetile = true)
-        } else if (isInstantMode) {
-            applyLayoutImmediate()
-        }
+        // Ensure queue loaded (may be empty on cover screen startup)
+        ensureQueueLoadedForCommands()
+        // Use exact same path as manual slider
+        applyLayoutImmediate()
 
         // Update UI if in settings mode - TARGETED UPDATE
         if (currentMode == MODE_SETTINGS) {

@@ -318,6 +318,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                  android.util.Log.d("KBBlocker", "BLOCKING: calling ensureKeyboardBlocked + triggerAggressiveBlocking")
                  imeManager?.ensureKeyboardBlocked()
                  imeManager?.triggerAggressiveBlockingWithThrottle()
+                 
+                 // COVER SCREEN AUTO MARGIN: Since DockIME isn't running on cover screen,
+                 // we trigger auto margin directly when VIEW_FOCUSED happens
+                 if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                     android.util.Log.d("KBBlocker", "VIEW_FOCUSED on cover: kbVisible=$isCustomKeyboardVisible")
+                     if (isCustomKeyboardVisible) {
+                         triggerCoverScreenAutoMargin()
+                     }
+                 }
             } else if (currentDisplayId != 1) {
                  // CASE B: Main/Virtual Display -> Ensure keyboard is NOT blocked
                  if (Build.VERSION.SDK_INT >= 24) {
@@ -603,6 +612,36 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             } else {
                 applyDockMode()
             }
+        }
+    }
+
+    // COVER SCREEN AUTO MARGIN: Read DockIME prefs and trigger margin directly
+    // Called when VIEW_FOCUSED happens on cover screen with keyboard visible
+    private var lastCoverScreenMarginTime = 0L
+    internal fun triggerCoverScreenAutoMargin() {
+        // Throttle to avoid spamming
+        val now = System.currentTimeMillis()
+        if (now - lastCoverScreenMarginTime < 500) return
+        lastCoverScreenMarginTime = now
+        
+        try {
+            val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+            val orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "_L" else "_P"
+            val marginPercent = dockPrefs.getInt("auto_resize_scale$orientation", dockPrefs.getInt("auto_resize_scale", 0))
+            val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))
+            
+            android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: enabled=$autoResizeEnabled margin=$marginPercent")
+            
+            // Cover screen: apply margin if set, don't require autoResizeEnabled since DockIME can't toggle it there
+            if (marginPercent > 0) {
+                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: APPLYING margin=$marginPercent")
+                lastDockMarginPercent = marginPercent
+                applyDockModeWithMargin(marginPercent)
+            } else {
+                android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: SKIPPED margin=$marginPercent")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("KBBlocker", "triggerCoverScreenAutoMargin error: ${e.message}")
         }
     }
 
@@ -2051,6 +2090,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          so they stay perfectly in sync.
     // =================================================================================
     internal fun applyDockModeWithMargin(marginPercent: Int) {
+        android.util.Log.d("KBBlocker", "applyDockModeWithMargin: START marginPercent=$marginPercent displayId=$currentDisplayId screenW=$uiScreenWidth screenH=$uiScreenHeight dockVisible=$isDockIMEVisible showAbove=${prefs.prefShowKBAboveDock}")
         logOverlayKbDiag("applyDockModeWithMargin_start", "marginPercent=$marginPercent")
         if (keyboardOverlay == null) initCustomKeyboard()
         if (!isCustomKeyboardVisible) {
@@ -2121,6 +2161,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // Use atomic method that sets BOTH window bounds AND key scale together
         // This prevents desync between window size and key scale
         keyboardOverlay?.setWindowBoundsWithScale(0, targetY, targetW, kbHeight)
+        android.util.Log.d("KBBlocker", "applyDockModeWithMargin: APPLIED y=$targetY w=$targetW h=$kbHeight case=$caseNum")
         
         // Update local prefs to match (base height is 300dp)
         val baseKbHeight = 300f * density
@@ -2405,10 +2446,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val isDockIMEConfigured = currentIme?.contains("DroidOSTrackpadKeyboard") == true
         val dockModePrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
         val isDockModeEnabled = dockModePrefs.getBoolean("dock_mode_d$currentDisplayId", dockModePrefs.getBoolean("dock_mode", false))
-        if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && isDockModeEnabled) {
+        android.util.Log.d("KBBlocker", "toggleKB: isNowVisible=$isNowVisible showAboveDock=${prefs.prefShowKBAboveDock} dockImeConfigured=$isDockIMEConfigured dockModeEnabled=$isDockModeEnabled displayId=$currentDisplayId lastMargin=$lastDockMarginPercent")
+        // Cover screen (displayId=1): bypass isDockModeEnabled since DockIME doesn't run there
+        if (isNowVisible && prefs.prefShowKBAboveDock && isDockIMEConfigured && (isDockModeEnabled || currentDisplayId == 1)) {
             if (lastDockMarginPercent >= 0) {
                 logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$lastDockMarginPercent")
                 applyDockModeWithMargin(lastDockMarginPercent)
+            } else if (currentDisplayId == 1) {
+                // COVER SCREEN: DockIME doesn't run so lastDockMarginPercent is never set.
+                // Load margin prefs directly and apply.
+                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=coverScreenAutoMargin")
+                triggerCoverScreenAutoMargin()
             } else {
                 logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock")
                 applyDockMode()
@@ -2423,18 +2471,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         enforceZOrder()
         logOverlayKbDiag("toggleCustomKeyboard_end", "isNowVisible=$isNowVisible")
 
-        // Notify launcher so auto-adjust margin retiles apps when KB is toggled
-        // IS_TILED=false triggers 100ms delay for fullscreen apps to let Android handle insets first
-        // FORCE_RETILE ensures retile happens on manual hide even if margin was already 0
-        val imeIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
-        imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
-        imeIntent.putExtra("VISIBLE", isNowVisible)
-        imeIntent.putExtra("IS_TILED", false)
-        imeIntent.putExtra("MANUAL_TOGGLE", true)
-        if (!isNowVisible) {
-            imeIntent.putExtra("FORCE_RETILE", true)
+        // Cover screen: use simple SET_MARGIN_BOTTOM path (same as manual slider)
+        // This avoids complex IME_VISIBILITY logic that can cause app resets
+        // Show KB = margin%, hide KB = 0%
+        if (currentDisplayId == 1) {
+            val marginIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.SET_MARGIN_BOTTOM")
+            marginIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            val marginValue = if (isNowVisible && lastDockMarginPercent > 0) lastDockMarginPercent else 0
+            marginIntent.putExtra("PERCENT", marginValue)
+            sendBroadcast(marginIntent)
+            android.util.Log.d("KBBlocker", "toggleKB: COVER SCREEN sent SET_MARGIN_BOTTOM percent=$marginValue")
+            // Skip IME_VISIBILITY on cover screen - not needed, causes issues
+        } else {
+            // Main screen: use normal IME_VISIBILITY path
+            val imeIntent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY")
+            imeIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            imeIntent.putExtra("VISIBLE", isNowVisible)
+            imeIntent.putExtra("IS_TILED", false)
+            imeIntent.putExtra("MANUAL_TOGGLE", true)
+            if (!isNowVisible) {
+                imeIntent.putExtra("FORCE_RETILE", true)
+            }
+            sendBroadcast(imeIntent)
         }
-        sendBroadcast(imeIntent)
         
         // [FIX] For fullscreen apps: sync DockIME visibility with overlay
         if (!isNowVisible) {
