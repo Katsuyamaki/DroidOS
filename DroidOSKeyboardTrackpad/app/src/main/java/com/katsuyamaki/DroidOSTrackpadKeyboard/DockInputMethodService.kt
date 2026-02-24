@@ -422,10 +422,16 @@ class DockInputMethodService : InputMethodService() {
         val explicitHide = explicitHideRequestedRecently(now)
         val hasActiveInputConnection = currentInputConnection != null
 
-        if (!explicitHide && prefAutoShowOverlay && hasActiveInputConnection && elapsedSinceShow <= imeTransientWindowHideGuardMs) {
+        val shouldDeferTransientHide =
+            !explicitHide &&
+            prefAutoShowOverlay &&
+            prefDockMode &&
+            elapsedSinceShow <= imeTransientWindowHideGuardMs
+
+        if (shouldDeferTransientHide) {
             android.util.Log.i(
                 IME_TRACE_TAG,
-                "event=DEFER_HIDE reason=transient_window elapsedMs=$elapsedSinceShow"
+                "event=DEFER_HIDE reason=transient_window elapsedMs=$elapsedSinceShow icActive=$hasActiveInputConnection"
             )
             imeVisibilityHandler.post {
                 try {
