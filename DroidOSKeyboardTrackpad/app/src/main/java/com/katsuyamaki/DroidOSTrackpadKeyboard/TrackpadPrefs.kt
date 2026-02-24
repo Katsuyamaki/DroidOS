@@ -29,7 +29,7 @@ class TrackpadPrefs {
     var prefBubbleIconIndex = 0
     var prefBubbleAlpha = 255
     var prefPersistentService = false
-    var prefBubbleIncludeTrackpad = false
+    var prefBubbleIncludeTrackpad = true
     var prefBubbleIncludeKeyboard = true
     var prefShowKBAboveDock = true // Default ON - position overlay KB above DockIME toolbar
     var prefBlockSoftKeyboard = false
@@ -84,7 +84,7 @@ class TrackpadPrefs {
         prefBubbleIconIndex = p.getInt("bubble_icon_index", 0)
         prefBubbleAlpha = p.getInt("bubble_alpha", 255)
         prefPersistentService = p.getBoolean("persistent_service", false)
-        prefBubbleIncludeTrackpad = p.getBoolean("bubble_include_trackpad", false)
+        prefBubbleIncludeTrackpad = p.getBoolean("bubble_include_trackpad", true)
         prefBubbleIncludeKeyboard = p.getBoolean("bubble_include_keyboard", true)
         prefBlockSoftKeyboard = p.getBoolean("block_soft_kb", false)
         prefPredictionAggression = p.getFloat("prediction_aggression", 1.1f)

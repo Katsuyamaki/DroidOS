@@ -491,10 +491,13 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal fun handleKeyboardToggle(intent: Intent) {
         val forceShow = intent.getBooleanExtra("FORCE_SHOW", false)
         val forceHide = intent.getBooleanExtra("FORCE_HIDE", false)
+        val openWithBubblePath = intent.getBooleanExtra("OPEN_WITH_BUBBLE_PATH", false)
+        val navH = intent.getIntExtra("nav_bar_height", -1)
+        if (navH >= 0) dockNavBarHeight = navH
 
         logOverlayKbDiag(
             "handleKeyboardToggle_enter",
-            "forceShow=$forceShow forceHide=$forceHide currentlyVisible=$isCustomKeyboardVisible dockVisible=$isDockIMEVisible"
+            "forceShow=$forceShow forceHide=$forceHide bubblePath=$openWithBubblePath currentlyVisible=$isCustomKeyboardVisible dockVisible=$isDockIMEVisible"
         )
 
         if (forceShow) isDockIMEVisible = true
@@ -552,11 +555,26 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             lastForceShowTime = System.currentTimeMillis()
             isDockIMEVisible = true
             if (keyboardOverlay == null) initCustomKeyboard()
-            keyboardOverlay?.hide()
-            keyboardOverlay?.show()
-            isCustomKeyboardVisible = true
-            enforceZOrder()
-            logOverlayKbDiag("handleKeyboardToggle_forceShow_apply", "visible=true")
+
+            val alreadyVisible = (keyboardOverlay?.isShowing() == true) || isCustomKeyboardVisible
+            if (!alreadyVisible) {
+                if (openWithBubblePath) {
+                    // IME launch path: use the same open routine bubble uses.
+                    toggleCustomKeyboard(suppressAutomation = true)
+                } else {
+                    keyboardOverlay?.show()
+                    isCustomKeyboardVisible = true
+                    enforceZOrder()
+                }
+            } else {
+                isCustomKeyboardVisible = true
+                enforceZOrder()
+            }
+
+            logOverlayKbDiag(
+                "handleKeyboardToggle_forceShow_apply",
+                "visible=true alreadyVisible=$alreadyVisible bubblePath=$openWithBubblePath"
+            )
         } else {
             toggleCustomKeyboard()
         }
@@ -616,7 +634,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val dockOs = if (uiScreenWidth > uiScreenHeight) "_L" else "_P"
         return prefs.getBoolean(
             "dock_mode_d${currentDisplayId}$dockOs",
-            prefs.getBoolean("dock_mode_d$currentDisplayId", prefs.getBoolean("dock_mode", true))
+            prefs.getBoolean("dock_mode_d$currentDisplayId", false)
         )
     }
 
@@ -673,7 +691,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 dockPrefs.getInt("auto_resize_scale$orientation", dockPrefs.getInt("auto_resize_scale", 0))))
             val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$displaySuffix$orientation",
                 dockPrefs.getBoolean("auto_resize$displaySuffix",
-                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", true))))
+                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))))
             
             android.util.Log.d("KBBlocker", "triggerCoverScreenAutoMargin: dockMode=$dockModeEnabled enabled=$autoResizeEnabled margin=$marginPercent")
             
@@ -1204,10 +1222,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     action == "RESET_CURSOR" -> resetCursorCenter()
                     action == "TOGGLE_DEBUG" -> toggleDebugMode()
                     action == "FORCE_KEYBOARD" || action == "TOGGLE_CUSTOM_KEYBOARD" -> {
-                        // Extract nav_bar_height if present (sent by DockIME on auto-show)
-                        val navH = intent.getIntExtra("nav_bar_height", -1)
-                        if (navH >= 0) dockNavBarHeight = navH
-                        toggleCustomKeyboard()
+                        handleKeyboardToggle(intent)
                     }
                     action == "PRESERVE_KEYBOARD" -> {
                         preserveKeyboardUntil = System.currentTimeMillis() + 1000L
@@ -2041,11 +2056,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                         else applyDockMode()
                     }
                 } else {
-                    // Dock toggle should not mutate auto-resize preference.
-                    // Auto-adjust margin remains a separate setting on cover screen.
                     dockPrefs.edit()
                         .putBoolean("dock_mode_d${currentDisplayId}$dockOs", false)
                         .putBoolean("dock_mode_d$currentDisplayId", false)
+                        .putBoolean("auto_resize$displaySuffix$dockOs", false)
+                        .putBoolean("auto_resize$displaySuffix", false)
                         .apply()
                     lastDockMarginPercent = -1
                     showToast("Dock mode disabled")
@@ -2548,7 +2563,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 dockPrefs.getInt("auto_resize_scale", 0))))
             val autoResizeEnabled = dockPrefs.getBoolean("auto_resize$displaySuffix$orientation",
                 dockPrefs.getBoolean("auto_resize$displaySuffix",
-                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", true))))
+                dockPrefs.getBoolean("auto_resize$orientation", dockPrefs.getBoolean("auto_resize", false))))
             android.util.Log.d("KBBlocker", "toggleKB: coverMargin=$coverMargin autoResize=$autoResizeEnabled (displaySuffix=$displaySuffix orient=$orientation)")
             // Only apply auto margin if toggle is ON, otherwise don't change margin
             val marginValue = if (isNowVisible && autoResizeEnabled && coverMargin > 0) coverMargin else if (!isNowVisible && autoResizeEnabled) 0 else -1

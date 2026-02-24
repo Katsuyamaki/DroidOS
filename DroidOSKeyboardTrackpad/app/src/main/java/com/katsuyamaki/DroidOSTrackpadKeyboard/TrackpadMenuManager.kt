@@ -337,7 +337,7 @@ class TrackpadMenuManager(
         val dockOs = if (context.resources.displayMetrics.widthPixels > context.resources.displayMetrics.heightPixels) "_L" else "_P"
         val isDockMode = dockPrefs.getBoolean(
             "dock_mode_d${service.currentDisplayId}$dockOs",
-            dockPrefs.getBoolean("dock_mode_d${service.currentDisplayId}", dockPrefs.getBoolean("dock_mode", true))
+            dockPrefs.getBoolean("dock_mode_d${service.currentDisplayId}", dockPrefs.getBoolean("dock_mode", false))
         )
         list.add(TrackpadMenuAdapter.MenuItem("Dock KB to Bottom", R.drawable.ic_dock_keyboard, TrackpadMenuAdapter.Type.TOGGLE,
             if(isDockMode) 1 else 0) { v ->

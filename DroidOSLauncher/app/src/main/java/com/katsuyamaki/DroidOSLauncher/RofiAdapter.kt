@@ -887,18 +887,11 @@ class RofiAdapter(
     private fun bindMarginHolder(holder: MarginHolder, item: MarginOption, position: Int) {
         holder.label.text = if (item.type == 0) "Top Margin:" else "Base Bottom Margin:"
         holder.label.setScaledTextSize(handler.currentFontSize, 1.0f)
-
-        val sliderMax = if (item.type == 0) 50 else 75
-        if (holder.slider.max != sliderMax) {
-            holder.slider.max = sliderMax
-        }
-
-        val clampedPercent = item.currentPercent.coerceIn(0, sliderMax)
-        holder.text.text = "${clampedPercent}%"
+        holder.text.text = "${item.currentPercent}%"
         holder.text.setScaledTextSize(handler.currentFontSize, 1.125f)
-
-        if (holder.slider.progress != clampedPercent) {
-            holder.slider.progress = clampedPercent
+        
+        if (holder.slider.progress != item.currentPercent) {
+            holder.slider.progress = item.currentPercent
         }
         
         holder.slider.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
