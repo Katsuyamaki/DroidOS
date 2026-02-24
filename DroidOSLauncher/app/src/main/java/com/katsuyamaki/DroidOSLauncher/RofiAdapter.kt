@@ -79,7 +79,8 @@ class RofiAdapter(
     
     inner class IconSettingHolder(v: View) : RecyclerView.ViewHolder(v) { 
         val preview: ImageView = v.findViewById(R.id.icon_setting_preview)
-        val text: TextView = v.findViewById(R.id.icon_setting_text) 
+        val text: TextView = v.findViewById(R.id.icon_setting_text)
+        val reset: TextView = v.findViewById(R.id.icon_setting_reset)
     }
     
     inner class CustomResInputHolder(v: View) : RecyclerView.ViewHolder(v) { 
@@ -743,21 +744,52 @@ class RofiAdapter(
     
     private fun bindIconSetting(holder: IconSettingHolder) {
         holder.text.setScaledTextSize(handler.currentFontSize, 1.0f)
-        try { 
+        holder.reset.setScaledTextSize(handler.currentFontSize, 0.875f)
+
+        try {
             val uriStr = AppPreferences.getIconUri(holder.itemView.context)
-            if (uriStr != null) { 
+            if (uriStr != null) {
                 val uri = Uri.parse(uriStr)
                 val input = handler.handlerContext.contentResolver.openInputStream(uri)
                 val bitmap = BitmapFactory.decodeStream(input)
                 input?.close()
-                holder.preview.setImageBitmap(bitmap) 
-            } else { 
-                holder.preview.setImageResource(R.drawable.ic_launcher_bubble) 
-            } 
-        } catch(e: Exception) { 
-            holder.preview.setImageResource(R.drawable.ic_launcher_bubble) 
+                if (bitmap != null) {
+                    holder.preview.setImageBitmap(bitmap)
+                } else {
+                    holder.preview.setImageResource(R.drawable.ic_launcher_bubble)
+                }
+            } else {
+                holder.preview.setImageResource(R.drawable.ic_launcher_bubble)
+            }
+        } catch (e: Exception) {
+            holder.preview.setImageResource(R.drawable.ic_launcher_bubble)
         }
+
         holder.itemView.setOnClickListener { handler.pickIcon() }
+
+        holder.reset.setOnClickListener {
+            val context = holder.itemView.context
+            val uriStr = AppPreferences.getIconUri(context)
+            if (uriStr.isNullOrEmpty()) {
+                handler.safeToast("Already using default icon")
+                return@setOnClickListener
+            }
+
+            try {
+                context.contentResolver.releasePersistableUriPermission(
+                    Uri.parse(uriStr),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+
+            AppPreferences.clearIconUri(context)
+            holder.preview.setImageResource(R.drawable.ic_launcher_bubble)
+            holder.preview.imageTintList = null
+            holder.preview.clearColorFilter()
+            context.sendBroadcast(Intent("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON"))
+            handler.safeToast("Launcher icon reset")
+        }
     }
     
     private fun bindDpiHolder(holder: DpiHolder, item: DpiOption) {

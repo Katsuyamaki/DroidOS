@@ -16,6 +16,21 @@
         android:textColor="#FFFFFF"
         android:textSize="@dimen/text_size_16sp" />
 
+    <TextView
+        android:id="@+id/icon_setting_reset"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/bg_item_active"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:text="Reset"
+        android:textColor="#FFFFFF"
+        android:textSize="@dimen/text_size_14sp" />
+
     <ImageView
         android:id="@+id/icon_setting_preview"
         android:layout_width="40dp"

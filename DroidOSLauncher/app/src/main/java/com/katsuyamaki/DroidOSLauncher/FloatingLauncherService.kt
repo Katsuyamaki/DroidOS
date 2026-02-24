@@ -4121,6 +4121,12 @@ private var isSoftKeyboardSupport = false
         captureIntent.setPackage(PACKAGE_TRACKPAD)
         captureIntent.putExtra("CAPTURE", false)
         sendBroadcast(captureIntent)
+
+        // Restore default keyboard layer when exiting slot selection.
+        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        layerIntent.setPackage(PACKAGE_TRACKPAD)
+        layerIntent.putExtra("ACTIVE", false)
+        sendBroadcast(layerIntent)
         
         // Return focus to search
         drawerView?.findViewById<EditText>(R.id.rofi_search_bar)?.requestFocus()
@@ -4140,6 +4146,12 @@ private var isSoftKeyboardSupport = false
         captureIntent.setPackage(PACKAGE_TRACKPAD)
         captureIntent.putExtra("CAPTURE", false)
         sendBroadcast(captureIntent)
+
+        // Restore default keyboard layer after second-step completion.
+        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        layerIntent.setPackage(PACKAGE_TRACKPAD)
+        layerIntent.putExtra("ACTIVE", false)
+        sendBroadcast(layerIntent)
         
         // Get active slot count from current layout
         val rects = getLayoutRects()
@@ -4221,6 +4233,12 @@ private var isSoftKeyboardSupport = false
         captureIntent.setPackage(PACKAGE_TRACKPAD)
         captureIntent.putExtra("CAPTURE", false)
         sendBroadcast(captureIntent)
+
+        // Restore default keyboard layer after second-step completion.
+        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        layerIntent.setPackage(PACKAGE_TRACKPAD)
+        layerIntent.putExtra("ACTIVE", false)
+        sendBroadcast(layerIntent)
         
         // Get active slot count from current layout
         val rects = getLayoutRects()
@@ -5129,10 +5147,17 @@ private var isSoftKeyboardSupport = false
             captureIntent.setPackage(PACKAGE_TRACKPAD)
             captureIntent.putExtra("CAPTURE", true)
             sendBroadcast(captureIntent)
+
+            // Match other 2-step command flows: force Number Layer for slot entry.
+            val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+            layerIntent.setPackage(PACKAGE_TRACKPAD)
+            layerIntent.putExtra("ACTIVE", true)
+            sendBroadcast(layerIntent)
             
             // Update UI
             debugStatusView?.visibility = View.VISIBLE
-            debugStatusView?.text = "Open & Move To: Select slot # (1-${selectedAppsQueue.size + 1})"
+            val modeLabel = if (isOpenSwapMode) "Open & Swap" else "Open & Move To"
+            debugStatusView?.text = "$modeLabel: Select slot # (1-${selectedAppsQueue.size + 1})"
             updateSelectedAppsDock()
             drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyDataSetChanged()
             

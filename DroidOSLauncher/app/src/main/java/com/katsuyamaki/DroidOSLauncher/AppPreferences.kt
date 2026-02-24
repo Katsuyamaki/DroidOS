@@ -383,6 +383,10 @@ object AppPreferences {
     fun getIconUri(context: Context): String? {
         return getPrefs(context).getString(KEY_ICON_URI, null)
     }
+
+    fun clearIconUri(context: Context) {
+        getPrefs(context).edit().remove(KEY_ICON_URI).apply()
+    }
     
     private const val KEY_BUBBLE_SIZE = "bubble_size_percent"
     
