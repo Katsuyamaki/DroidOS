@@ -1789,7 +1789,17 @@ windowManager.addView(keyboardContainer, keyboardParams)
             return
         }
         if (key == KeyboardView.SpecialKey.HIDE_KEYBOARD) {
-            onCloseAction() // Calls the close/hide action passed from Service
+            val service = context as? OverlayService
+            val openedMenu = if (service?.menuManager != null) {
+                service.menuManager?.show()
+                service.enforceZOrder()
+                true
+            } else {
+                false
+            }
+            if (!openedMenu) {
+                onCloseAction()
+            }
             return
         }
 

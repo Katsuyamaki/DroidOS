@@ -2161,7 +2161,11 @@ private fun buildKeyboard() {
         if (overrideColor != null) {
             bg.setColor(overrideColor)
         } else if (pressed) {
-            bg.setColor(Color.parseColor("#3DDC84"))
+            if (key == "HIDE_KB") {
+                bg.setColor(Color.parseColor("#3A3A3A"))
+            } else {
+                bg.setColor(Color.parseColor("#3DDC84"))
+            }
         } else {
             bg.setColor(getKeyColor(key))
         }
@@ -2221,7 +2225,7 @@ private fun buildKeyboard() {
         "MUTE" -> "Mute"; "VOL-" -> "Vol-"; "VOL+" -> "Vol+"
         "BACK" -> "Back"; "FWD" -> "Fwd"; "MIC" -> "🎤"
         "SCREEN" -> if (isSymbolsActive()) "MODE" else "📺"
-        "HIDE_KB" -> "▼"
+        "HIDE_KB" -> "☰"
         else -> key
     }
 
