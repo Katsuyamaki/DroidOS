@@ -803,7 +803,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     ?: output.lines().find { it.contains("voice", true) }
                 
                 if (voiceIme != null) {
+                    android.util.Log.i("IME_TRACE", "event=REQ_SET d=$currentDisplayId source=overlay_voice target=${voiceIme.substringAfterLast("/")}")
                     shellService?.runCommand("ime set $voiceIme")
+                    val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                    android.util.Log.i("IME_TRACE", "event=VERIFY_VOICE d=$currentDisplayId source=overlay_voice final=${finalIme.substringAfterLast("/")}")
                     // Try to refocus input
                     handler.postDelayed({ attemptRefocusInput() }, 500)
                 } else {
@@ -1066,19 +1069,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try {
             val prefs = getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
             val savedIme = prefs.getString("user_preferred_ime", null)
-            if (savedIme != null && (savedIme.contains("honeyboard") || savedIme.contains("com.sec"))) {
-                // Check if Gboard is enabled
-                Thread {
-                    try {
-                        val enabledImes = shellService?.runCommand("ime list -s") ?: ""
-                        val gboard = enabledImes.lines().find { 
-                            it.contains("com.google.android.inputmethod.latin") 
-                        }
-                        if (gboard != null) {
-                            prefs.edit().putString("user_preferred_ime", gboard.trim()).apply()
-                        }
-                    } catch (e: Exception) {}
-                }.start()
+            val shouldClearSavedIme =
+                savedIme != null && (
+                    savedIme.contains("honeyboard") ||
+                    savedIme.contains("com.sec") ||
+                    savedIme.contains("com.google.android.tts") ||
+                    savedIme.contains("VoiceInputMethodService") ||
+                    savedIme.contains("NullInputMethodService")
+                )
+
+            if (shouldClearSavedIme) {
+                prefs.edit().remove("user_preferred_ime").apply()
+                android.util.Log.i("IME_TRACE", "event=PREF_SANITIZE removed=${savedIme?.substringAfterLast("/")}")
             }
         } catch (e: Exception) {}
         // =================================================================================
@@ -1440,8 +1442,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             android.util.Log.d("KBBlocker", "setupUI KB switch check: prev=$previousDisplayId target=$displayId prefBlock=${prefs.prefBlockSoftKeyboard}")
             if (previousDisplayId == 1 && displayId != 1 && prefs.prefBlockSoftKeyboard) {
                 android.util.Log.d("KBBlocker", "setupUI: TRIGGERING forceRefreshIme in 300ms")
+                android.util.Log.i("IME_TRACE", "event=FORCE_REFRESH_TRIGGER from=$previousDisplayId to=$displayId")
                 handler.postDelayed({
                     android.util.Log.d("KBBlocker", "setupUI: calling forceRefreshIme NOW")
+                    android.util.Log.i("IME_TRACE", "event=FORCE_REFRESH_CALL from=$previousDisplayId to=$displayId")
                     imeManager?.forceRefreshIme()
                 }, 300)
             }

@@ -256,6 +256,11 @@ class KeyboardPickerActivity : Activity() {
 
     private fun openKeyboardSettings() {
         try {
+            getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("ime_explicit_pick_until", System.currentTimeMillis() + 45000L)
+                .apply()
+
             val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)

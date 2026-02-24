@@ -19,10 +19,15 @@ class ShizukuInputHandler(
     private var displayId: Int
 ) {
     companion object {
-        private const val TAG = "ShizukuInputHandler"
+        private const val IME_TRACE_TAG = "IME_TRACE"
+        private const val EXTRA_REQUEST_ID = "requestId"
+        private const val BROADCAST_ACK_TIMEOUT_MS = 45L
+        private const val BROADCAST_POLL_INTERVAL_MS = 4L
     }
 
     private val executor = Executors.newSingleThreadExecutor()
+    private var nextRequestId = 1L
+    private var lastBroadcastHadFailure = false
 
     // Timestamp for tracking injection timing
     var lastInjectionTime: Long = 0L
@@ -35,6 +40,97 @@ class ShizukuInputHandler(
 
     fun updateShellService(shellService: IShellService?) {
         this.shellService = shellService
+    }
+
+    private fun shouldUseBroadcastPath(): Boolean {
+        val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
+        val isDockActive = currentIme.contains(context.packageName) &&
+            (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
+        return isDockActive && displayId != 1
+    }
+
+    private fun newRequestId(): Long {
+        val id = nextRequestId
+        nextRequestId += 1L
+        if (nextRequestId == Long.MAX_VALUE) {
+            nextRequestId = 1L
+        }
+        return id
+    }
+
+    private fun awaitBroadcastAck(requestId: Long, timeoutMs: Long): ImeBroadcastHealth.Snapshot? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val snapshot = ImeBroadcastHealth.snapshot()
+            if (snapshot.requestId == requestId) {
+                return snapshot
+            }
+            try {
+                Thread.sleep(BROADCAST_POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            }
+        }
+        val snapshot = ImeBroadcastHealth.snapshot()
+        return if (snapshot.requestId == requestId) snapshot else null
+    }
+
+    private inline fun sendImeBroadcastWithFallback(
+        action: String,
+        putExtras: (Intent) -> Unit,
+        fallback: () -> Unit
+    ) {
+        val requestId = newRequestId()
+        val intent = Intent(action).apply {
+            setPackage(context.packageName)
+            putExtra(EXTRA_REQUEST_ID, requestId)
+        }
+        putExtras(intent)
+        context.sendBroadcast(intent)
+
+        val ack = awaitBroadcastAck(requestId, BROADCAST_ACK_TIMEOUT_MS)
+        if (ack?.success == true) {
+            if (lastBroadcastHadFailure) {
+                android.util.Log.i(
+                    IME_TRACE_TAG,
+                    "event=IME_BROADCAST_RECOVER request=$requestId action=${action.substringAfterLast(".")}"
+                )
+                lastBroadcastHadFailure = false
+            }
+            return
+        }
+
+        val reason = ack?.detail ?: "timeout"
+        ImeBroadcastHealth.markFallbackRequest(requestId)
+        if (!lastBroadcastHadFailure) {
+            android.util.Log.i(
+                IME_TRACE_TAG,
+                "event=IME_BROADCAST_FALLBACK request=$requestId action=${action.substringAfterLast(".")} reason=$reason"
+            )
+        }
+        lastBroadcastHadFailure = true
+        fallback()
+    }
+
+    private fun injectKeyViaShell(keyCode: Int, metaState: Int) {
+        shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, displayId, 1)
+        Thread.sleep(10)
+        shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)
+    }
+
+    private fun injectDeleteViaShell(length: Int) {
+        for (i in 0 until length) {
+            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, displayId, 1)
+            Thread.sleep(5)
+            shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, displayId, 1)
+        }
+    }
+
+    private fun injectTextViaShell(text: String) {
+        val escapedText = text.replace("\"", "\\\"")
+        val cmd = "input -d $displayId text \"$escapedText\""
+        shellService?.runCommand(cmd)
     }
 
     /**
@@ -83,64 +179,21 @@ class ShizukuInputHandler(
         executor.execute {
             try {
                 if (keyCode in systemKeys) {
-
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, displayId, 1)
-                    Thread.sleep(10)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)
+                    injectKeyViaShell(keyCode, metaState)
                     return@execute
                 }
 
-                val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(context.packageName) &&
-                    (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-                
-                // COVER SCREEN FIX: On display 1, DockIME is set as "active" but the service
-                // never actually starts (because showMode=HIDDEN). Broadcasts go nowhere.
-                // Force shell injection on cover screen since DockIME isn't running.
-                val useBroadcast = isDockActive && displayId != 1
-                android.util.Log.d("ShizukuInput", "sendKey: currentIme=$currentIme isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
-
-                // =================================================================================
-                // COVER SCREEN (Display 1) FLASH ISSUE - DOCUMENTED TESTING RESULTS
-                // =================================================================================
-                // PROBLEM: On Samsung cover screen, UI elements flash on every keystroke.
-                // ROOT CAUSE: Samsung's AOD service reacts to InputManager.injectInputEvent().
-                //
-                // WHAT WORKS (no flash):
-                // - Display 0 with DroidOS IME: Uses NullIME InputConnection.sendKeyEvent()
-                // - Display 0 with Gboard/Samsung KB: Shell injection with device ID 0
-                //
-                // WHAT DOESN'T WORK (still flashes on display 1):
-                // - Device ID 0: AOD still reacts
-                // - Device ID 1: AOD still reacts  
-                // - Device ID -1: AOD still reacts
-                // - FLAG_SOFT_KEYBOARD (2): AOD still reacts
-                // - FLAG_FROM_SYSTEM (8): AOD still reacts
-                // - SOURCE_TOUCHSCREEN: AOD still reacts
-                // - SOURCE_KEYBOARD: AOD still reacts
-                // - Forcing IME back with "ime set": Samsung immediately switches back to HoneyBoard
-                //   and NullIME loses InputConnection before broadcast arrives
-                //
-                // CONCLUSION: Samsung's AOD service on cover screen reacts to ANY 
-                // InputManager.injectInputEvent() call. The only flash-free path is
-                // InputConnection.sendKeyEvent() via NullIME, but Samsung aggressively
-                // switches IME to HoneyBoard on cover screen, making this path unavailable.
-                //
-                // CURRENT BEHAVIOR: Typing works on cover screen but with visual flash.
-                // =================================================================================
-
-                if (useBroadcast) {
-                    // DroidOS IME active on main screen - use broadcast path (no flash)
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY")
-                    intent.setPackage(context.packageName)
-                    intent.putExtra("keyCode", keyCode)
-                    intent.putExtra("metaState", metaState)
-                    context.sendBroadcast(intent)
+                if (shouldUseBroadcastPath()) {
+                    sendImeBroadcastWithFallback(
+                        action = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY",
+                        putExtras = { intent ->
+                            intent.putExtra("keyCode", keyCode)
+                            intent.putExtra("metaState", metaState)
+                        },
+                        fallback = { injectKeyViaShell(keyCode, metaState) }
+                    )
                 } else {
-                    // Shell injection - works but flashes on cover screen (Samsung AOD limitation)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, displayId, 1)
-                    Thread.sleep(10)
-                    shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, displayId, 1)
+                    injectKeyViaShell(keyCode, metaState)
                 }
             } catch (e: Exception) {
             }
@@ -157,23 +210,14 @@ class ShizukuInputHandler(
 
         executor.execute {
             try {
-                val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(context.packageName) &&
-                    (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-                val useBroadcast = isDockActive && displayId != 1
-                android.util.Log.d("ShizukuInput", "bulkDelete: isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
-
-                if (useBroadcast) {
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE")
-                    intent.setPackage(context.packageName)
-                    intent.putExtra("length", length)
-                    context.sendBroadcast(intent)
+                if (shouldUseBroadcastPath()) {
+                    sendImeBroadcastWithFallback(
+                        action = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE",
+                        putExtras = { intent -> intent.putExtra("length", length) },
+                        fallback = { injectDeleteViaShell(length) }
+                    )
                 } else {
-                    for (i in 0 until length) {
-                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0, displayId, 1)
-                        Thread.sleep(5)
-                        shellService?.injectKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0, displayId, 1)
-                    }
+                    injectDeleteViaShell(length)
                 }
             } catch (e: Exception) {
             }
@@ -188,21 +232,14 @@ class ShizukuInputHandler(
 
         executor.execute {
             try {
-                val currentIme = android.provider.Settings.Secure.getString(context.contentResolver, "default_input_method") ?: ""
-                val isDockActive = currentIme.contains(context.packageName) &&
-                    (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
-                val useBroadcast = isDockActive && displayId != 1
-                android.util.Log.d("ShizukuInput", "injectText: isDockActive=$isDockActive displayId=$displayId useBroadcast=$useBroadcast")
-
-                if (useBroadcast) {
-                    val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT")
-                    intent.setPackage(context.packageName)
-                    intent.putExtra("text", text)
-                    context.sendBroadcast(intent)
+                if (shouldUseBroadcastPath()) {
+                    sendImeBroadcastWithFallback(
+                        action = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT",
+                        putExtras = { intent -> intent.putExtra("text", text) },
+                        fallback = { injectTextViaShell(text) }
+                    )
                 } else {
-                    val escapedText = text.replace("\"", "\\\"")
-                    val cmd = "input -d $displayId text \"$escapedText\""
-                    shellService?.runCommand(cmd)
+                    injectTextViaShell(text)
                 }
             } catch (e: Exception) {
             }

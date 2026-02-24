@@ -27,6 +27,40 @@ class NullInputMethodService : InputMethodService() {
 
     companion object {
         private const val TAG = "NullIME"
+        private const val IME_TRACE_TAG = "IME_TRACE"
+        private const val BROADCAST_ACTION_TEXT = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT"
+        private const val BROADCAST_ACTION_KEY = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY"
+        private const val BROADCAST_ACTION_DELETE = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE"
+        private const val EXTRA_REQUEST_ID = "requestId"
+    }
+
+    private var lastImeDropSignature: String? = null
+    private var lastImeDropLogElapsed = 0L
+    private val imeDropLogThrottleMs = 3000L
+
+    private fun recordImeBroadcast(action: String, requestId: Long, success: Boolean, detail: String) {
+        ImeBroadcastHealth.record(action, requestId, success, detail)
+        if (success) {
+            lastImeDropSignature = null
+            return
+        }
+        if (detail == "fallback_claimed") {
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val signature = "$action|$detail"
+        val shouldLog =
+            signature != lastImeDropSignature || (now - lastImeDropLogElapsed) >= imeDropLogThrottleMs
+
+        if (shouldLog) {
+            android.util.Log.i(
+                IME_TRACE_TAG,
+                "event=IME_BROADCAST_DROP service=null action=${action.substringAfterLast(".")} reason=$detail request=$requestId"
+            )
+            lastImeDropSignature = signature
+            lastImeDropLogElapsed = now
+        }
     }
 
     // =================================================================================
@@ -36,60 +70,51 @@ class NullInputMethodService : InputMethodService() {
     // =================================================================================
     private val inputReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val ic = currentInputConnection
-            
-            when (intent?.action) {
-                // =====================================================================
-                // ACTION: INJECT_TEXT
-                // SUMMARY: Commits text directly to the input field.
-                //          Used for normal character input and word completion.
-                // =====================================================================
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT" -> {
-                    val text = intent.getStringExtra("text")
-                    if (!text.isNullOrEmpty()) {
-                        if (ic != null) {
-                            ic.commitText(text, 1)
-                        } else {
+            val action = intent?.action ?: return
+            val requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
 
-                        }
+            if (ImeBroadcastHealth.consumeFallbackRequest(requestId)) {
+                recordImeBroadcast(action, requestId, false, "fallback_claimed")
+                return
+            }
+
+            val ic = currentInputConnection
+            if (ic == null) {
+                recordImeBroadcast(action, requestId, false, "ic_null")
+                return
+            }
+
+            when (action) {
+                BROADCAST_ACTION_TEXT -> {
+                    val text = intent.getStringExtra("text")
+                    if (text.isNullOrEmpty()) {
+                        recordImeBroadcast(action, requestId, false, "empty_text")
+                    } else {
+                        ic.commitText(text, 1)
+                        recordImeBroadcast(action, requestId, true, "ok")
                     }
                 }
-                
-                // =====================================================================
-                // ACTION: INJECT_KEY (FIXED)
-                // SUMMARY: Sends a key event with proper metaState support.
-                //          This enables SHIFT (for uppercase/symbols), CTRL, and ALT.
-                //
-                //          Previously used sendDownUpKeyEvents() which ignores metaState.
-                //          Now constructs full KeyEvent objects with metaState included.
-                // =====================================================================
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY" -> {
+                BROADCAST_ACTION_KEY -> {
                     val code = intent.getIntExtra("keyCode", 0)
                     val metaState = intent.getIntExtra("metaState", 0)
-                    
                     if (code > 0) {
-                        if (ic != null) {
-                            sendKeyEventWithMeta(ic, code, metaState)
-                        } else {
-
-                        }
+                        sendKeyEventWithMeta(ic, code, metaState)
+                        recordImeBroadcast(action, requestId, true, "ok")
+                    } else {
+                        recordImeBroadcast(action, requestId, false, "invalid_key")
                     }
                 }
-                
-                // =====================================================================
-                // ACTION: INJECT_DELETE
-                // SUMMARY: Deletes characters before the cursor.
-                //          Used for backspace and bulk delete operations.
-                // =====================================================================
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE" -> {
+                BROADCAST_ACTION_DELETE -> {
                     val length = intent.getIntExtra("length", 1)
                     if (length > 0) {
-                        if (ic != null) {
-                            ic.deleteSurroundingText(length, 0)
-                        } else {
-
-                        }
+                        ic.deleteSurroundingText(length, 0)
+                        recordImeBroadcast(action, requestId, true, "ok")
+                    } else {
+                        recordImeBroadcast(action, requestId, false, "invalid_delete")
                     }
+                }
+                else -> {
+                    recordImeBroadcast(action, requestId, false, "unknown_action")
                 }
             }
         }
@@ -159,9 +184,9 @@ class NullInputMethodService : InputMethodService() {
         
         // Register receiver for OverlayService communication
         val filter = IntentFilter().apply {
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY")
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE")
+            addAction(BROADCAST_ACTION_TEXT)
+            addAction(BROADCAST_ACTION_KEY)
+            addAction(BROADCAST_ACTION_DELETE)
         }
         
         if (Build.VERSION.SDK_INT >= 33) { // TIRAMISU

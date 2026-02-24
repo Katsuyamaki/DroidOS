@@ -24,10 +24,12 @@ class DockInputMethodService : InputMethodService() {
 
     companion object {
         private const val TAG = "DockIME"
+        private const val IME_TRACE_TAG = "IME_TRACE"
         // Keep the original broadcast action for backward compatibility with OverlayService
         private const val BROADCAST_ACTION_TEXT = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT"
         private const val BROADCAST_ACTION_KEY = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY"
         private const val BROADCAST_ACTION_DELETE = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE"
+        private const val EXTRA_REQUEST_ID = "requestId"
     }
 
     private var dockView: View? = null
@@ -59,6 +61,9 @@ class DockInputMethodService : InputMethodService() {
     private var imeWindowVisible = false
     private var imeShowDispatchedSessionId = -1L
     private var pendingInitialImeShowRunnable: Runnable? = null
+    private var lastImeDropSignature: String? = null
+    private var lastImeDropLogElapsed = 0L
+    private val imeDropLogThrottleMs = 3000L
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -97,26 +102,79 @@ class DockInputMethodService : InputMethodService() {
         }
     }
 
+    private fun recordImeBroadcast(action: String, requestId: Long, success: Boolean, detail: String) {
+        ImeBroadcastHealth.record(action, requestId, success, detail)
+        if (success) {
+            lastImeDropSignature = null
+            return
+        }
+        if (detail == "fallback_claimed") {
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val signature = "$action|$detail"
+        val shouldLog =
+            signature != lastImeDropSignature || (now - lastImeDropLogElapsed) >= imeDropLogThrottleMs
+
+        if (shouldLog) {
+            android.util.Log.i(
+                IME_TRACE_TAG,
+                "event=IME_BROADCAST_DROP service=dock action=${action.substringAfterLast(".")} reason=$detail request=$requestId"
+            )
+            lastImeDropSignature = signature
+            lastImeDropLogElapsed = now
+        }
+    }
+
     // Receiver to handle text injection from the Overlay Trackpad
     private val inputReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            val requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
+
+            if (ImeBroadcastHealth.consumeFallbackRequest(requestId)) {
+                recordImeBroadcast(action, requestId, false, "fallback_claimed")
+                return
+            }
+
             val ic = currentInputConnection
-            android.util.Log.d("DockIME", "inputReceiver: action=${intent?.action} ic=${if (ic != null) "OK" else "NULL"}")
-            if (ic == null) return
-            
-            when (intent?.action) {
+            if (ic == null) {
+                recordImeBroadcast(action, requestId, false, "ic_null")
+                return
+            }
+
+            when (action) {
                 BROADCAST_ACTION_TEXT -> {
                     val text = intent.getStringExtra("text")
-                    if (!text.isNullOrEmpty()) ic.commitText(text, 1)
+                    if (text.isNullOrEmpty()) {
+                        recordImeBroadcast(action, requestId, false, "empty_text")
+                    } else {
+                        ic.commitText(text, 1)
+                        recordImeBroadcast(action, requestId, true, "ok")
+                    }
                 }
                 BROADCAST_ACTION_KEY -> {
                     val code = intent.getIntExtra("keyCode", 0)
                     val metaState = intent.getIntExtra("metaState", 0)
-                    if (code > 0) sendKeyEventWithMeta(ic, code, metaState)
+                    if (code > 0) {
+                        sendKeyEventWithMeta(ic, code, metaState)
+                        recordImeBroadcast(action, requestId, true, "ok")
+                    } else {
+                        recordImeBroadcast(action, requestId, false, "invalid_key")
+                    }
                 }
                 BROADCAST_ACTION_DELETE -> {
                     val length = intent.getIntExtra("length", 1)
-                    if (length > 0) ic.deleteSurroundingText(length, 0)
+                    if (length > 0) {
+                        ic.deleteSurroundingText(length, 0)
+                        recordImeBroadcast(action, requestId, true, "ok")
+                    } else {
+                        recordImeBroadcast(action, requestId, false, "invalid_delete")
+                    }
+                }
+                else -> {
+                    recordImeBroadcast(action, requestId, false, "unknown_action")
                 }
             }
         }
@@ -642,6 +700,13 @@ class DockInputMethodService : InputMethodService() {
 
         // 4. Switch IME
         btnSwitch?.setOnClickListener {
+
+            val until = System.currentTimeMillis() + 45000L
+            getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("ime_explicit_pick_until", until)
+                .apply()
+            android.util.Log.i("IME_TRACE", "event=PICKER_ARM source=dock_switch until=$until")
 
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showInputMethodPicker()

@@ -2388,7 +2388,10 @@ windowManager.addView(keyboardContainer, keyboardParams)
                     ?: output.lines().find { it.contains("voice", true) }
                 
                 if (voiceIme != null) {
+                    android.util.Log.i("IME_TRACE", "event=REQ_SET d=$targetDisplayId source=keyboard_overlay_voice target=${voiceIme.substringAfterLast("/")}")
                     shellService?.runCommand("ime set $voiceIme")
+                    val finalIme = shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                    android.util.Log.i("IME_TRACE", "event=VERIFY_VOICE d=$targetDisplayId source=keyboard_overlay_voice final=${finalIme.substringAfterLast("/")}")
                 } else {
                     // If IME missing, turn off light
                     micCheckHandler.post { keyboardView?.setVoiceActive(false) }

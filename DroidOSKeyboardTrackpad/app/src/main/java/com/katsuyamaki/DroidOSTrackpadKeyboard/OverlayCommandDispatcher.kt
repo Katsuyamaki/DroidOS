@@ -11,6 +11,7 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
 
     companion object {
         private const val TAG = "OverlayCommandDispatcher"
+        private const val IME_TRACE_TAG = "IME_TRACE"
     }
 
     /**
@@ -144,8 +145,42 @@ class OverlayCommandDispatcher(private val service: OverlayService) {
                 val imeName = intent.getStringExtra("IME_NAME") ?: "keyboard"
                 Thread {
                     try {
+                        android.util.Log.i(
+                            IME_TRACE_TAG,
+                            "event=REQ_SET d=${service.currentDisplayId} source=dispatcher_switch target=${imeId.substringAfterLast("/")}"
+                        )
+
+                        val safeToPersist =
+                            !imeId.contains("NullInputMethodService") &&
+                            !imeId.contains("com.google.android.tts") &&
+                            !imeId.contains("VoiceInputMethodService") &&
+                            !imeId.contains("honeyboard") &&
+                            !imeId.contains("com.sec.android.inputmethod")
+
+                        if (safeToPersist) {
+                            val normalizedIme = if (imeId.contains("DockInputMethodService")) {
+                                "${service.packageName}/com.katsuyamaki.DroidOSTrackpadKeyboard.DockInputMethodService"
+                            } else {
+                                imeId
+                            }
+                            service.getSharedPreferences("TrackpadPrefs", android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString("user_preferred_ime", normalizedIme)
+                                .putLong("ime_explicit_pick_until", 0L)
+                                .apply()
+                            android.util.Log.i(
+                                IME_TRACE_TAG,
+                                "event=PREF_SAVE d=${service.currentDisplayId} source=dispatcher_switch ime=${normalizedIme.substringAfterLast("/")}"
+                            )
+                        }
+
                         service.shellService?.runCommand("settings put secure default_input_method $imeId")
                         service.shellService?.runCommand("ime set $imeId")
+                        val finalIme = service.shellService?.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                        android.util.Log.i(
+                            IME_TRACE_TAG,
+                            "event=VERIFY_SWITCH d=${service.currentDisplayId} target=${imeId.substringAfterLast("/")} final=${finalIme.substringAfterLast("/")}"
+                        )
                         service.handler.post { service.showToast("Switched to $imeName") }
                     } catch (e: Exception) {
                         service.handler.post { service.showToast("Failed to switch keyboard") }
