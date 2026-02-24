@@ -583,19 +583,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (intent.hasExtra("auto_resize")) {
             val autoResize = intent.getBooleanExtra("auto_resize", false)
             if (!autoResize) {
-                lastDockMarginPercent = -1
+                val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+                val dockModeEnabled = isDockModeEnabledForCurrentDisplay(dockPrefs)
+                val persistedMargin = readDockMarginPercentForCurrentDisplay(dockPrefs)
+                if (persistedMargin > 0) {
+                    lastDockMarginPercent = persistedMargin
+                }
+
                 if (isCustomKeyboardVisible) {
-                    val restoreScale = if (manualKeyScaleBeforeMargin > 0) manualKeyScaleBeforeMargin else prefs.prefKeyScale
-                    manualKeyScaleBeforeMargin = -1
-                    prefs.prefKeyScale = restoreScale
-                    val density = resources.displayMetrics.density
-                    val navBarHeight = getNavBarHeight()
-                    val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
-                    val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
-                    val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
-                    keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
-                    saveKeyboardHeightForDock(kbHeight)
-                } else {
+                    if (dockModeEnabled && persistedMargin > 0) {
+                        applyDockModeWithMargin(persistedMargin)
+                    } else {
+                        val restoreScale = if (manualKeyScaleBeforeMargin > 0) manualKeyScaleBeforeMargin else prefs.prefKeyScale
+                        manualKeyScaleBeforeMargin = -1
+                        prefs.prefKeyScale = restoreScale
+                        val density = resources.displayMetrics.density
+                        val navBarHeight = getNavBarHeight()
+                        val kbHeight = (275f * (restoreScale / 100f) * density).toInt()
+                        val dockToolbarHeight = if (prefs.prefShowKBAboveDock && isDockIMEVisible) (40 * density).toInt() else 0
+                        val targetY = uiScreenHeight - kbHeight - dockToolbarHeight - navBarHeight
+                        keyboardOverlay?.setWindowBoundsWithScale(0, targetY, uiScreenWidth, kbHeight)
+                        saveKeyboardHeightForDock(kbHeight)
+                    }
+                } else if (!dockModeEnabled || persistedMargin <= 0) {
                     manualKeyScaleBeforeMargin = -1
                 }
             }
@@ -610,6 +620,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         )
     }
 
+    private fun readDockMarginPercentForCurrentDisplay(prefs: android.content.SharedPreferences): Int {
+        val orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "_L" else "_P"
+        val displaySuffix = "_d$currentDisplayId"
+        return prefs.getInt(
+            "auto_resize_scale$displaySuffix$orientation",
+            prefs.getInt(
+                "auto_resize_scale$displaySuffix",
+                prefs.getInt("auto_resize_scale$orientation", prefs.getInt("auto_resize_scale", 0))
+            )
+        )
+    }
+
     internal fun handleApplyDockMode(intent: Intent) {
         dockNavBarHeight = intent.getIntExtra("nav_bar_height", -1)
         if (!intent.getBooleanExtra("enabled", false)) return
@@ -621,9 +643,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         }
 
         val marginPercent = intent.getIntExtra("resize_to_margin", -1)
-        if (marginPercent >= 0) {
-            lastDockMarginPercent = marginPercent
-            applyDockModeWithMargin(marginPercent)
+        val persistedMargin = readDockMarginPercentForCurrentDisplay(dockPrefs)
+        val resolvedMargin = if (marginPercent >= 0) marginPercent else if (persistedMargin > 0) persistedMargin else -1
+        if (resolvedMargin >= 0) {
+            lastDockMarginPercent = resolvedMargin
+            applyDockModeWithMargin(resolvedMargin)
         } else {
             applyDockMode()
         }
@@ -2485,17 +2509,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // Load per-display prefs directly.
                 logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=coverScreenAutoMargin")
                 triggerCoverScreenAutoMargin()
-            } else if (lastDockMarginPercent >= 0) {
-                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$lastDockMarginPercent")
-                applyDockModeWithMargin(lastDockMarginPercent)
-            } else if (currentDisplayId == 1) {
-                // COVER SCREEN: DockIME doesn't run so lastDockMarginPercent is never set.
-                // Load margin prefs directly and apply.
-                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=coverScreenAutoMargin")
-                triggerCoverScreenAutoMargin()
             } else {
-                logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock")
-                applyDockMode()
+                val persistedMargin = readDockMarginPercentForCurrentDisplay(dockModePrefs)
+                val resolvedMargin = if (lastDockMarginPercent >= 0) lastDockMarginPercent else persistedMargin
+                if (resolvedMargin > 0) {
+                    lastDockMarginPercent = resolvedMargin
+                    logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=margin margin=$resolvedMargin")
+                    applyDockModeWithMargin(resolvedMargin)
+                } else {
+                    logOverlayKbDiag("toggleCustomKeyboard_dockDecision", "mode=defaultDock")
+                    applyDockMode()
+                }
             }
         } else {
             logOverlayKbDiag(

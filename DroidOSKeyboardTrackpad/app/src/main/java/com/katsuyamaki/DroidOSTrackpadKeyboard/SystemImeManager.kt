@@ -363,6 +363,9 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                     isKeyboardRestoreInProgress = true
                     
                     try {
+                        shellService.runCommand("settings put secure show_ime_with_hard_keyboard 1")
+                        traceIme("SHOW_IME_WITH_HARD", "value=1 reason=restore_start")
+
                         val initialIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
                         
                         val sharedPrefs = service.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
@@ -622,6 +625,8 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 
                 val currentIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
                 log("forceRefreshIme: current IME = $currentIme")
+                shellService.runCommand("settings put secure show_ime_with_hard_keyboard 1")
+                traceIme("SHOW_IME_WITH_HARD", "value=1 reason=force_refresh")
                 
                 // Get user's preferred IME
                 val sharedPrefs = service.getSharedPreferences("TrackpadPrefs", android.content.Context.MODE_PRIVATE)

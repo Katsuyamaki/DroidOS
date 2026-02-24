@@ -1249,9 +1249,9 @@ class DockInputMethodService : InputMethodService() {
             val shouldUsePersistedFallback = !hasFreshTiledBroadcastForThisShow && withinBootstrapWindow
             val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
 
-            val inputPkg = currentInputEditorInfo?.packageName ?: "null"
-
-            if (prefAutoResize && prefDockMode && shouldSuppressInsets) {
+            // Tiled suppression must be independent from fullscreen auto-resize toggle.
+            // Auto-resize is only for fullscreen app behavior.
+            if (prefDockMode && shouldSuppressInsets) {
                 // TILED/MANAGED: Launcher handles resize via retileExistingWindows().
                 // Suppress insets so Android's ADJUST_RESIZE doesn't ALSO resize = double margin.
                 outInsets.contentTopInsets = viewH
@@ -1266,7 +1266,7 @@ class DockInputMethodService : InputMethodService() {
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT
 
             } else {
-                // No auto-resize: minimal toolbar only, normal inset behavior
+                // No fullscreen auto-resize: keep default minimal inset behavior.
                 outInsets.contentTopInsets = 0
                 outInsets.visibleTopInsets = 0
                 outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_CONTENT

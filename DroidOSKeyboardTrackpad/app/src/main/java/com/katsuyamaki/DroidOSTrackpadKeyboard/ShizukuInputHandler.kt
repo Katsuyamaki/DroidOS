@@ -23,11 +23,15 @@ class ShizukuInputHandler(
         private const val EXTRA_REQUEST_ID = "requestId"
         private const val BROADCAST_ACK_TIMEOUT_MS = 45L
         private const val BROADCAST_POLL_INTERVAL_MS = 4L
+        private const val IME_RECOVERY_COOLDOWN_MS = 30000L
+        private const val IME_RECOVERY_BRIDGE_SETTLE_MS = 160L
     }
 
     private val executor = Executors.newSingleThreadExecutor()
     private var nextRequestId = 1L
     private var lastBroadcastHadFailure = false
+    @Volatile private var imeRecoveryInProgress = false
+    @Volatile private var lastImeRecoveryElapsedMs = 0L
 
     // Timestamp for tracking injection timing
     var lastInjectionTime: Long = 0L
@@ -47,6 +51,106 @@ class ShizukuInputHandler(
         val isDockActive = currentIme.contains(context.packageName) &&
             (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
         return isDockActive && displayId != 1
+    }
+
+    private fun shortIme(ime: String?): String {
+        if (ime.isNullOrBlank()) return "none"
+        return ime.substringAfterLast("/")
+    }
+
+    private fun pickBridgeImeId(enabledImes: List<String>, installedImes: List<String>, dockImeId: String): String? {
+        fun isBridgeCandidate(id: String): Boolean {
+            if (id == dockImeId) return false
+            if (id.contains("NullInputMethodService")) return false
+            if (id.contains("com.google.android.tts")) return false
+            if (id.contains("VoiceInputMethodService")) return false
+            return true
+        }
+
+        fun pickFrom(pool: List<String>): String? {
+            pool.firstOrNull {
+                it.contains("com.google.android.inputmethod.latin") && isBridgeCandidate(it)
+            }?.let { return it }
+
+            pool.firstOrNull {
+                (it.contains("honeyboard") || it.contains("com.sec.android.inputmethod")) && isBridgeCandidate(it)
+            }?.let { return it }
+
+            return pool.firstOrNull { isBridgeCandidate(it) }
+        }
+
+        return pickFrom(enabledImes) ?: pickFrom(installedImes)
+    }
+
+    private fun maybeRecoverImeSession(fallbackReason: String) {
+        if (displayId == 1) return
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (imeRecoveryInProgress) return
+        if (nowElapsed - lastImeRecoveryElapsedMs < IME_RECOVERY_COOLDOWN_MS) return
+
+        val shell = shellService ?: return
+
+        imeRecoveryInProgress = true
+        lastImeRecoveryElapsedMs = nowElapsed
+
+        Thread {
+            try {
+                val currentIme = shell.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                val isDockActive = currentIme.contains(context.packageName) &&
+                    (currentIme.contains("DockInputMethodService") || currentIme.contains("NullInputMethodService"))
+                if (!isDockActive) {
+                    return@Thread
+                }
+
+                val allImes = shell.runCommand("ime list -a -s") ?: ""
+                val installedImes = allImes.lines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+
+                val dockImeId = installedImes.firstOrNull {
+                    it.contains(context.packageName) &&
+                        it.contains("DockInputMethodService")
+                } ?: return@Thread
+
+                val enabledImes = (shell.runCommand("ime list -s") ?: "")
+                    .lines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+
+                val bridgeImeId = pickBridgeImeId(enabledImes, installedImes, dockImeId) ?: return@Thread
+
+                android.util.Log.i(
+                    IME_TRACE_TAG,
+                    "event=IME_RECOVERY_START reason=$fallbackReason bridge=${shortIme(bridgeImeId)} dock=${shortIme(dockImeId)}"
+                )
+
+                shell.runCommand("settings put secure show_ime_with_hard_keyboard 1")
+                shell.runCommand("ime enable $bridgeImeId")
+                shell.runCommand("ime set $bridgeImeId")
+                Thread.sleep(IME_RECOVERY_BRIDGE_SETTLE_MS)
+
+                shell.runCommand("ime enable $dockImeId")
+                shell.runCommand("settings put secure default_input_method $dockImeId")
+                shell.runCommand("ime set $dockImeId")
+
+                Thread.sleep(120)
+                val finalIme = shell.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                val success = finalIme == dockImeId || finalIme.contains("DockInputMethodService")
+
+                android.util.Log.i(
+                    IME_TRACE_TAG,
+                    "event=IME_RECOVERY_DONE ok=$success final=${shortIme(finalIme)} dock=${shortIme(dockImeId)}"
+                )
+            } catch (e: Exception) {
+                android.util.Log.i(
+                    IME_TRACE_TAG,
+                    "event=IME_RECOVERY_ERR reason=${e.javaClass.simpleName}"
+                )
+            } finally {
+                imeRecoveryInProgress = false
+            }
+        }.start()
     }
 
     private fun newRequestId(): Long {
@@ -111,6 +215,7 @@ class ShizukuInputHandler(
         }
         lastBroadcastHadFailure = true
         fallback()
+        maybeRecoverImeSession(reason)
     }
 
     private fun injectKeyViaShell(keyCode: Int, metaState: Int) {
