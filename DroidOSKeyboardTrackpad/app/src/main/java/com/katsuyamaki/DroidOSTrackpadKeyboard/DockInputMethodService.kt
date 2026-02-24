@@ -54,12 +54,16 @@ class DockInputMethodService : InputMethodService() {
     private val imeVisibilityHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val imeHideConfirmDelayMs = 140L
     private val imeHideBounceGuardMs = 260L
+    private val overlayAutoHideMinVisibleMs = 2200L
+    private val imeTransientWindowHideGuardMs = 1800L
     private val tiledStateFreshWindowMs = 1200L
     private val imeInitialShowDelayMs = 120L
     private var imeVisibilitySessionId = 0L
     private var lastConfirmedHideSessionId = -1L
     private var imeWindowVisible = false
     private var imeShowDispatchedSessionId = -1L
+    private var lastImeShowPulseTime = 0L
+    private var lastExplicitHideRequestAt = 0L
     private var pendingInitialImeShowRunnable: Runnable? = null
     private var lastImeDropSignature: String? = null
     private var lastImeDropLogElapsed = 0L
@@ -216,6 +220,19 @@ class DockInputMethodService : InputMethodService() {
 
     }
 
+    private fun imeShowReferenceTime(): Long {
+        return maxOf(lastImeShowPulseTime, windowShownTime)
+    }
+
+    private fun explicitHideRequestedRecently(now: Long): Boolean {
+        return lastExplicitHideRequestAt > 0L && (now - lastExplicitHideRequestAt) <= imeTransientWindowHideGuardMs
+    }
+
+    private fun requestExplicitDockHide() {
+        lastExplicitHideRequestAt = System.currentTimeMillis()
+        requestHideSelf(0)
+    }
+
     private fun runConfirmedImeHiddenEffects(reason: String, sessionId: Long) {
         if (sessionId != imeVisibilitySessionId) {
             return
@@ -243,11 +260,22 @@ class DockInputMethodService : InputMethodService() {
         }
 
         if (prefAutoShowOverlay) {
-            val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
-            intent.setPackage(packageName)
-            intent.putExtra("FORCE_HIDE", true)
-            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-            sendBroadcast(intent)
+            val now = System.currentTimeMillis()
+            val showReferenceTime = imeShowReferenceTime()
+            val elapsedSinceShow = if (showReferenceTime > 0L) now - showReferenceTime else Long.MAX_VALUE
+            if (showReferenceTime <= 0L || elapsedSinceShow < overlayAutoHideMinVisibleMs) {
+                val reasonTag = if (showReferenceTime <= 0L) "missing_show_anchor" else "recent_show"
+                android.util.Log.i(
+                    IME_TRACE_TAG,
+                    "event=SKIP_AUTO_HIDE reason=$reasonTag elapsedMs=$elapsedSinceShow"
+                )
+            } else {
+                val intent = Intent("TOGGLE_CUSTOM_KEYBOARD")
+                intent.setPackage(packageName)
+                intent.putExtra("FORCE_HIDE", true)
+                intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                sendBroadcast(intent)
+            }
         }
     }
 
@@ -255,7 +283,12 @@ class DockInputMethodService : InputMethodService() {
         pendingImeHiddenConfirmRunnable?.let { imeVisibilityHandler.removeCallbacks(it) }
 
         val sessionId = imeVisibilitySessionId
-        val elapsedSinceShow = System.currentTimeMillis() - windowShownTime
+        val showReferenceTime = imeShowReferenceTime()
+        val elapsedSinceShow = if (showReferenceTime > 0L) {
+            System.currentTimeMillis() - showReferenceTime
+        } else {
+            imeHideBounceGuardMs
+        }
         val bounceDelay = (imeHideBounceGuardMs - elapsedSinceShow).coerceAtLeast(0L)
         val delayMs = maxOf(imeHideConfirmDelayMs, bounceDelay)
 
@@ -273,6 +306,7 @@ class DockInputMethodService : InputMethodService() {
             return
         }
 
+        lastImeShowPulseTime = System.currentTimeMillis()
         sendImeVisibilityBroadcast(
             visible = true,
             isTiled = launcherTiledActive,
@@ -287,9 +321,16 @@ class DockInputMethodService : InputMethodService() {
         loadDockPrefs()
 
         if (imeWindowVisible) {
+            pendingImeHiddenConfirmRunnable?.let {
+                imeVisibilityHandler.removeCallbacks(it)
+                pendingImeHiddenConfirmRunnable = null
+            }
+            lastExplicitHideRequestAt = 0L
+            lastImeShowPulseTime = System.currentTimeMillis()
             return
         }
         imeWindowVisible = true
+        lastExplicitHideRequestAt = 0L
 
         pendingImeHiddenConfirmRunnable?.let {
             imeVisibilityHandler.removeCallbacks(it)
@@ -319,6 +360,7 @@ class DockInputMethodService : InputMethodService() {
 
         // Record show time for bootstrap fallback window
         windowShownTime = now
+        lastImeShowPulseTime = now
         staleTiledHandler.removeCallbacks(staleTiledCheck)
 
 
@@ -388,6 +430,28 @@ class DockInputMethodService : InputMethodService() {
         if (!imeWindowVisible) {
             return
         }
+
+        val now = System.currentTimeMillis()
+        val showReferenceTime = imeShowReferenceTime()
+        val elapsedSinceShow = if (showReferenceTime > 0L) now - showReferenceTime else Long.MAX_VALUE
+        val withinTransientWindow = elapsedSinceShow <= imeTransientWindowHideGuardMs
+        val hasActiveEditor = currentInputConnection != null && currentInputEditorInfo != null
+        val explicitHide = explicitHideRequestedRecently(now)
+
+        if (!explicitHide && withinTransientWindow && hasActiveEditor) {
+            android.util.Log.i(
+                IME_TRACE_TAG,
+                "event=DEFER_HIDE reason=transient_window_hidden elapsedMs=$elapsedSinceShow"
+            )
+            imeVisibilityHandler.post {
+                try {
+                    requestShowSelf(0)
+                } catch (_: Exception) {
+                }
+            }
+            return
+        }
+
         imeWindowVisible = false
 
         pendingInitialImeShowRunnable?.let {
@@ -396,8 +460,6 @@ class DockInputMethodService : InputMethodService() {
         }
 
         scheduleConfirmedImeHidden("onWindowHidden")
-        
-        
 
     }
 
@@ -426,7 +488,7 @@ class DockInputMethodService : InputMethodService() {
     private var prefAutoShowOverlay = false
     private var prefDockMode = false
     private var prefAutoResize = false
-    private var prefResizeScale = 0 // Default 0% (Range 0-50%)
+    private var prefResizeScale = 0 // Default 0% (Range 0-75%)
     private var prefShowKBAboveDock = true // Default ON when dock mode is enabled
     
     private val ACTION_MARGIN_CHANGED = "com.katsuyamaki.DroidOSLauncher.MARGIN_CHANGED"
@@ -462,7 +524,7 @@ class DockInputMethodService : InputMethodService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME") {
 
-                requestHideSelf(0)
+                requestExplicitDockHide()
             }
         }
     }
@@ -527,16 +589,16 @@ class DockInputMethodService : InputMethodService() {
             prefs.getBoolean(
                 "auto_show_overlay$displaySuffix",
                 // Legacy fallback: orientation/global keys from older builds.
-                prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", false))
+                prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", true))
             )
         )
-        prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
+        prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", true)))
         prefAutoResize = prefs.getBoolean(
             "auto_resize$displaySuffix$os",
             prefs.getBoolean(
                 "auto_resize$displaySuffix",
                 // Legacy fallback: orientation/global keys from older builds.
-                prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", false))
+                prefs.getBoolean("auto_resize$os", prefs.getBoolean("auto_resize", true))
             )
         )
         prefResizeScale = prefs.getInt(
@@ -715,7 +777,7 @@ class DockInputMethodService : InputMethodService() {
         // 5. Hide Dock
         btnHide?.setOnClickListener {
 
-            requestHideSelf(0)
+            requestExplicitDockHide()
         }
     }
     // =================================================================================

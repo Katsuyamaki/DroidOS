@@ -188,7 +188,7 @@
             android:id="@+id/seekbar_resize_height"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:max="50"
+            android:max="75"
             android:progress="0"
             android:progressTint="#3DDC84"
             android:thumbTint="#3DDC84"/>

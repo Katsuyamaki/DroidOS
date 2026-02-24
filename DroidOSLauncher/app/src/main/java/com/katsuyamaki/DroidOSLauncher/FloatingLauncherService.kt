@@ -611,6 +611,11 @@ private var isSoftKeyboardSupport = false
     private var lastKnownDockImeToolbarVisible = false // Track from broadcasts, not just SharedPrefs
     private var imeMarginManualSessionActive = false // True while IME override is from manual bubble toggle
     private var lastKnownShowKbAboveDock = true // Track live show-above-dock mode from IME visibility broadcasts
+    private var imeShowStartedAt = 0L
+    private val imeTransientTiledGuardMs = 1800L
+    private var pendingImeHideConfirmRunnable: Runnable? = null
+    private var imeHideConfirmToken = 0L
+    private val imeHideConfirmDelayMs = 420L
 
     private fun isDroidOsImeCurrentlyActive(): Boolean {
         return try {
@@ -717,6 +722,22 @@ private var isSoftKeyboardSupport = false
         return focusedManaged
     }
 
+    private fun hasManagedTiledWindowsForImeStable(
+        focusedPkgOverride: String? = null,
+        visibleHint: Boolean = imeMarginOverrideActive
+    ): Boolean {
+        val rawTiled = hasManagedTiledWindowsForIme(focusedPkgOverride)
+        if (rawTiled) return true
+
+        val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
+        if (!visibleHint || activeNonMinimizedCount <= 1) return false
+
+        val startedAt = imeShowStartedAt
+        if (startedAt <= 0L) return false
+
+        return (System.currentTimeMillis() - startedAt) <= imeTransientTiledGuardMs
+    }
+
     private fun effectiveBottomMarginPercent(): Int {
         val systemInsetPct = systemBottomInsetPercent()
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
@@ -734,7 +755,7 @@ private var isSoftKeyboardSupport = false
         }
 
         // Fullscreen/independent apps should NOT get launcher margins - let Android ADJUST_RESIZE handle it.
-        val hasLauncherTiledWindows = hasManagedTiledWindowsForIme()
+        val hasLauncherTiledWindows = hasManagedTiledWindowsForImeStable()
 
         // IME hidden: reserve persistent system inset only for tiled apps.
         if (!imeMarginOverrideActive) {
@@ -2296,13 +2317,23 @@ private var isSoftKeyboardSupport = false
                         // 2. Open 1 app (even if in queue), tap text field - app should resize for keyboard
                         // ===================================================================================
                         val isActuallyTiled = hasManagedTiledWindowsForIme(detectedPkg)
+                        val inImeTransientTiledGuard =
+                            imeMarginOverrideActive &&
+                            activeNonMinimized.size > 1 &&
+                            !isActuallyTiled &&
+                            imeShowStartedAt > 0L &&
+                            (System.currentTimeMillis() - imeShowStartedAt) <= imeTransientTiledGuardMs
+                        val tiledForImeSync = if (inImeTransientTiledGuard) true else isActuallyTiled
                         if (!isSystemOverlay) {
                             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-                                .putBoolean("launcher_tiled_active", isActuallyTiled)
+                                .putBoolean("launcher_tiled_active", tiledForImeSync)
                                 .apply()
                             sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
                                 .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                                .putExtra("TILED_ACTIVE", isActuallyTiled))
+                                .putExtra("TILED_ACTIVE", tiledForImeSync))
+                            if (inImeTransientTiledGuard) {
+                                android.util.Log.d("LauncherMargin", "IME transient guard: keeping tiled sync true for pkg=$detectedPkg")
+                            }
                         }
                         // [FULLSCREEN] Skip auto-minimize during cooldown after explicit tiled app launch.
                         // This prevents newly launched tiled apps from being immediately hidden.
@@ -7183,10 +7214,45 @@ private var isSoftKeyboardSupport = false
         val isTiled = intent.getBooleanExtra("IS_TILED", true)
         val forceRetile = intent.getBooleanExtra("FORCE_RETILE", false)
         val manualToggle = intent.getBooleanExtra("MANUAL_TOGGLE", false)
+        val hideConfirmed = intent.getBooleanExtra("HIDE_CONFIRMED", false)
         val hasDockExtra = intent.getBooleanExtra("HAS_DOCK_IME_VISIBLE", false)
         val dockVisible = intent.getBooleanExtra("DOCK_IME_VISIBLE", false)
         val hasShowAboveDockExtra = intent.getBooleanExtra("HAS_SHOW_KB_ABOVE_DOCK", false)
         val showAboveDock = intent.getBooleanExtra("SHOW_KB_ABOVE_DOCK", true)
+        val wasImeMarginOverrideActive = imeMarginOverrideActive
+        val now = System.currentTimeMillis()
+        val withinImeTransientGuard =
+            wasImeMarginOverrideActive &&
+            imeShowStartedAt > 0L &&
+            (now - imeShowStartedAt) <= imeTransientTiledGuardMs
+
+        if (visible) {
+            pendingImeHideConfirmRunnable?.let {
+                uiHandler.removeCallbacks(it)
+                pendingImeHideConfirmRunnable = null
+            }
+        } else if (manualToggle && !hideConfirmed && withinImeTransientGuard && !hasDockExtra && !forceRetile) {
+            android.util.Log.d("LauncherMargin", "IME hide guard: ignoring manual false pulse during transient window")
+            return
+        } else if (!manualToggle && !hideConfirmed) {
+            if (withinImeTransientGuard) {
+                android.util.Log.d("LauncherMargin", "IME hide guard: ignoring non-manual false pulse during transient window")
+                return
+            }
+
+            val delayedIntent = Intent(intent).putExtra("HIDE_CONFIRMED", true)
+            val token = ++imeHideConfirmToken
+            pendingImeHideConfirmRunnable?.let { uiHandler.removeCallbacks(it) }
+            val runnable = Runnable {
+                if (imeHideConfirmToken != token) return@Runnable
+                pendingImeHideConfirmRunnable = null
+                applyImeVisibilityFromQueue(delayedIntent)
+            }
+            pendingImeHideConfirmRunnable = runnable
+            uiHandler.postDelayed(runnable, imeHideConfirmDelayMs)
+            android.util.Log.d("LauncherMargin", "IME hide debounce: queued confirm in ${imeHideConfirmDelayMs}ms")
+            return
+        }
 
         // Update dock toolbar visibility + show-above-dock state:
         // - Manual toggle uses transient manual-session behavior and must not overwrite DockIME truth.
@@ -7222,7 +7288,11 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        val hasLauncherTiledWindows = hasManagedTiledWindowsForIme()
+        if (visible && !wasImeMarginOverrideActive && imeShowStartedAt <= 0L) {
+            imeShowStartedAt = System.currentTimeMillis()
+        }
+
+        val hasLauncherTiledWindows = hasManagedTiledWindowsForImeStable(visibleHint = visible || imeMarginOverrideActive)
         val resolvedIsTiled = isTiled || (visible && hasLauncherTiledWindows && !manualToggle)
 
         // Keep DockIME tiled state synced from launcher-side truth so IME bootstrap does not
@@ -7234,6 +7304,11 @@ private var isSoftKeyboardSupport = false
         sendBroadcast(Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
             .setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
             .putExtra("TILED_ACTIVE", dockSyncTiledActive))
+
+        if (!visible) {
+            imeMarginOverrideActive = false
+            imeShowStartedAt = 0L
+        }
 
         // Ignore updates only when there are no launcher-tiled windows and no explicit override.
         if (!hasLauncherTiledWindows && !resolvedIsTiled && !forceRetile && !manualToggle) {
@@ -7257,6 +7332,7 @@ private var isSoftKeyboardSupport = false
             // Invalidate any pending delayed show commit callbacks and apply hidden-state margin now.
             pendingImeShowRetileToken = nextImeShowRetileToken++
             imeMarginOverrideActive = false
+            imeShowStartedAt = 0L
             applyImeMarginRetileFromQueue(forceRetile)
         }
     }
@@ -8381,7 +8457,7 @@ private var isSoftKeyboardSupport = false
             // ===================================================================================
             // Authoritative tiled state for IME suppression must include managed focus context.
             // Queue size alone is insufficient and can misclassify fullscreen external apps as tiled.
-            val isActuallyTiled = hasManagedTiledWindowsForIme()
+            val isActuallyTiled = hasManagedTiledWindowsForImeStable()
 
             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                 .putBoolean("launcher_tiled_active", isActuallyTiled)
