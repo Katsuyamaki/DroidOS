@@ -435,10 +435,11 @@ class DockInputMethodService : InputMethodService() {
         val showReferenceTime = imeShowReferenceTime()
         val elapsedSinceShow = if (showReferenceTime > 0L) now - showReferenceTime else Long.MAX_VALUE
         val withinTransientWindow = elapsedSinceShow <= imeTransientWindowHideGuardMs
-        val hasActiveEditor = currentInputConnection != null && currentInputEditorInfo != null
+        val hasActiveInputConnection = currentInputConnection != null
         val explicitHide = explicitHideRequestedRecently(now)
 
-        if (!explicitHide && withinTransientWindow && hasActiveEditor) {
+        if (!explicitHide && withinTransientWindow && hasActiveInputConnection) {
+            lastImeShowPulseTime = now
             android.util.Log.i(
                 IME_TRACE_TAG,
                 "event=DEFER_HIDE reason=transient_window_hidden elapsedMs=$elapsedSinceShow"

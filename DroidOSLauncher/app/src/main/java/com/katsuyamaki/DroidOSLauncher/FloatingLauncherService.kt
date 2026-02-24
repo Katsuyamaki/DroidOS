@@ -685,7 +685,9 @@ private var isSoftKeyboardSupport = false
         val screenHeight = metrics.heightPixels
         if (screenHeight <= 0) return 0
 
-        val navBarPx = try {
+        val navBarPx = if (receivedNavBarHeightPx >= 0) {
+            receivedNavBarHeightPx
+        } else try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
@@ -7194,15 +7196,19 @@ private var isSoftKeyboardSupport = false
     // SelectedAppsAdapter extracted to SelectedAppsAdapter.kt
 
     private fun applyImeMarginRetileFromQueue(forceRetile: Boolean) {
-        android.util.Log.d("LauncherMargin", "applyImeMarginRetileFromQueue: displayId=$currentDisplayId bottomMarginPercent=$bottomMarginPercent")
         val newEffective = effectiveBottomMarginPercent()
         val hasEffectiveChange = newEffective != lastAppliedEffectiveMargin
+        val allowForceNoopRetile = forceRetile && !imeMarginOverrideActive
 
-        // IME retiles must be strictly state-change driven.
-        // Duplicate hide/show broadcasts can request forceRetile with unchanged effective margin
-        // (0->0 or 25->25). Running those no-op passes can trigger redundant WM resize transactions
-        // and intermittently produce blank/half-updated bottom-row windows.
-        if (!hasEffectiveChange) return
+        android.util.Log.d(
+            "LauncherMargin",
+            "applyImeMarginRetileFromQueue: displayId=$currentDisplayId bottomMarginPercent=$bottomMarginPercent effective=$newEffective lastEffective=$lastAppliedEffectiveMargin changed=$hasEffectiveChange forceRetile=$forceRetile imeOverride=$imeMarginOverrideActive allowForceNoop=$allowForceNoopRetile"
+        )
+
+        // Keep duplicate-noop suppression for normal flow.
+        // Only allow no-op force-retile after IME hidden state is committed so
+        // tiled windows get one corrective redraw on hide transitions.
+        if (!hasEffectiveChange && !allowForceNoopRetile) return
 
         lastAppliedEffectiveMargin = newEffective
         setupVisualQueue()
