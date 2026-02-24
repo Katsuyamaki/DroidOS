@@ -1249,9 +1249,9 @@ class DockInputMethodService : InputMethodService() {
             val shouldUsePersistedFallback = !hasFreshTiledBroadcastForThisShow && withinBootstrapWindow
             val shouldSuppressInsets = launcherTiledActive || (shouldUsePersistedFallback && persistedTiledActive)
 
-            // Tiled suppression must be independent from fullscreen auto-resize toggle.
-            // Auto-resize is only for fullscreen app behavior.
-            if (prefDockMode && shouldSuppressInsets) {
+            // Tiled suppression must be independent from dock-mode/fullscreen auto-resize toggles.
+            // If launcher is managing tiled windows, Android insets must stay suppressed.
+            if (shouldSuppressInsets) {
                 // TILED/MANAGED: Launcher handles resize via retileExistingWindows().
                 // Suppress insets so Android's ADJUST_RESIZE doesn't ALSO resize = double margin.
                 outInsets.contentTopInsets = viewH

@@ -700,6 +700,23 @@ private var isSoftKeyboardSupport = false
         return ((navBarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
     }
 
+    private fun hasManagedTiledWindowsForIme(focusedPkgOverride: String? = null): Boolean {
+        val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
+        if (activeNonMinimized.size <= 1) return false
+
+        val focusedRaw = focusedPkgOverride ?: activePackageName
+        if (focusedRaw.isNullOrBlank()) return true
+
+        val focusedPkg = focusedRaw.substringBefore("/")
+        val isGeminiDetect = focusedPkg == "com.google.android.googlequicksearchbox"
+        val focusedManaged = activeNonMinimized.any {
+            val base = it.getBasePackage()
+            base == focusedPkg || it.packageName == focusedPkg ||
+                (isGeminiDetect && base == "com.google.android.apps.bard")
+        }
+        return focusedManaged
+    }
+
     private fun effectiveBottomMarginPercent(): Int {
         val systemInsetPct = systemBottomInsetPercent()
         val canAutoAdjustForIme = autoAdjustMarginForIME && (isDroidOsImeCurrentlyActive() || droidOsImeDetected)
@@ -716,10 +733,8 @@ private var isSoftKeyboardSupport = false
             return (bottomMarginPercent + systemInsetPct).coerceAtMost(100)
         }
 
-        // Check if we have launcher-managed tiled windows (2+ non-minimized apps).
         // Fullscreen/independent apps should NOT get launcher margins - let Android ADJUST_RESIZE handle it.
-        val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
-        val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+        val hasLauncherTiledWindows = hasManagedTiledWindowsForIme()
 
         // IME hidden: reserve persistent system inset only for tiled apps.
         if (!imeMarginOverrideActive) {
@@ -2280,7 +2295,7 @@ private var isSoftKeyboardSupport = false
                         // 1. Open 2 tiled apps (top/bottom layout), tap text field - NO blank gap
                         // 2. Open 1 app (even if in queue), tap text field - app should resize for keyboard
                         // ===================================================================================
-                        val isActuallyTiled = activeNonMinimized.size > 1
+                        val isActuallyTiled = hasManagedTiledWindowsForIme(detectedPkg)
                         if (!isSystemOverlay) {
                             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                                 .putBoolean("launcher_tiled_active", isActuallyTiled)
@@ -7207,8 +7222,7 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        val activeNonMinimizedCount = selectedAppsQueue.count { !it.isMinimized }
-        val hasLauncherTiledWindows = activeNonMinimizedCount > 1
+        val hasLauncherTiledWindows = hasManagedTiledWindowsForIme()
         val resolvedIsTiled = isTiled || (visible && hasLauncherTiledWindows && !manualToggle)
 
         // Keep DockIME tiled state synced from launcher-side truth so IME bootstrap does not
@@ -8365,10 +8379,9 @@ private var isSoftKeyboardSupport = false
             // KEY INVARIANT: When autoAdjustMarginForIME=true AND there are non-minimized managed
             // apps, DockIME MUST suppress insets. The Launcher handles ALL app resizing.
             // ===================================================================================
-            val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
-            // Authoritative tiled state: number of visible launcher-managed windows.
-            // Do not gate by transient accessibility focus, which can flip during IME transitions.
-            val isActuallyTiled = activeNonMinimized.size > 1
+            // Authoritative tiled state for IME suppression must include managed focus context.
+            // Queue size alone is insufficient and can misclassify fullscreen external apps as tiled.
+            val isActuallyTiled = hasManagedTiledWindowsForIme()
 
             getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
                 .putBoolean("launcher_tiled_active", isActuallyTiled)
