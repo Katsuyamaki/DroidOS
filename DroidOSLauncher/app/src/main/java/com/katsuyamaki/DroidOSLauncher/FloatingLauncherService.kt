@@ -591,6 +591,7 @@ private var isSoftKeyboardSupport = false
     private var allowExternalBroadcastCommands = false
     private var externalBroadcastAccessUnlocked = false
     private var githubClaimExchangeInProgress = false
+    private val keyboardStorePackageName = "com.katsuyamaki.DroidOSTrackpadKeyboard"
 
     private var isVirtualDisplayActive = false
     override var currentDrawerHeightPercent = 70
@@ -662,6 +663,40 @@ private var isSoftKeyboardSupport = false
         } catch (e: Exception) {
             safeToast("Unable to launch purchase flow")
         }
+    }
+
+    private fun openStoreListingWithFallback(primaryUrl: String, fallbackUrl: String, storeLabel: String) {
+        try {
+            val primaryIntent = Intent(Intent.ACTION_VIEW, Uri.parse(primaryUrl))
+            primaryIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(primaryIntent)
+        } catch (_: Exception) {
+            try {
+                val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl))
+                fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(fallbackIntent)
+            } catch (_: Exception) {
+                safeToast("Unable to open $storeLabel listing")
+            }
+        }
+    }
+
+    private fun openGooglePlayKeyboardListing() {
+        val pkg = keyboardStorePackageName
+        openStoreListingWithFallback(
+            "market://details?id=$pkg",
+            "https://play.google.com/store/apps/details?id=$pkg",
+            "Google Play"
+        )
+    }
+
+    private fun openSamsungKeyboardListing() {
+        val pkg = keyboardStorePackageName
+        openStoreListingWithFallback(
+            "samsungapps://ProductDetail/$pkg",
+            "https://galaxystore.samsung.com/detail/$pkg",
+            "Galaxy Store"
+        )
     }
 
     private fun openGithubAuthorizationPortal() {
@@ -2376,6 +2411,7 @@ private var isSoftKeyboardSupport = false
                             detectedPkg.contains("launcher") ||
                             detectedPkg.contains("cocktail") ||
                             detectedPkg.contains("edge") ||
+                            detectedPkg == packageName ||
                             detectedPkg == "android"
                         
                         if (!isSystemOverlay && !isManagedApp) {
@@ -2436,6 +2472,7 @@ private var isSoftKeyboardSupport = false
                             detectedPkg.contains("android.providers") ||
                             detectedPkg.contains("permissioncontroller") ||
                             detectedPkg.contains("DroidOSTrackpadKeyboard") ||
+                            detectedPkg == packageName ||
                             isImeOrKeyboardPackage(detectedPkg) ||
                             detectedPkg == "android"
                         // [FIX] Managed state: if app is in queue and not minimized, DroidOS is managing its bounds.
@@ -2711,7 +2748,8 @@ private var isSoftKeyboardSupport = false
                                 windowPkg.contains("edge") ||
                                 windowPkg.contains("samsung.android.app.routines") ||
                                 windowPkg.contains("android.providers") ||
-                                windowPkg.contains("permissioncontroller")
+                                windowPkg.contains("permissioncontroller") ||
+                                windowPkg == packageName
                             if (isSystemOverlay) continue
 
                             window.getBoundsInScreen(boundsRect)
@@ -7183,6 +7221,9 @@ private var isSoftKeyboardSupport = false
                         displayList.add(ActionOption("Google Play: Open Unlock Flow") {
                             openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
                         })
+                        displayList.add(ActionOption("Google Play: Open Keyboard Listing") {
+                            openGooglePlayKeyboardListing()
+                        })
 
                         displayList.add(ActionOption("GitHub: Open Authorization Request Page") {
                             openGithubAuthorizationPortal()
@@ -7200,6 +7241,9 @@ private var isSoftKeyboardSupport = false
                             switchMode(MODE_KEYBINDS)
                         })
 
+                        displayList.add(ActionOption("Samsung: Open Keyboard Listing") {
+                            openSamsungKeyboardListing()
+                        })
                         displayList.add(LegendOption("Samsung: Billing flow remains in samsung binary; wire Samsung IAP there when ready."))
 
                         displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
@@ -7220,6 +7264,9 @@ private var isSoftKeyboardSupport = false
                         }
                         displayList.add(ActionOption(unlockLabel) {
                             openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
+                        })
+                        displayList.add(ActionOption("Get DroidOS Keyboard (Google Play)") {
+                            openGooglePlayKeyboardListing()
                         })
 
                         if (externalBroadcastAccessUnlocked) {
@@ -7302,6 +7349,9 @@ private var isSoftKeyboardSupport = false
                     }
 
                     else -> {
+                        displayList.add(ActionOption("Get DroidOS Keyboard (Galaxy Store)") {
+                            openSamsungKeyboardListing()
+                        })
                         displayList.add(
                             ToggleOption(
                                 "Allow External App Broadcast Access",

@@ -56,7 +56,7 @@
         <activity
             android:name=".FeatureUnlockPurchaseActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/Theme.QuadrantLauncher" />
 
         <service
             android:name=".FloatingLauncherService"
