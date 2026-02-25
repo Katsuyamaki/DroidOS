@@ -94,6 +94,7 @@ class KeyboardOverlay(
     //          until the finger stops moving for the configured delay.
     // =================================================================================
     private var isOrientationModeActive = false
+    private var swipeTrailView: SwipeTrailView? = null
     private var orientationTrailView: SwipeTrailView? = null
     // =================================================================================
     // END BLOCK: VIRTUAL MIRROR ORIENTATION MODE VARIABLES
@@ -461,6 +462,26 @@ class KeyboardOverlay(
         lp.height = if (baseH == -2) FrameLayout.LayoutParams.WRAP_CONTENT else baseH
         keyboardView!!.layoutParams = lp
 
+        val overlayW = if (baseW == -2) {
+            (if (keyboardView!!.width > 0) keyboardView!!.width else keyboardView!!.measuredWidth)
+                .takeIf { it > 0 } ?: FrameLayout.LayoutParams.MATCH_PARENT
+        } else {
+            baseW
+        }
+        val overlayH = if (baseH == -2) {
+            (if (keyboardView!!.height > 0) keyboardView!!.height else keyboardView!!.measuredHeight)
+                .takeIf { it > 0 } ?: FrameLayout.LayoutParams.MATCH_PARENT
+        } else {
+            baseH
+        }
+        listOfNotNull(swipeTrailView, orientationTrailView).forEach { overlay ->
+            val overlayLp = overlay.layoutParams as? FrameLayout.LayoutParams ?: return@forEach
+            overlayLp.width = overlayW
+            overlayLp.height = overlayH
+            overlay.layoutParams = overlayLp
+            overlay.rotation = angle.toFloat()
+        }
+
         // 4. Apply Rotation to View (Not Container)
         keyboardView!!.rotation = angle.toFloat()
         keyboardContainer!!.rotation = 0f // Ensure container is NOT rotated
@@ -492,10 +513,18 @@ class KeyboardOverlay(
                 val ty = (w - h) / 2f
                 keyboardView!!.translationX = tx
                 keyboardView!!.translationY = ty
+                swipeTrailView?.translationX = tx
+                swipeTrailView?.translationY = ty
+                orientationTrailView?.translationX = tx
+                orientationTrailView?.translationY = ty
             }
             else -> {
                 keyboardView!!.translationX = 0f
                 keyboardView!!.translationY = 0f
+                swipeTrailView?.translationX = 0f
+                swipeTrailView?.translationY = 0f
+                orientationTrailView?.translationX = 0f
+                orientationTrailView?.translationY = 0f
             }
         }
     }
@@ -551,6 +580,12 @@ class KeyboardOverlay(
         keyboardView?.rotation = 0f
         keyboardView?.translationX = 0f
         keyboardView?.translationY = 0f
+        swipeTrailView?.rotation = 0f
+        swipeTrailView?.translationX = 0f
+        swipeTrailView?.translationY = 0f
+        orientationTrailView?.rotation = 0f
+        orientationTrailView?.translationX = 0f
+        orientationTrailView?.translationY = 0f
 
         // 3. Calculate Dimensions
         // Width: 90% of screen, capped at 1200px to prevent ultra-wide windows
@@ -645,6 +680,8 @@ class KeyboardOverlay(
             windowManager.removeView(keyboardContainer)
             keyboardContainer = null
             keyboardView = null
+            swipeTrailView = null
+            orientationTrailView = null
             isVisible = false 
         } catch (e: Exception) { } 
     }
@@ -1078,7 +1115,10 @@ fun setCustomModKey(keyCode: Int) {
         // Defensive cleanup — remove old container if still attached
         if (keyboardContainer != null) {
             try { windowManager.removeView(keyboardContainer) } catch (e: Exception) {}
-            keyboardContainer = null; keyboardView = null
+            keyboardContainer = null
+            keyboardView = null
+            swipeTrailView = null
+            orientationTrailView = null
         }
 
         // [FIX] Use custom FrameLayout to intercept ALL touches.
@@ -1313,6 +1353,7 @@ fun setCustomModKey(keyCode: Int) {
         trailParams.setMargins(2, 28, 2, 0)
         keyboardContainer?.addView(trailView, trailParams)
         keyboardView?.attachTrailView(trailView)
+        swipeTrailView = trailView
 
         // ORIENTATION TRAIL VIEW
         orientationTrailView = SwipeTrailView(context)
@@ -2040,6 +2081,156 @@ windowManager.addView(keyboardContainer, keyboardParams)
     // =================================================================================
 
     // =================================================================================
+    // SWIPE ROTATION ALIGNMENT HELPERS
+    // SUMMARY: Keeps swipe decoding aligned with the visual keyboard rotation.
+    //          Scores candidate transforms (none / cw / ccw) against key centers
+    //          and picks the best match for decoding.
+    // =================================================================================
+    private fun normalizeRotationDegrees(degrees: Int): Int {
+        val normalized = degrees % 360
+        return if (normalized < 0) normalized + 360 else normalized
+    }
+
+    private fun getSwipeTransformSize(): Pair<Float, Float>? {
+        val kv = keyboardView ?: return null
+        val w = (if (kv.width > 0) kv.width else kv.measuredWidth).toFloat()
+        val h = (if (kv.height > 0) kv.height else kv.measuredHeight).toFloat()
+        if (w <= 0f || h <= 0f) return null
+        return Pair(w, h)
+    }
+
+    private fun rotatePointForSwipe(
+        point: android.graphics.PointF,
+        angleDeg: Int,
+        width: Float,
+        height: Float
+    ): android.graphics.PointF {
+        val angle = normalizeRotationDegrees(angleDeg)
+        if (angle == 0) return android.graphics.PointF(point.x, point.y)
+
+        val cx = width / 2f
+        val cy = height / 2f
+        val dx = point.x - cx
+        val dy = point.y - cy
+
+        return when (angle) {
+            90 -> android.graphics.PointF(cx - dy, cy + dx)
+            180 -> android.graphics.PointF(cx - dx, cy - dy)
+            270 -> android.graphics.PointF(cx + dy, cy - dx)
+            else -> android.graphics.PointF(point.x, point.y)
+        }
+    }
+
+    private fun rotatePathForSwipe(
+        path: List<android.graphics.PointF>,
+        angleDeg: Int,
+        width: Float,
+        height: Float
+    ): List<android.graphics.PointF> {
+        val angle = normalizeRotationDegrees(angleDeg)
+        if (angle == 0) return path
+        return path.map { rotatePointForSwipe(it, angle, width, height) }
+    }
+
+    private fun computePathAlignmentScore(
+        path: List<android.graphics.PointF>,
+        keyCenters: Collection<android.graphics.PointF>
+    ): Float {
+        if (path.isEmpty() || keyCenters.isEmpty()) return Float.MAX_VALUE
+
+        val step = max(1, path.size / 20)
+        var sum = 0f
+        var count = 0
+        var i = 0
+        while (i < path.size) {
+            val p = path[i]
+            var minDistSq = Float.MAX_VALUE
+            for (center in keyCenters) {
+                val dx = p.x - center.x
+                val dy = p.y - center.y
+                val distSq = dx * dx + dy * dy
+                if (distSq < minDistSq) minDistSq = distSq
+            }
+            sum += minDistSq
+            count++
+            i += step
+        }
+
+        return if (count == 0) Float.MAX_VALUE else sum / count.toFloat()
+    }
+
+    private fun chooseSwipePathRotation(
+        path: List<android.graphics.PointF>,
+        keyMap: Map<String, android.graphics.PointF>
+    ): Int {
+        val rotation = normalizeRotationDegrees(currentRotation)
+        if (rotation == 0 || path.isEmpty() || keyMap.isEmpty()) return 0
+        if (rotation != 90 && rotation != 180 && rotation != 270) return 0
+
+        val size = getSwipeTransformSize() ?: return 0
+        val width = size.first
+        val height = size.second
+        val centers = keyMap.values
+
+        val counterClockwise = normalizeRotationDegrees(360 - rotation)
+        val candidateAngles = mutableListOf(0)
+        if (!candidateAngles.contains(rotation)) candidateAngles.add(rotation)
+        if (!candidateAngles.contains(counterClockwise)) candidateAngles.add(counterClockwise)
+
+        var bestAngle = 0
+        var bestScore = computePathAlignmentScore(path, centers)
+
+        for (angle in candidateAngles) {
+            if (angle == 0) continue
+            val rotated = rotatePathForSwipe(path, angle, width, height)
+            val score = computePathAlignmentScore(rotated, centers)
+            if (score < bestScore) {
+                bestScore = score
+                bestAngle = angle
+            }
+        }
+
+        return bestAngle
+    }
+
+    private fun normalizeSwipePathPoints(
+        path: List<android.graphics.PointF>,
+        keyMap: Map<String, android.graphics.PointF>
+    ): List<android.graphics.PointF> {
+        val angle = chooseSwipePathRotation(path, keyMap)
+        if (angle == 0) return path
+        val size = getSwipeTransformSize() ?: return path
+        return rotatePathForSwipe(path, angle, size.first, size.second)
+    }
+
+    private fun normalizeSwipePathTimed(
+        path: List<TimedPoint>,
+        keyMap: Map<String, android.graphics.PointF>
+    ): List<TimedPoint> {
+        if (path.isEmpty()) return path
+        val pointPath = path.map { it.toPointF() }
+        val angle = chooseSwipePathRotation(pointPath, keyMap)
+        if (angle == 0) return path
+
+        val size = getSwipeTransformSize() ?: return path
+        val width = size.first
+        val height = size.second
+
+        return path.map { timedPoint ->
+            val rotated = rotatePointForSwipe(
+                android.graphics.PointF(timedPoint.x, timedPoint.y),
+                angle,
+                width,
+                height
+            )
+            TimedPoint(rotated.x, rotated.y, timedPoint.timestamp)
+        }
+    }
+    // =================================================================================
+    // END BLOCK: SWIPE ROTATION ALIGNMENT HELPERS
+    // =================================================================================
+
+    // =================================================================================
     // FUNCTION: onSwipeDetectedTimed (PHASE 2 - Dual Algorithm with Color Coding)
     // SUMMARY: Receives swipe path and gets predictions from dual algorithm.
     //          Winner is selected based on swipe speed:
@@ -2051,12 +2242,13 @@ windowManager.addView(keyboardContainer, keyboardParams)
 
         val keyMap = keyboardView?.getKeyCenters()
         if (keyMap.isNullOrEmpty()) return
+        val normalizedPath = normalizeSwipePathTimed(path, keyMap)
 
         // Run dual prediction in background
         Thread {
             try {
                 // decodeSwipeTimed now returns List<SwipeResult>
-                val results = predictionEngine.decodeSwipeTimed(path, keyMap)
+                val results = predictionEngine.decodeSwipeTimed(normalizedPath, keyMap)
                 
                 if (results.isEmpty()) {
                     return@Thread
@@ -2129,10 +2321,11 @@ windowManager.addView(keyboardContainer, keyboardParams)
         
         val keyMap = keyboardView?.getKeyCenters()
         if (keyMap.isNullOrEmpty()) return
+        val normalizedPath = normalizeSwipePathPoints(path, keyMap)
 
         Thread {
             try {
-                val suggestions = predictionEngine.decodeSwipe(path, keyMap)
+                val suggestions = predictionEngine.decodeSwipe(normalizedPath, keyMap)
 
                 if (suggestions.isNotEmpty()) {
                     handler.post {
@@ -2186,11 +2379,12 @@ windowManager.addView(keyboardContainer, keyboardParams)
         
         val keyMap = keyboardView?.getKeyCenters()
         if (keyMap.isNullOrEmpty()) return
+        val normalizedPath = normalizeSwipePathPoints(path, keyMap)
 
         // Run dual preview in background
         Thread {
             try {
-                val (preciseResult, shapeResult) = predictionEngine.decodeSwipeDualPreview(path, keyMap)
+                val (preciseResult, shapeResult) = predictionEngine.decodeSwipeDualPreview(normalizedPath, keyMap)
 
                 // Only update if we have at least one result
                 if (preciseResult != null || shapeResult != null) {

@@ -931,41 +931,30 @@ private var customModKeyCode = 0
     private fun mapKeys() {
         keyCenters.clear()
 
-        // 1. Get the absolute position of the KeyboardView itself
-        val parentLoc = IntArray(2)
-        this.getLocationOnScreen(parentLoc)
-        val parentX = parentLoc[0]
-        val parentY = parentLoc[1]
+        // Build centers in KeyboardView-local coordinates (pre-rotation layout space).
+        // Touch events in dispatchTouchEvent are also local to KeyboardView, so this keeps
+        // keyMap and swipe path in the same coordinate system.
+        fun traverse(view: View, baseX: Float, baseY: Float) {
+            val localX = baseX + view.left + view.translationX
+            val localY = baseY + view.top + view.translationY
 
-        // 2. Traverse all children to find tagged TextViews
-        fun traverse(view: View) {
             if (view is android.view.ViewGroup) {
                 for (i in 0 until view.childCount) {
-                    traverse(view.getChildAt(i))
+                    traverse(view.getChildAt(i), localX, localY)
                 }
             }
 
-            // Check if this view (could be ViewGroup or TextView) has a tag
-            if (view.tag is String) {
-                val key = view.tag as String
-                // We only care about single letters for swipe decoding (A-Z)
-                if (key.length == 1 && Character.isLetter(key[0])) {
-                    val loc = IntArray(2)
-                    view.getLocationOnScreen(loc)
+            val key = view.tag as? String ?: return
+            if (key.length == 1 && Character.isLetter(key[0])) {
+                val centerX = localX + (view.width / 2f)
+                val centerY = localY + (view.height / 2f)
 
-                    // Calculate center relative to the KeyboardView (0,0 is top-left of keyboard)
-                    // This matches the MotionEvent coordinates we get in dispatchTouchEvent
-                    val centerX = (loc[0] - parentX) + (view.width / 2f)
-                    val centerY = (loc[1] - parentY) + (view.height / 2f)
-
-                    keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
-                    // Also store lowercase for easier matching
-                    keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
-                }
+                keyCenters[key.uppercase()] = android.graphics.PointF(centerX, centerY)
+                keyCenters[key.lowercase()] = android.graphics.PointF(centerX, centerY)
             }
         }
-        traverse(this)
 
+        traverse(this, 0f, 0f)
 
         if (keyCenters.isNotEmpty()) {
 
