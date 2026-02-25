@@ -8,43 +8,7 @@
     android:padding="8dp"
     android:elevation="8dp">
 
-    <!-- Option 1: Auto-sync overlay keyboard visibility -->
-    <LinearLayout
-        android:id="@+id/option_auto_show"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:padding="12dp"
-        android:background="?android:attr/selectableItemBackground">
-
-        <ImageView
-            android:id="@+id/icon_auto_show"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_dock_keyboard"
-            android:tint="#888888"
-            android:layout_marginEnd="12dp"/>
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Auto-show Overlay Keyboard"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"/>
-
-        <View
-            android:id="@+id/toggle_auto_show"
-            android:layout_width="36dp"
-            android:layout_height="20dp"
-            android:background="#555555"/>
-    </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#444444"/>
+    <!-- Option 1 (Auto-show) removed - always ON -->
 
     <!-- Option 2: Dock mode (snap overlay KB to bottom) -->
     <LinearLayout

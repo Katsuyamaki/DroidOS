@@ -268,8 +268,9 @@ class OverlayLayoutManager(
             service.prefs.prefBubbleX = (service.uiScreenWidth / 2) + 80
             service.prefs.prefBubbleY = service.uiScreenHeight / 2
         }
-        bubbleParams.x = service.prefs.prefBubbleX.coerceIn(0, (service.uiScreenWidth - 60).coerceAtLeast(0))
-        bubbleParams.y = service.prefs.prefBubbleY.coerceIn(0, (service.uiScreenHeight - 60).coerceAtLeast(0))
+        val (bubbleMaxX, bubbleMaxY) = service.getBubbleClampBounds()
+        bubbleParams.x = service.prefs.prefBubbleX.coerceIn(0, bubbleMaxX)
+        bubbleParams.y = service.prefs.prefBubbleY.coerceIn(0, bubbleMaxY)
 
         var initialX = 0; var initialY = 0; var initialTouchX = 0f; var initialTouchY = 0f; var isDrag = false
         var isLongPressHandled = false

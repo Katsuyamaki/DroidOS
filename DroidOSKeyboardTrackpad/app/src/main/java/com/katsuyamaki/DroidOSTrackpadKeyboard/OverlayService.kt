@@ -2305,7 +2305,21 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         updateScrollSize(); updateScrollPosition(); updateHandleSize(); updateLayoutSizes(); prefs.save(this); showToast("Preset Applied")
     }
     
-    fun resetBubblePosition() { bubbleParams.x = (uiScreenWidth / 2) + 80; bubbleParams.y = uiScreenHeight / 2; try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}; prefs.prefBubbleX = bubbleParams.x; prefs.prefBubbleY = bubbleParams.y; prefs.save(this); showToast("Bubble Reset") }
+    fun resetBubblePosition() {
+        val (maxX, maxY) = getBubbleClampBounds()
+        val targetX = ((uiScreenWidth / 2) + 80).coerceIn(0, maxX)
+        val targetY = (uiScreenHeight / 2).coerceIn(0, maxY)
+
+        bubbleParams.x = targetX
+        bubbleParams.y = targetY
+        try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch(e: Exception){}
+
+        prefs.prefBubbleX = bubbleParams.x
+        prefs.prefBubbleY = bubbleParams.y
+        prefs.save(this)
+        saveCurrentState()
+        showToast("Bubble Reset")
+    }
 
 
 
@@ -2609,6 +2623,15 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private fun toggleScreen() { if (isScreenOff) turnScreenOn() else turnScreenOff() }
     
     private fun updateUiMetrics() { val display = displayManager?.getDisplay(currentDisplayId) ?: return; val metrics = android.util.DisplayMetrics(); display.getRealMetrics(metrics); uiScreenWidth = metrics.widthPixels; uiScreenHeight = metrics.heightPixels }
+
+    internal fun getBubbleClampBounds(): Pair<Int, Int> {
+        val scale = prefs.prefBubbleSize.coerceIn(50, 200) / 100f
+        val density = resources.displayMetrics.density
+        val bubbleSizePx = (60 * scale * density).toInt().coerceAtLeast(1)
+        val maxX = (uiScreenWidth - bubbleSizePx).coerceAtLeast(0)
+        val maxY = (uiScreenHeight - bubbleSizePx).coerceAtLeast(0)
+        return maxX to maxY
+    }
     // NOTE: createTrackpadDisplayContext moved to helper methods section as internal
     private fun addHandle(context: Context, gravity: Int, color: Int, onTouch: (View, MotionEvent) -> Boolean) { val container = FrameLayout(context); val p = FrameLayout.LayoutParams(prefs.prefHandleTouchSize, prefs.prefHandleTouchSize); p.gravity = gravity; val visual = View(context); val bg = GradientDrawable(); bg.setColor(color); bg.cornerRadius = 15f; visual.background = bg; val vp = FrameLayout.LayoutParams(prefs.prefHandleSize, prefs.prefHandleSize); vp.gravity = Gravity.CENTER; container.addView(visual, vp); handleContainers.add(container); handleVisuals.add(visual); trackpadLayout?.addView(container, p); container.setOnTouchListener { v, e -> onTouch(v, e) } }
     
@@ -3153,8 +3176,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 keyboardOverlay?.setVibrationEnabled(prefs.prefVibrate)
 
                 layoutManager?.let { lm ->
-                    lm.bubbleParams.x = prefs.prefBubbleX.coerceIn(0, (uiScreenWidth - 60).coerceAtLeast(0))
-                    lm.bubbleParams.y = prefs.prefBubbleY.coerceIn(0, (uiScreenHeight - 60).coerceAtLeast(0))
+                    val (bubbleMaxX, bubbleMaxY) = getBubbleClampBounds()
+                    lm.bubbleParams.x = prefs.prefBubbleX.coerceIn(0, bubbleMaxX)
+                    lm.bubbleParams.y = prefs.prefBubbleY.coerceIn(0, bubbleMaxY)
                     try { windowManager?.updateViewLayout(bubbleView, lm.bubbleParams) } catch (_: Exception) {}
                     lm.applyBubbleAppearance()
                 } ?: applyBubbleAppearance()

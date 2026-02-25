@@ -476,7 +476,7 @@ class DockInputMethodService : InputMethodService() {
     // DOCK POPUP MENU STATE
     // =================================================================================
     private var popupWindow: android.widget.PopupWindow? = null
-    private var prefAutoShowOverlay = false
+    private var prefAutoShowOverlay = true // Always ON - toggle removed from UI
     private var prefDockMode = false
     private var prefAutoResize = false
     private var prefResizeScale = 0 // Default 0% (Range 0-50%)
@@ -575,14 +575,7 @@ class DockInputMethodService : InputMethodService() {
         val displayId = getImeDisplayId()
         val os = dockOrientSuffix()
         val displaySuffix = "_d$displayId"
-        prefAutoShowOverlay = prefs.getBoolean(
-            "auto_show_overlay$displaySuffix$os",
-            prefs.getBoolean(
-                "auto_show_overlay$displaySuffix",
-                // Legacy fallback: orientation/global keys from older builds.
-                prefs.getBoolean("auto_show_overlay$os", prefs.getBoolean("auto_show_overlay", false))
-            )
-        )
+        // prefAutoShowOverlay is always true - no longer user-configurable
         prefDockMode = prefs.getBoolean("dock_mode_d${displayId}$os", prefs.getBoolean("dock_mode_d$displayId", prefs.getBoolean("dock_mode", false)))
         prefAutoResize = prefs.getBoolean(
             "auto_resize$displaySuffix$os",
@@ -615,8 +608,7 @@ class DockInputMethodService : InputMethodService() {
         val os = dockOrientSuffix()
         val displaySuffix = "_d$displayId"
         getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
-            .putBoolean("auto_show_overlay$displaySuffix$os", prefAutoShowOverlay)
-            .putBoolean("auto_show_overlay$displaySuffix", prefAutoShowOverlay)
+            // auto_show_overlay no longer saved - always true
             .putBoolean("dock_mode_d${displayId}$os", prefDockMode)
             .putBoolean("dock_mode_d$displayId", prefDockMode)
             .putBoolean("auto_resize$displaySuffix$os", prefAutoResize)
@@ -787,11 +779,9 @@ class DockInputMethodService : InputMethodService() {
         val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
         val popupView = inflater.inflate(R.layout.layout_dock_popup, null)
         
-        // Setup toggle visuals
-        val toggleAutoShow = popupView.findViewById<View>(R.id.toggle_auto_show)
+        // Setup toggle visuals (auto-show removed - always ON)
         val toggleDockMode = popupView.findViewById<View>(R.id.toggle_dock_mode)
         val toggleAutoResize = popupView.findViewById<View>(R.id.toggle_auto_resize)
-        val iconAutoShow = popupView.findViewById<android.widget.ImageView>(R.id.icon_auto_show)
         val iconDockMode = popupView.findViewById<android.widget.ImageView>(R.id.icon_dock_mode)
         val iconAutoResize = popupView.findViewById<android.widget.ImageView>(R.id.icon_auto_resize)
         val textAutoResize = popupView.findViewById<android.widget.TextView>(R.id.text_auto_resize)
@@ -809,10 +799,8 @@ class DockInputMethodService : InputMethodService() {
         val textKBAboveDock = popupView.findViewById<android.widget.TextView>(R.id.text_kb_above_dock)
 
         fun updateToggleVisuals() {
-            // Option 1 & 2 - always enabled
-            toggleAutoShow?.setBackgroundColor(if (prefAutoShowOverlay) 0xFF3DDC84.toInt() else 0xFF555555.toInt())
+            // Dock Mode toggle
             toggleDockMode?.setBackgroundColor(if (prefDockMode) 0xFF3DDC84.toInt() else 0xFF555555.toInt())
-            iconAutoShow?.setColorFilter(if (prefAutoShowOverlay) 0xFF3DDC84.toInt() else 0xFF888888.toInt())
             iconDockMode?.setColorFilter(if (prefDockMode) 0xFF3DDC84.toInt() else 0xFF888888.toInt())
             
             // Option 3 - Auto Resize: Only enabled when Dock Mode is ON
@@ -904,20 +892,7 @@ class DockInputMethodService : InputMethodService() {
 
 
         
-        // Option 1: Auto-show overlay
-
-        popupView.findViewById<View>(R.id.option_auto_show)?.setOnClickListener {
-            prefAutoShowOverlay = !prefAutoShowOverlay
-            saveDockPrefs()
-            updateToggleVisuals()
-            
-            val intent = Intent("DOCK_PREF_CHANGED")
-            intent.setPackage(packageName)
-            intent.putExtra("auto_show_overlay", prefAutoShowOverlay)
-            sendBroadcast(intent)
-            
-
-        }
+        // Option 1 (Auto-show overlay) removed - always ON
         
         // Option 2: Dock mode
         popupView.findViewById<View>(R.id.option_dock_mode)?.setOnClickListener {

@@ -31,18 +31,39 @@ internal class OverlayLayoutStateStore(private val service: OverlayService) {
         service.trackpadParams.width = p.getInt("W_$effectiveKey", service.trackpadParams.width)
         service.trackpadParams.height = p.getInt("H_$effectiveKey", service.trackpadParams.height)
 
-        service.prefs.prefBubbleX = when {
-            p.contains("BUBBLE_X_$effectiveKey") -> p.getInt("BUBBLE_X_$effectiveKey", service.prefs.prefBubbleX)
-            p.contains("bubble_x") -> p.getInt("bubble_x", service.prefs.prefBubbleX)
-            else -> service.prefs.prefBubbleX
+        val bubbleKey = when {
+            p.contains("BUBBLE_X_$key") && p.contains("BUBBLE_Y_$key") -> key
+            p.contains("BUBBLE_X_$legacyKey") && p.contains("BUBBLE_Y_$legacyKey") -> legacyKey
+            else -> null
         }
-        service.prefs.prefBubbleY = when {
-            p.contains("BUBBLE_Y_$effectiveKey") -> p.getInt("BUBBLE_Y_$effectiveKey", service.prefs.prefBubbleY)
-            p.contains("bubble_y") -> p.getInt("bubble_y", service.prefs.prefBubbleY)
-            else -> service.prefs.prefBubbleY
+        val bubbleSizeKey = when {
+            p.contains("BUBBLE_SIZE_$key") -> key
+            p.contains("BUBBLE_SIZE_$legacyKey") -> legacyKey
+            else -> null
+        }
+        val (bubbleMaxX, bubbleMaxY) = service.getBubbleClampBounds()
+        val legacyBubbleX = p.getInt("bubble_x", Int.MIN_VALUE)
+        val legacyBubbleY = p.getInt("bubble_y", Int.MIN_VALUE)
+        val hasUsableLegacyBubble =
+            legacyBubbleX != Int.MIN_VALUE &&
+                legacyBubbleY != Int.MIN_VALUE &&
+                legacyBubbleX in 0..bubbleMaxX &&
+                legacyBubbleY in 0..bubbleMaxY
+
+        if (bubbleKey != null) {
+            service.prefs.prefBubbleX = p.getInt("BUBBLE_X_$bubbleKey", -1).coerceIn(0, bubbleMaxX)
+            service.prefs.prefBubbleY = p.getInt("BUBBLE_Y_$bubbleKey", -1).coerceIn(0, bubbleMaxY)
+        } else if (hasUsableLegacyBubble) {
+            service.prefs.prefBubbleX = legacyBubbleX
+            service.prefs.prefBubbleY = legacyBubbleY
+        } else {
+            // No display-scoped bubble coordinates for this display/orientation.
+            // Force default-center placement instead of carrying stale values from another display.
+            service.prefs.prefBubbleX = -1
+            service.prefs.prefBubbleY = -1
         }
         service.prefs.prefBubbleSize = when {
-            p.contains("BUBBLE_SIZE_$effectiveKey") -> p.getInt("BUBBLE_SIZE_$effectiveKey", service.prefs.prefBubbleSize)
+            bubbleSizeKey != null -> p.getInt("BUBBLE_SIZE_$bubbleSizeKey", service.prefs.prefBubbleSize)
             p.contains("bubble_size") -> p.getInt("bubble_size", service.prefs.prefBubbleSize)
             else -> service.prefs.prefBubbleSize
         }.coerceIn(50, 200)
