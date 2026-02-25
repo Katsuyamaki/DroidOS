@@ -33,6 +33,7 @@ interface LauncherActionHandler {
     var queueCommandPending: CommandDef?
     var queueCommandSourceIndex: Int
     var showSlotNumbersInQueue: Boolean
+    var isLockSelectionMode: Boolean
     
     // State access - Reorder
     var reorderSelectionIndex: Int
@@ -47,6 +48,8 @@ interface LauncherActionHandler {
     fun addToSelection(app: MainActivity.AppInfo)
     fun toggleFavorite(app: MainActivity.AppInfo)
     fun refreshSearchList()
+    fun isAppLocked(app: MainActivity.AppInfo): Boolean
+    fun toggleLockForApp(app: MainActivity.AppInfo)
     
     // Layout/profile actions
     fun selectLayout(layout: LayoutOption)

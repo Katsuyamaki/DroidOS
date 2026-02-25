@@ -34,4 +34,14 @@
         android:layout_gravity="bottom|center_horizontal"
         android:background="#00FF00"
         android:visibility="gone"/>
+
+    <ImageView
+        android:id="@+id/selected_app_lock_badge"
+        android:layout_width="12dp"
+        android:layout_height="12dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="2dp"
+        android:src="@drawable/ic_lock_badge"
+        android:contentDescription="Locked"
+        android:visibility="gone"/>
 </FrameLayout>

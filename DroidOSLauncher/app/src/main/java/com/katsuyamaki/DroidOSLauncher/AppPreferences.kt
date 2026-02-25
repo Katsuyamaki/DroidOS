@@ -18,6 +18,7 @@ object AppPreferences {
     private const val KEY_TARGET_DISPLAY_INDEX = "KEY_TARGET_DISPLAY_INDEX"
     private const val KEY_IS_INSTANT_MODE = "KEY_IS_INSTANT_MODE"
     private const val KEY_LAST_QUEUE = "KEY_LAST_QUEUE"
+    private const val KEY_LOCKED_APP_IDENTIFIERS = "KEY_LOCKED_APP_IDENTIFIERS"
     private const val KEY_SHOW_SHIZUKU_WARNING = "KEY_SHOW_SHIZUKU_WARNING"
     private const val KEY_REORDER_TIMEOUT = "KEY_REORDER_TIMEOUT"
     private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
@@ -585,6 +586,17 @@ object AppPreferences {
         val str = getPrefs(context).getString(KEY_LAST_QUEUE, "") ?: ""
         if (str.isEmpty()) return emptyList()
         return str.split(",").filter { it.isNotEmpty() }
+    }
+
+    fun saveLockedAppIdentifiers(context: Context, identifiers: Set<String>) {
+        val cleaned = identifiers.filter { it.isNotBlank() }.toSet()
+        getPrefs(context).edit().putStringSet(KEY_LOCKED_APP_IDENTIFIERS, cleaned).apply()
+    }
+
+    fun getLockedAppIdentifiers(context: Context): MutableSet<String> {
+        return (getPrefs(context).getStringSet(KEY_LOCKED_APP_IDENTIFIERS, emptySet()) ?: emptySet())
+            .filter { it.isNotBlank() }
+            .toMutableSet()
     }
     
     // [FIX] Persist minimized states so UNMINIMIZE works after queue reload

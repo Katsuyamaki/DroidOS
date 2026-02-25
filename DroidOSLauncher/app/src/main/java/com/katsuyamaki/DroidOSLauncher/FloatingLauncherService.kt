@@ -86,6 +86,7 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
                         currentDisplayId = targetId
                         initWindow()
                         isExpanded = false // Reset state for new display
+                        isLockSelectionMode = false
                     }
                 }
             }
@@ -515,6 +516,8 @@ private var isSoftKeyboardSupport = false
     override var queueSelectedIndex = -1
     override var queueCommandPending: CommandDef? = null
     override var queueCommandSourceIndex = -1
+    override var isLockSelectionMode = false
+    private val lockedAppIdentifiers = mutableSetOf<String>()
     
     // OPEN_MOVE_TO / OPEN_SWAP State
     private var isOpenMoveToMode = false
@@ -1188,7 +1191,7 @@ private var isSoftKeyboardSupport = false
                 MODE_LAYOUTS -> (item is LayoutOption && item.type == LAYOUT_CUSTOM_DYNAMIC && item.isCustomSaved)
                 MODE_RESOLUTION -> (item is ResolutionOption && item.index >= 100)
                 MODE_PROFILES -> (item is ProfileOption && !item.isCurrent)
-                MODE_SEARCH -> true
+                MODE_SEARCH -> item is MainActivity.AppInfo
                 MODE_BLACKLIST -> true
                 else -> false
             }
@@ -1241,6 +1244,11 @@ private var isSoftKeyboardSupport = false
             val pos = v.adapterPosition
             if (pos != RecyclerView.NO_POSITION) { 
                 val app = selectedAppsQueue[pos]
+                if (isAppLocked(app)) {
+                    drawerView?.findViewById<RecyclerView>(R.id.selected_apps_recycler)?.adapter?.notifyItemChanged(pos)
+                    safeToast("${app.label} is locked")
+                    return
+                }
                 if (app.packageName != PACKAGE_BLANK) { 
                     val basePkg = app.getBasePackage()
                     // Record killed package to prevent re-adding as fullscreen app
@@ -1811,6 +1819,11 @@ private var isSoftKeyboardSupport = false
                         executeOpenSwap(queueSelectedIndex + 1)
                         return
                     }
+
+                    if (isLockSelectionMode && queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
+                        toggleLockForApp(selectedAppsQueue[queueSelectedIndex])
+                        return
+                    }
                     
                     // [FIX] Complete pending 2-step command (like swap) if active
                     if (queueCommandPending != null) {
@@ -1871,6 +1884,11 @@ private var isSoftKeyboardSupport = false
                     }
                     if (isOpenSwapMode && openMoveToApp != null && queueSelectedIndex >= 0) {
                         executeOpenSwap(queueSelectedIndex + 1)
+                        return
+                    }
+
+                    if (isLockSelectionMode && queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
+                        toggleLockForApp(selectedAppsQueue[queueSelectedIndex])
                         return
                     }
                     
@@ -2871,6 +2889,8 @@ private var isSoftKeyboardSupport = false
         try { if (rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() } catch (e: Exception) {}
 
         // Load preferences
+        lockedAppIdentifiers.clear()
+        lockedAppIdentifiers.addAll(AppPreferences.getLockedAppIdentifiers(this))
         loadInstalledApps(); currentFontSize = AppPreferences.getFontSize(this)
         // [DEPRECATED] killAppOnExecute = AppPreferences.getKillOnExecute(this)
         targetDisplayIndex = AppPreferences.getTargetDisplayIndex(this)
@@ -2951,6 +2971,7 @@ private var isSoftKeyboardSupport = false
                 setupDrawer()
                 updateBubbleIcon()
                 isExpanded = false
+                isLockSelectionMode = false
                 safeToast("Recalled to Display $targetDisplayId")
 
                 // [FIX] Apply layout immediately if in Instant Mode
@@ -3328,6 +3349,7 @@ private var isSoftKeyboardSupport = false
             setupDrawer()
             updateBubbleIcon()
             isExpanded = false
+            isLockSelectionMode = false
             // Retile all tiled windows to fit the new screen dimensions
             requestHeadlessRetile("orientation-change", 400L)
         } catch (e: Exception) { }
@@ -3784,13 +3806,30 @@ private var isSoftKeyboardSupport = false
                         }
                     }
                 }
-                // ENTER: Launch top result immediately
+                // ENTER: Activate top result immediately
                 if (keyCode == KeyEvent.KEYCODE_ENTER) {
                     if (displayList.isNotEmpty()) {
                         val item = displayList[0]
-                        if (item is MainActivity.AppInfo) {
-                            addToSelection(item)
-                            return@setOnKeyListener true
+                        when (item) {
+                            is MainActivity.AppInfo -> {
+                                addToSelection(item)
+                                return@setOnKeyListener true
+                            }
+                            is ActionOption -> {
+                                dismissKeyboardAndRestore()
+                                item.action()
+                                return@setOnKeyListener true
+                            }
+                            is ToggleOption -> {
+                                if (item.canToggle) {
+                                    item.isEnabled = !item.isEnabled
+                                    item.onToggle(item.isEnabled)
+                                } else {
+                                    safeToast(item.disabledNote ?: "DroidOS Toolbar Keyboard is needed for this function")
+                                }
+                                drawerView?.findViewById<RecyclerView>(R.id.rofi_recycler_view)?.adapter?.notifyDataSetChanged()
+                                return@setOnKeyListener true
+                            }
                         }
                     }
                 }
@@ -3965,6 +4004,11 @@ private var isSoftKeyboardSupport = false
                                 executeOpenSwap(queueSelectedIndex + 1)
                                 return@setOnKeyListener true
                             }
+
+                            if (isLockSelectionMode && queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
+                                toggleLockForApp(selectedAppsQueue[queueSelectedIndex])
+                                return@setOnKeyListener true
+                            }
                             
                             if (queueCommandPending != null) {
                                 // Complete 2-Step Command
@@ -3996,6 +4040,11 @@ private var isSoftKeyboardSupport = false
                             }
                             if (isOpenSwapMode && openMoveToApp != null && queueSelectedIndex >= 0) {
                                 executeOpenSwap(queueSelectedIndex + 1)
+                                return@setOnKeyListener true
+                            }
+
+                            if (isLockSelectionMode && queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
+                                toggleLockForApp(selectedAppsQueue[queueSelectedIndex])
                                 return@setOnKeyListener true
                             }
                             
@@ -4805,6 +4854,7 @@ private var isSoftKeyboardSupport = false
             try { windowManager.removeView(drawerView) } catch(e: Exception) {}
             // bubbleView?.visibility = View.VISIBLE // No need to toggle if always visible
             isExpanded = false
+            isLockSelectionMode = false
 
             // Auto-Restore Focus
             if (activePackageName != null) {
@@ -5216,6 +5266,49 @@ private var isSoftKeyboardSupport = false
     private fun testFocusUpdate() {
         safeToast("TEST_FOCUS_UPDATE CALLED")
     }
+
+    private fun lockModeActionLabel(): String {
+        return if (isLockSelectionMode) {
+            "Lock Mode: ON (Select app to lock/unlock)"
+        } else {
+            "Lock Mode: OFF"
+        }
+    }
+
+    private fun appLockKey(app: MainActivity.AppInfo): String {
+        val identifier = app.getIdentifier()
+        return if (identifier == "com.google.android.apps.bard") {
+            "com.google.android.googlequicksearchbox:gemini"
+        } else {
+            identifier
+        }
+    }
+
+    override fun isAppLocked(app: MainActivity.AppInfo): Boolean {
+        if (app.packageName == PACKAGE_BLANK) return false
+        return lockedAppIdentifiers.contains(appLockKey(app))
+    }
+
+    override fun toggleLockForApp(app: MainActivity.AppInfo) {
+        if (app.packageName == PACKAGE_BLANK) {
+            safeToast("Blank Space cannot be locked")
+            return
+        }
+
+        val key = appLockKey(app)
+        val nowLocked = if (lockedAppIdentifiers.contains(key)) {
+            lockedAppIdentifiers.remove(key)
+            false
+        } else {
+            lockedAppIdentifiers.add(key)
+            true
+        }
+
+        AppPreferences.saveLockedAppIdentifiers(this, lockedAppIdentifiers)
+        safeToast(if (nowLocked) "Locked ${app.label}" else "Unlocked ${app.label}")
+        updateAllUIs()
+        refreshSearchList()
+    }
     
     // Helper to get searchable text from any option type
     private fun getOptionSearchText(item: Any): String {
@@ -5248,6 +5341,11 @@ private var isSoftKeyboardSupport = false
         if (currentMode == MODE_SEARCH) {
             // App search mode - use allAppsList
             displayList.clear()
+            displayList.add(ActionOption(lockModeActionLabel()) {
+                isLockSelectionMode = !isLockSelectionMode
+                safeToast(if (isLockSelectionMode) "Lock mode enabled" else "Lock mode disabled")
+                refreshSearchList()
+            })
             val filtered = if (actualQuery.isEmpty()) { allAppsList } else { allAppsList.filter { it.label.contains(actualQuery, ignoreCase = true) } }
             val sorted = filtered.sortedWith(compareBy<MainActivity.AppInfo> { it.packageName != PACKAGE_BLANK }.thenByDescending { it.isFavorite }.thenBy { it.label.lowercase() })
             displayList.addAll(sorted)
@@ -5350,6 +5448,11 @@ private var isSoftKeyboardSupport = false
     override fun addToSelection(app: MainActivity.AppInfo) {
         dismissKeyboardAndRestore()
         val et = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar)
+
+        if (isLockSelectionMode) {
+            toggleLockForApp(app)
+            return
+        }
         
         // OPEN_MOVE_TO/OPEN_SWAP MODE: Intercept app selection
         if ((isOpenMoveToMode || isOpenSwapMode) && openMoveToApp == null) {
@@ -5411,6 +5514,10 @@ private var isSoftKeyboardSupport = false
         }
         
         if (existing != null) { 
+            if (isAppLocked(existing)) {
+                safeToast("${existing.label} is locked")
+                return
+            }
             // Remove from queue
             selectedAppsQueue.remove(existing)
             
@@ -5806,6 +5913,7 @@ private var isSoftKeyboardSupport = false
         
         updateBubbleIcon()
         isExpanded = false
+        isLockSelectionMode = false
         safeToast("Switched to Display $currentDisplayId (${targetDisplay.name})")
 
         // [FIX] Apply layout immediately if in Instant Mode
@@ -8117,6 +8225,10 @@ private var isSoftKeyboardSupport = false
             "KILL" -> {
                 if (index in selectedAppsQueue.indices) {
                     val app = selectedAppsQueue[index]
+                    if (isAppLocked(app)) {
+                        safeToast("${app.label} is locked")
+                        return
+                    }
                     if (app.packageName != PACKAGE_BLANK) {
                         val basePkg = app.getBasePackage()
                         // [FIX] Record killed package to prevent re-adding as fullscreen app

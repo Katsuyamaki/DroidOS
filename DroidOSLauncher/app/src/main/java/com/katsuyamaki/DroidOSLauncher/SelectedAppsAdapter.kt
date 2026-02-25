@@ -21,6 +21,7 @@ class SelectedAppsAdapter(
         val underline: View = v.findViewById(R.id.focus_underline)
         val frame: View = itemView
         val slotBadge: TextView = v.findViewById(R.id.slot_number_badge)
+        val lockBadge: ImageView = v.findViewById(R.id.selected_app_lock_badge)
     }
     
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -72,6 +73,12 @@ class SelectedAppsAdapter(
             }
             holder.icon.alpha = if (app.isMinimized) 0.4f else 1.0f 
         }
+
+        holder.lockBadge.visibility = if (app.packageName != PACKAGE_BLANK && handler.isAppLocked(app)) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
         
         holder.itemView.setOnClickListener { 
             try { 
@@ -82,6 +89,8 @@ class SelectedAppsAdapter(
                     } else { 
                         handler.swapReorderItem(position) 
                     } 
+                } else if (handler.isLockSelectionMode) {
+                    handler.toggleLockForApp(app)
                 } else { 
                     if (app.packageName != PACKAGE_BLANK) { 
                         val intent = Intent().apply {
