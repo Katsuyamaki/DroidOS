@@ -588,7 +588,7 @@ private var isSoftKeyboardSupport = false
     private val isInstantMode = true // [DEPRECATED] Execute mode removed - always instant mode
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
-    private var allowExternalBroadcastCommands = true
+    private var allowExternalBroadcastCommands = false
     
     private var isVirtualDisplayActive = false
     override var currentDrawerHeightPercent = 70

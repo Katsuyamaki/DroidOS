@@ -621,7 +621,7 @@ object AppPreferences {
     }
 
     fun getAllowExternalBroadcastCommands(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_ALLOW_EXTERNAL_BROADCAST_CMDS, true)
+        return getPrefs(context).getBoolean(KEY_ALLOW_EXTERNAL_BROADCAST_CMDS, false)
     }
     
     // --- REORDER PREFERENCES ---
