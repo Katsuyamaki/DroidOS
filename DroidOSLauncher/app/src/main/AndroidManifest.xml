@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="com.android.vending.BILLING" />
     <uses-permission android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND" />
 
     <queries>
@@ -50,6 +52,11 @@
         <activity android:name=".IconPickerActivity" 
                   android:theme="@android:style/Theme.Translucent.NoTitleBar"
                   android:exported="false" />
+
+        <activity
+            android:name=".FeatureUnlockPurchaseActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
             android:name=".FloatingLauncherService"

@@ -589,7 +589,9 @@ private var isSoftKeyboardSupport = false
     private var showShizukuWarning = true 
     private var useAltScreenOff = false
     private var allowExternalBroadcastCommands = false
-    
+    private var externalBroadcastAccessUnlocked = false
+    private var githubClaimExchangeInProgress = false
+
     private var isVirtualDisplayActive = false
     override var currentDrawerHeightPercent = 70
     override var currentDrawerWidthPercent = 90
@@ -624,8 +626,170 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+    private fun refreshUnlockedFeatureState() {
+        if (BuildConfig.USE_GITHUB_AUTH && AppPreferences.isGithubAuthorizationTokenExpired(this)) {
+            AppPreferences.setGithubAuthorizationToken(this, null)
+        }
 
+        externalBroadcastAccessUnlocked = when {
+            BuildConfig.IS_INTERNAL_TESTING_BINARY -> true
+            BuildConfig.USE_PLAY_BILLING -> FeatureUnlockCatalog.isFeatureUnlocked(
+                this,
+                FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS
+            )
+            BuildConfig.USE_GITHUB_AUTH -> AppPreferences.hasValidGithubAuthorizationToken(this)
+            else -> false
+        }
 
+        // Security baseline: locked feature must force external broadcasts OFF.
+        if (!externalBroadcastAccessUnlocked) {
+            allowExternalBroadcastCommands = false
+            AppPreferences.setAllowExternalBroadcastCommands(this, false)
+        }
+    }
+
+    private fun openFeatureUnlockPurchase(featureId: String) {
+        if (!BuildConfig.USE_PLAY_BILLING) {
+            safeToast("Google Play purchase flow is unavailable in this store build")
+            return
+        }
+
+        try {
+            val intent = Intent(this, FeatureUnlockPurchaseActivity::class.java)
+            intent.putExtra(FeatureUnlockPurchaseActivity.EXTRA_FEATURE_ID, featureId)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            safeToast("Unable to launch purchase flow")
+        }
+    }
+
+    private fun openGithubAuthorizationPortal() {
+        val url = BuildConfig.AUTH_PORTAL_URL
+        if (url.isBlank()) {
+            safeToast("Authorization portal URL not configured for this build")
+            return
+        }
+
+        try {
+            val targetUri = GithubAuthorizationManager.buildClaimPortalUri(this, url) ?: Uri.parse(url)
+            val intent = Intent(Intent.ACTION_VIEW, targetUri)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            safeToast("Unable to open authorization portal")
+        }
+    }
+
+    private fun exchangeGithubClaimCodeFromClipboard() {
+        if (!BuildConfig.USE_GITHUB_AUTH) {
+            safeToast("GitHub authorization is unavailable in this store build")
+            return
+        }
+
+        val exchangeUrl = BuildConfig.AUTH_EXCHANGE_URL
+        if (exchangeUrl.isBlank()) {
+            safeToast("Auth exchange endpoint is not configured for this build")
+            return
+        }
+
+        if (githubClaimExchangeInProgress) {
+            safeToast("Claim code exchange is already running")
+            return
+        }
+
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            val claimCode = clipboard?.primaryClip
+                ?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.coerceToText(this)
+                ?.toString()
+                ?.trim()
+                .orEmpty()
+
+            if (!GithubAuthorizationManager.isPlausibleClaimCode(claimCode)) {
+                safeToast("Clipboard does not contain a valid claim code")
+                return
+            }
+
+            githubClaimExchangeInProgress = true
+            safeToast("Exchanging claim code...")
+
+            Thread {
+                val result = GithubAuthorizationManager.exchangeClaimCode(this, exchangeUrl, claimCode)
+                uiHandler.post {
+                    githubClaimExchangeInProgress = false
+                    when (result) {
+                        is GithubAuthorizationManager.ExchangeResult.Success -> {
+                            AppPreferences.setGithubAuthorizationToken(
+                                this,
+                                result.accessToken,
+                                result.tokenId,
+                                result.expiresAtEpochSeconds
+                            )
+                            refreshUnlockedFeatureState()
+                            safeToast("Authorization token activated")
+                            if (isExpanded && currentMode == MODE_KEYBINDS) {
+                                switchMode(MODE_KEYBINDS)
+                            }
+                        }
+
+                        is GithubAuthorizationManager.ExchangeResult.Failure -> {
+                            safeToast(result.message)
+                        }
+                    }
+                }
+            }.start()
+        } catch (e: Exception) {
+            githubClaimExchangeInProgress = false
+            safeToast("Unable to read claim code from clipboard")
+        }
+    }
+
+    private fun importGithubAccessTokenFromClipboardTemporarily() {
+        if (!BuildConfig.USE_GITHUB_AUTH || !BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
+            safeToast("Temporary manual token import is disabled for this build")
+            return
+        }
+
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            val token = clipboard?.primaryClip
+                ?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.coerceToText(this)
+                ?.toString()
+                ?.trim()
+                .orEmpty()
+
+            val isValid = token.length in 16..4096 && token.none { it.isWhitespace() }
+            if (!isValid) {
+                safeToast("Clipboard does not contain a valid access token")
+                return
+            }
+
+            AppPreferences.setGithubAuthorizationToken(
+                this,
+                token,
+                tokenId = "manual_import",
+                expiresAtEpochSeconds = null
+            )
+            refreshUnlockedFeatureState()
+            safeToast("Manual access token applied")
+            if (isExpanded && currentMode == MODE_KEYBINDS) {
+                switchMode(MODE_KEYBINDS)
+            }
+        } catch (e: Exception) {
+            safeToast("Unable to read access token from clipboard")
+        }
+    }
+
+    private fun clearGithubAuthorizationToken() {
+        AppPreferences.setGithubAuthorizationToken(this, null)
+        refreshUnlockedFeatureState()
+        safeToast("Authorization token cleared")
+    }
 
     private fun isDockImeToolbarVisible(): Boolean {
         // Manual bubble session never has DockIME toolbar; keep persisted state untouched.
@@ -859,6 +1023,11 @@ private var isSoftKeyboardSupport = false
                 val enable = intent?.getBooleanExtra("ENABLE", true) ?: true
                 setKeepScreenOn(enable)
                 safeToast(if (enable) "Screen: Always On" else "Screen: Normal Timeout")
+            } else if (action == FeatureUnlockCatalog.ACTION_FEATURE_UNLOCKS_UPDATED) {
+                refreshUnlockedFeatureState()
+                if (isExpanded && currentMode == MODE_KEYBINDS) {
+                    switchMode(MODE_KEYBINDS)
+                }
             } else if (action == "com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER") {
                 // [FIX] Copy intent extras to prevent recycling after onReceive returns
                 intent?.let {
@@ -2651,6 +2820,7 @@ private var isSoftKeyboardSupport = false
             addAction("com.katsuyamaki.DroidOSLauncher.IME_VISIBILITY") // Auto-adjust margin
             addAction("com.katsuyamaki.DroidOSLauncher.SET_AUTO_ADJUST_MARGIN") // Sync from DockIME
             addAction("com.katsuyamaki.DroidOSLauncher.FULLSCREEN_APP_OPENING") // Auto-minimize tiled apps
+            addAction(FeatureUnlockCatalog.ACTION_FEATURE_UNLOCKS_UPDATED)
 
         }
 
@@ -2671,6 +2841,7 @@ private var isSoftKeyboardSupport = false
         showShizukuWarning = AppPreferences.getShowShizukuWarning(this)
         useAltScreenOff = AppPreferences.getUseAltScreenOff(this); isReorderDragEnabled = AppPreferences.getReorderDrag(this)
         allowExternalBroadcastCommands = AppPreferences.getAllowExternalBroadcastCommands(this)
+        refreshUnlockedFeatureState()
         isReorderTapEnabled = AppPreferences.getReorderTap(this); autoResizeEnabled = AppPreferences.getAutoResizeKeyboard(this)
         // bubbleSizePercent, currentDrawerHeightPercent, currentDrawerWidthPercent now loaded per-config in loadDisplaySettings()
         val startupDisplayId = targetDisplayIndex
@@ -7003,14 +7174,145 @@ private var isSoftKeyboardSupport = false
             }
             MODE_KEYBINDS -> {
                 searchBar.hint = "Configure Hotkeys"
+                refreshUnlockedFeatureState()
 
-                displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
-                    allowExternalBroadcastCommands = it
-                    AppPreferences.setAllowExternalBroadcastCommands(this, it)
-                    switchMode(MODE_KEYBINDS) // Refresh to show/hide warning
-                })
-                if (allowExternalBroadcastCommands) {
-                    displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
+                when {
+                    BuildConfig.IS_INTERNAL_TESTING_BINARY -> {
+                        displayList.add(LegendOption("INTERNAL TESTING BINARY: feature locks are bypassed for local validation."))
+
+                        displayList.add(ActionOption("Google Play: Open Unlock Flow") {
+                            openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
+                        })
+
+                        displayList.add(ActionOption("GitHub: Open Authorization Request Page") {
+                            openGithubAuthorizationPortal()
+                        })
+                        displayList.add(ActionOption("GitHub: Exchange Claim Code (Clipboard)") {
+                            exchangeGithubClaimCodeFromClipboard()
+                        })
+                        if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
+                            displayList.add(ActionOption("GitHub: Temporary Apply Access Token (Clipboard)") {
+                                importGithubAccessTokenFromClipboardTemporarily()
+                            })
+                        }
+                        displayList.add(ActionOption("GitHub: Clear Authorization Token") {
+                            clearGithubAuthorizationToken()
+                            switchMode(MODE_KEYBINDS)
+                        })
+
+                        displayList.add(LegendOption("Samsung: Billing flow remains in samsung binary; wire Samsung IAP there when ready."))
+
+                        displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
+                            allowExternalBroadcastCommands = it
+                            AppPreferences.setAllowExternalBroadcastCommands(this, it)
+                            switchMode(MODE_KEYBINDS)
+                        })
+                        if (allowExternalBroadcastCommands) {
+                            displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
+                        }
+                    }
+
+                    BuildConfig.USE_PLAY_BILLING -> {
+                        val unlockLabel = if (externalBroadcastAccessUnlocked) {
+                            "Manage Feature Unlocks (Google Play)"
+                        } else {
+                            "Unlock Features (Google Play)"
+                        }
+                        displayList.add(ActionOption(unlockLabel) {
+                            openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
+                        })
+
+                        if (externalBroadcastAccessUnlocked) {
+                            displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
+                                allowExternalBroadcastCommands = it
+                                AppPreferences.setAllowExternalBroadcastCommands(this, it)
+                                switchMode(MODE_KEYBINDS) // Refresh to show/hide warning
+                            })
+                            if (allowExternalBroadcastCommands) {
+                                displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
+                            }
+                        } else {
+                            displayList.add(
+                                ToggleOption(
+                                    "Allow External App Broadcast Access",
+                                    false,
+                                    canToggle = false,
+                                    disabledNote = "Requires Google Play purchase. Tap 'Unlock Features (Google Play)'.",
+                                    onToggle = { _ -> }
+                                )
+                            )
+                            displayList.add(LegendOption("NOTE: Locked by default for security. Unlock with Google Play purchase."))
+                        }
+                    }
+
+                    BuildConfig.USE_GITHUB_AUTH -> {
+                        displayList.add(ActionOption("Open Authorization Request Page") {
+                            openGithubAuthorizationPortal()
+                        })
+                        displayList.add(ActionOption("Exchange Claim Code (Clipboard)") {
+                            exchangeGithubClaimCodeFromClipboard()
+                        })
+                        if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
+                            displayList.add(ActionOption("Temporary: Apply Access Token (Clipboard)") {
+                                importGithubAccessTokenFromClipboardTemporarily()
+                            })
+                        }
+
+                        if (externalBroadcastAccessUnlocked) {
+                            displayList.add(ActionOption("Clear Authorization Token") {
+                                clearGithubAuthorizationToken()
+                                switchMode(MODE_KEYBINDS)
+                            })
+
+                            displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
+                                allowExternalBroadcastCommands = it
+                                AppPreferences.setAllowExternalBroadcastCommands(this, it)
+                                switchMode(MODE_KEYBINDS)
+                            })
+                            if (allowExternalBroadcastCommands) {
+                                displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
+                            }
+                        } else {
+                            val disabledReason = when {
+                                BuildConfig.AUTH_EXCHANGE_URL.isBlank() && BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT -> {
+                                    "Auth API endpoint missing. Use temporary access-token import from clipboard."
+                                }
+                                BuildConfig.AUTH_EXCHANGE_URL.isBlank() -> {
+                                    "GitHub build missing auth API endpoint. Set GITHUB_AUTH_EXCHANGE_URL before release."
+                                }
+                                else -> {
+                                    "GitHub build: request claim at https://katsuyamaki.github.io/, then exchange claim code from clipboard."
+                                }
+                            }
+
+                            displayList.add(
+                                ToggleOption(
+                                    "Allow External App Broadcast Access",
+                                    false,
+                                    canToggle = false,
+                                    disabledNote = disabledReason,
+                                    onToggle = { _ -> }
+                                )
+                            )
+                            displayList.add(LegendOption("NOTE: Claim and token issuance stay on backend API; app only exchanges claim codes."))
+                            if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
+                                displayList.add(LegendOption("NOTE: Temporary manual access-token import is enabled in this GitHub build."))
+                            }
+                        }
+                    }
+
+                    else -> {
+                        displayList.add(
+                            ToggleOption(
+                                "Allow External App Broadcast Access",
+                                false,
+                                canToggle = false,
+                                disabledNote = "This store build requires store-specific unlock integration.",
+                                onToggle = { _ -> }
+                            )
+                        )
+                        displayList.add(LegendOption("NOTE: Samsung/Galaxy Store unlock flow can be wired to Samsung IAP next."))
+                    }
                 }
 
                 displayList.add(ActionOption("How to use: Set modifier + key. Press to trigger.") {})

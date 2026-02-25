@@ -23,6 +23,8 @@ object AppPreferences {
     private const val KEY_USE_ALT_SCREEN_OFF = "KEY_USE_ALT_SCREEN_OFF" // New
     private const val KEY_AUTO_RESTART_TRACKPAD = "KEY_AUTO_RESTART_TRACKPAD"
     private const val KEY_ALLOW_EXTERNAL_BROADCAST_CMDS = "KEY_ALLOW_EXTERNAL_BROADCAST_CMDS"
+    private const val KEY_GITHUB_AUTH_TOKEN_ID = "KEY_GITHUB_AUTH_TOKEN_ID"
+    private const val KEY_GITHUB_AUTH_EXPIRY_EPOCH = "KEY_GITHUB_AUTH_EXPIRY_EPOCH"
 
     // === BLACKLIST STORAGE - START ===
     // Stores blacklisted apps using "packageName:activityName" format
@@ -622,6 +624,78 @@ object AppPreferences {
 
     fun getAllowExternalBroadcastCommands(context: Context): Boolean {
         return getPrefs(context).getBoolean(KEY_ALLOW_EXTERNAL_BROADCAST_CMDS, false)
+    }
+
+    fun setGithubAuthorizationToken(
+        context: Context,
+        token: String?,
+        tokenId: String? = null,
+        expiresAtEpochSeconds: Long? = null
+    ) {
+        val cleanToken = token?.trim().orEmpty()
+        val editor = getPrefs(context).edit()
+
+        if (cleanToken.isEmpty()) {
+            SecureTokenStore.clearGithubAuthorizationToken(context)
+            editor.remove(KEY_GITHUB_AUTH_TOKEN_ID)
+            editor.remove(KEY_GITHUB_AUTH_EXPIRY_EPOCH)
+            editor.apply()
+            return
+        }
+
+        SecureTokenStore.setGithubAuthorizationToken(context, cleanToken)
+
+        val cleanTokenId = tokenId?.trim().orEmpty()
+        if (cleanTokenId.isEmpty()) {
+            editor.remove(KEY_GITHUB_AUTH_TOKEN_ID)
+        } else {
+            editor.putString(KEY_GITHUB_AUTH_TOKEN_ID, cleanTokenId)
+        }
+
+        if (expiresAtEpochSeconds == null || expiresAtEpochSeconds <= 0L) {
+            editor.remove(KEY_GITHUB_AUTH_EXPIRY_EPOCH)
+        } else {
+            editor.putLong(KEY_GITHUB_AUTH_EXPIRY_EPOCH, expiresAtEpochSeconds)
+        }
+
+        editor.apply()
+    }
+
+    fun getGithubAuthorizationToken(context: Context): String {
+        return SecureTokenStore.getGithubAuthorizationToken(context)
+    }
+
+    fun getGithubAuthorizationTokenId(context: Context): String? {
+        return getPrefs(context).getString(KEY_GITHUB_AUTH_TOKEN_ID, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    fun getGithubAuthorizationTokenExpiryEpochSeconds(context: Context): Long? {
+        val prefs = getPrefs(context)
+        if (!prefs.contains(KEY_GITHUB_AUTH_EXPIRY_EPOCH)) return null
+
+        val value = prefs.getLong(KEY_GITHUB_AUTH_EXPIRY_EPOCH, -1L)
+        return if (value > 0L) value else null
+    }
+
+    fun hasValidGithubAuthorizationToken(
+        context: Context,
+        nowEpochSeconds: Long = System.currentTimeMillis() / 1000L
+    ): Boolean {
+        val token = getGithubAuthorizationToken(context)
+        if (token.isEmpty()) return false
+
+        val expiry = getGithubAuthorizationTokenExpiryEpochSeconds(context) ?: return true
+        return expiry > nowEpochSeconds
+    }
+
+    fun isGithubAuthorizationTokenExpired(
+        context: Context,
+        nowEpochSeconds: Long = System.currentTimeMillis() / 1000L
+    ): Boolean {
+        val expiry = getGithubAuthorizationTokenExpiryEpochSeconds(context) ?: return false
+        return expiry <= nowEpochSeconds
     }
     
     // --- REORDER PREFERENCES ---
