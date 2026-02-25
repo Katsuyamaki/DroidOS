@@ -425,8 +425,10 @@ class DockInputMethodService : InputMethodService() {
         val shouldDeferTransientHide =
             !explicitHide &&
             prefAutoShowOverlay &&
-            prefDockMode &&
-            elapsedSinceShow <= imeTransientWindowHideGuardMs
+            elapsedSinceShow <= imeTransientWindowHideGuardMs &&
+            // Floating mode keeps legacy guard (active input required).
+            // Dock mode keeps relaxed guard for transient InputConnection drops.
+            (prefDockMode || hasActiveInputConnection)
 
         if (shouldDeferTransientHide) {
             android.util.Log.i(
