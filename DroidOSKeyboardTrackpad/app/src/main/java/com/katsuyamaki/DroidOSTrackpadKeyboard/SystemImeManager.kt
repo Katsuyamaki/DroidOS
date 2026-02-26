@@ -24,6 +24,9 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
     @Volatile private var lastInternalSetReason: String = ""
     @Volatile private var lastInternalSetTarget: String = ""
     @Volatile private var lastInternalSetAt: Long = 0L
+    @Volatile private var lastShowModeTraceSignature: String = ""
+    @Volatile private var lastShowModeTraceAt: Long = 0L
+    private val showModeTraceThrottleMs = 15000L
 
     private fun log(msg: String) {
         android.util.Log.d(TAG, msg)
@@ -71,6 +74,33 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
         return true
     }
 
+    private fun pickBridgeImeId(
+        enabledImes: List<String>,
+        installedImes: List<String>,
+        targetImeId: String
+    ): String? {
+        fun isBridgeCandidate(id: String): Boolean {
+            if (id == targetImeId) return false
+            if (isNullIme(id)) return false
+            if (isVoiceIme(id)) return false
+            return true
+        }
+
+        fun pickFrom(pool: List<String>): String? {
+            pool.firstOrNull {
+                it.contains("com.google.android.inputmethod.latin") && isBridgeCandidate(it)
+            }?.let { return it }
+
+            pool.firstOrNull {
+                isSamsungIme(it) && isBridgeCandidate(it)
+            }?.let { return it }
+
+            return pool.firstOrNull { isBridgeCandidate(it) }
+        }
+
+        return pickFrom(enabledImes) ?: pickFrom(installedImes)
+    }
+
     private fun isExplicitPickerPending(prefs: android.content.SharedPreferences, now: Long): Boolean {
         return prefs.getLong("ime_explicit_pick_until", 0L) > now
     }
@@ -88,6 +118,31 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
             lastTraceAt = now
         }
         android.util.Log.i(IME_TRACE_TAG, msg)
+    }
+
+    private fun currentShowModeLabel(): String {
+        if (Build.VERSION.SDK_INT < 24) return "NA"
+        return try {
+            when (service.softKeyboardController.showMode) {
+                AccessibilityService.SHOW_MODE_AUTO -> "AUTO"
+                AccessibilityService.SHOW_MODE_HIDDEN -> "HIDDEN"
+                else -> service.softKeyboardController.showMode.toString()
+            }
+        } catch (e: Exception) {
+            "ERR:${e.javaClass.simpleName}"
+        }
+    }
+
+    private fun traceShowModeState(reason: String, extra: String = "") {
+        val mode = currentShowModeLabel()
+        val now = System.currentTimeMillis()
+        val signature = "$reason|$mode|${service.currentDisplayId}|$extra"
+        synchronized(this) {
+            if (signature == lastShowModeTraceSignature && now - lastShowModeTraceAt < showModeTraceThrottleMs) return
+            lastShowModeTraceSignature = signature
+            lastShowModeTraceAt = now
+        }
+        traceIme("SHOW_MODE_STATE", "reason=$reason mode=$mode $extra")
     }
 
     private fun markImeSet(reason: String, targetIme: String) {
@@ -583,6 +638,7 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
         // Rely on standard Android API to suppress keyboard
         if (Build.VERSION.SDK_INT >= 24) {
             try {
+                traceShowModeState("cover_block_before")
                 val currentMode = service.softKeyboardController.showMode
                 log("triggerAggressiveBlocking: current showMode=$currentMode")
                 
@@ -590,6 +646,7 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                     service.softKeyboardController.showMode = AccessibilityService.SHOW_MODE_HIDDEN
                     log("triggerAggressiveBlocking: set showMode to HIDDEN")
                 }
+                traceShowModeState("cover_block_after")
             } catch (e: Exception) {
                 log("triggerAggressiveBlocking: ERROR - ${e.message}")
             }
@@ -627,7 +684,17 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 log("forceRefreshIme: current IME = $currentIme")
                 shellService.runCommand("settings put secure show_ime_with_hard_keyboard 1")
                 traceIme("SHOW_IME_WITH_HARD", "value=1 reason=force_refresh")
-                
+                traceShowModeState("force_refresh_start", "current=${shortIme(currentIme)}")
+
+                handler.post {
+                    if (Build.VERSION.SDK_INT >= 24) {
+                        try {
+                            service.softKeyboardController.showMode = AccessibilityService.SHOW_MODE_AUTO
+                            traceShowModeState("force_refresh_set_auto", "current=${shortIme(currentIme)}")
+                        } catch (_: Exception) {}
+                    }
+                }
+
                 // Get user's preferred IME
                 val sharedPrefs = service.getSharedPreferences("TrackpadPrefs", android.content.Context.MODE_PRIVATE)
                 val userPrefRaw = sharedPrefs.getString("user_preferred_ime", null)
@@ -635,6 +702,15 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 val userPref = normalizeDockIme(userPrefRaw)
                 val preCoverIme = normalizeDockIme(preCoverImeRaw)
                 log("forceRefreshIme: userPref = $userPref")
+
+                val installedImes = (shellService.runCommand("ime list -a -s") ?: "")
+                    .lines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                val enabledImes = (shellService.runCommand("ime list -s") ?: "")
+                    .lines()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
 
                 var targetIme: String? = null
                 if (isRestoreCandidateIme(userPref)) {
@@ -661,6 +737,20 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                     "current=${shortIme(currentIme)} saved=${shortIme(userPref)} precover=${shortIme(preCoverIme)} target=${shortIme(targetIme)}"
                 )
 
+                if (isDockIme(targetIme)) {
+                    val bridgeIme = pickBridgeImeId(enabledImes, installedImes, targetIme)
+                    if (!bridgeIme.isNullOrEmpty()) {
+                        traceIme("FORCE_BRIDGE", "bridge=${shortIme(bridgeIme)} target=${shortIme(targetIme)}")
+                        shellService.runCommand("ime enable $bridgeIme")
+                        markImeSet("forceRefreshIme:bridge", bridgeIme)
+                        shellService.runCommand("settings put secure default_input_method $bridgeIme")
+                        shellService.runCommand("ime set $bridgeIme")
+                        Thread.sleep(180)
+                    } else {
+                        traceIme("FORCE_BRIDGE_SKIP", "reason=no_bridge target=${shortIme(targetIme)}")
+                    }
+                }
+
                 // Step 1: Disable NullInputMethodService to force system to switch
                 log("forceRefreshIme: disabling NullIME...")
                 shellService.runCommand("ime disable $nullIme")
@@ -674,33 +764,69 @@ class SystemImeManager(private val service: OverlayService, private val shellSer
                 log("forceRefreshIme: settings put result = $r1")
                 val r2 = shellService.runCommand("ime set $targetIme")
                 log("forceRefreshIme: ime set result = $r2")
-                Thread.sleep(200)
+                Thread.sleep(220)
                 
                 // Step 3: Re-enable NullInputMethodService for future cover screen use
                 log("forceRefreshIme: re-enabling NullIME...")
                 shellService.runCommand("ime enable $nullIme")
-                
-                // Step 4: Re-enable Samsung KB package (was disabled on cover screen)
-                log("forceRefreshIme: re-enabling Samsung KB package")
-                shellService.runCommand("pm enable com.samsung.android.honeyboard")
-                Thread.sleep(200)
-                
-                // Also ime enable
-                val allImes = shellService.runCommand("ime list -a -s") ?: ""
-                val samsungId = allImes.lines().find { 
+
+                val samsungId = (installedImes + enabledImes).firstOrNull { 
                     it.contains("honeyboard") || it.contains("com.sec.android.inputmethod") 
                 }?.trim()
+
+                // Verify BEFORE re-enabling Samsung IME path to avoid immediate takeover race.
+                var finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                log("forceRefreshIme: VERIFY final IME = $finalIme")
+
+                var success = if (isDockIme(targetIme)) {
+                    finalIme == targetIme || isDockIme(finalIme)
+                } else {
+                    finalIme == targetIme || finalIme.contains(targetIme.substringAfterLast("/"))
+                }
+                traceIme("VERIFY_FORCE_REFRESH", "target=${shortIme(targetIme)} final=${shortIme(finalIme)} ok=$success")
+
+                // If Samsung still won during transition, temporarily disable it and retry once.
+                if (!success && isDockIme(targetIme) && !samsungId.isNullOrEmpty()) {
+                    traceIme(
+                        "FORCE_REFRESH_RETRY",
+                        "reason=verify_failed final=${shortIme(finalIme)} samsung=${shortIme(samsungId)}"
+                    )
+                    shellService.runCommand("ime disable $samsungId")
+                    Thread.sleep(120)
+                    shellService.runCommand("ime enable $targetIme")
+                    markImeSet("forceRefreshIme:retry", targetIme)
+                    shellService.runCommand("settings put secure default_input_method $targetIme")
+                    shellService.runCommand("ime set $targetIme")
+                    Thread.sleep(220)
+
+                    finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                    success = finalIme == targetIme || isDockIme(finalIme)
+                    traceIme("VERIFY_FORCE_REFRESH_RETRY", "target=${shortIme(targetIme)} final=${shortIme(finalIme)} ok=$success")
+                }
+
+                // Step 4: Re-enable Samsung package/IME after restore attempt.
+                log("forceRefreshIme: re-enabling Samsung KB package")
+                shellService.runCommand("pm enable com.samsung.android.honeyboard")
+                Thread.sleep(120)
+
                 if (!samsungId.isNullOrEmpty()) {
                     log("forceRefreshIme: ime enable Samsung KB: $samsungId")
                     shellService.runCommand("ime enable $samsungId")
-                }
-                
-                // Verify
-                val finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
-                log("forceRefreshIme: VERIFY final IME = $finalIme")
 
-                val success = finalIme == targetIme || finalIme.contains("DockInputMethodService") || finalIme.contains(targetIme.substringAfterLast("/"))
-                traceIme("VERIFY_FORCE_REFRESH", "target=${shortIme(targetIme)} final=${shortIme(finalIme)} ok=$success")
+                    // Reassert Dock once after Samsung re-enable to close takeover race.
+                    if (isDockIme(targetIme)) {
+                        markImeSet("forceRefreshIme:post_samsung_reassert", targetIme)
+                        shellService.runCommand("settings put secure default_input_method $targetIme")
+                        shellService.runCommand("ime set $targetIme")
+                        Thread.sleep(120)
+
+                        finalIme = shellService.runCommand("settings get secure default_input_method")?.trim() ?: ""
+                        success = finalIme == targetIme || isDockIme(finalIme)
+                        traceIme("VERIFY_FORCE_REFRESH_POST_SAMSUNG", "target=${shortIme(targetIme)} final=${shortIme(finalIme)} ok=$success")
+                    }
+                }
+
+                traceShowModeState("force_refresh_verify", "target=${shortIme(targetIme)} final=${shortIme(finalIme)} ok=$success")
                 handler.post { 
                     service.showToast(if (success) "KB Ready" else "KB: $finalIme")
                 }

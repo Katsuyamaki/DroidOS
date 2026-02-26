@@ -8,10 +8,12 @@ import android.content.IntentFilter
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 
@@ -29,6 +31,8 @@ class DockInputMethodService : InputMethodService() {
         private const val BROADCAST_ACTION_TEXT = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_TEXT"
         private const val BROADCAST_ACTION_KEY = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_KEY"
         private const val BROADCAST_ACTION_DELETE = "com.katsuyamaki.DroidOSTrackpadKeyboard.INJECT_DELETE"
+        private const val ACTION_HIDE_DOCK_IME = "com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME"
+        private const val ACTION_SHOW_DOCK_IME = "com.katsuyamaki.DroidOSTrackpadKeyboard.SHOW_DOCK_IME"
         private const val EXTRA_REQUEST_ID = "requestId"
     }
 
@@ -68,6 +72,13 @@ class DockInputMethodService : InputMethodService() {
     private var lastImeDropSignature: String? = null
     private var lastImeDropLogElapsed = 0L
     private val imeDropLogThrottleMs = 3000L
+    private var lastDockStateSignature: String? = null
+    private var lastDockStateLogElapsed = 0L
+    private val dockStateLogThrottleMs = 15000L
+    private var lastInputRescueElapsed = 0L
+    private val inputRescueCooldownMs = 900L
+    private val inputRescueWatchdogDelayMs = 280L
+    private var pendingInputRescueWatchdog: Runnable? = null
 
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -129,6 +140,112 @@ class DockInputMethodService : InputMethodService() {
             lastImeDropSignature = signature
             lastImeDropLogElapsed = now
         }
+    }
+
+    private fun shortIme(ime: String?): String {
+        if (ime.isNullOrBlank()) return "none"
+        return ime.substringAfterLast("/")
+    }
+
+    private fun readDefaultImeShort(): String {
+        return try {
+            shortIme(Settings.Secure.getString(contentResolver, "default_input_method"))
+        } catch (_: Exception) {
+            "err"
+        }
+    }
+
+    private fun traceDockState(event: String, details: String = "") {
+        val now = SystemClock.elapsedRealtime()
+        val defaultIme = readDefaultImeShort()
+        val signature = "$event|$imeWindowVisible|$imeVisibilitySessionId|$launcherTiledActive|$defaultIme|$details"
+        if (signature == lastDockStateSignature && now - lastDockStateLogElapsed < dockStateLogThrottleMs) {
+            return
+        }
+        lastDockStateSignature = signature
+        lastDockStateLogElapsed = now
+
+        android.util.Log.i(
+            IME_TRACE_TAG,
+            "event=DOCK_$event d=${getImeDisplayId()} vis=$imeWindowVisible session=$imeVisibilitySessionId " +
+                "default=$defaultIme tiled=$launcherTiledActive dockMode=$prefDockMode autoResize=$prefAutoResize " +
+                "showAbove=$prefShowKBAboveDock $details"
+        )
+    }
+
+    private fun isTextLikeEditor(attribute: EditorInfo?): Boolean {
+        if (attribute == null) return true
+        return attribute.inputType != EditorInfo.TYPE_NULL
+    }
+
+    private fun maybeRescueDockVisibility(reason: String, attribute: EditorInfo?, restarting: Boolean) {
+        if (isInputViewShown || imeWindowVisible) {
+            return
+        }
+
+        val nowWall = System.currentTimeMillis()
+        if (explicitHideRequestedRecently(nowWall)) {
+            traceDockState("RESCUE_SKIP", "reason=$reason cause=explicit_hide")
+            return
+        }
+
+        val inputType = attribute?.inputType ?: -1
+        if (!isTextLikeEditor(attribute)) {
+            traceDockState("RESCUE_SKIP", "reason=$reason cause=non_text inputType=$inputType")
+            return
+        }
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed - lastInputRescueElapsed < inputRescueCooldownMs) {
+            return
+        }
+        lastInputRescueElapsed = nowElapsed
+
+        traceDockState("RESCUE_REQ", "reason=$reason inputType=$inputType restart=$restarting")
+
+        imeVisibilityHandler.post {
+            try {
+                requestShowSelf(0)
+            } catch (_: Exception) {
+            }
+        }
+
+        pendingInputRescueWatchdog?.let { imeVisibilityHandler.removeCallbacks(it) }
+        val expectedSession = imeVisibilitySessionId
+        val watchdog = Runnable {
+            pendingInputRescueWatchdog = null
+            if (isInputViewShown || imeWindowVisible) {
+                traceDockState("RESCUE_OK", "reason=$reason inputType=$inputType")
+            } else {
+                traceDockState(
+                    "RESCUE_STILL_HIDDEN",
+                    "reason=$reason inputType=$inputType restart=$restarting session=$expectedSession"
+                )
+            }
+        }
+        pendingInputRescueWatchdog = watchdog
+        imeVisibilityHandler.postDelayed(watchdog, inputRescueWatchdogDelayMs)
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        val inputType = attribute?.inputType ?: -1
+        val icActive = currentInputConnection != null
+        traceDockState("START_INPUT", "restart=$restarting inputType=$inputType icActive=$icActive shown=$isInputViewShown")
+        maybeRescueDockVisibility("onStartInput", attribute, restarting)
+    }
+
+    override fun onStartInputView(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(attribute, restarting)
+        val inputType = attribute?.inputType ?: -1
+        val icActive = currentInputConnection != null
+        traceDockState("START_INPUT_VIEW", "restart=$restarting inputType=$inputType icActive=$icActive shown=$isInputViewShown")
+        maybeRescueDockVisibility("onStartInputView", attribute, restarting)
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
+        traceDockState("FINISH_INPUT_VIEW", "finishing=$finishingInput shown=$isInputViewShown")
     }
 
     // Receiver to handle text injection from the Overlay Trackpad
@@ -227,6 +344,7 @@ class DockInputMethodService : InputMethodService() {
 
     private fun requestExplicitDockHide() {
         lastExplicitHideRequestAt = System.currentTimeMillis()
+        traceDockState("EXPLICIT_HIDE_REQ")
         requestHideSelf(0)
     }
 
@@ -244,6 +362,12 @@ class DockInputMethodService : InputMethodService() {
         }
 
         lastConfirmedHideSessionId = sessionId
+        traceDockState("HIDE_CONFIRMED", "reason=$reason")
+
+        val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
+        dockPrefs.edit()
+            .putBoolean("dock_ime_visible", false)
+            .apply()
 
         sendImeVisibilityBroadcast(
             visible = false,
@@ -360,6 +484,7 @@ class DockInputMethodService : InputMethodService() {
         // Record show time for bootstrap fallback window
         windowShownTime = now
         staleTiledHandler.removeCallbacks(staleTiledCheck)
+        traceDockState("WINDOW_SHOWN", "freshTiled=$hasFreshTiledBroadcast")
 
 
         // Mirror manual smooth flow: open overlay keyboard first via the same bubble path,
@@ -431,9 +556,9 @@ class DockInputMethodService : InputMethodService() {
             (prefDockMode || hasActiveInputConnection)
 
         if (shouldDeferTransientHide) {
-            android.util.Log.i(
-                IME_TRACE_TAG,
-                "event=DEFER_HIDE reason=transient_window elapsedMs=$elapsedSinceShow icActive=$hasActiveInputConnection"
+            traceDockState(
+                "HIDE_DEFER",
+                "reason=transient_window elapsedMs=$elapsedSinceShow explicit=$explicitHide icActive=$hasActiveInputConnection"
             )
             imeVisibilityHandler.post {
                 try {
@@ -445,6 +570,7 @@ class DockInputMethodService : InputMethodService() {
         }
 
         imeWindowVisible = false
+        traceDockState("WINDOW_HIDDEN", "elapsedMs=$elapsedSinceShow explicit=$explicitHide")
 
         pendingInitialImeShowRunnable?.let {
             imeVisibilityHandler.removeCallbacks(it)
@@ -460,10 +586,12 @@ class DockInputMethodService : InputMethodService() {
             val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
             dockView = inflater.inflate(R.layout.layout_input_dock, null)
             setupDockListeners(dockView!!)
+            traceDockState("CREATE_INPUT_VIEW_OK")
             return dockView!!
 
 
         } catch (e: Exception) {
+            traceDockState("CREATE_INPUT_VIEW_ERR", "err=${e.javaClass.simpleName}")
             // Safety Fallback: Return 0-size view if XML fails (prevents OverlayService crash)
             return View(this).apply { 
                 layoutParams = android.view.ViewGroup.LayoutParams(0, 0)
@@ -510,12 +638,18 @@ class DockInputMethodService : InputMethodService() {
     }
 
 
-    // [FIX] Receiver to hide DockIME when overlay KB is manually hidden
+    // [FIX] Receiver to hide/show DockIME when overlay keyboard state changes
     private val hideDockReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME") {
-
-                requestExplicitDockHide()
+            when (intent?.action) {
+                ACTION_HIDE_DOCK_IME -> {
+                    requestExplicitDockHide()
+                }
+                ACTION_SHOW_DOCK_IME -> {
+                    val reason = intent.getStringExtra("reason") ?: "broadcast"
+                    traceDockState("SHOW_REQ", "reason=$reason")
+                    maybeRescueDockVisibility("broadcast:$reason", null, restarting = false)
+                }
             }
         }
     }
@@ -530,7 +664,10 @@ class DockInputMethodService : InputMethodService() {
             addAction(ACTION_MARGIN_CHANGED)
         }
         val tiledFilter = IntentFilter("com.katsuyamaki.DroidOSTrackpadKeyboard.TILED_STATE")
-        val hideFilter = IntentFilter("com.katsuyamaki.DroidOSTrackpadKeyboard.HIDE_DOCK_IME")
+        val hideFilter = IntentFilter().apply {
+            addAction(ACTION_HIDE_DOCK_IME)
+            addAction(ACTION_SHOW_DOCK_IME)
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(inputReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(marginReceiver, IntentFilter(ACTION_MARGIN_CHANGED), Context.RECEIVER_EXPORTED)
@@ -543,12 +680,21 @@ class DockInputMethodService : InputMethodService() {
             registerReceiver(hideDockReceiver, hideFilter)
         }
         android.util.Log.d("DockIME", "onCreate: receivers registered OK")
+        traceDockState("SERVICE_CREATE")
     }
 
     override fun onDestroy() {
         android.util.Log.d("DockIME", "onDestroy: service stopping")
+        traceDockState("SERVICE_DESTROY")
+        getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("dock_ime_visible", false)
+            .apply()
         super.onDestroy()
         staleTiledHandler.removeCallbacks(staleTiledCheck)
+        pendingInputRescueWatchdog?.let {
+            imeVisibilityHandler.removeCallbacks(it)
+            pendingInputRescueWatchdog = null
+        }
         try { unregisterReceiver(inputReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(marginReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(tiledStateReceiver) } catch (e: Exception) {}

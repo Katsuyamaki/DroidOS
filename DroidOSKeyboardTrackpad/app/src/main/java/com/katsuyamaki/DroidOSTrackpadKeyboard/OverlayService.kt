@@ -26,6 +26,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
+import android.provider.Settings
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.Display
@@ -188,6 +189,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var dockNavBarHeight: Int = -1
     private var lastDockMarginPercent = -1 // Track whether DockIME toolbar is currently showing
     private var manualKeyScaleBeforeMargin = -1 // Save manual key scale before margin adjustment
+    private var lastDockShowNudgeElapsed = 0L
+    private val dockShowNudgeCooldownMs = 1200L
+    private var lastDockMainRecoverElapsed = 0L
+    private val dockMainRecoverCooldownMs = 5000L
 
 
     var isCustomKeyboardVisible = true // Changed: Default ON
@@ -241,6 +246,61 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     // END BLOCK: ensureCoverKeyboardEnforced
     // =================================================================================
+
+    private fun maybeNudgeDockImeOnMainEditableFocus(event: AccessibilityEvent) {
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_FOCUSED) return
+        if (currentDisplayId == 1 || !prefs.prefBlockSoftKeyboard) return
+
+        val source = event.source
+        val isEditable = source?.isEditable == true
+        source?.recycle()
+        if (!isEditable) return
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed - lastDockShowNudgeElapsed < dockShowNudgeCooldownMs) {
+            return
+        }
+        lastDockShowNudgeElapsed = nowElapsed
+
+        val currentIme = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+        val shortIme = currentIme.substringAfterLast("/")
+        val isDockIme = currentIme.contains("DockInputMethodService")
+        val isSamsungIme =
+            currentIme.contains("honeyboard") ||
+                currentIme.contains("com.sec.android.inputmethod") ||
+                shortIme.contains("HoneyBoardService")
+
+        android.util.Log.i(
+            "IME_TRACE",
+            "event=DOCK_MAIN_EDITABLE_FOCUS d=$currentDisplayId dock=$isDockIme samsung=$isSamsungIme ime=$shortIme"
+        )
+
+        if (!isDockIme) {
+            if (isSamsungIme) {
+                val canRecover = nowElapsed - lastDockMainRecoverElapsed >= dockMainRecoverCooldownMs
+                if (canRecover) {
+                    lastDockMainRecoverElapsed = nowElapsed
+                    android.util.Log.i(
+                        "IME_TRACE",
+                        "event=DOCK_MAIN_IME_DRIFT d=$currentDisplayId ime=$shortIme action=force_refresh"
+                    )
+                    imeManager?.forceRefreshIme()
+                } else {
+                    android.util.Log.i(
+                        "IME_TRACE",
+                        "event=DOCK_MAIN_IME_DRIFT_SKIP d=$currentDisplayId ime=$shortIme reason=cooldown"
+                    )
+                }
+            }
+            return
+        }
+
+        val showIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SHOW_DOCK_IME")
+        showIntent.setPackage(packageName)
+        showIntent.putExtra("reason", "main_editable_focus")
+        sendBroadcast(showIntent)
+        android.util.Log.i("IME_TRACE", "event=DOCK_SHOW_REQUEST d=$currentDisplayId source=main_editable_focus")
+    }
 
     // =================================================================================
     // FUNCTION: onAccessibilityEvent
@@ -312,6 +372,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // Skip during active typing to prevent overlay flashing with DroidOS IME
             val isActivelyTyping = System.currentTimeMillis() - lastInjectionTime < 300
             android.util.Log.d("KBBlocker", "Event=$eventTypeName displayId=$currentDisplayId prefBlock=${prefs.prefBlockSoftKeyboard} voiceActive=$isVoiceActive typing=$isActivelyTyping")
+
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                maybeNudgeDockImeOnMainEditableFocus(event)
+            }
             
             if (currentDisplayId == 1 && prefs.prefBlockSoftKeyboard && !isVoiceActive && !isActivelyTyping) {
                  // CASE A: Cover Screen + Blocking Enabled -> Force Null Keyboard
