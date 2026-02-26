@@ -256,6 +256,9 @@ class MirrorModeManager(
     fun onTouch(x: Float, y: Float, action: Int): Boolean {
         if (!isActive()) return false
 
+        // Keep mapping accurate if dock mode resized/repositioned the physical keyboard.
+        updateMirrorSyncDimensions()
+
         val scaleX = if (physicalKbWidth > 0) mirrorKbWidth / physicalKbWidth else 1f
         val scaleY = if (physicalKbHeight > 0) mirrorKbHeight / physicalKbHeight else 1f
         val mirrorX = x * scaleX

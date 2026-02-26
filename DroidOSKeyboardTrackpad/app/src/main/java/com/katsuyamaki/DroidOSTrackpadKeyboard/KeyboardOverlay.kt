@@ -295,10 +295,11 @@ class KeyboardOverlay(
             keyboardParams?.y = y
             keyboardParams?.width = width
             keyboardParams?.height = height
-            try { 
+            try {
                 windowManager.updateViewLayout(keyboardContainer, keyboardParams)
                 saveKeyboardPosition()
                 saveKeyboardSize()
+                onSizeChanged?.invoke()
             } catch (e: Exception) {}
         } else {
             // Even if hidden, save the new bounds so they apply on next show
@@ -322,28 +323,29 @@ class KeyboardOverlay(
     fun setWindowBoundsWithScale(x: Int, y: Int, width: Int, height: Int) {
         val density = context.resources.displayMetrics.density
         val baseHeightPx = 300f * density
-        
+
         // Calculate scale from target height (keys should fit the window perfectly)
         val targetScale = (height.toFloat() / baseHeightPx).coerceIn(0.3f, 1.5f)
-        
+
         // Update internal scale and key view
         internalScale = targetScale
         keyboardView?.setScale(targetScale)
-        
+
         // Update window bounds
         keyboardWidth = width
         keyboardHeight = height
-        
+
         if (isVisible && keyboardParams != null) {
             keyboardParams?.x = x
             keyboardParams?.y = y
             keyboardParams?.width = width
             keyboardParams?.height = height
-            try { 
+            try {
                 windowManager.updateViewLayout(keyboardContainer, keyboardParams)
                 saveKeyboardPosition()
                 saveKeyboardSize()
                 saveKeyboardScale() // Save scale with size to keep them in sync
+                onSizeChanged?.invoke()
             } catch (e: Exception) {}
         } else {
             // Save bounds and scale even if hidden
@@ -358,7 +360,7 @@ class KeyboardOverlay(
                 .putInt("keyboard_key_scale_d${currentDisplayId}$os", targetScaleInt)
                 .apply()
         }
-        
+
         logKeyboardDiag(
             "setWindowBoundsWithScale",
             "target=${width}x${height}@(${x},${y}) targetScale=$targetScale visible=$isVisible"
@@ -397,7 +399,7 @@ class KeyboardOverlay(
     fun updateSize(w: Int, h: Int) {
         keyboardWidth = w
         keyboardHeight = h
-        
+
         if (keyboardContainer == null || keyboardParams == null) {
             saveKeyboardSize()
             return
@@ -407,6 +409,7 @@ class KeyboardOverlay(
         try {
             windowManager.updateViewLayout(keyboardContainer, keyboardParams)
             saveKeyboardSize()
+            onSizeChanged?.invoke()
         } catch (e: Exception) {  }
     }
     

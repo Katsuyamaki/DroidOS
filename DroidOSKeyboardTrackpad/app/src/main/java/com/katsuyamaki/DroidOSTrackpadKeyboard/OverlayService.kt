@@ -3103,15 +3103,18 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val settings = p.getString("SETTINGS_$effectiveKey", null)
         var keyboardUpdated = false
 
-        // If no saved profile for this orientation, apply landscape defaults
+        // If no saved profile for this orientation, apply landscape defaults.
+        // Virtual mirror starts with dock OFF for new users; non-mirror keeps legacy ON default.
         if (settings == null && uiScreenWidth > uiScreenHeight) {
             val dockPrefs = getSharedPreferences("DockIMEPrefs", Context.MODE_PRIVATE)
             val displaySuffix = "_d$currentDisplayId"
+            val defaultDockMode = !prefs.prefVirtualMirrorMode
+            val defaultAutoResize = !prefs.prefVirtualMirrorMode
             dockPrefs.edit()
-                .putBoolean("dock_mode_d${currentDisplayId}_L", true)
-                .putBoolean("dock_mode_d$currentDisplayId", true)
-                .putBoolean("auto_resize${displaySuffix}_L", true)
-                .putBoolean("auto_resize$displaySuffix", true)
+                .putBoolean("dock_mode_d${currentDisplayId}_L", defaultDockMode)
+                .putBoolean("dock_mode_d$currentDisplayId", defaultDockMode)
+                .putBoolean("auto_resize${displaySuffix}_L", defaultAutoResize)
+                .putBoolean("auto_resize$displaySuffix", defaultAutoResize)
                 .apply()
         }
 
