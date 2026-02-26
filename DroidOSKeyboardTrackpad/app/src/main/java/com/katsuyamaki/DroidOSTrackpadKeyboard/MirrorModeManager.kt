@@ -225,11 +225,11 @@ class MirrorModeManager(
         val metrics = android.util.DisplayMetrics()
         display.getRealMetrics(metrics)
 
-        val mirrorWidth = (metrics.widthPixels * 0.95f).toInt()
+        val mirrorWidth = (metrics.widthPixels * 0.33f).toInt().coerceIn(160, metrics.widthPixels)
 
         mirrorKeyboardParams?.x = 0
         mirrorKeyboardParams?.y = 0
-        mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        mirrorKeyboardParams?.gravity = Gravity.CENTER
         mirrorKeyboardParams?.width = mirrorWidth
         mirrorKeyboardParams?.height = WindowManager.LayoutParams.WRAP_CONTENT
 
@@ -495,7 +495,8 @@ class MirrorModeManager(
             display.getRealMetrics(metrics)
 
             val savedWidth = service.prefs.prefMirrorWidth
-            val mirrorWidth = if (savedWidth != -1 && savedWidth > 0) savedWidth else (metrics.widthPixels * 0.95f).toInt()
+            val defaultMirrorWidth = (metrics.widthPixels * 0.33f).toInt().coerceIn(160, metrics.widthPixels)
+            val mirrorWidth = if (savedWidth != -1 && savedWidth > 0) savedWidth else defaultMirrorWidth
 
             mirrorKbWidth = mirrorWidth.toFloat()
             mirrorKbHeight = 400f
@@ -517,7 +518,7 @@ class MirrorModeManager(
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
-            mirrorKeyboardParams?.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            mirrorKeyboardParams?.gravity = Gravity.CENTER
             mirrorKeyboardParams?.y = 0
 
             val savedX = service.prefs.prefMirrorX
