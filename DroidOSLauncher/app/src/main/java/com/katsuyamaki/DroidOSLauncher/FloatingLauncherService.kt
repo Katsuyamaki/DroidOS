@@ -5341,11 +5341,13 @@ private var isSoftKeyboardSupport = false
         if (currentMode == MODE_SEARCH) {
             // App search mode - use allAppsList
             displayList.clear()
-            displayList.add(ActionOption(lockModeActionLabel()) {
-                isLockSelectionMode = !isLockSelectionMode
-                safeToast(if (isLockSelectionMode) "Lock mode enabled" else "Lock mode disabled")
-                refreshSearchList()
-            })
+            if (actualQuery.isEmpty()) {
+                displayList.add(ActionOption(lockModeActionLabel()) {
+                    isLockSelectionMode = !isLockSelectionMode
+                    safeToast(if (isLockSelectionMode) "Lock mode enabled" else "Lock mode disabled")
+                    refreshSearchList()
+                })
+            }
             val filtered = if (actualQuery.isEmpty()) { allAppsList } else { allAppsList.filter { it.label.contains(actualQuery, ignoreCase = true) } }
             val sorted = filtered.sortedWith(compareBy<MainActivity.AppInfo> { it.packageName != PACKAGE_BLANK }.thenByDescending { it.isFavorite }.thenBy { it.label.lowercase() })
             displayList.addAll(sorted)

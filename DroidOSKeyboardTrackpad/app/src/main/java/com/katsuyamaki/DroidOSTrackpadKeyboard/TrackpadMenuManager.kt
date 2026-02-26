@@ -373,7 +373,9 @@ class TrackpadMenuManager(
             TrackpadMenuAdapter.Type.TOGGLE,
             if(p.prefVirtualMirrorMode) 1 else 0
         ) { _ ->
-            service.toggleVirtualMirrorMode()
+            val sourceDisplayHint = drawerView?.display?.displayId ?: -1
+            val sourceDisplayId = service.resolveLikelyActivePhysicalDisplayId(sourceDisplayHint)
+            service.toggleVirtualMirrorMode(sourceDisplayId)
             hide()  // Close menu since display context may change
         })
 

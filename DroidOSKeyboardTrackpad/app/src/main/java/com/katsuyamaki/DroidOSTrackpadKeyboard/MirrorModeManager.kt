@@ -388,6 +388,7 @@ class MirrorModeManager(
     private fun enterMirrorMode() {
 
 
+        service.alignUiToMirrorToggleDisplayHint()
         service.storePreMirrorState()
 
         val displays = displayManager?.displays ?: emptyArray()

@@ -60,6 +60,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var pendingDisplayId = -1
     // Track last time we injected text to distinguish our events from user touches
     private var lastInjectionTime = 0L
+    private var lastObservedPhysicalDisplayId = -1
+    private var lastObservedPhysicalDisplayTimeMs = 0L
 
 
     // === RECEIVER & ACTIONS - START ===
@@ -317,6 +319,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+
+        if (event.displayId == Display.DEFAULT_DISPLAY || event.displayId == 1) {
+            lastObservedPhysicalDisplayId = event.displayId
+            lastObservedPhysicalDisplayTimeMs = SystemClock.elapsedRealtime()
+        }
         
         // [EFFICIENCY] IMMEDIATE FILTER
         // Block high-frequency noise immediately
@@ -1171,8 +1178,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         val finalTarget = when {
             pendingDisplayId >= 0 -> pendingDisplayId
-            globalTarget >= 0 -> globalTarget
-            else -> currentDisplayId
+            globalTarget == Display.DEFAULT_DISPLAY || globalTarget == 1 -> resolveLikelyActivePhysicalDisplayId(globalTarget)
+            else -> resolveLikelyActivePhysicalDisplayId()
         }
         
         // =================================================================================
@@ -1203,6 +1210,16 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         
         // Build UI
         setupUI(finalTarget)
+
+        handler.postDelayed({
+            if (!prefs.prefVirtualMirrorMode) {
+                val resolvedDisplay = resolveLikelyActivePhysicalDisplayId()
+                if ((resolvedDisplay == Display.DEFAULT_DISPLAY || resolvedDisplay == 1) && resolvedDisplay != currentDisplayId) {
+                    saveCurrentState()
+                    setupUI(resolvedDisplay)
+                }
+            }
+        }, 700)
         
         // [FIX] Ensure bubble icon status is updated
         updateBubbleStatus()
@@ -1222,7 +1239,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try { createNotification() } catch(e: Exception){  }
         
         if (intent != null) {
-            val dId = intent.getIntExtra("displayId", -999)
+            val dId = when {
+                intent.hasExtra("displayId") -> intent.getIntExtra("displayId", -999)
+                intent.hasExtra("DISPLAY_ID") -> intent.getIntExtra("DISPLAY_ID", -999)
+                else -> -999
+            }
             if (dId != -999) {
                 handler.post { Toast.makeText(this, "Service Started on D:$dId", Toast.LENGTH_SHORT).show() }
             }
@@ -1233,8 +1254,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
             // [FIX] Combined Startup Logic
             if (intent != null) {
-                val dId = intent.getIntExtra("displayId", -1)
-                
+                val dId = when {
+                    intent.hasExtra("displayId") -> intent.getIntExtra("displayId", -1)
+                    intent.hasExtra("DISPLAY_ID") -> intent.getIntExtra("DISPLAY_ID", -1)
+                    else -> -1
+                }
+
                 if (dId != -1) {
                     if (isAccessibilityReady) {
                         // Safe to launch immediately
@@ -1253,13 +1278,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             val action = intent?.action
             val isForceStart = intent?.getBooleanExtra("force_start", false) == true
             val startupTarget = if (isForceStart) {
-                try {
-                    android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", Display.DEFAULT_DISPLAY)
+                val forcedTarget = try {
+                    android.provider.Settings.Global.getInt(contentResolver, "droidos_target_display", -1)
                 } catch (e: Exception) {
-                    Display.DEFAULT_DISPLAY
+                    -1
                 }
+                resolveLikelyActivePhysicalDisplayId(forcedTarget)
             } else {
-                Display.DEFAULT_DISPLAY
+                resolveLikelyActivePhysicalDisplayId()
             }
             fun matches(suffix: String): Boolean = action?.endsWith(suffix) == true
             
@@ -3559,7 +3585,48 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         return mirrorManager?.isInOrientationMode() ?: false
     }
 
+    private fun resolvePhysicalDisplayFromWindows(): Int {
+        if (Build.VERSION.SDK_INT < 30) return -1
+        return try {
+            val focused = windows.firstOrNull {
+                (it.displayId == Display.DEFAULT_DISPLAY || it.displayId == 1) && (it.isFocused || it.isActive)
+            }
+            if (focused != null) {
+                focused.displayId
+            } else {
+                windows.firstOrNull { it.displayId == Display.DEFAULT_DISPLAY || it.displayId == 1 }?.displayId ?: -1
+            }
+        } catch (e: Exception) {
+            -1
+        }
+    }
 
+    internal fun resolveLikelyActivePhysicalDisplayId(preferredDisplayId: Int = -1): Int {
+        val d0 = displayManager?.getDisplay(Display.DEFAULT_DISPLAY)
+        val d1 = displayManager?.getDisplay(1)
+        val isD0On = d0?.state == Display.STATE_ON
+        val isD1On = d1?.state == Display.STATE_ON
+
+        val windowDisplay = resolvePhysicalDisplayFromWindows()
+        if (windowDisplay == Display.DEFAULT_DISPLAY || windowDisplay == 1) return windowDisplay
+
+        val isRecentObserved = SystemClock.elapsedRealtime() - lastObservedPhysicalDisplayTimeMs <= 5000L
+        if (isRecentObserved && (lastObservedPhysicalDisplayId == Display.DEFAULT_DISPLAY || lastObservedPhysicalDisplayId == 1)) {
+            return lastObservedPhysicalDisplayId
+        }
+
+        if (preferredDisplayId == Display.DEFAULT_DISPLAY && isD0On) return Display.DEFAULT_DISPLAY
+        if (preferredDisplayId == 1 && isD1On) return 1
+
+        return when {
+            isD1On && !isD0On -> 1
+            isD0On && !isD1On -> Display.DEFAULT_DISPLAY
+            currentDisplayId == Display.DEFAULT_DISPLAY || currentDisplayId == 1 -> currentDisplayId
+            d0 != null -> Display.DEFAULT_DISPLAY
+            d1 != null -> 1
+            else -> Display.DEFAULT_DISPLAY
+        }
+    }
 
 
     // =================================================================================
@@ -3572,7 +3639,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // =================================================================================
 
 
-    fun toggleVirtualMirrorMode() {
+    fun toggleVirtualMirrorMode(sourceDisplayId: Int = -1) {
+        val resolvedSourceDisplayId = resolveLikelyActivePhysicalDisplayId(sourceDisplayId)
+        mirrorToggleDisplayHint = if (!prefs.prefVirtualMirrorMode) resolvedSourceDisplayId else -1
         mirrorManager?.toggle()
     }
 
@@ -3620,6 +3689,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal var preMirrorTrackpadVisible = false
     internal var preMirrorKeyboardVisible = false
     internal var preMirrorTargetDisplayId = 0
+    private var mirrorToggleDisplayHint = -1
 
     internal fun storePreMirrorState() {
         preMirrorTrackpadVisible = isTrackpadVisible
@@ -3630,6 +3700,24 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal fun restorePreMirrorVisibility() {
         if (isTrackpadVisible != preMirrorTrackpadVisible) toggleTrackpad()
         if (isCustomKeyboardVisible != preMirrorKeyboardVisible) toggleCustomKeyboard(suppressAutomation = true)
+    }
+
+    internal fun consumeMirrorToggleDisplayHint(): Int {
+        val hint = mirrorToggleDisplayHint
+        mirrorToggleDisplayHint = -1
+        return hint
+    }
+
+    internal fun alignUiToMirrorToggleDisplayHint() {
+        val hint = consumeMirrorToggleDisplayHint()
+        if (hint != Display.DEFAULT_DISPLAY && hint != 1) return
+
+        val targetDisplay = displayManager?.getDisplay(hint) ?: return
+        if (targetDisplay.state != Display.STATE_ON) return
+        if (hint == currentDisplayId) return
+
+        saveCurrentState()
+        setupUI(hint)
     }
 
     internal fun switchToRemoteDisplay(displayId: Int) {
