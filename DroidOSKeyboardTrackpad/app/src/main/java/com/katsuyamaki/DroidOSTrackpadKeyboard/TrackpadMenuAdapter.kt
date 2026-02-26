@@ -1,8 +1,11 @@
 package com.katsuyamaki.DroidOSTrackpadKeyboard
 
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -16,6 +19,44 @@ import androidx.recyclerview.widget.RecyclerView
 
 class TrackpadMenuAdapter(private val items: List<MenuItem>) : 
     RecyclerView.Adapter<TrackpadMenuAdapter.Holder>() {
+
+    private val dpadRepeatHandler = Handler(Looper.getMainLooper())
+    private val activeDpadRepeats = mutableMapOf<View, Runnable>()
+
+    private val dpadInitialRepeatDelayMs = 260L
+    private val dpadRepeatIntervalMs = 70L
+
+    private fun stopDpadRepeat(button: View) {
+        activeDpadRepeats.remove(button)?.let { dpadRepeatHandler.removeCallbacks(it) }
+    }
+
+    private fun bindDpadRepeat(button: Button, command: String, action: ((Any) -> Unit)?) {
+        stopDpadRepeat(button)
+        button.setOnClickListener(null)
+        button.setOnLongClickListener { true }
+        button.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    action?.invoke(command)
+                    val repeater = object : Runnable {
+                        override fun run() {
+                            action?.invoke(command)
+                            dpadRepeatHandler.postDelayed(this, dpadRepeatIntervalMs)
+                        }
+                    }
+                    activeDpadRepeats[button] = repeater
+                    dpadRepeatHandler.postDelayed(repeater, dpadInitialRepeatDelayMs)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    stopDpadRepeat(button)
+                    v.performClick()
+                    true
+                }
+                else -> true
+            }
+        }
+    }
 
     data class MenuItem(
         val title: CharSequence,
@@ -90,6 +131,27 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
         // Reset click listener
         holder.itemView.setOnClickListener(null)
 
+        // Reset D-pad listeners/state because RecyclerView reuses holders across item types.
+        stopDpadRepeat(holder.btnUp)
+        stopDpadRepeat(holder.btnDown)
+        stopDpadRepeat(holder.btnLeft)
+        stopDpadRepeat(holder.btnRight)
+        holder.btnUp.setOnTouchListener(null)
+        holder.btnDown.setOnTouchListener(null)
+        holder.btnLeft.setOnTouchListener(null)
+        holder.btnRight.setOnTouchListener(null)
+        holder.btnCenter.setOnTouchListener(null)
+        holder.btnUp.setOnClickListener(null)
+        holder.btnDown.setOnClickListener(null)
+        holder.btnLeft.setOnClickListener(null)
+        holder.btnRight.setOnClickListener(null)
+        holder.btnCenter.setOnClickListener(null)
+        holder.btnUp.setOnLongClickListener(null)
+        holder.btnDown.setOnLongClickListener(null)
+        holder.btnLeft.setOnLongClickListener(null)
+        holder.btnRight.setOnLongClickListener(null)
+        holder.btnCenter.setOnLongClickListener(null)
+
         when (item.type) {
             Type.ACTION -> {
                 holder.actionIcon.visibility = View.GONE
@@ -123,10 +185,12 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
             }
             Type.DPAD -> {
                 holder.dpadGrid.visibility = View.VISIBLE
-                holder.btnUp.setOnClickListener { item.action?.invoke("UP") }
-                holder.btnDown.setOnClickListener { item.action?.invoke("DOWN") }
-                holder.btnLeft.setOnClickListener { item.action?.invoke("LEFT") }
-                holder.btnRight.setOnClickListener { item.action?.invoke("RIGHT") }
+                bindDpadRepeat(holder.btnUp, "UP", item.action)
+                bindDpadRepeat(holder.btnDown, "DOWN", item.action)
+                bindDpadRepeat(holder.btnLeft, "LEFT", item.action)
+                bindDpadRepeat(holder.btnRight, "RIGHT", item.action)
+                holder.btnCenter.setOnTouchListener(null)
+                holder.btnCenter.setOnLongClickListener(null)
                 holder.btnCenter.setOnClickListener { item.action?.invoke("CENTER") }
             }
             Type.INFO -> {
@@ -156,6 +220,20 @@ class TrackpadMenuAdapter(private val items: List<MenuItem>) :
                 // Optional: Add top margin if possible via params, or just rely on list order
             }
         }
+    }
+
+    override fun onViewRecycled(holder: Holder) {
+        super.onViewRecycled(holder)
+        stopDpadRepeat(holder.btnUp)
+        stopDpadRepeat(holder.btnDown)
+        stopDpadRepeat(holder.btnLeft)
+        stopDpadRepeat(holder.btnRight)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        dpadRepeatHandler.removeCallbacksAndMessages(null)
+        activeDpadRepeats.clear()
     }
 
     override fun getItemCount(): Int = items.size
