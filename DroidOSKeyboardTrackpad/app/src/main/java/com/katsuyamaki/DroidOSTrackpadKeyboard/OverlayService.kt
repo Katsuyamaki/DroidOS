@@ -194,6 +194,14 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private var lastDockMainRecoverElapsed = 0L
     private val dockMainRecoverCooldownMs = 5000L
 
+    // BT capture touch forwarding state (virtual mirror mode)
+    private enum class ForwardTouchTarget {
+        BUBBLE,
+        KEYBOARD,
+        TRACKPAD
+    }
+    private var activeForwardTouchTarget: ForwardTouchTarget? = null
+    private var activeForwardPointerId: Int = -1
 
     var isCustomKeyboardVisible = true // Changed: Default ON
     var isScreenOff = false
@@ -3400,7 +3408,83 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // HELPER: Forward Touch to Sibling Windows
     // Used by BT Mouse Capture Overlay to let finger touches reach Trackpad/Keyboard
     // =================================================================================
+    private fun clearActiveForwardTouchTarget() {
+        activeForwardTouchTarget = null
+        activeForwardPointerId = -1
+    }
+
+    private fun isPointInsideView(rawX: Float, rawY: Float, view: View): Boolean {
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val x = loc[0].toFloat()
+        val y = loc[1].toFloat()
+        return rawX >= x && rawX <= x + view.width && rawY >= y && rawY <= y + view.height
+    }
+
+    private fun dispatchForwardTouchToView(targetView: View, event: MotionEvent): Boolean {
+        if (!targetView.isAttachedToWindow || targetView.visibility != View.VISIBLE) return false
+        val loc = IntArray(2)
+        targetView.getLocationOnScreen(loc)
+        val x = loc[0].toFloat()
+        val y = loc[1].toFloat()
+
+        event.offsetLocation(-x, -y)
+        val handled = targetView.dispatchTouchEvent(event)
+        event.offsetLocation(x, y)
+        return handled
+    }
+
+    private fun dispatchToActiveForwardTarget(event: MotionEvent): Boolean {
+        return when (activeForwardTouchTarget) {
+            ForwardTouchTarget.BUBBLE -> {
+                val bView = bubbleView
+                if (bView != null) dispatchForwardTouchToView(bView, event) else false
+            }
+            ForwardTouchTarget.KEYBOARD -> {
+                val kbContainer = keyboardOverlay?.getContainerView()
+                if (isCustomKeyboardVisible && kbContainer != null && keyboardOverlay?.isShowing() == true) {
+                    dispatchForwardTouchToView(kbContainer, event)
+                } else {
+                    false
+                }
+            }
+            ForwardTouchTarget.TRACKPAD -> {
+                val tpView = trackpadLayout
+                if (isTrackpadVisible && tpView != null) {
+                    dispatchForwardTouchToView(tpView, event)
+                } else {
+                    false
+                }
+            }
+            null -> false
+        }
+    }
+
     internal fun forwardTouchToSiblings(event: MotionEvent): Boolean {
+        val action = event.actionMasked
+
+        if (action == MotionEvent.ACTION_DOWN) {
+            activeForwardPointerId = event.getPointerId(event.actionIndex)
+            activeForwardTouchTarget = null
+        }
+
+        // Keep drag/resize gestures sticky to the initial target so they don't drop mid-hold.
+        val activeTarget = activeForwardTouchTarget
+        if (activeTarget != null) {
+            val handledActive = dispatchToActiveForwardTarget(event)
+            val shouldEndGesture = action == MotionEvent.ACTION_UP ||
+                action == MotionEvent.ACTION_CANCEL ||
+                (action == MotionEvent.ACTION_POINTER_UP &&
+                    event.getPointerId(event.actionIndex) == activeForwardPointerId)
+
+            if (shouldEndGesture || !handledActive) {
+                clearActiveForwardTouchTarget()
+            }
+            if (handledActive) {
+                return true
+            }
+        }
+
         var handled = false
         val rawX = event.rawX
         val rawY = event.rawY
@@ -3412,51 +3496,39 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         // 2. Try Bubble (High Priority - floats above KB/Trackpad)
         if (!handled && bubbleView != null && bubbleView?.isAttachedToWindow == true) {
-             val bView = bubbleView!!
-             val loc = IntArray(2)
-             bView.getLocationOnScreen(loc)
-             val x = loc[0].toFloat()
-             val y = loc[1].toFloat()
-             
-             if (rawX >= x && rawX <= x + bView.width && rawY >= y && rawY <= y + bView.height) {
-                 event.offsetLocation(-x, -y)
-                 handled = bView.dispatchTouchEvent(event)
-                 event.offsetLocation(x, y) // Restore
-             }
+            val bView = bubbleView!!
+            if (isPointInsideView(rawX, rawY, bView)) {
+                handled = dispatchForwardTouchToView(bView, event)
+                if (handled && action == MotionEvent.ACTION_DOWN) {
+                    activeForwardTouchTarget = ForwardTouchTarget.BUBBLE
+                }
+            }
         }
 
         // 3. Try Keyboard
         if (!handled && isCustomKeyboardVisible) {
             val kbContainer = keyboardOverlay?.getContainerView()
-            if (kbContainer != null && kbContainer.isAttachedToWindow && keyboardOverlay?.isShowing() == true) {
-                val loc = IntArray(2)
-                kbContainer.getLocationOnScreen(loc)
-                val x = loc[0].toFloat()
-                val y = loc[1].toFloat()
-                
-                if (rawX >= x && rawX <= x + kbContainer.width && rawY >= y && rawY <= y + kbContainer.height) {
-                    event.offsetLocation(-x, -y)
-                    handled = kbContainer.dispatchTouchEvent(event)
-                    event.offsetLocation(x, y) // Restore
+            if (kbContainer != null && keyboardOverlay?.isShowing() == true && isPointInsideView(rawX, rawY, kbContainer)) {
+                handled = dispatchForwardTouchToView(kbContainer, event)
+                if (handled && action == MotionEvent.ACTION_DOWN) {
+                    activeForwardTouchTarget = ForwardTouchTarget.KEYBOARD
                 }
             }
         }
 
-        // 3. Try Trackpad
+        // 4. Try Trackpad
         if (!handled && isTrackpadVisible && trackpadLayout != null) {
             val tpView = trackpadLayout!!
-            if (tpView.isAttachedToWindow && tpView.visibility == View.VISIBLE) {
-                val loc = IntArray(2)
-                tpView.getLocationOnScreen(loc)
-                val x = loc[0].toFloat()
-                val y = loc[1].toFloat()
-                
-                if (rawX >= x && rawX <= x + tpView.width && rawY >= y && rawY <= y + tpView.height) {
-                    event.offsetLocation(-x, -y)
-                    handled = tpView.dispatchTouchEvent(event)
-                    event.offsetLocation(x, y) // Restore
+            if (isPointInsideView(rawX, rawY, tpView)) {
+                handled = dispatchForwardTouchToView(tpView, event)
+                if (handled && action == MotionEvent.ACTION_DOWN) {
+                    activeForwardTouchTarget = ForwardTouchTarget.TRACKPAD
                 }
             }
+        }
+
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            clearActiveForwardTouchTarget()
         }
 
         return handled
