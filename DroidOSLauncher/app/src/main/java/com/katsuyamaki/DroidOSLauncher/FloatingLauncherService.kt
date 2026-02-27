@@ -5913,8 +5913,9 @@ private var isSoftKeyboardSupport = false
     // === LAUNCH VIA SHELL - END ===
 
     // === FOCUS VIA TASK - START ===
-    // Focuses an already-visible freeform window without UI click simulation.
-    // Prefer task-fronting to preserve state; reinforce with brought-to-front start as fallback.
+    // Focuses an already-visible window while preserving in-app navigation state.
+    // Use brought-to-front start (no windowing-mode override) since this path has historically
+    // transferred input focus more reliably than task-front reflection on some Samsung builds.
     private fun focusViaTask(app: MainActivity.AppInfo, bounds: Rect?) {
         try {
             if (app.packageName == PACKAGE_BLANK || app.isMinimized) return
@@ -5924,23 +5925,45 @@ private var isSoftKeyboardSupport = false
             }
             if (!targetStillInQueue) return
 
-            val basePkg = app.getBasePackage()
+            val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
             val className = app.className
+            val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
 
-            val taskId = shellService?.getTaskId(basePkg, className) ?: -1
-            if (taskId != -1) {
-                shellService?.moveTaskToFront(taskId)
-                if (bounds != null) {
+            val cmd = if (resolvedClass != null) {
+                "am start -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+            } else {
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+            }
+            shellService?.runCommand(cmd)
+
+            if (bounds != null) {
+                val taskId = shellService?.getTaskId(basePkg, className) ?: -1
+                if (taskId != -1) {
                     shellService?.repositionTask(basePkg, className, bounds.left, bounds.top, bounds.right, bounds.bottom)
                 }
             }
-
-            val cmd = buildFreeformStartCommand(basePkg, className, currentDisplayId, broughtToFront = true)
-            shellService?.runCommand(cmd)
         } catch (e: Exception) {
         }
     }
     // === FOCUS VIA TASK - END ===
+
+    // [FOCUS_FALLBACK] Some OneUI builds move window Z-order but keep old IME target/editor.
+    // Tap near the caption area (not content center) to transfer input focus with minimal side effects.
+    private fun scheduleWindowActivationTap(bounds: Rect?, delayMs: Long = 120L) {
+        if (bounds == null) return
+        val density = resources.displayMetrics.density
+        val captionOffsetPx = (10f * density).toInt().coerceAtLeast(6)
+        val tapX = bounds.centerX()
+        val tapY = (bounds.top + captionOffsetPx).coerceAtMost(bounds.bottom - 1)
+
+        Thread {
+            try {
+                if (delayMs > 0L) Thread.sleep(delayMs)
+                shellService?.runCommand("input tap $tapX $tapY")
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
 
     // [CURSOR] Send cursor to center of app bounds when focusing via DroidOS
     // Bounds from getLayoutRects() are in layout-relative coordinates (top margin = y:0),
@@ -8904,17 +8927,12 @@ private var isSoftKeyboardSupport = false
                             }
                             
                             if (alreadyFocused) {
-                                // App already focused - am start is no-op, use input tap to force focus back
-                                if (bounds != null) {
-                                    val centerX = bounds.centerX()
-                                    val centerY = bounds.centerY()
-                                    try {
-                                        shellService?.runCommand("input tap $centerX $centerY")
-                                    } catch (e: Exception) {
-                                    }
-                                }
+                                // App already focused - perform caption tap to refresh input focus target.
+                                scheduleWindowActivationTap(bounds, delayMs = 0L)
                             } else if (!app.isMinimized) {
                                 focusViaTask(app, bounds)
+                                // Deterministic fallback when WM fronting updates visual focus but IME target lags.
+                                scheduleWindowActivationTap(bounds)
                             } else {
                                 launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
@@ -8973,6 +8991,7 @@ private var isSoftKeyboardSupport = false
                         val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                         val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
                         focusViaTask(app, bounds)
+                        scheduleWindowActivationTap(bounds)
                         sendCursorToAppCenter(bounds)
 
                         // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events

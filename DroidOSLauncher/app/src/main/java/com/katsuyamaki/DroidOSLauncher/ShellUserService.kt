@@ -698,36 +698,50 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // === MOVE TASK TO FRONT / FOCUS TASK - START ===
     // Brings a task to front using ActivityTaskManager.moveTaskToFront() via reflection.
     // This focuses the window WITHOUT re-launching any activity, preserving in-app nav state.
-    override fun moveTaskToFront(taskId: Int) {
+    override fun moveTaskToFront(taskId: Int, displayId: Int) {
         val token = Binder.clearCallingIdentity()
         try {
+            val options = try {
+                android.app.ActivityOptions.makeBasic().apply {
+                    if (displayId >= 0) setLaunchDisplayId(displayId)
+                }.toBundle()
+            } catch (e: Exception) {
+                null
+            }
+
             val atmClass = Class.forName("android.app.ActivityTaskManager")
             val getServiceMethod = atmClass.getMethod("getService")
             val atm = getServiceMethod.invoke(null)
-            // moveTaskToFront(int taskId, int flags, Bundle options)
-            val moveMethod = atm.javaClass.getMethod(
-                "moveTaskToFront",
-                String::class.java,  // callingPackage (Android 12+)
-                String::class.java,  // callingFeatureId
-                Int::class.javaPrimitiveType,  // taskId
-                Int::class.javaPrimitiveType,  // flags
-                android.os.Bundle::class.java  // options
-            )
-            moveMethod.invoke(atm, "com.katsuyamaki.DroidOSLauncher", null, taskId, 0, null)
-        } catch (e: NoSuchMethodException) {
-            // Fallback: Try 3-param signature (older Android)
+
+            var moved = false
+
+            // Preferred signature on newer Android builds.
             try {
-                val atmClass = Class.forName("android.app.ActivityTaskManager")
-                val getServiceMethod = atmClass.getMethod("getService")
-                val atm = getServiceMethod.invoke(null)
                 val moveMethod = atm.javaClass.getMethod(
                     "moveTaskToFront",
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    android.os.Bundle::class.java
+                    String::class.java,  // callingPackage
+                    String::class.java,  // callingFeatureId
+                    Int::class.javaPrimitiveType,  // taskId
+                    Int::class.javaPrimitiveType,  // flags
+                    android.os.Bundle::class.java  // options
                 )
-                moveMethod.invoke(atm, taskId, 0, null)
-            } catch (e2: Exception) {
+                moveMethod.invoke(atm, "com.katsuyamaki.DroidOSLauncher", null, taskId, 0, options)
+                moved = true
+            } catch (e: Exception) {
+            }
+
+            // Fallback signature used on some builds/devices.
+            if (!moved) {
+                try {
+                    val moveMethod = atm.javaClass.getMethod(
+                        "moveTaskToFront",
+                        Int::class.javaPrimitiveType,
+                        Int::class.javaPrimitiveType,
+                        android.os.Bundle::class.java
+                    )
+                    moveMethod.invoke(atm, taskId, 0, options)
+                } catch (e: Exception) {
+                }
             }
         } catch (e: Exception) {
         } finally {
