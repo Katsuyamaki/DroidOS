@@ -902,18 +902,140 @@ private var isSoftKeyboardSupport = false
         return ((navBarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
     }
 
+    private data class ObservedComponent(
+        val packageName: String,
+        val className: String?
+    )
+
+    private fun normalizeActivityClass(packageName: String, className: String?): String? {
+        val trimmed = className?.trim()
+        if (trimmed.isNullOrEmpty() || trimmed == "null" || trimmed == "default") return null
+        return if (trimmed.startsWith(".")) "$packageName$trimmed" else trimmed
+    }
+
+    private fun parseObservedComponent(rawObserved: String): ObservedComponent? {
+        val trimmed = rawObserved.trim()
+        if (trimmed.isEmpty()) return null
+
+        val rawPkg = if (trimmed.contains("/")) trimmed.substringBefore("/") else trimmed
+        val pkg = AppCompatibilityRegistry.normalizePackage(rawPkg)
+        if (pkg.isEmpty()) return null
+
+        val rawClass = if (trimmed.contains("/")) {
+            trimmed.substringAfter("/", "").substringBefore("}").takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+
+        return ObservedComponent(pkg, normalizeActivityClass(pkg, rawClass))
+    }
+
+    private fun getObservedVisibleComponents(displayId: Int): List<ObservedComponent> {
+        val rawComponents = try {
+            shellService?.getVisibleComponents(displayId) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val source = if (rawComponents.isNotEmpty()) {
+            rawComponents
+        } else {
+            shellService?.getVisiblePackages(displayId) ?: emptyList()
+        }
+
+        val unique = LinkedHashMap<String, ObservedComponent>()
+        for (raw in source) {
+            val observed = parseObservedComponent(raw) ?: continue
+            val key = "${observed.packageName}/${observed.className ?: ""}"
+            if (!unique.containsKey(key)) unique[key] = observed
+        }
+
+        return unique.values.toList()
+    }
+
+    private fun getQueueEntryId(app: MainActivity.AppInfo): String {
+        if (app.packageName == PACKAGE_BLANK) return PACKAGE_BLANK
+
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        val normalizedClass = normalizeActivityClass(basePkg, app.className)
+        return if (normalizedClass != null) "$basePkg|$normalizedClass" else basePkg
+    }
+
+    private fun parseQueueEntryId(identifier: String): ObservedComponent? {
+        if (identifier.isBlank() || identifier == PACKAGE_BLANK) return null
+
+        if (identifier.contains("|")) {
+            val pkg = AppCompatibilityRegistry.normalizePackage(identifier.substringBefore("|"))
+            if (pkg.isEmpty()) return null
+            val cls = normalizeActivityClass(pkg, identifier.substringAfter("|", ""))
+            return ObservedComponent(pkg, cls)
+        }
+
+        // Legacy Gemini format support.
+        if (identifier.contains(":") && !identifier.contains("/")) {
+            val basePkg = AppCompatibilityRegistry.normalizePackage(identifier.substringBefore(":"))
+            val suffix = identifier.substringAfter(":", "")
+            if (basePkg == "com.google.android.googlequicksearchbox" && suffix == "gemini") {
+                return ObservedComponent("com.google.android.apps.bard", null)
+            }
+            return if (basePkg.isEmpty()) null else ObservedComponent(basePkg, null)
+        }
+
+        return parseObservedComponent(identifier)
+    }
+
+    private fun queueAppMatchesObservedComponent(app: MainActivity.AppInfo, observed: ObservedComponent): Boolean {
+        val appPkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (appPkg.isEmpty()) return false
+
+        val identityMatches =
+            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(appPkg, observed.packageName)
+        if (!identityMatches) return false
+
+        val appClass = normalizeActivityClass(appPkg, app.className)
+        return when {
+            appClass != null && observed.className != null -> {
+                if (appClass == observed.className) {
+                    true
+                } else {
+                    // Some apps (Docs/Sheets) expose multiple proxy/home classes for the same main task.
+                    // Treat those proxy classes as one identity so we don't create duplicate hidden main slots.
+                    val appIsProxy = AppCompatibilityRegistry.isProxyActivity(appPkg, appClass)
+                    val observedIsProxy = AppCompatibilityRegistry.isProxyActivity(observed.packageName, observed.className)
+                    appPkg == observed.packageName && appIsProxy && observedIsProxy
+                }
+            }
+            appClass == null && observed.className == null -> true
+            else -> AppCompatibilityRegistry.shouldMergeTaskIdentity(appPkg) ||
+                AppCompatibilityRegistry.shouldMergeTaskIdentity(observed.packageName)
+        }
+    }
+
     private fun queueAppMatchesObservedPackage(app: MainActivity.AppInfo, observedPkg: String): Boolean {
         val observed = AppCompatibilityRegistry.normalizePackage(observedPkg)
         if (observed.isEmpty()) return false
-        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(app.getBasePackage(), observed) ||
-            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(app.packageName, observed)
+
+        val appPkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (appPkg.isEmpty()) return false
+
+        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(appPkg, observed) || appPkg == observed
+    }
+
+    private fun queueAppVisibleInObservedComponents(
+        app: MainActivity.AppInfo,
+        observedComponents: List<ObservedComponent>
+    ): Boolean {
+        return observedComponents.any { observed -> queueAppMatchesObservedComponent(app, observed) }
     }
 
     private fun focusIdentityMatches(lhs: String?, rhs: String?): Boolean {
         return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(lhs, rhs)
     }
 
-    private fun tryCreateObservedPackageEntry(observedPkg: String): MainActivity.AppInfo? {
+    private fun tryCreateObservedPackageEntry(
+        observedPkg: String,
+        observedClass: String?
+    ): MainActivity.AppInfo? {
         val pkg = AppCompatibilityRegistry.normalizePackage(observedPkg)
         if (pkg.isEmpty() || pkg == packageName || pkg == PACKAGE_TRACKPAD || pkg == PACKAGE_BLANK) return null
 
@@ -923,7 +1045,7 @@ private var isSoftKeyboardSupport = false
             MainActivity.AppInfo(
                 label = label,
                 packageName = pkg,
-                className = null,
+                className = normalizeActivityClass(pkg, observedClass),
                 isFavorite = AppPreferences.isFavorite(this, pkg),
                 isMinimized = false
             )
@@ -932,20 +1054,30 @@ private var isSoftKeyboardSupport = false
         }
     }
 
-    private fun findAppByObservedPackage(observedPkg: String): MainActivity.AppInfo? {
-        val observed = AppCompatibilityRegistry.normalizePackage(observedPkg)
-        if (observed.isEmpty()) return null
-
-        val exact = allAppsList.find {
-            AppCompatibilityRegistry.normalizePackage(it.packageName) == observed ||
-                AppCompatibilityRegistry.normalizePackage(it.getBasePackage()) == observed
+    private fun findAppByObservedComponent(observed: ObservedComponent): MainActivity.AppInfo? {
+        val exactByComponent = allAppsList.find {
+            val candidatePkg = AppCompatibilityRegistry.normalizePackage(it.getBasePackage())
+            val candidateClass = normalizeActivityClass(candidatePkg, it.className)
+            candidatePkg == observed.packageName && candidateClass == observed.className
         }
-        if (exact != null) return exact
+        if (exactByComponent != null) return exactByComponent
 
-        val alias = allAppsList.find { queueAppMatchesObservedPackage(it, observed) }
+        if (observed.className == null) {
+            val exactByPackage = allAppsList.find {
+                AppCompatibilityRegistry.normalizePackage(it.getBasePackage()) == observed.packageName
+            }
+            if (exactByPackage != null) return exactByPackage
+        }
+
+        val alias = allAppsList.find { queueAppMatchesObservedComponent(it, observed) }
         if (alias != null) return alias
 
-        return tryCreateObservedPackageEntry(observed)
+        return tryCreateObservedPackageEntry(observed.packageName, observed.className)
+    }
+
+    private fun findAppByObservedPackage(observedPkg: String): MainActivity.AppInfo? {
+        val observed = parseObservedComponent(observedPkg) ?: return null
+        return findAppByObservedComponent(observed)
     }
 
     private fun buildFreeformStartCommand(
@@ -1320,7 +1452,7 @@ private var isSoftKeyboardSupport = false
                 refreshQueueAndLayout("Closed ${app.label}")
             } 
         }
-        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) { super.clearView(recyclerView, viewHolder); val pkgs = selectedAppsQueue.map { it.packageName }; AppPreferences.saveLastQueue(this@FloatingLauncherService, pkgs); if (isInstantMode) applyLayoutImmediate() }
+        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) { super.clearView(recyclerView, viewHolder); val ids = selectedAppsQueue.map { getQueueEntryId(it) }; AppPreferences.saveLastQueue(this@FloatingLauncherService, ids); if (isInstantMode) applyLayoutImmediate() }
     }
 
     // === SWIPE DETECTOR - START ===
@@ -4718,6 +4850,7 @@ private var isSoftKeyboardSupport = false
                     val appEntry = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, pkg) }
                     if (appEntry != null) {
                          className = appEntry.className
+                         bounds = packageRectCache[getQueueEntryId(appEntry)] ?: bounds
                          if (bounds == null) {
                              val appIndex = selectedAppsQueue.indexOf(appEntry)
                              val rects = getLayoutRects()
@@ -4756,9 +4889,12 @@ private var isSoftKeyboardSupport = false
                         }
 
                         // Check success
-                        // We check BOTH display ID and visibility
-                        val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)
-                            ?.any { visiblePkg -> AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(visiblePkg, pkg) } == true
+                        // We check BOTH display ID and visibility.
+                        val targetApp = MainActivity.AppInfo("", pkg, className)
+                        val visibleOnTarget = getObservedVisibleComponents(targetDisplayId).any { observed ->
+                            queueAppMatchesObservedComponent(targetApp, observed) ||
+                                (className.isNullOrBlank() && AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, pkg))
+                        }
                         if (visibleOnTarget) {
                             // One final resize to ensure it stuck
                             if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
@@ -5675,17 +5811,17 @@ private var isSoftKeyboardSupport = false
     // === FOCUS VIA TASK - START ===
     // Focuses an already-visible freeform window using am start --activity-brought-to-front.
     // Executed inline from WM command queue to preserve command ordering.
-    private fun focusViaTask(pkg: String, bounds: Rect?) {
+    private fun focusViaTask(app: MainActivity.AppInfo, bounds: Rect?) {
         try {
-            val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-            val appEntry = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, basePkg) }
+            if (app.packageName == PACKAGE_BLANK || app.isMinimized) return
 
-            // Skip stale focus targets (already removed/minimized/hidden)
-            if (appEntry == null || appEntry.packageName == PACKAGE_BLANK || appEntry.isMinimized) {
-                return
+            val targetStillInQueue = selectedAppsQueue.any {
+                it.packageName == app.packageName && it.className == app.className
             }
+            if (!targetStillInQueue) return
 
-            val className = appEntry.className
+            val basePkg = app.getBasePackage()
+            val className = app.className
             val cmd = buildFreeformStartCommand(basePkg, className, currentDisplayId, broughtToFront = true)
             shellService?.runCommand(cmd)
         } catch (e: Exception) {
@@ -6025,34 +6161,37 @@ private var isSoftKeyboardSupport = false
 
         try {
             val rects = getLayoutRects()
-            val activeApps = selectedAppsQueue.filter { !it.isMinimized }
-            val packages = mutableListOf<String>()
-            val boundsList = mutableListOf<Int>()
-            for (i in 0 until minOf(activeApps.size, rects.size)) {
-                val app = activeApps[i]
-                if (app.packageName == PACKAGE_BLANK) continue
-                val basePkg = app.getBasePackage()
-                val bounds = rects[i]
-                packageRectCache[basePkg] = bounds
-                packages.add(basePkg)
-                boundsList.addAll(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
-            }
-            if (packages.isEmpty()) return
+            val activeApps = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+            if (activeApps.isEmpty() || rects.isEmpty()) return
 
             val requestId = latestRetileRequestId.incrementAndGet()
-            val packagesSnapshot = packages.toList()
-            val boundsSnapshot = boundsList.toIntArray()
+            val activeSnapshot = activeApps.map { it.copy() }
+            val rectSnapshot = rects.toList()
+
             retileExecutor.execute {
                 try {
-                    if (requestId != latestRetileRequestId.get()) return@execute
+                    fun applyPass() {
+                        for (i in 0 until minOf(activeSnapshot.size, rectSnapshot.size)) {
+                            if (requestId != latestRetileRequestId.get()) return
+                            val app = activeSnapshot[i]
+                            val bounds = rectSnapshot[i]
+                            val basePkg = app.getBasePackage()
+                            val cls = app.className
 
-                    shellService?.batchResize(packagesSnapshot, boundsSnapshot)
+                            packageRectCache[getQueueEntryId(app)] = bounds
+                            packageRectCache[basePkg] = bounds
+
+                            shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        }
+                    }
+
+                    if (requestId != latestRetileRequestId.get()) return@execute
+                    applyPass()
 
                     // Guarded settle pass: occasionally WM applies only part of a rapid IME retile.
-                    // Reapply identical bounds only if this request is still latest.
                     Thread.sleep(90)
                     if (requestId != latestRetileRequestId.get()) return@execute
-                    shellService?.batchResize(packagesSnapshot, boundsSnapshot)
+                    applyPass()
                 } catch (e: Exception) {
                 }
             }
@@ -6105,7 +6244,7 @@ private var isSoftKeyboardSupport = false
     // Ensures Visual Queue is populated even if the Drawer hasn't been opened yet.
     private fun restoreQueueFromPrefs() {
         val lastQueue = AppPreferences.getLastQueue(this)
-        val minimizedPkgs = AppPreferences.getMinimizedPackages(this)
+        val minimizedEntries = AppPreferences.getMinimizedPackages(this)
         selectedAppsQueue.clear()
         
         for (identifier in lastQueue) {
@@ -6114,8 +6253,9 @@ private var isSoftKeyboardSupport = false
             } else {
                 val appInfo = findAppByIdentifier(identifier)
                 if (appInfo != null) {
-                    // [FIX] Restore minimized state from saved preferences
-                    appInfo.isMinimized = minimizedPkgs.contains(appInfo.getBasePackage())
+                    // [FIX] Restore minimized state per queue entry, with base-package fallback for legacy saves.
+                    val entryId = getQueueEntryId(appInfo)
+                    appInfo.isMinimized = minimizedEntries.contains(entryId) || minimizedEntries.contains(appInfo.getBasePackage())
                     selectedAppsQueue.add(appInfo)
                 }
             }
@@ -6137,7 +6277,8 @@ private var isSoftKeyboardSupport = false
 
         Thread {
             try {
-                val visiblePackages = shellService!!.getVisiblePackages(currentDisplayId)
+                val observedVisible = getObservedVisibleComponents(currentDisplayId)
+                val visiblePackages = observedVisible.map { it.packageName }.distinct()
                 val allRunning = shellService!!.getAllRunningPackages()
                 val lastQueue = AppPreferences.getLastQueue(this)
 
@@ -6150,21 +6291,19 @@ private var isSoftKeyboardSupport = false
                         if (identifier == PACKAGE_BLANK) {
                             selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
                         } else {
-                            // Find by identifier (handles both package-only and package:suffix formats)
+                            // Find by identifier (supports package-only and component-aware queue IDs)
                             val appInfo = findAppByIdentifier(identifier)
 
                             if (appInfo != null) {
                                 val basePkg = appInfo.getBasePackage()
 
-                                // Check if running/visible for this task identity.
+                                // Check if running for this task identity.
                                 val isRunning = allRunning.any { runningPkg ->
                                     AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(runningPkg, basePkg)
                                 }
 
                                 if (isRunning) {
-                                    val isVisible = visiblePackages.any { visiblePkg ->
-                                        AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(visiblePkg, basePkg)
-                                    }
+                                    val isVisible = queueAppVisibleInObservedComponents(appInfo, observedVisible)
 
                                     // [FIX] Check for recent manual override (within 5 seconds)
                                     // Prevents app from flickering grey/hidden immediately after unminimizing
@@ -6188,14 +6327,14 @@ private var isSoftKeyboardSupport = false
                         }
                     }
 
-                    // === PHASE 2: Add newly visible apps not already in queue ===
-                    for (pkg in visiblePackages) {
+                    // === PHASE 2: Add newly visible activities not already in queue ===
+                    for (observed in observedVisible) {
                         val alreadyInQueue = selectedAppsQueue.any { queuedApp ->
-                            queueAppMatchesObservedPackage(queuedApp, pkg)
+                            queueAppMatchesObservedComponent(queuedApp, observed)
                         }
 
                         if (!alreadyInQueue) {
-                            val appInfo = findAppByObservedPackage(pkg)
+                            val appInfo = findAppByObservedComponent(observed)
                             if (appInfo != null) {
                                 appInfo.isMinimized = false
                                 selectedAppsQueue.add(appInfo)
@@ -6213,41 +6352,42 @@ private var isSoftKeyboardSupport = false
     // === FETCH RUNNING APPS - END ===
 
     // === FIND APP BY IDENTIFIER - START ===
-    // Finds an AppInfo from allAppsList by its identifier
-    // Handles both simple package names and compound identifiers (package:suffix)
-    // Also handles the getIdentifier() format used for saving
+    // Finds an AppInfo from allAppsList by saved queue identifier.
+    // Supports component-aware IDs (pkg|class), legacy package:suffix IDs, and package-only IDs.
     private fun findAppByIdentifier(identifier: String): MainActivity.AppInfo? {
-        // First, try exact getIdentifier() match
+        val parsedQueueId = parseQueueEntryId(identifier)
+        if (parsedQueueId != null) {
+            val byObserved = findAppByObservedComponent(parsedQueueId)
+            if (byObserved != null) return byObserved
+        }
+
+        // Legacy exact getIdentifier match
         val exactMatch = allAppsList.find { it.getIdentifier() == identifier }
         if (exactMatch != null) return exactMatch
 
-        // If identifier contains ":", try matching the components
+        // Legacy Gemini special case
         if (identifier.contains(":")) {
             val basePkg = identifier.substringBefore(":")
             val suffix = identifier.substringAfter(":")
 
-            // Special case: "com.google.android.googlequicksearchbox:gemini" -> find Gemini app
             if (basePkg == "com.google.android.googlequicksearchbox" && suffix == "gemini") {
-                // Look for the standalone Gemini app first
                 val geminiStandalone = allAppsList.find { it.packageName == "com.google.android.apps.bard" }
                 if (geminiStandalone != null) return geminiStandalone
 
-                // Fall back to Google QSB with Gemini activity
                 val geminiInGoogle = allAppsList.find {
                     it.packageName == basePkg &&
-                    (it.className?.lowercase()?.contains("gemini") == true ||
-                     it.className?.lowercase()?.contains("assistant") == true ||
-                     it.className?.lowercase()?.contains("bard") == true)
+                        (it.className?.lowercase()?.contains("gemini") == true ||
+                            it.className?.lowercase()?.contains("assistant") == true ||
+                            it.className?.lowercase()?.contains("bard") == true)
                 }
                 if (geminiInGoogle != null) return geminiInGoogle
             }
 
-            // Try matching by base package
             val byBasePkg = allAppsList.find { it.packageName == basePkg }
             if (byBasePkg != null) return byBasePkg
         }
 
-        // Simple package name match
+        // Last fallback: package-only lookup
         return allAppsList.find { it.packageName == identifier }
     }
     // === FIND APP BY IDENTIFIER - END ===
@@ -6777,24 +6917,24 @@ private var isSoftKeyboardSupport = false
         isExecuting = true
         pendingExecutionNeeded = false // Reset pending flag for THIS run
 
-        // Get currently visible apps on this display, excluding ourselves and the trackpad
-        val activeApps = shellService?.getVisiblePackages(currentDisplayId)
-            ?.mapNotNull { pkgName -> findAppByObservedPackage(pkgName) }
-            ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
-            ?: emptyList()
+        // Get currently visible apps on this display, excluding ourselves and the trackpad.
+        val activeApps = getObservedVisibleComponents(currentDisplayId)
+            .mapNotNull { observed -> findAppByObservedComponent(observed) }
+            .filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
 
         // [FULLSCREEN] If there's a visible app not in the queue (fullscreen app), add it to the queue.
         // This converts the fullscreen app into a tiled app, placing the user's selected apps on top.
         // Without this, the fullscreen app detection would minimize the newly launched tiled apps.
-        val queuePackages = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+        val queueEntries = selectedAppsQueue.map { getQueueEntryId(it) }.toSet()
         // [FIX] Clean up old entries and exclude recently removed packages from fullscreen detection
         val now = System.currentTimeMillis()
         recentlyRemovedPackages.entries.removeIf { now - it.value > REMOVED_PACKAGE_COOLDOWN_MS }
-        val fullscreenApps = activeApps.filter { 
+        val fullscreenApps = activeApps.filter {
             val basePkg = it.getBasePackage()
-            basePkg !in queuePackages && 
-            !it.isMinimized && 
-            !recentlyRemovedPackages.containsKey(basePkg)
+            val entryId = getQueueEntryId(it)
+            entryId !in queueEntries &&
+                !it.isMinimized &&
+                !recentlyRemovedPackages.containsKey(basePkg)
         }
         if (fullscreenApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized }) {
             for (fsApp in fullscreenApps) {
@@ -6810,7 +6950,7 @@ private var isSoftKeyboardSupport = false
         refreshDisplayId()
 
         // Save queue
-        val identifiers = selectedAppsQueue.map { it.getIdentifier() }
+        val identifiers = selectedAppsQueue.map { getQueueEntryId(it) }
         AppPreferences.saveLastQueue(this, identifiers)
         
         Thread { 
@@ -6915,7 +7055,8 @@ private var isSoftKeyboardSupport = false
                         debugShowAppIdentification("TILE[$i]", basePkg, cls)
                     }
                     
-                    // [CACHE] Store intended bounds for Watchdog recovery
+                    // [CACHE] Store intended bounds for Watchdog recovery.
+                    packageRectCache[getQueueEntryId(app)] = bounds
                     packageRectCache[basePkg] = bounds
 
                     // 1. Launch App (SYNCHRONOUSLY)
@@ -8376,21 +8517,21 @@ private var isSoftKeyboardSupport = false
                              // This converts the fullscreen app into a tiled app so both stay open together.
                              // The fullscreen app goes to position 0 (first tiling slot).
                              try {
-                                 val visiblePkgs = shellService?.getVisiblePackages(currentDisplayId) ?: emptyList()
-                                 val userVisibleApps = visiblePkgs.mapNotNull { pkgName ->
-                                     val pkg = if (pkgName.contains(":")) pkgName.substringBefore(":") else pkgName
+                                 val visibleObserved = getObservedVisibleComponents(currentDisplayId)
+                                 val userVisibleApps = visibleObserved.mapNotNull { observed ->
+                                     val pkg = observed.packageName
                                      if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
                                          pkg.contains("systemui") || isImeOrKeyboardPackage(pkg) ||
                                          pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.")) null
-                                     else findAppByObservedPackage(pkg)
+                                     else findAppByObservedComponent(observed)
                                  }.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
                                  
-                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
+                                 val queueEntries = selectedAppsQueue.map { getQueueEntryId(it) }.toSet()
                                  
                                  // If exactly one visible app (fullscreen) not in queue, add to position 0
                                  if (userVisibleApps.size == 1) {
                                      val fullscreenApp = userVisibleApps.first()
-                                     if (!queuePkgs.contains(fullscreenApp.getBasePackage())) {
+                                     if (!queueEntries.contains(getQueueEntryId(fullscreenApp))) {
                                          fullscreenApp.isMinimized = false
                                          selectedAppsQueue.add(0, fullscreenApp.copy())
                                          manualStateOverrides[fullscreenApp.getBasePackage()] = System.currentTimeMillis()
@@ -8400,12 +8541,11 @@ private var isSoftKeyboardSupport = false
                              
                              // Continue with existing logic for multiple visible apps
                              try {
-                                 val activeApps = shellService?.getVisiblePackages(currentDisplayId)
-                                     ?.mapNotNull { pkgName -> findAppByObservedPackage(pkgName) }
-                                     ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
-                                     ?: emptyList()
-                                 val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
-                                 val fsApps = activeApps.filter { it.getBasePackage() !in queuePkgs && !it.isMinimized }
+                                 val activeApps = getObservedVisibleComponents(currentDisplayId)
+                                     .mapNotNull { observed -> findAppByObservedComponent(observed) }
+                                     .filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                                 val queueEntries = selectedAppsQueue.map { getQueueEntryId(it) }.toSet()
+                                 val fsApps = activeApps.filter { getQueueEntryId(it) !in queueEntries && !it.isMinimized }
                                  if (fsApps.isNotEmpty() && selectedAppsQueue.any { !it.isMinimized || it == app }) {
                                      for (fsApp in fsApps) {
                                          selectedAppsQueue.add(fsApp.copy())
@@ -8591,7 +8731,7 @@ private var isSoftKeyboardSupport = false
                                     }
                                 }
                             } else if (!app.isMinimized) {
-                                focusViaTask(app.getBasePackage(), bounds)
+                                focusViaTask(app, bounds)
                             } else {
                                 launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
@@ -8640,7 +8780,7 @@ private var isSoftKeyboardSupport = false
                             // Layout rects only include non-minimized slots, so find the layout index
                             val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                             val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
-                            focusViaTask(app.getBasePackage(), bounds)
+                            focusViaTask(app, bounds)
                             sendCursorToAppCenter(bounds)
                             
                             // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
@@ -8793,11 +8933,11 @@ private var isSoftKeyboardSupport = false
             sanitizeFocusState("refreshQueueAndLayout:$msg")
             updateAllUIs()
 
-            // Auto-save queue state including minimized packages
-            val identifiers = selectedAppsQueue.map { it.getIdentifier() }
+            // Auto-save queue state including minimized entries
+            val identifiers = selectedAppsQueue.map { getQueueEntryId(it) }
             AppPreferences.saveLastQueue(this, identifiers)
-            val minimizedPkgs = selectedAppsQueue.filter { it.isMinimized }.map { it.getBasePackage() }.toSet()
-            AppPreferences.saveMinimizedPackages(this, minimizedPkgs)
+            val minimizedEntries = selectedAppsQueue.filter { it.isMinimized }.map { getQueueEntryId(it) }.toSet()
+            AppPreferences.saveMinimizedPackages(this, minimizedEntries)
 
             // ===================================================================================
             // CRITICAL: DOUBLE-MARGIN BUG FIX - DO NOT MODIFY WITHOUT UNDERSTANDING

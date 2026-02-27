@@ -59,6 +59,12 @@ object AppCompatibilityRegistry {
         )
     )
 
+    private val proxyActivityKeywordsByPackage: Map<String, Set<String>> = mapOf(
+        "com.google.android.apps.docs" to setOf("newmainproxyactivity", "homescreenactivity"),
+        "com.google.android.apps.docs.editors.docs" to setOf("newmainproxyactivity", "homescreenactivity"),
+        "com.google.android.apps.docs.editors.sheets" to setOf("newmainproxyactivity", "homescreenactivity")
+    )
+
     fun normalizePackage(rawPackage: String?): String {
         if (rawPackage.isNullOrBlank()) return ""
         return rawPackage.substringBefore(':').substringBefore('/')
@@ -123,6 +129,17 @@ object AppCompatibilityRegistry {
 
     fun shouldForcePackageLaunch(rawPackage: String?): Boolean {
         return equivalentPackagesFor(rawPackage).any { rules[it]?.forcePackageLaunch == true }
+    }
+
+    fun isProxyActivity(rawPackage: String?, className: String?): Boolean {
+        val pkg = normalizePackage(rawPackage)
+        val cls = className?.trim()?.lowercase() ?: return false
+        if (pkg.isEmpty() || cls.isEmpty()) return false
+
+        return equivalentPackagesFor(pkg).any { equivalentPkg ->
+            val keywords = proxyActivityKeywordsByPackage[equivalentPkg] ?: emptySet()
+            keywords.any { keyword -> cls.contains(keyword) }
+        }
     }
 
     fun resolveLaunchClass(rawPackage: String?, className: String?): String? {

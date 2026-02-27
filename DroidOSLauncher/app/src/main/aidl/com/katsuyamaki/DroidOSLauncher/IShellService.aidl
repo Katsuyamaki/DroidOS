@@ -7,6 +7,7 @@ interface IShellService {
     void setScreenOff(int displayIndex, boolean turnOff);
     void repositionTask(String packageName, String className, int left, int top, int right, int bottom);
     List<String> getVisiblePackages(int displayId);
+    List<String> getVisibleComponents(int displayId);
     List<String> getWindowLayouts(int displayId);
     List<String> getAllRunningPackages();
     int getTaskId(String packageName, String className);

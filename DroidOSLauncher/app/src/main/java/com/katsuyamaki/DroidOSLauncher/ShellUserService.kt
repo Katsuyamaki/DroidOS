@@ -23,6 +23,7 @@ class ShellUserService : IShellService.Stub() {
 
     // === EFFICIENCY CACHE ===
     private var cachedVisiblePackages: List<String> = emptyList()
+    private var cachedVisibleComponents: List<String> = emptyList()
     private var lastVisibleCacheTime: Long = 0
     private var cachedDisplayId: Int = -1 // Track which display the cache is for
     private val VISIBLE_CACHE_TTL = 800L // 800ms Cache Validity
@@ -287,42 +288,52 @@ override fun setBrightness(displayId: Int, brightness: Int) {
 
 
 
-    // === GET VISIBLE PACKAGES - START ===
-    // Returns list of packages that are actually visible on the specified display
-    // Checks both mViewVisibility AND window frame bounds
-    // Windows moved off-screen (left >= 10000) are considered not visible
-    override fun getVisiblePackages(displayId: Int): List<String> {
-        val now = System.currentTimeMillis()
-        
-        // [EFFICIENCY] Return cached result if valid AND for same display
-        if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty() && cachedDisplayId == displayId) {
-            return ArrayList(cachedVisiblePackages)
-        }
-        
+    // === GET VISIBLE PACKAGES / COMPONENTS - START ===
+    // Components are returned as "package/class" when class is available.
+    // Packages are derived from the component list.
+    private fun parseWindowComponent(rawToken: String?): String? {
+        val token = rawToken?.substringBefore("}")?.trim().orEmpty()
+        if (token.isEmpty()) return null
 
-        val list = ArrayList<String>()
+        val pkg = token.substringBefore("/")
+        if (!isUserApp(pkg)) return null
+
+        return token
+    }
+
+    override fun getVisibleComponents(displayId: Int): List<String> {
+        val now = System.currentTimeMillis()
+
+        // [EFFICIENCY] Return cached result if valid AND for same display
+        if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisibleComponents.isNotEmpty() && cachedDisplayId == displayId) {
+            return ArrayList(cachedVisibleComponents)
+        }
+
+        val components = ArrayList<String>()
         val token = Binder.clearCallingIdentity()
         try {
             val p = Runtime.getRuntime().exec("dumpsys window windows")
             val r = BufferedReader(InputStreamReader(p.inputStream))
             var line: String?
-            var currentPkg: String? = null
+            var currentComponent: String? = null
             var isVisible = false
             var onCorrectDisplay = false
             var isOffScreen = false
-            val windowPattern = Pattern.compile("Window\\{[0-9a-f]+ u\\d+ ([^\\}/ ]+)")
+            val windowPattern = Pattern.compile("Window\\{[0-9a-f]+ u\\d+ ([^ ]+)")
             val framePattern = Pattern.compile("(?:frame|mFrame)=\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]")
 
             while (r.readLine().also { line = it } != null) {
                 val l = line!!.trim()
 
                 if (l.startsWith("Window #")) {
-                    currentPkg = null
+                    currentComponent = null
                     isVisible = false
                     onCorrectDisplay = false
                     isOffScreen = false
                     val matcher = windowPattern.matcher(l)
-                    if (matcher.find()) currentPkg = matcher.group(1)
+                    if (matcher.find()) {
+                        currentComponent = parseWindowComponent(matcher.group(1))
+                    }
                 }
 
                 if (l.contains("displayId=$displayId") || l.contains("mDisplayId=$displayId")) {
@@ -343,32 +354,64 @@ override fun setBrightness(displayId: Int, brightness: Int) {
                     } catch (e: Exception) {}
                 }
 
-                if (currentPkg != null && isVisible && onCorrectDisplay && !isOffScreen) {
-                    if (isUserApp(currentPkg!!) && !list.contains(currentPkg!!)) {
-                        list.add(currentPkg!!)
+                if (currentComponent != null && isVisible && onCorrectDisplay && !isOffScreen) {
+                    if (!components.contains(currentComponent!!)) {
+                        components.add(currentComponent!!)
                     }
-                    currentPkg = null
+                    currentComponent = null
                 }
             }
             r.close()
             p.waitFor()
-            
-            // [EFFICIENCY] Update Cache
-            cachedVisiblePackages = ArrayList(list)
+
+            val packages = LinkedHashSet<String>()
+            for (component in components) {
+                val pkg = component.substringBefore("/")
+                if (pkg.isNotEmpty()) packages.add(pkg)
+            }
+
+            // [EFFICIENCY] Update cache for both component + package views
+            cachedVisibleComponents = ArrayList(components)
+            cachedVisiblePackages = ArrayList(packages)
             lastVisibleCacheTime = now
             cachedDisplayId = displayId
-            cachedDisplayId = displayId
-            
+
         } catch (e: Exception) {
         } finally {
             Binder.restoreCallingIdentity(token)
         }
-        return list
+
+        return ArrayList(cachedVisibleComponents)
+    }
+
+    override fun getVisiblePackages(displayId: Int): List<String> {
+        val now = System.currentTimeMillis()
+
+        // [EFFICIENCY] Return cached result if valid AND for same display
+        if (now - lastVisibleCacheTime < VISIBLE_CACHE_TTL && cachedVisiblePackages.isNotEmpty() && cachedDisplayId == displayId) {
+            return ArrayList(cachedVisiblePackages)
+        }
+
+        val components = getVisibleComponents(displayId)
+        val packages = LinkedHashSet<String>()
+        for (component in components) {
+            val pkg = component.substringBefore("/")
+            if (pkg.isNotEmpty()) packages.add(pkg)
+        }
+
+        cachedVisiblePackages = ArrayList(packages)
+        if (cachedDisplayId != displayId) cachedDisplayId = displayId
+        if (lastVisibleCacheTime == 0L) lastVisibleCacheTime = now
+
+        return ArrayList(cachedVisiblePackages)
     }
 
     // [EFFICIENCY] Manual cache invalidation for instant UI updates after actions
     fun invalidateVisibleCache() {
         lastVisibleCacheTime = 0
+        cachedVisiblePackages = emptyList()
+        cachedVisibleComponents = emptyList()
+        cachedDisplayId = -1
     }
 
     override fun getAllRunningPackages(): List<String> {
