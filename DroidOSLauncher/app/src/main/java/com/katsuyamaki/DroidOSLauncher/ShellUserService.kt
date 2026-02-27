@@ -572,6 +572,10 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         val taskMatchPackages = AppCompatibilityRegistry.taskMatchPackagesFor(normalizedTargetPackage)
         val preferPackageTask = AppCompatibilityRegistry.shouldPreferPackageTaskMatch(normalizedTargetPackage)
         val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(normalizedTargetPackage, className)
+        val strictTaskScopedClass =
+            resolvedClass != null &&
+                AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalizedTargetPackage) &&
+                !AppCompatibilityRegistry.isProxyActivity(normalizedTargetPackage, resolvedClass)
         val shouldTrace = AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalizedTargetPackage)
         val traceCandidates = mutableListOf<String>()
 
@@ -649,7 +653,13 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             r.close()
             p.waitFor()
 
-            val result = if (preferPackageTask) {
+            val result = if (strictTaskScopedClass) {
+                when {
+                    exactVisibleTaskId > 0 -> exactVisibleTaskId
+                    exactTaskId > 0 -> exactTaskId
+                    else -> -1
+                }
+            } else if (preferPackageTask) {
                 when {
                     packageVisibleTaskId > 0 -> packageVisibleTaskId
                     packageTaskId > 0 -> packageTaskId
@@ -674,7 +684,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             if (shouldTrace) {
                 android.util.Log.d(
                     "DROIDOS_TASK_RESOLVE",
-                    "pkg=$normalizedTargetPackage cls=${resolvedClass ?: "<pkg>"} preferPkg=$preferPackageTask " +
+                    "pkg=$normalizedTargetPackage cls=${resolvedClass ?: "<pkg>"} preferPkg=$preferPackageTask strictTaskScoped=$strictTaskScopedClass " +
                         "exactV=$exactVisibleTaskId exact=$exactTaskId pkgV=$packageVisibleTaskId pkg=$packageTaskId " +
                         "fbV=$fallbackVisibleTaskId fb=$fallbackTaskId result=$result candidates=${traceCandidates.joinToString("|")}"
                 )
@@ -763,7 +773,18 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             } catch (e: Exception) {
             }
 
-            // FALLBACK: Off-screen positioning (only if Samsung API failed)
+            // FALLBACK 1: platform task minimize command.
+            if (!success) {
+                try {
+                    val moveBackExit = Runtime.getRuntime()
+                        .exec(arrayOf("sh", "-c", "am task move-task-to-back $taskId"))
+                        .waitFor()
+                    success = moveBackExit == 0
+                } catch (e: Exception) {
+                }
+            }
+
+            // FALLBACK 2: off-screen positioning only as last resort.
             if (!success) {
                 val modeCmd = "am task set-windowing-mode $taskId 5"
                 Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
@@ -778,6 +799,113 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         }
     }
     // === MOVE TASK TO BACK / MINIMIZE TASK - END ===
+
+    // === RESTORE MINIMIZED TASK - START ===
+    // Restores a Samsung-minimized task using startActivityFromRecents.
+    // This is the API Android launchers use internally to bring back recent/minimized tasks.
+    // Unlike moveTaskToFront, this properly handles Samsung's minimized state.
+    override fun restoreMinimizedTask(taskId: Int, displayId: Int): Boolean {
+        val token = Binder.clearCallingIdentity()
+        try {
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getServiceMethod = atmClass.getMethod("getService")
+            val atm = getServiceMethod.invoke(null)
+
+            val options = android.app.ActivityOptions.makeBasic().apply {
+                if (displayId >= 0) setLaunchDisplayId(displayId)
+                // Request freeform windowing mode
+                try {
+                    val setWindowingMode = javaClass.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
+                    setWindowingMode.invoke(this, 5)
+                } catch (e: Exception) {}
+            }.toBundle()
+
+            // Primary: startActivityFromRecents — this is how Android restores minimized/recent tasks.
+            try {
+                val startFromRecents = atm.javaClass.getMethod(
+                    "startActivityFromRecents",
+                    Int::class.javaPrimitiveType,
+                    android.os.Bundle::class.java
+                )
+                val result = startFromRecents.invoke(atm, taskId, options)
+                if (result is Int && result >= 0) {
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DROIDOS_SHELL", "startActivityFromRecents failed: ${e.message}")
+            }
+
+            // Fallback: try Samsung MultiTaskingBinder for a restore/maximize method.
+            try {
+                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
+                val binder = getMultiTaskingBinder.invoke(atm)
+                if (binder != null) {
+                    // Try common Samsung restore method names.
+                    for (methodName in listOf("maximizeTaskById", "restoreTaskById", "unminimizeTaskById")) {
+                        try {
+                            val method = binder.javaClass.getMethod(methodName, Int::class.javaPrimitiveType)
+                            method.invoke(binder, taskId)
+                            return true
+                        } catch (e: Exception) {}
+                    }
+                }
+            } catch (e: Exception) {}
+
+            return false
+        } catch (e: Exception) {
+            return false
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+    // === RESTORE MINIMIZED TASK - END ===
+
+    // === DUMP MULTITASKING METHODS - START ===
+    // Debug helper: enumerate all methods on Samsung's MultiTaskingBinder.
+    override fun dumpMultiTaskingMethods(): String {
+        val token = Binder.clearCallingIdentity()
+        try {
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getServiceMethod = atmClass.getMethod("getService")
+            val atm = getServiceMethod.invoke(null)
+
+            val result = StringBuilder()
+
+            // Dump IActivityTaskManager methods that contain relevant keywords.
+            result.appendLine("=== IActivityTaskManager methods ===")
+            for (m in atm.javaClass.methods) {
+                val name = m.name.lowercase()
+                if (name.contains("task") || name.contains("minimize") || name.contains("maximize") ||
+                    name.contains("restore") || name.contains("display") || name.contains("recents") ||
+                    name.contains("windowing") || name.contains("freeform") || name.contains("root")) {
+                    result.appendLine("${m.name}(${m.parameterTypes.joinToString(", ") { it.simpleName }})")
+                }
+            }
+
+            // Dump MultiTaskingBinder methods.
+            try {
+                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
+                val binder = getMultiTaskingBinder.invoke(atm)
+                if (binder != null) {
+                    result.appendLine("=== MultiTaskingBinder methods ===")
+                    for (m in binder.javaClass.methods) {
+                        result.appendLine("${m.name}(${m.parameterTypes.joinToString(", ") { it.simpleName }})")
+                    }
+                } else {
+                    result.appendLine("MultiTaskingBinder is null")
+                }
+            } catch (e: Exception) {
+                result.appendLine("MultiTaskingBinder error: ${e.message}")
+            }
+
+            return result.toString()
+        } catch (e: Exception) {
+            return "Error: ${e.message}"
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+    // === DUMP MULTITASKING METHODS - END ===
 
     // === MOVE TASK TO FRONT / FOCUS TASK - START ===
     // Brings a task to front using ActivityTaskManager.moveTaskToFront() via reflection.

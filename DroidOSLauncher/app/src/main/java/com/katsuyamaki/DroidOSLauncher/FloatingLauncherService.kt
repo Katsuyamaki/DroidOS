@@ -6268,8 +6268,12 @@ private var isSoftKeyboardSupport = false
 
         val observedMatches = try {
             getObservedVisibleComponents(currentDisplayId).filter { observed ->
-                queueAppMatchesObservedComponent(app, observed) ||
-                    queueAppMatchesObservedPackage(app, observed.packageName)
+                if (taskScoped) {
+                    queueAppMatchesObservedComponent(app, observed)
+                } else {
+                    queueAppMatchesObservedComponent(app, observed) ||
+                        queueAppMatchesObservedPackage(app, observed.packageName)
+                }
             }
         } catch (e: Exception) {
             emptyList()
@@ -6308,7 +6312,9 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        classCandidates.add(null)
+        if (!taskScoped) {
+            classCandidates.add(null)
+        }
 
         var resolvedTid = -1
         var chosenClass: String? = null
@@ -6321,7 +6327,7 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        if (resolvedTid > 0 && taskScoped) {
+        if (resolvedTid > 0 && taskScoped && (app.taskIdHint == null || app.taskIdHint ?: -1 <= 0)) {
             app.taskIdHint = resolvedTid
         }
 
@@ -6378,34 +6384,45 @@ private var isSoftKeyboardSupport = false
 
                 var visibleNow = false
 
-                if (tid > 0) {
-                    // Bring existing task back first.
-                    shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
-                    shellService?.runCommand("am task set-windowing-mode $tid 5")
-                    shellService?.runCommand("am task move-task-to-front $tid")
-                    shellService?.moveTaskToFront(tid, currentDisplayId)
-                    applyBoundsIfPossible(tid)
+                val traceRestore = shouldTraceTaskResolution(basePkg)
 
-                    Thread.sleep(170)
-                    visibleNow = isVisibleNow()
+                if (tid > 0) {
+                    // Phase 1: restoreMinimizedTask — uses startActivityFromRecents.
+                    // This is how Android launchers restore minimized/recent tasks and
+                    // properly handles Samsung's minimized state for subactivities.
+                    val restored = try {
+                        shellService?.restoreMinimizedTask(tid, currentDisplayId) ?: false
+                    } catch (e: Exception) { false }
+
+                    if (restored) {
+                        Thread.sleep(200)
+                        applyBoundsIfPossible(tid)
+                        visibleNow = isVisibleNow()
+                    }
+
+                    if (traceRestore) {
+                        android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_RECENTS entry=$entryId tid=$tid restored=$restored visible=$visibleNow")
+                    }
+
+                    // Phase 2: moveTaskToFront fallback (works for non-Samsung-minimized tasks).
+                    if (!visibleNow) {
+                        shellService?.runCommand("am task set-windowing-mode $tid 5")
+                        shellService?.runCommand("am task move-task-to-front $tid")
+                        shellService?.moveTaskToFront(tid, currentDisplayId)
+                        applyBoundsIfPossible(tid)
+                        Thread.sleep(200)
+                        visibleNow = isVisibleNow()
+                        if (traceRestore) {
+                            android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE2_FRONT entry=$entryId tid=$tid visible=$visibleNow")
+                        }
+                    }
 
                     if (!visibleNow) {
-                        if (taskScoped) {
-                            // Task-scoped docs/sheets entries are not always launchable by explicit class.
-                            shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
-                            shellService?.runCommand("am task set-windowing-mode $tid 5")
-                            applyBoundsIfPossible(tid)
-                            shellService?.runCommand("am task move-task-to-front $tid")
-                            shellService?.moveTaskToFront(tid, currentDisplayId)
-                            Thread.sleep(220)
-                            visibleNow = isVisibleNow()
-                        }
-
                         // Clear stale sub-activity hint before fallback starts.
                         if (taskScoped) app.taskIdHint = null
 
                         // Explicit-class launch fallback is only safe for non task-scoped entries.
-                        if (!visibleNow && !taskScoped) {
+                        if (!taskScoped) {
                             shellService?.runCommand(buildFreeformStartCommand(basePkg, queueClass, currentDisplayId))
                             Thread.sleep(220)
                             tid = resolveTaskIdForApp(app, "RESTORE_AFTER_FREEFORM_EXPLICIT")
@@ -6413,7 +6430,7 @@ private var isSoftKeyboardSupport = false
                             visibleNow = isVisibleNow()
                         }
 
-                        if (!visibleNow) {
+                        if (!visibleNow && !taskScoped) {
                             shellService?.runCommand(buildFreeformStartCommand(basePkg, null, currentDisplayId))
                             Thread.sleep(220)
                             tid = resolveTaskIdForApp(app, "RESTORE_AFTER_FREEFORM_PACKAGE")
@@ -6441,14 +6458,24 @@ private var isSoftKeyboardSupport = false
                         applyBoundsIfPossible(tid)
                     }
                 } else {
-                    // No task found: for task-scoped entries, avoid explicit class start (often requires extras).
-                    if (taskScoped) app.taskIdHint = null
-                    if (!taskScoped) {
+                    // No task found: for task-scoped entries, avoid package fallback relaunch.
+                    if (taskScoped) {
+                        shellService?.runCommand(
+                            buildFreeformStartCommand(
+                                basePkg,
+                                queueClass,
+                                currentDisplayId,
+                                broughtToFront = true
+                            )
+                        )
+                        Thread.sleep(220)
+                        tid = resolveTaskIdForApp(app, "RESTORE_AFTER_TASKSCOPED_LAUNCH")
+                    } else {
                         shellService?.runCommand(buildFreeformStartCommand(basePkg, queueClass, currentDisplayId))
                         Thread.sleep(220)
                         tid = resolveTaskIdForApp(app, "RESTORE_AFTER_EXPLICIT")
                     }
-                    if (tid <= 0) {
+                    if (tid <= 0 && !taskScoped) {
                         shellService?.runCommand(buildFreeformStartCommand(basePkg, null, currentDisplayId))
                         Thread.sleep(220)
                         tid = resolveTaskIdForApp(app, "RESTORE_AFTER_LAUNCH")
@@ -6549,6 +6576,8 @@ private var isSoftKeyboardSupport = false
     }
 
     private fun shouldUseHiddenMinimizeStrategy(basePkg: String, className: String?): Boolean {
+        // Hidden display only works on A14/A15 (SDK < 36) for non-task-scoped entries.
+        // On A16+, move-task-to-display silently fails — use offscreen instead.
         if (Build.VERSION.SDK_INT >= 36) return false
         return !shouldUseTaskScopedIdentityForClass(basePkg, className)
     }
@@ -6556,12 +6585,16 @@ private var isSoftKeyboardSupport = false
     private fun minimizeTaskOffscreen(taskId: Int): Boolean {
         return try {
             shellService?.runCommand("am task set-windowing-mode $taskId 5")
-            shellService?.runCommand("am task resize $taskId 99999 99999 100000 100000")
+            // Use negative coordinates to push window above-left of display where Samsung
+            // cannot clamp it to a visible corner. Fallback to far-right if negative fails.
+            shellService?.runCommand("am task resize $taskId -10000 -10000 -9999 -9999")
             true
         } catch (e: Exception) {
             false
         }
     }
+
+    @Volatile private var multiTaskingMethodsDumped = false
 
     private fun minimizeTaskForQueueEntry(app: MainActivity.AppInfo, reason: String): Int {
         val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
@@ -6578,18 +6611,28 @@ private var isSoftKeyboardSupport = false
         minimizedTaskIdByEntryId[entryId] = tid
         packageTaskIdCache[basePkg] = tid
 
-        if (taskScoped) {
-            // Avoid Samsung minimizeTaskById for task-scoped docs/sheets entries.
-            val movedOffscreen = minimizeTaskOffscreen(tid)
-            if (!movedOffscreen) shellService?.moveTaskToBack(tid)
-            return tid
+        var method = "none"
+
+        // One-time dump of Samsung MultiTaskingBinder methods for diagnostics.
+        if (!multiTaskingMethodsDumped) {
+            multiTaskingMethodsDumped = true
+            try {
+                val dump = shellService?.dumpMultiTaskingMethods() ?: "null"
+                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=MULTITASKING_DUMP methods=$dump")
+            } catch (e: Exception) {}
         }
 
-        if (shouldUseHiddenMinimizeStrategy(basePkg, cls)) {
-            val movedToHidden = minimizeToHiddenDisplay(tid, basePkg, cls)
-            if (!movedToHidden) shellService?.moveTaskToBack(tid)
-        } else {
-            shellService?.moveTaskToBack(tid)
+        // Use Samsung moveTaskToBack (minimizeTaskById) for ALL entries.
+        // This properly minimizes without counting toward OneUI 5-app limit.
+        // Restore uses restoreMinimizedTask (startActivityFromRecents) instead of moveTaskToFront.
+        shellService?.moveTaskToBack(tid)
+        method = if (taskScoped) "samsung-taskScoped" else "samsung"
+
+        if (shouldTraceTaskResolution(basePkg)) {
+            android.util.Log.d(
+                "DROIDOS_TASK_TRACE",
+                "reason=MINIMIZE_METHOD entry=$entryId pkg=$basePkg tid=$tid method=$method taskScoped=$taskScoped"
+            )
         }
 
         return tid
