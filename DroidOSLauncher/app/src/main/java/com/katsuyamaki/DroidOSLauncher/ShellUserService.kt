@@ -790,35 +790,162 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         return false
     }
 
-    override fun batchResize(packages: List<String>, bounds: IntArray) {
+    private data class StackTaskInfo(
+        val taskId: Int,
+        val packageName: String,
+        val className: String?
+    )
 
-        val token = Binder.clearCallingIdentity()
+    private fun normalizeResizeClass(packageName: String, className: String?): String? {
+        val trimmed = className?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed == "null" || trimmed == "default") return null
+        return if (trimmed.startsWith(".")) "$packageName$trimmed" else trimmed
+    }
+
+    private fun parseStackTasksForResize(): List<StackTaskInfo> {
+        val tasks = mutableListOf<StackTaskInfo>()
         try {
             val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "am stack list"))
             val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
             p.waitFor()
-            val taskIds = mutableMapOf<String, Int>()
+
+            val taskPattern = Regex("taskId=(\\d+):\\s+([^\\s]+)")
             for (line in lines) {
                 val trimmed = line.trim()
-                if (!trimmed.contains("taskId=") || !trimmed.contains(":")) continue
-                val match = Regex("taskId=(\\d+):").find(trimmed) ?: continue
+                val match = taskPattern.find(trimmed) ?: continue
+
                 val tid = match.groupValues[1].toIntOrNull() ?: continue
                 if (tid <= 0) continue
-                for (pkg in packages) {
-                    if (trimmed.contains("$pkg/")) {
-                        val prev = taskIds[pkg] ?: -1
-                        if (tid > prev) taskIds[pkg] = tid
-                    }
+
+                val rawComponent = match.groupValues[2]
+                val rawPackage = rawComponent.substringBefore("/")
+                val normalizedPackage = AppCompatibilityRegistry.normalizePackage(rawPackage)
+                if (normalizedPackage.isEmpty() || !isUserApp(normalizedPackage)) continue
+
+                val rawClass = if (rawComponent.contains("/")) rawComponent.substringAfter("/") else null
+                val normalizedClass = normalizeResizeClass(normalizedPackage, rawClass)
+
+                tasks.add(
+                    StackTaskInfo(
+                        taskId = tid,
+                        packageName = normalizedPackage,
+                        className = normalizedClass
+                    )
+                )
+            }
+        } catch (e: Exception) {
+        }
+        return tasks.sortedByDescending { it.taskId }
+    }
+
+    private fun scoreTaskForResizeRequest(
+        task: StackTaskInfo,
+        requestPackage: String,
+        requestClass: String?
+    ): Int {
+        val samePackage = task.packageName == requestPackage
+        val identityMatch = samePackage ||
+            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(task.packageName, requestPackage)
+        if (!identityMatch) return Int.MIN_VALUE
+
+        if (samePackage && requestClass != null && task.className != null) {
+            if (task.className == requestClass) return 100
+
+            val requestShort = requestClass.substringAfterLast(".")
+            val taskShort = task.className.substringAfterLast(".")
+            if (requestShort == taskShort) return 95
+
+            val bothProxy =
+                AppCompatibilityRegistry.isProxyActivity(requestPackage, requestClass) &&
+                    AppCompatibilityRegistry.isProxyActivity(task.packageName, task.className)
+            if (bothProxy) return 90
+        }
+
+        if (samePackage) return 70
+
+        if (requestClass != null && task.className != null) {
+            val bothProxyEquivalent =
+                AppCompatibilityRegistry.isProxyActivity(requestPackage, requestClass) &&
+                    AppCompatibilityRegistry.isProxyActivity(task.packageName, task.className)
+            if (bothProxyEquivalent) return 60
+        }
+
+        return 50
+    }
+
+    private fun resolveTaskIdsForResize(packages: List<String>, classes: List<String?>): IntArray {
+        val resolved = IntArray(packages.size) { -1 }
+        if (packages.isEmpty()) return resolved
+
+        val tasks = parseStackTasksForResize()
+        val usedTaskIds = mutableSetOf<Int>()
+
+        for (i in packages.indices) {
+            val requestPackage = AppCompatibilityRegistry.normalizePackage(packages[i])
+            if (requestPackage.isEmpty()) continue
+
+            val requestClass = classes.getOrNull(i)
+            var bestTask: StackTaskInfo? = null
+            var bestScore = Int.MIN_VALUE
+
+            for (task in tasks) {
+                if (task.taskId in usedTaskIds) continue
+                val score = scoreTaskForResizeRequest(task, requestPackage, requestClass)
+                if (score <= Int.MIN_VALUE) continue
+
+                val shouldReplace =
+                    score > bestScore ||
+                        (score == bestScore && (bestTask == null || task.taskId > bestTask.taskId))
+                if (shouldReplace) {
+                    bestTask = task
+                    bestScore = score
                 }
             }
+
+            if (bestTask != null) {
+                resolved[i] = bestTask.taskId
+                usedTaskIds.add(bestTask.taskId)
+                continue
+            }
+
+            val fallbackTaskId = getTaskId(requestPackage, requestClass)
+            if (fallbackTaskId > 0 && fallbackTaskId !in usedTaskIds) {
+                resolved[i] = fallbackTaskId
+                usedTaskIds.add(fallbackTaskId)
+            }
+        }
+
+        return resolved
+    }
+
+    override fun batchResize(packages: List<String>, bounds: IntArray) {
+        val emptyClasses = List(packages.size) { "" }
+        batchResizeComponents(packages, emptyClasses, bounds)
+    }
+
+    override fun batchResizeComponents(packages: List<String>, classes: List<String>, bounds: IntArray) {
+        if (packages.isEmpty() || bounds.isEmpty()) return
+
+        val token = Binder.clearCallingIdentity()
+        try {
+            val normalizedPackages = packages.map { AppCompatibilityRegistry.normalizePackage(it) }
+            val normalizedClasses = normalizedPackages.indices.map { index ->
+                normalizeResizeClass(normalizedPackages[index], classes.getOrNull(index))
+            }
+            val taskIds = resolveTaskIdsForResize(normalizedPackages, normalizedClasses)
+
             val procs = mutableListOf<Process>()
-            for (i in packages.indices) {
-                val tid = taskIds[packages[i]] ?: continue
+            for (i in normalizedPackages.indices) {
+                val tid = taskIds.getOrNull(i) ?: -1
+                if (tid <= 0) continue
+
                 val off = i * 4
                 if (off + 3 >= bounds.size) break
-                val cmd = "am task resize $tid ${bounds[off]} ${bounds[off+1]} ${bounds[off+2]} ${bounds[off+3]}"
+
+                val cmd = "am task resize $tid ${bounds[off]} ${bounds[off + 1]} ${bounds[off + 2]} ${bounds[off + 3]}"
                 procs.add(Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd)))
             }
+
             for (proc in procs) proc.waitFor()
         } catch (e: Exception) {
         } finally {

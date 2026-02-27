@@ -14,6 +14,7 @@ interface IShellService {
     void moveTaskToBack(int taskId);
     void moveTaskToFront(int taskId, int displayId);
     void batchResize(in List<String> packages, in int[] bounds);
+    void batchResizeComponents(in List<String> packages, in List<String> classes, in int[] bounds);
     boolean isTaskFreeform(String packageName);
 
 

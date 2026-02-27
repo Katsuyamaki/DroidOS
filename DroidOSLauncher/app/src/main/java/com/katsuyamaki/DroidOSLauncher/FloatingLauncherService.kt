@@ -6362,18 +6362,32 @@ private var isSoftKeyboardSupport = false
 
             retileExecutor.execute {
                 try {
+                    val pairCount = minOf(activeSnapshot.size, rectSnapshot.size)
+                    if (pairCount <= 0) return@execute
+
                     fun applyPass() {
-                        for (i in 0 until minOf(activeSnapshot.size, rectSnapshot.size)) {
+                        val packages = mutableListOf<String>()
+                        val classes = mutableListOf<String>()
+                        val boundsList = mutableListOf<Int>()
+
+                        for (i in 0 until pairCount) {
                             if (requestId != latestRetileRequestId.get()) return
+
                             val app = activeSnapshot[i]
                             val bounds = rectSnapshot[i]
-                            val basePkg = app.getBasePackage()
-                            val cls = app.className
+                            val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+                            if (basePkg.isEmpty()) continue
 
                             packageRectCache[getQueueEntryId(app)] = bounds
                             packageRectCache[basePkg] = bounds
 
-                            shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            packages.add(basePkg)
+                            classes.add(app.className ?: "")
+                            boundsList.addAll(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
+                        }
+
+                        if (packages.isNotEmpty()) {
+                            shellService?.batchResizeComponents(packages, classes, boundsList.toIntArray())
                         }
                     }
 
@@ -6427,6 +6441,21 @@ private var isSoftKeyboardSupport = false
         if (isExecuting || isProcessingWmCommand || pendingHeadlessRetile) return
         if (selectedAppsQueue.none { !it.isMinimized && it.packageName != PACKAGE_BLANK }) return
 
+        val normalizedTriggerPkg = AppCompatibilityRegistry.normalizePackage(triggerPkg)
+        if (normalizedTriggerPkg.isEmpty()) return
+        if (!AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalizedTriggerPkg)) return
+
+        val hasComponentAwareManagedEntry = selectedAppsQueue.any { queued ->
+            !queued.isMinimized &&
+                queued.packageName != PACKAGE_BLANK &&
+                queueAppMatchesObservedPackage(queued, normalizedTriggerPkg) &&
+                normalizeActivityClass(
+                    AppCompatibilityRegistry.normalizePackage(queued.getBasePackage()),
+                    queued.className
+                ) != null
+        }
+        if (!hasComponentAwareManagedEntry) return
+
         val now = System.currentTimeMillis()
         if (now - lastAutoQueueSyncAt < AUTO_QUEUE_SYNC_DEBOUNCE_MS) return
         lastAutoQueueSyncAt = now
@@ -6455,7 +6484,7 @@ private var isSoftKeyboardSupport = false
                 val queueMatchesTriggerPackage = selectedAppsQueue.any { queued ->
                     !queued.isMinimized &&
                         queued.packageName != PACKAGE_BLANK &&
-                        queueAppMatchesObservedPackage(queued, triggerPkg)
+                        queueAppMatchesObservedPackage(queued, normalizedTriggerPkg)
                 }
                 if (!queueMatchesTriggerPackage) {
                     lastObservedVisibleSignature = signature

@@ -65,6 +65,12 @@ object AppCompatibilityRegistry {
         "com.google.android.apps.docs.editors.sheets" to setOf("newmainproxyactivity", "homescreenactivity")
     )
 
+    private val observedComponentAutoSyncPackages: Set<String> = setOf(
+        "com.google.android.apps.docs",
+        "com.google.android.apps.docs.editors.docs",
+        "com.google.android.apps.docs.editors.sheets"
+    )
+
     fun normalizePackage(rawPackage: String?): String {
         if (rawPackage.isNullOrBlank()) return ""
         return rawPackage.substringBefore(':').substringBefore('/')
@@ -129,6 +135,12 @@ object AppCompatibilityRegistry {
 
     fun shouldForcePackageLaunch(rawPackage: String?): Boolean {
         return equivalentPackagesFor(rawPackage).any { rules[it]?.forcePackageLaunch == true }
+    }
+
+    fun shouldAutoSyncObservedComponents(rawPackage: String?): Boolean {
+        val normalized = normalizePackage(rawPackage)
+        if (normalized.isEmpty()) return false
+        return normalized in observedComponentAutoSyncPackages
     }
 
     fun isProxyActivity(rawPackage: String?, className: String?): Boolean {
