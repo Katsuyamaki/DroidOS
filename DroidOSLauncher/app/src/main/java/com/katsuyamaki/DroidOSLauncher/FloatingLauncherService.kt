@@ -6387,33 +6387,60 @@ private var isSoftKeyboardSupport = false
                 val traceRestore = shouldTraceTaskResolution(basePkg)
 
                 if (tid > 0) {
-                    // Phase 1: restoreMinimizedTask — uses startActivityFromRecents.
-                    // This is how Android launchers restore minimized/recent tasks and
-                    // properly handles Samsung's minimized state for subactivities.
-                    val restored = try {
-                        shellService?.restoreMinimizedTask(tid, currentDisplayId) ?: false
-                    } catch (e: Exception) { false }
-
-                    if (restored) {
-                        Thread.sleep(200)
-                        applyBoundsIfPossible(tid)
-                        visibleNow = isVisibleNow()
-                    }
-
-                    if (traceRestore) {
-                        android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_RECENTS entry=$entryId tid=$tid restored=$restored visible=$visibleNow")
-                    }
-
-                    // Phase 2: moveTaskToFront fallback (works for non-Samsung-minimized tasks).
-                    if (!visibleNow) {
+                    if (Build.VERSION.SDK_INT < 36) {
+                        // A14/A15 fallback: minimized tasks live on hidden display, so move
+                        // them back to active display before trying to focus.
+                        shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
                         shellService?.runCommand("am task set-windowing-mode $tid 5")
+                        applyBoundsIfPossible(tid)
                         shellService?.runCommand("am task move-task-to-front $tid")
                         shellService?.moveTaskToFront(tid, currentDisplayId)
-                        applyBoundsIfPossible(tid)
-                        Thread.sleep(200)
+                        Thread.sleep(220)
                         visibleNow = isVisibleNow()
+
                         if (traceRestore) {
-                            android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE2_FRONT entry=$entryId tid=$tid visible=$visibleNow")
+                            android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_A14 entry=$entryId tid=$tid visible=$visibleNow")
+                        }
+
+                        if (!visibleNow && taskScoped) {
+                            shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
+                            shellService?.runCommand("am task set-windowing-mode $tid 5")
+                            applyBoundsIfPossible(tid)
+                            shellService?.runCommand("am task move-task-to-front $tid")
+                            shellService?.moveTaskToFront(tid, currentDisplayId)
+                            Thread.sleep(220)
+                            visibleNow = isVisibleNow()
+                            if (traceRestore) {
+                                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_A14_RETRY entry=$entryId tid=$tid visible=$visibleNow")
+                            }
+                        }
+                    } else {
+                        // A16+ primary: restoreMinimizedTask uses recents restore semantics.
+                        val restored = try {
+                            shellService?.restoreMinimizedTask(tid, currentDisplayId) ?: false
+                        } catch (e: Exception) { false }
+
+                        if (restored) {
+                            Thread.sleep(200)
+                            applyBoundsIfPossible(tid)
+                            visibleNow = isVisibleNow()
+                        }
+
+                        if (traceRestore) {
+                            android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_RECENTS entry=$entryId tid=$tid restored=$restored visible=$visibleNow")
+                        }
+
+                        // Phase 2 fallback for tasks that were not Samsung-minimized.
+                        if (!visibleNow) {
+                            shellService?.runCommand("am task set-windowing-mode $tid 5")
+                            shellService?.runCommand("am task move-task-to-front $tid")
+                            shellService?.moveTaskToFront(tid, currentDisplayId)
+                            applyBoundsIfPossible(tid)
+                            Thread.sleep(200)
+                            visibleNow = isVisibleNow()
+                            if (traceRestore) {
+                                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE2_FRONT entry=$entryId tid=$tid visible=$visibleNow")
+                            }
                         }
                     }
 
@@ -6561,25 +6588,69 @@ private var isSoftKeyboardSupport = false
         return hiddenMinimizeDisplayId
     }
 
-    // Minimize task using hidden display (for A14 fallback)
+    // Minimize task using hidden display (A14/A15 fallback).
     // IMPORTANT: Do not relaunch as fallback here; relaunch can spawn duplicate main/sub tasks.
     private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
         val targetId = ensureHiddenMinimizeDisplay()
         if (targetId <= 0) return false
 
         try {
+            val normalizedClass = normalizeActivityClass(packageName, className)
+            val taskScoped = shouldUseTaskScopedIdentityForClass(packageName, normalizedClass)
+
+            fun isStillVisibleOnCurrentDisplay(): Boolean {
+                val currentVisible = getObservedVisibleComponents(currentDisplayId)
+                return currentVisible.any { observed ->
+                    (observed.taskId != null && observed.taskId == taskId) ||
+                        (
+                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName) &&
+                                (
+                                    !taskScoped ||
+                                        normalizedClass.isNullOrEmpty() ||
+                                        observed.className == normalizedClass
+                                )
+                        )
+                }
+            }
+
+            // Attempt 1: move existing task to hidden display.
             shellService?.runCommand("am task move-task-to-display $taskId $targetId")
-            return true
+            Thread.sleep(140)
+            if (!isStillVisibleOnCurrentDisplay()) return true
+
+            // Attempt 2 (legacy A14 fallback): start target on hidden display.
+            val startCmd = if (!normalizedClass.isNullOrEmpty()) {
+                "am start -n $packageName/$normalizedClass --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
+            } else {
+                "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
+            }
+            shellService?.runCommand(startCmd)
+            Thread.sleep(180)
+            if (!isStillVisibleOnCurrentDisplay()) return true
+
+            // Final signal: hidden display visibility if present.
+            val hiddenVisible = getObservedVisibleComponents(targetId)
+            if (hiddenVisible.any { observed ->
+                    (observed.taskId != null && observed.taskId == taskId) ||
+                        (
+                            !taskScoped &&
+                                AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName)
+                        )
+                }
+            ) {
+                return true
+            }
+
+            return false
         } catch (e: Exception) {
             return false
         }
     }
 
     private fun shouldUseHiddenMinimizeStrategy(basePkg: String, className: String?): Boolean {
-        // Hidden display only works on A14/A15 (SDK < 36) for non-task-scoped entries.
-        // On A16+, move-task-to-display silently fails — use offscreen instead.
+        // A14/A15 fallback path. A16+ uses Samsung minimize/restore APIs.
         if (Build.VERSION.SDK_INT >= 36) return false
-        return !shouldUseTaskScopedIdentityForClass(basePkg, className)
+        return true
     }
 
     private fun minimizeTaskOffscreen(taskId: Int): Boolean {
@@ -6622,11 +6693,24 @@ private var isSoftKeyboardSupport = false
             } catch (e: Exception) {}
         }
 
-        // Use Samsung moveTaskToBack (minimizeTaskById) for ALL entries.
-        // This properly minimizes without counting toward OneUI 5-app limit.
-        // Restore uses restoreMinimizedTask (startActivityFromRecents) instead of moveTaskToFront.
-        shellService?.moveTaskToBack(tid)
-        method = if (taskScoped) "samsung-taskScoped" else "samsung"
+        if (shouldUseHiddenMinimizeStrategy(basePkg, queueClass ?: cls)) {
+            val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, queueClass ?: cls)
+            if (hiddenMinimized) {
+                method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
+            } else {
+                // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
+                shellService?.moveTaskToBack(tid)
+                method = if (taskScoped) {
+                    "hidden-display-failed-samsung-fallback-taskScoped"
+                } else {
+                    "hidden-display-failed-samsung-fallback"
+                }
+            }
+        } else {
+            // A16+ path: Samsung minimize API.
+            shellService?.moveTaskToBack(tid)
+            method = if (taskScoped) "samsung-taskScoped" else "samsung"
+        }
 
         if (shouldTraceTaskResolution(basePkg)) {
             android.util.Log.d(
