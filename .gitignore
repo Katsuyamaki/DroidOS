@@ -38,6 +38,7 @@ droid_stats_graph.py
 DroidOS_Repomix_*.md
 log.md
 playstore.md
+ime_trace_cover_main.txt
 # Ignore all files in the project root
 /*
 # Do NOT ignore directories (this allows Git to see your app folders)
