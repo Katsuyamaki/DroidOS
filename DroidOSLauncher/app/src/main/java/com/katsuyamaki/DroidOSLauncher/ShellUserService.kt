@@ -301,6 +301,48 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         return token
     }
 
+    override fun getVisibleTaskComponents(displayId: Int): List<String> {
+        val components = ArrayList<String>()
+        val seenTaskIds = HashSet<Int>()
+        val token = Binder.clearCallingIdentity()
+        try {
+            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "am stack list"))
+            val r = BufferedReader(InputStreamReader(p.inputStream))
+            var line: String?
+            var currentDisplayId = -1
+            val displayPattern = Regex("displayId=(\\d+)")
+            val taskPattern = Regex("taskId=(\\d+):\\s+([^\\s]+)")
+
+            while (r.readLine().also { line = it } != null) {
+                val l = line!!.trim()
+
+                val displayMatch = displayPattern.find(l)
+                if (displayMatch != null) {
+                    currentDisplayId = displayMatch.groupValues[1].toIntOrNull() ?: -1
+                }
+
+                if (currentDisplayId != displayId) continue
+                if (!l.contains("taskId=") || !l.contains("visible=true")) continue
+
+                val taskMatch = taskPattern.find(l) ?: continue
+                val taskId = taskMatch.groupValues[1].toIntOrNull() ?: continue
+                if (taskId <= 0 || seenTaskIds.contains(taskId)) continue
+
+                val component = parseWindowComponent(taskMatch.groupValues[2]) ?: continue
+                components.add("$taskId|$component")
+                seenTaskIds.add(taskId)
+            }
+
+            r.close()
+            p.waitFor()
+        } catch (e: Exception) {
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+
+        return components
+    }
+
     override fun getVisibleComponents(displayId: Int): List<String> {
         val now = System.currentTimeMillis()
 
@@ -519,14 +561,19 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // For Gemini: caches the exact task ID when found since it becomes invisible after trampoline
 
     override fun getTaskId(packageName: String, className: String?): Int {
-        var exactTaskId = -1      // Best: full component match
-        var packageTaskId = -1    // Good: package/equivalent package match
-        var fallbackTaskId = -1   // Last resort: short activity name match
+        var exactVisibleTaskId = -1
+        var exactTaskId = -1
+        var packageVisibleTaskId = -1
+        var packageTaskId = -1
+        var fallbackVisibleTaskId = -1
+        var fallbackTaskId = -1
 
         val normalizedTargetPackage = AppCompatibilityRegistry.normalizePackage(packageName)
         val taskMatchPackages = AppCompatibilityRegistry.taskMatchPackagesFor(normalizedTargetPackage)
         val preferPackageTask = AppCompatibilityRegistry.shouldPreferPackageTaskMatch(normalizedTargetPackage)
         val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(normalizedTargetPackage, className)
+        val shouldTrace = AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalizedTargetPackage)
+        val traceCandidates = mutableListOf<String>()
 
         val isGemini = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
             normalizedTargetPackage,
@@ -573,27 +620,64 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 val foundId = match.groupValues[1].toIntOrNull() ?: continue
                 if (foundId <= 0) continue
 
+                val isVisible = l.contains("visible=true")
+
                 if (fullComponent != null && l.contains(fullComponent)) {
-                    exactTaskId = foundId
+                    exactTaskId = maxOf(exactTaskId, foundId)
+                    if (isVisible) exactVisibleTaskId = maxOf(exactVisibleTaskId, foundId)
+                    if (shouldTrace && traceCandidates.size < 10) {
+                        traceCandidates.add("exact:tid=$foundId vis=$isVisible")
+                    }
                 } else if (taskMatchPackages.any { taskPkg -> l.contains("$taskPkg/") }) {
-                    packageTaskId = foundId
+                    packageTaskId = maxOf(packageTaskId, foundId)
+                    if (isVisible) packageVisibleTaskId = maxOf(packageVisibleTaskId, foundId)
+                    if (shouldTrace && traceCandidates.size < 10) {
+                        traceCandidates.add("pkg:tid=$foundId vis=$isVisible")
+                    }
                 } else if (shortActivity != null &&
                     shortActivity != "MainActivity" &&
                     shortActivity != "default" &&
                     l.contains(shortActivity)
                 ) {
-                    fallbackTaskId = foundId
+                    fallbackTaskId = maxOf(fallbackTaskId, foundId)
+                    if (isVisible) fallbackVisibleTaskId = maxOf(fallbackVisibleTaskId, foundId)
+                    if (shouldTrace && traceCandidates.size < 10) {
+                        traceCandidates.add("fallback:tid=$foundId vis=$isVisible")
+                    }
                 }
             }
             r.close()
             p.waitFor()
 
-            val result = when {
-                preferPackageTask && packageTaskId > 0 -> packageTaskId
-                exactTaskId > 0 -> exactTaskId
-                packageTaskId > 0 -> packageTaskId
-                fallbackTaskId > 0 -> fallbackTaskId
-                else -> -1
+            val result = if (preferPackageTask) {
+                when {
+                    packageVisibleTaskId > 0 -> packageVisibleTaskId
+                    packageTaskId > 0 -> packageTaskId
+                    exactVisibleTaskId > 0 -> exactVisibleTaskId
+                    exactTaskId > 0 -> exactTaskId
+                    fallbackVisibleTaskId > 0 -> fallbackVisibleTaskId
+                    fallbackTaskId > 0 -> fallbackTaskId
+                    else -> -1
+                }
+            } else {
+                when {
+                    exactVisibleTaskId > 0 -> exactVisibleTaskId
+                    exactTaskId > 0 -> exactTaskId
+                    packageVisibleTaskId > 0 -> packageVisibleTaskId
+                    packageTaskId > 0 -> packageTaskId
+                    fallbackVisibleTaskId > 0 -> fallbackVisibleTaskId
+                    fallbackTaskId > 0 -> fallbackTaskId
+                    else -> -1
+                }
+            }
+
+            if (shouldTrace) {
+                android.util.Log.d(
+                    "DROIDOS_TASK_RESOLVE",
+                    "pkg=$normalizedTargetPackage cls=${resolvedClass ?: "<pkg>"} preferPkg=$preferPackageTask " +
+                        "exactV=$exactVisibleTaskId exact=$exactTaskId pkgV=$packageVisibleTaskId pkg=$packageTaskId " +
+                        "fbV=$fallbackVisibleTaskId fb=$fallbackTaskId result=$result candidates=${traceCandidates.joinToString("|")}"
+                )
             }
 
             if (isGemini) {
@@ -948,6 +1032,40 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 
             for (proc in procs) proc.waitFor()
         } catch (e: Exception) {
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+
+    override fun getTaskDebugSnapshot(packageName: String): String {
+        val normalized = AppCompatibilityRegistry.normalizePackage(packageName)
+        if (normalized.isEmpty()) return "empty-package"
+
+        val token = Binder.clearCallingIdentity()
+        return try {
+            val relatedPackages = AppCompatibilityRegistry.taskMatchPackagesFor(normalized)
+            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "am stack list"))
+            val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
+            p.waitFor()
+
+            val matched = mutableListOf<String>()
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (!trimmed.contains("taskId=")) continue
+
+                if (relatedPackages.any { candidate -> trimmed.contains("$candidate/") }) {
+                    matched.add(trimmed)
+                    if (matched.size >= 24) break
+                }
+            }
+
+            if (matched.isEmpty()) {
+                "no-task-lines"
+            } else {
+                matched.joinToString("\n")
+            }
+        } catch (e: Exception) {
+            "snapshot-error:${e.message}"
         } finally {
             Binder.restoreCallingIdentity(token)
         }

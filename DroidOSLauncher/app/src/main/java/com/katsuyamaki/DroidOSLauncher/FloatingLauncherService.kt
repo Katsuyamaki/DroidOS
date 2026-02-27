@@ -496,6 +496,8 @@ private var isSoftKeyboardSupport = false
     // [NEW] Persist tiling info for Watchdog recovery
     private val packageRectCache = java.util.concurrent.ConcurrentHashMap<String, Rect>()
     private val packageTaskIdCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    // Per-queue-entry minimized task cache prevents main/sub package collisions on restore.
+    private val minimizedTaskIdByEntryId = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     // [NEW] Prevent concurrent watchdog threads for the same package
     private val activeEnforcements = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -913,8 +915,15 @@ private var isSoftKeyboardSupport = false
 
     private data class ObservedComponent(
         val packageName: String,
-        val className: String?
+        val className: String?,
+        val taskId: Int? = null
     )
+
+    private fun shouldUseTaskScopedIdentity(rawPackage: String?): Boolean {
+        val normalized = AppCompatibilityRegistry.normalizePackage(rawPackage)
+        if (normalized.isEmpty()) return false
+        return AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalized)
+    }
 
     private fun normalizeActivityClass(packageName: String, className: String?): String? {
         val trimmed = className?.trim()
@@ -922,40 +931,79 @@ private var isSoftKeyboardSupport = false
         return if (trimmed.startsWith(".")) "$packageName$trimmed" else trimmed
     }
 
+    private fun shouldUseTaskScopedIdentityForClass(rawPackage: String?, className: String?): Boolean {
+        val normalizedPkg = AppCompatibilityRegistry.normalizePackage(rawPackage)
+        if (!shouldUseTaskScopedIdentity(normalizedPkg)) return false
+
+        val normalizedClass = normalizeActivityClass(normalizedPkg, className)
+        if (normalizedClass.isNullOrEmpty()) return false
+
+        // Keep proxy/home activities as a single main entry even if task IDs churn.
+        if (AppCompatibilityRegistry.isProxyActivity(normalizedPkg, normalizedClass)) return false
+
+        return true
+    }
+
     private fun parseObservedComponent(rawObserved: String): ObservedComponent? {
         val trimmed = rawObserved.trim()
         if (trimmed.isEmpty()) return null
 
-        val rawPkg = if (trimmed.contains("/")) trimmed.substringBefore("/") else trimmed
+        var taskId: Int? = null
+        var componentToken = trimmed
+
+        val taskPrefixedMatch = Regex("^(\\d+)\\|(.+)$").find(trimmed)
+        if (taskPrefixedMatch != null) {
+            val candidateTaskId = taskPrefixedMatch.groupValues[1].toIntOrNull()
+            val candidateComponent = taskPrefixedMatch.groupValues[2]
+            if (candidateTaskId != null && candidateComponent.contains("/")) {
+                taskId = candidateTaskId
+                componentToken = candidateComponent
+            }
+        }
+
+        val rawPkg = if (componentToken.contains("/")) componentToken.substringBefore("/") else componentToken
         val pkg = AppCompatibilityRegistry.normalizePackage(rawPkg)
         if (pkg.isEmpty()) return null
 
-        val rawClass = if (trimmed.contains("/")) {
-            trimmed.substringAfter("/", "").substringBefore("}").takeIf { it.isNotBlank() }
+        val rawClass = if (componentToken.contains("/")) {
+            componentToken.substringAfter("/", "").substringBefore("}").takeIf { it.isNotBlank() }
         } else {
             null
         }
 
-        return ObservedComponent(pkg, normalizeActivityClass(pkg, rawClass))
+        return ObservedComponent(pkg, normalizeActivityClass(pkg, rawClass), taskId)
     }
 
     private fun getObservedVisibleComponents(displayId: Int): List<ObservedComponent> {
+        val rawTaskComponents = try {
+            shellService?.getVisibleTaskComponents(displayId) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
         val rawComponents = try {
             shellService?.getVisibleComponents(displayId) ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }
 
-        val source = if (rawComponents.isNotEmpty()) {
-            rawComponents
-        } else {
-            shellService?.getVisiblePackages(displayId) ?: emptyList()
+        val source = when {
+            rawTaskComponents.isNotEmpty() -> rawTaskComponents
+            rawComponents.isNotEmpty() -> rawComponents
+            else -> shellService?.getVisiblePackages(displayId) ?: emptyList()
         }
 
         val unique = LinkedHashMap<String, ObservedComponent>()
         for (raw in source) {
             val observed = parseObservedComponent(raw) ?: continue
-            val key = "${observed.packageName}/${observed.className ?: ""}"
+            val key = if (
+                shouldUseTaskScopedIdentityForClass(observed.packageName, observed.className) &&
+                    observed.taskId != null
+            ) {
+                "${observed.packageName}/${observed.className ?: ""}|t${observed.taskId}"
+            } else {
+                "${observed.packageName}/${observed.className ?: ""}"
+            }
             if (!unique.containsKey(key)) unique[key] = observed
         }
 
@@ -967,7 +1015,14 @@ private var isSoftKeyboardSupport = false
 
         val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
         val normalizedClass = normalizeActivityClass(basePkg, app.className)
-        return if (normalizedClass != null) "$basePkg|$normalizedClass" else basePkg
+        val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, normalizedClass)
+        val taskSuffix = if (taskScoped && (app.taskIdHint ?: 0) > 0) {
+            "|t${app.taskIdHint}"
+        } else {
+            ""
+        }
+
+        return if (normalizedClass != null) "$basePkg|$normalizedClass$taskSuffix" else basePkg
     }
 
     private fun findAppByQueueEntryId(entryId: String?): MainActivity.AppInfo? {
@@ -1018,24 +1073,37 @@ private var isSoftKeyboardSupport = false
     private fun parseQueueEntryId(identifier: String): ObservedComponent? {
         if (identifier.isBlank() || identifier == PACKAGE_BLANK) return null
 
-        if (identifier.contains("|")) {
-            val pkg = AppCompatibilityRegistry.normalizePackage(identifier.substringBefore("|"))
+        var coreId = identifier.trim()
+        var taskId: Int? = null
+
+        val taskSuffixMatch = Regex("\\|t(\\d+)$").find(coreId)
+        if (taskSuffixMatch != null) {
+            taskId = taskSuffixMatch.groupValues[1].toIntOrNull()
+            coreId = coreId.removeRange(taskSuffixMatch.range)
+        }
+
+        if (coreId.contains("|")) {
+            val pkg = AppCompatibilityRegistry.normalizePackage(coreId.substringBefore("|"))
             if (pkg.isEmpty()) return null
-            val cls = normalizeActivityClass(pkg, identifier.substringAfter("|", ""))
-            return ObservedComponent(pkg, cls)
+            val cls = normalizeActivityClass(pkg, coreId.substringAfter("|", ""))
+            val effectiveTaskId = if (shouldUseTaskScopedIdentityForClass(pkg, cls)) taskId else null
+            return ObservedComponent(pkg, cls, effectiveTaskId)
         }
 
         // Legacy Gemini format support.
-        if (identifier.contains(":") && !identifier.contains("/")) {
-            val basePkg = AppCompatibilityRegistry.normalizePackage(identifier.substringBefore(":"))
-            val suffix = identifier.substringAfter(":", "")
+        if (coreId.contains(":") && !coreId.contains("/")) {
+            val basePkg = AppCompatibilityRegistry.normalizePackage(coreId.substringBefore(":"))
+            val suffix = coreId.substringAfter(":", "")
             if (basePkg == "com.google.android.googlequicksearchbox" && suffix == "gemini") {
-                return ObservedComponent("com.google.android.apps.bard", null)
+                return ObservedComponent("com.google.android.apps.bard", null, null)
             }
-            return if (basePkg.isEmpty()) null else ObservedComponent(basePkg, null)
+            return if (basePkg.isEmpty()) null else ObservedComponent(basePkg, null, null)
         }
 
-        return parseObservedComponent(identifier)
+        return parseObservedComponent(coreId)?.let { parsed ->
+            val effectiveTaskId = if (shouldUseTaskScopedIdentityForClass(parsed.packageName, parsed.className)) taskId else null
+            parsed.copy(taskId = effectiveTaskId)
+        }
     }
 
     private fun queueAppMatchesObservedComponent(app: MainActivity.AppInfo, observed: ObservedComponent): Boolean {
@@ -1047,6 +1115,16 @@ private var isSoftKeyboardSupport = false
         if (!identityMatches) return false
 
         val appClass = normalizeActivityClass(appPkg, app.className)
+        val taskScoped = shouldUseTaskScopedIdentityForClass(appPkg, appClass)
+        val observedTaskScoped = shouldUseTaskScopedIdentityForClass(observed.packageName, observed.className)
+        if ((taskScoped || observedTaskScoped) &&
+            app.taskIdHint != null &&
+            observed.taskId != null &&
+            app.taskIdHint != observed.taskId
+        ) {
+            return false
+        }
+
         return when {
             appClass != null && observed.className != null -> {
                 if (appClass == observed.className) {
@@ -1079,16 +1157,75 @@ private var isSoftKeyboardSupport = false
         app: MainActivity.AppInfo,
         observedComponents: List<ObservedComponent>
     ): Boolean {
-        return observedComponents.any { observed -> queueAppMatchesObservedComponent(app, observed) }
+        val matched = observedComponents.firstOrNull { observed -> queueAppMatchesObservedComponent(app, observed) } ?: return false
+
+        if (shouldUseTaskScopedIdentityForClass(app.getBasePackage(), app.className)) {
+            val observedTaskId = matched.taskId
+            if (observedTaskId != null && observedTaskId > 0 && app.taskIdHint != observedTaskId) {
+                app.taskIdHint = observedTaskId
+            }
+        }
+
+        return true
+    }
+
+    private fun remapTaskHintFromObserved(
+        app: MainActivity.AppInfo,
+        observedComponents: List<ObservedComponent>,
+        claimedTaskIds: MutableSet<Int>
+    ) {
+        if (!shouldUseTaskScopedIdentityForClass(app.getBasePackage(), app.className)) return
+
+        val strictMatch = observedComponents.firstOrNull { observed ->
+            val tid = observed.taskId
+            queueAppMatchesObservedComponent(app, observed) && (tid == null || !claimedTaskIds.contains(tid))
+        }
+        val strictTid = strictMatch?.taskId
+        if (strictTid != null && strictTid > 0) {
+            app.taskIdHint = strictTid
+            claimedTaskIds.add(strictTid)
+            return
+        }
+
+        val relaxed = if (app.taskIdHint != null) app.copy(taskIdHint = null) else app
+        val fallbackMatch = observedComponents.firstOrNull { observed ->
+            val tid = observed.taskId
+            tid != null && tid > 0 &&
+                !claimedTaskIds.contains(tid) &&
+                queueAppMatchesObservedComponent(relaxed, observed)
+        }
+
+        val fallbackTid = fallbackMatch?.taskId
+        if (fallbackTid != null && fallbackTid > 0) {
+            app.taskIdHint = fallbackTid
+            claimedTaskIds.add(fallbackTid)
+        }
     }
 
     private fun focusIdentityMatches(lhs: String?, rhs: String?): Boolean {
         return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(lhs, rhs)
     }
 
+    private fun applyObservedTaskIdentity(
+        app: MainActivity.AppInfo,
+        observed: ObservedComponent
+    ): MainActivity.AppInfo {
+        val appPkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        val resolvedClass = app.className ?: normalizeActivityClass(observed.packageName, observed.className)
+        if (!shouldUseTaskScopedIdentityForClass(appPkg, resolvedClass)) return app
+
+        val observedTid = observed.taskId ?: return app
+        if (observedTid <= 0) return app
+
+        if (app.taskIdHint == observedTid && resolvedClass == app.className) return app
+
+        return app.copy(className = resolvedClass, taskIdHint = observedTid)
+    }
+
     private fun tryCreateObservedPackageEntry(
         observedPkg: String,
-        observedClass: String?
+        observedClass: String?,
+        observedTaskId: Int? = null
     ): MainActivity.AppInfo? {
         val pkg = AppCompatibilityRegistry.normalizePackage(observedPkg)
         if (pkg.isEmpty() || pkg == packageName || pkg == PACKAGE_TRACKPAD || pkg == PACKAGE_BLANK) return null
@@ -1096,12 +1233,14 @@ private var isSoftKeyboardSupport = false
         return try {
             val appInfo = packageManager.getApplicationInfo(pkg, 0)
             val label = packageManager.getApplicationLabel(appInfo).toString()
+            val resolvedClass = normalizeActivityClass(pkg, observedClass)
             MainActivity.AppInfo(
                 label = label,
                 packageName = pkg,
-                className = normalizeActivityClass(pkg, observedClass),
+                className = resolvedClass,
                 isFavorite = AppPreferences.isFavorite(this, pkg),
-                isMinimized = false
+                isMinimized = false,
+                taskIdHint = if (shouldUseTaskScopedIdentityForClass(pkg, resolvedClass)) observedTaskId else null
             )
         } catch (e: Exception) {
             null
@@ -1114,19 +1253,19 @@ private var isSoftKeyboardSupport = false
             val candidateClass = normalizeActivityClass(candidatePkg, it.className)
             candidatePkg == observed.packageName && candidateClass == observed.className
         }
-        if (exactByComponent != null) return exactByComponent
+        if (exactByComponent != null) return applyObservedTaskIdentity(exactByComponent, observed)
 
         if (observed.className == null) {
             val exactByPackage = allAppsList.find {
                 AppCompatibilityRegistry.normalizePackage(it.getBasePackage()) == observed.packageName
             }
-            if (exactByPackage != null) return exactByPackage
+            if (exactByPackage != null) return applyObservedTaskIdentity(exactByPackage, observed)
         }
 
         val alias = allAppsList.find { queueAppMatchesObservedComponent(it, observed) }
-        if (alias != null) return alias
+        if (alias != null) return applyObservedTaskIdentity(alias, observed)
 
-        return tryCreateObservedPackageEntry(observed.packageName, observed.className)
+        return tryCreateObservedPackageEntry(observed.packageName, observed.className, observed.taskId)
     }
 
     private fun findAppByObservedPackage(observedPkg: String): MainActivity.AppInfo? {
@@ -5496,8 +5635,9 @@ private var isSoftKeyboardSupport = false
                 
                 // [FIX] Restore selection to same app after sort
                 if (selectedApp != null) {
-                    val newIndex = selectedAppsQueue.indexOfFirst { 
-                        it.packageName == selectedApp.packageName && it.className == selectedApp.className 
+                    val selectedEntryId = getQueueEntryId(selectedApp)
+                    val newIndex = selectedAppsQueue.indexOfFirst {
+                        getQueueEntryId(it) == selectedEntryId
                     }
                     if (newIndex >= 0) {
                         queueSelectedIndex = newIndex
@@ -5955,8 +6095,9 @@ private var isSoftKeyboardSupport = false
         try {
             if (app.packageName == PACKAGE_BLANK || app.isMinimized) return
 
+            val targetEntryId = getQueueEntryId(app)
             val targetStillInQueue = selectedAppsQueue.any {
-                it.packageName == app.packageName && it.className == app.className
+                getQueueEntryId(it) == targetEntryId
             }
             if (!targetStillInQueue) return
 
@@ -5972,9 +6113,9 @@ private var isSoftKeyboardSupport = false
             shellService?.runCommand(cmd)
 
             if (bounds != null) {
-                val taskId = shellService?.getTaskId(basePkg, className) ?: -1
-                if (taskId != -1) {
-                    shellService?.repositionTask(basePkg, className, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                val taskId = resolveTaskIdForApp(app, "FOCUS")
+                if (taskId > 0) {
+                    shellService?.runCommand("am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
                 }
             }
         } catch (e: Exception) {
@@ -6041,7 +6182,305 @@ private var isSoftKeyboardSupport = false
         sendBroadcast(intent)
     }
 
-    
+    private fun getBoundsForQueueIndex(queueIndex: Int): Rect? {
+        if (queueIndex !in selectedAppsQueue.indices) return null
+        val rects = getLayoutRects()
+        if (rects.isEmpty()) return null
+
+        // Queue includes minimized/blank entries; convert queue index to active tiling slot index.
+        val layoutIndex = selectedAppsQueue.take(queueIndex + 1).count {
+            !it.isMinimized && it.packageName != PACKAGE_BLANK
+        } - 1
+
+        return if (layoutIndex in rects.indices) rects[layoutIndex] else null
+    }
+
+    private fun shouldTraceTaskResolution(basePkg: String): Boolean {
+        return AppCompatibilityRegistry.shouldAutoSyncObservedComponents(basePkg)
+    }
+
+    private fun logTaskResolutionTrace(
+        reason: String,
+        app: MainActivity.AppInfo,
+        basePkg: String,
+        queueClass: String?,
+        attemptedClasses: List<String?>,
+        chosenClass: String?,
+        resolvedTid: Int,
+        observedSummary: String
+    ) {
+        if (!shouldTraceTaskResolution(basePkg)) return
+
+        val entryId = getQueueEntryId(app)
+        val snapshot = try {
+            shellService?.getTaskDebugSnapshot(basePkg) ?: "snapshot-null"
+        } catch (e: Exception) {
+            "snapshot-error:${e.message}"
+        }
+
+        val compactSnapshot = snapshot
+            .lineSequence()
+            .take(12)
+            .joinToString(" || ")
+
+        android.util.Log.d(
+            "DROIDOS_TASK_TRACE",
+            "reason=$reason entry=$entryId pkg=$basePkg queueClass=${queueClass ?: "null"} " +
+                "attempted=${attemptedClasses.joinToString(",") { it ?: "<pkg>" }} " +
+                "chosen=${chosenClass ?: "<pkg>"} tid=$resolvedTid observed=$observedSummary snapshot=$compactSnapshot"
+        )
+    }
+
+    private fun resolveTaskIdForApp(app: MainActivity.AppInfo, reason: String): Int {
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (basePkg.isEmpty()) return -1
+
+        val traceEnabled = shouldTraceTaskResolution(basePkg)
+        val queueClass = normalizeActivityClass(basePkg, app.className)
+        val classCandidates = linkedSetOf<String?>()
+        if (queueClass != null) classCandidates.add(queueClass)
+
+        val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: app.className)
+        val hintedTaskId = if (taskScoped) app.taskIdHint else null
+        if (hintedTaskId != null && hintedTaskId > 0) {
+            val hintSnapshot = try {
+                shellService?.getTaskDebugSnapshot(basePkg) ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+
+            if (hintSnapshot.contains("taskId=$hintedTaskId:")) {
+                if (traceEnabled) {
+                    logTaskResolutionTrace(
+                        reason = reason,
+                        app = app,
+                        basePkg = basePkg,
+                        queueClass = queueClass,
+                        attemptedClasses = listOf("<hint:$hintedTaskId>"),
+                        chosenClass = "<hint>",
+                        resolvedTid = hintedTaskId,
+                        observedSummary = "hint-match"
+                    )
+                }
+                return hintedTaskId
+            }
+        }
+
+        val observedMatches = try {
+            getObservedVisibleComponents(currentDisplayId).filter { observed ->
+                queueAppMatchesObservedComponent(app, observed) ||
+                    queueAppMatchesObservedPackage(app, observed.packageName)
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val observedSummary = if (observedMatches.isEmpty()) {
+            "none"
+        } else {
+            observedMatches.joinToString(",") {
+                "${it.packageName}/${it.className ?: "null"}#${it.taskId ?: -1}"
+            }
+        }
+
+        for (observed in observedMatches) {
+            val normalizedObserved = normalizeActivityClass(basePkg, observed.className)
+            if (!normalizedObserved.isNullOrEmpty()) classCandidates.add(normalizedObserved)
+        }
+
+        if (taskScoped && (hintedTaskId == null || hintedTaskId <= 0)) {
+            val uniqueObservedTid = observedMatches.mapNotNull { it.taskId }.distinct().singleOrNull()
+            if (uniqueObservedTid != null && uniqueObservedTid > 0) {
+                app.taskIdHint = uniqueObservedTid
+                if (traceEnabled) {
+                    logTaskResolutionTrace(
+                        reason = reason,
+                        app = app,
+                        basePkg = basePkg,
+                        queueClass = queueClass,
+                        attemptedClasses = listOf("<observed:$uniqueObservedTid>"),
+                        chosenClass = "<observed>",
+                        resolvedTid = uniqueObservedTid,
+                        observedSummary = observedSummary
+                    )
+                }
+                return uniqueObservedTid
+            }
+        }
+
+        classCandidates.add(null)
+
+        var resolvedTid = -1
+        var chosenClass: String? = null
+        for (candidateClass in classCandidates) {
+            val tid = shellService?.getTaskId(basePkg, candidateClass) ?: -1
+            if (tid > 0) {
+                resolvedTid = tid
+                chosenClass = candidateClass
+                break
+            }
+        }
+
+        if (resolvedTid > 0 && taskScoped) {
+            app.taskIdHint = resolvedTid
+        }
+
+        if (traceEnabled) {
+            logTaskResolutionTrace(
+                reason = reason,
+                app = app,
+                basePkg = basePkg,
+                queueClass = queueClass,
+                attemptedClasses = classCandidates.toList(),
+                chosenClass = chosenClass,
+                resolvedTid = resolvedTid,
+                observedSummary = observedSummary
+            )
+        }
+
+        return resolvedTid
+    }
+
+    private fun restoreAppTaskToCurrentDisplay(app: MainActivity.AppInfo, targetBounds: Rect? = null) {
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (basePkg.isEmpty()) return
+        val entryId = getQueueEntryId(app)
+        val queueClass = normalizeActivityClass(basePkg, app.className)
+        val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: app.className)
+
+        fun buildBroughtToFrontStartCmd(targetClass: String?): String {
+            return if (!targetClass.isNullOrEmpty()) {
+                "am start -W -n $basePkg/$targetClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+            } else {
+                "am start -W -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+            }
+        }
+
+        fun applyBoundsIfPossible(taskId: Int) {
+            if (targetBounds == null || taskId <= 0) return
+            shellService?.runCommand("am task resize $taskId ${targetBounds.left} ${targetBounds.top} ${targetBounds.right} ${targetBounds.bottom}")
+        }
+
+        fun isVisibleNow(): Boolean {
+            return try {
+                queueAppVisibleInObservedComponents(app, getObservedVisibleComponents(currentDisplayId))
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        Thread {
+            try {
+                var tid = minimizedTaskIdByEntryId[entryId] ?: -1
+                if (tid <= 0) {
+                    tid = resolveTaskIdForApp(app, "RESTORE")
+                }
+
+                var visibleNow = false
+
+                if (tid > 0) {
+                    // Bring existing task back first.
+                    shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
+                    shellService?.runCommand("am task set-windowing-mode $tid 5")
+                    shellService?.runCommand("am task move-task-to-front $tid")
+                    shellService?.moveTaskToFront(tid, currentDisplayId)
+                    applyBoundsIfPossible(tid)
+
+                    Thread.sleep(170)
+                    visibleNow = isVisibleNow()
+
+                    if (!visibleNow) {
+                        if (taskScoped) {
+                            // Task-scoped docs/sheets entries are not always launchable by explicit class.
+                            shellService?.runCommand("am task move-task-to-display $tid $currentDisplayId")
+                            shellService?.runCommand("am task set-windowing-mode $tid 5")
+                            applyBoundsIfPossible(tid)
+                            shellService?.runCommand("am task move-task-to-front $tid")
+                            shellService?.moveTaskToFront(tid, currentDisplayId)
+                            Thread.sleep(220)
+                            visibleNow = isVisibleNow()
+                        }
+
+                        // Clear stale sub-activity hint before fallback starts.
+                        if (taskScoped) app.taskIdHint = null
+
+                        // Explicit-class launch fallback is only safe for non task-scoped entries.
+                        if (!visibleNow && !taskScoped) {
+                            shellService?.runCommand(buildFreeformStartCommand(basePkg, queueClass, currentDisplayId))
+                            Thread.sleep(220)
+                            tid = resolveTaskIdForApp(app, "RESTORE_AFTER_FREEFORM_EXPLICIT")
+                            if (tid > 0) applyBoundsIfPossible(tid)
+                            visibleNow = isVisibleNow()
+                        }
+
+                        if (!visibleNow) {
+                            shellService?.runCommand(buildFreeformStartCommand(basePkg, null, currentDisplayId))
+                            Thread.sleep(220)
+                            tid = resolveTaskIdForApp(app, "RESTORE_AFTER_FREEFORM_PACKAGE")
+                            if (tid > 0) applyBoundsIfPossible(tid)
+                            visibleNow = isVisibleNow()
+                        }
+
+                        if (!visibleNow && !taskScoped) {
+                            shellService?.runCommand(buildBroughtToFrontStartCmd(queueClass))
+                            Thread.sleep(170)
+                            visibleNow = isVisibleNow()
+                        }
+
+                        if (!visibleNow) {
+                            shellService?.runCommand(buildBroughtToFrontStartCmd(null))
+                            Thread.sleep(170)
+                            visibleNow = isVisibleNow()
+                        }
+                    }
+
+                    tid = resolveTaskIdForApp(app, "RESTORE_AFTER_FRONT")
+                    if (tid > 0) {
+                        packageTaskIdCache[basePkg] = tid
+                        minimizedTaskIdByEntryId.remove(entryId)
+                        applyBoundsIfPossible(tid)
+                    }
+                } else {
+                    // No task found: for task-scoped entries, avoid explicit class start (often requires extras).
+                    if (taskScoped) app.taskIdHint = null
+                    if (!taskScoped) {
+                        shellService?.runCommand(buildFreeformStartCommand(basePkg, queueClass, currentDisplayId))
+                        Thread.sleep(220)
+                        tid = resolveTaskIdForApp(app, "RESTORE_AFTER_EXPLICIT")
+                    }
+                    if (tid <= 0) {
+                        shellService?.runCommand(buildFreeformStartCommand(basePkg, null, currentDisplayId))
+                        Thread.sleep(220)
+                        tid = resolveTaskIdForApp(app, "RESTORE_AFTER_LAUNCH")
+                    }
+                    if (tid > 0) {
+                        packageTaskIdCache[basePkg] = tid
+                        applyBoundsIfPossible(tid)
+                    }
+                    visibleNow = isVisibleNow()
+                }
+
+                val visibleFinal = visibleNow || isVisibleNow()
+                if (!visibleFinal) {
+                    // Avoid leaving a blank active slot when restore fails.
+                    app.isMinimized = true
+                    if (tid > 0) {
+                        minimizedTaskIdByEntryId[entryId] = tid
+                    }
+                    uiHandler.post { updateAllUIs() }
+                }
+
+                if (shouldTraceTaskResolution(basePkg)) {
+                    android.util.Log.d(
+                        "DROIDOS_TASK_TRACE",
+                        "reason=RESTORE_RESULT entry=$entryId pkg=$basePkg tid=$tid visible=$visibleFinal"
+                    )
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
     private fun toggleVirtualDisplay() {
         if (virtualDisplay == null) {
             setKeepScreenOn(true)
@@ -6096,23 +6535,64 @@ private var isSoftKeyboardSupport = false
     }
 
     // Minimize task using hidden display (for A14 fallback)
-    // Tries move-task-to-display first, then am start as fallback
+    // IMPORTANT: Do not relaunch as fallback here; relaunch can spawn duplicate main/sub tasks.
     private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
         val targetId = ensureHiddenMinimizeDisplay()
         if (targetId <= 0) return false
-        
+
         try {
-            // ATTEMPT 1: Move existing task to hidden display (preserves state)
             shellService?.runCommand("am task move-task-to-display $taskId $targetId")
-            
-            // ATTEMPT 2: Fallback relaunch on hidden display
-            val startCmd = buildFreeformStartCommand(packageName, className, targetId)
-            shellService?.runCommand(startCmd)
-            
             return true
         } catch (e: Exception) {
             return false
         }
+    }
+
+    private fun shouldUseHiddenMinimizeStrategy(basePkg: String, className: String?): Boolean {
+        if (Build.VERSION.SDK_INT >= 36) return false
+        return !shouldUseTaskScopedIdentityForClass(basePkg, className)
+    }
+
+    private fun minimizeTaskOffscreen(taskId: Int): Boolean {
+        return try {
+            shellService?.runCommand("am task set-windowing-mode $taskId 5")
+            shellService?.runCommand("am task resize $taskId 99999 99999 100000 100000")
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun minimizeTaskForQueueEntry(app: MainActivity.AppInfo, reason: String): Int {
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (basePkg.isEmpty()) return -1
+
+        val cls = app.className
+        val queueClass = normalizeActivityClass(basePkg, cls)
+        val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: cls)
+        val entryId = getQueueEntryId(app)
+
+        val tid = resolveTaskIdForApp(app, reason)
+        if (tid <= 0) return -1
+
+        minimizedTaskIdByEntryId[entryId] = tid
+        packageTaskIdCache[basePkg] = tid
+
+        if (taskScoped) {
+            // Avoid Samsung minimizeTaskById for task-scoped docs/sheets entries.
+            val movedOffscreen = minimizeTaskOffscreen(tid)
+            if (!movedOffscreen) shellService?.moveTaskToBack(tid)
+            return tid
+        }
+
+        if (shouldUseHiddenMinimizeStrategy(basePkg, cls)) {
+            val movedToHidden = minimizeToHiddenDisplay(tid, basePkg, cls)
+            if (!movedToHidden) shellService?.moveTaskToBack(tid)
+        } else {
+            shellService?.moveTaskToBack(tid)
+        }
+
+        return tid
     }
     
     // Check if a package is on the hidden minimize display
@@ -6472,7 +6952,17 @@ private var isSoftKeyboardSupport = false
                     append("|")
                     append(
                         observedVisible
-                            .map { observed -> "${observed.packageName}/${observed.className ?: ""}" }
+                            .map { observed ->
+                                val base = "${observed.packageName}/${observed.className ?: ""}"
+                                if (
+                                    shouldUseTaskScopedIdentityForClass(observed.packageName, observed.className) &&
+                                        observed.taskId != null
+                                ) {
+                                    "$base|t${observed.taskId}"
+                                } else {
+                                    base
+                                }
+                            }
                             .distinct()
                             .sorted()
                             .joinToString("|")
@@ -6566,52 +7056,56 @@ private var isSoftKeyboardSupport = false
         Thread {
             try {
                 val observedVisible = getObservedVisibleComponents(currentDisplayId)
-                val visiblePackages = observedVisible.map { it.packageName }.distinct()
                 val allRunning = shellService!!.getAllRunningPackages()
                 val lastQueue = AppPreferences.getLastQueue(this)
 
-
                 uiHandler.post {
                     selectedAppsQueue.clear()
+                    val claimedObservedTaskIds = mutableSetOf<Int>()
+                    val queueEntryIds = mutableSetOf<String>()
 
                     // === PHASE 1: Restore apps from saved queue ===
                     for (identifier in lastQueue) {
                         if (identifier == PACKAGE_BLANK) {
                             selectedAppsQueue.add(MainActivity.AppInfo(" (Blank Space)", PACKAGE_BLANK, null))
-                        } else {
-                            // Find by identifier (supports package-only and component-aware queue IDs)
-                            val appInfo = findAppByIdentifier(identifier)
+                            continue
+                        }
 
-                            if (appInfo != null) {
-                                val basePkg = appInfo.getBasePackage()
+                        // Find by identifier (supports package-only and component-aware queue IDs)
+                        val appInfo = findAppByIdentifier(identifier) ?: continue
+                        val basePkg = appInfo.getBasePackage()
 
-                                // Check if running for this task identity.
-                                val isRunning = allRunning.any { runningPkg ->
-                                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(runningPkg, basePkg)
-                                }
+                        // Rebind stale task hints to current visible tasks before visibility checks.
+                        remapTaskHintFromObserved(appInfo, observedVisible, claimedObservedTaskIds)
 
-                                if (isRunning) {
-                                    val isVisible = queueAppVisibleInObservedComponents(appInfo, observedVisible)
+                        val isRunning = allRunning.any { runningPkg ->
+                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(runningPkg, basePkg)
+                        }
+                        if (!isRunning) continue
 
-                                    // [FIX] Check for recent manual override (within 5 seconds)
-                                    // Prevents app from flickering grey/hidden immediately after unminimizing
-                                    val lastManualTime = manualStateOverrides[basePkg] ?: 0L
-                                    val isRecentOverride = (System.currentTimeMillis() - lastManualTime) < 5000
+                        val isVisible = queueAppVisibleInObservedComponents(appInfo, observedVisible)
 
-                                    if (!isRecentOverride) {
-                                        // Check if on hidden display - always minimized if so
-                                        val onHiddenDisplay = isOnHiddenMinimizeDisplay(basePkg)
-                                        if (onHiddenDisplay) {
-                                            appInfo.isMinimized = true
-                                        } else {
-                                            appInfo.isMinimized = !isVisible
-                                        }
-                                    }
+                        val entryId = getQueueEntryId(appInfo)
 
-                                    selectedAppsQueue.add(appInfo)
-                                }
-                            } else {
-                            }
+                        // [FIX] Check for recent manual override (within 5 seconds)
+                        // Prevents app from flickering grey/hidden immediately after unminimizing
+                        val lastManualTime = manualStateOverrides[basePkg] ?: 0L
+                        val isRecentOverride = (System.currentTimeMillis() - lastManualTime) < 5000
+
+                        if (!isRecentOverride) {
+                            val entryMarkedMinimized = minimizedTaskIdByEntryId.containsKey(entryId)
+                            val onHiddenDisplay = isOnHiddenMinimizeDisplay(basePkg)
+                            appInfo.isMinimized = entryMarkedMinimized || onHiddenDisplay || !isVisible
+                        }
+
+                        if (!queueEntryIds.contains(entryId)) {
+                            selectedAppsQueue.add(appInfo)
+                            queueEntryIds.add(entryId)
+                        }
+
+                        val hintedTaskId = appInfo.taskIdHint
+                        if (hintedTaskId != null && hintedTaskId > 0) {
+                            claimedObservedTaskIds.add(hintedTaskId)
                         }
                     }
 
@@ -6625,12 +7119,17 @@ private var isSoftKeyboardSupport = false
                             val appInfo = findAppByObservedComponent(observed)
                             if (appInfo != null) {
                                 appInfo.isMinimized = false
-                                selectedAppsQueue.add(appInfo)
+                                remapTaskHintFromObserved(appInfo, observedVisible, claimedObservedTaskIds)
+                                val entryId = getQueueEntryId(appInfo)
+                                if (!queueEntryIds.contains(entryId)) {
+                                    selectedAppsQueue.add(appInfo)
+                                    queueEntryIds.add(entryId)
+                                }
                             }
                         }
                     }
 
-                    sortAppQueue() // Now empty/disabled
+                    sortAppQueue()
                     updateAllUIs()
                 }
             } catch (e: Exception) {
@@ -7296,14 +7795,12 @@ private var isSoftKeyboardSupport = false
                     showWallpaper()
                 } else {
                     // Standard Loop
-                    for (app in minimizedApps) { 
-                        if (app.packageName != PACKAGE_BLANK) { 
-                            try { 
-                                val basePkg = app.getBasePackage()
-                                val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
-                                if (tid != -1) shellService?.moveTaskToBack(tid) 
-                            } catch (e: Exception) {} 
-                        } 
+                    for (app in minimizedApps) {
+                        if (app.packageName != PACKAGE_BLANK) {
+                            try {
+                                minimizeTaskForQueueEntry(app, "EXECUTE_MINIMIZE_PASS")
+                            } catch (e: Exception) {}
+                        }
                     }
                 }
                 
@@ -7375,32 +7872,30 @@ private var isSoftKeyboardSupport = false
 
                         // Fast poll (50ms) for snappiness
                         while (System.currentTimeMillis() - startPoll < maxWait) {
-                            tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                            if (tid != -1) break
+                            tid = resolveTaskIdForApp(app, "EXECUTE_TILE_POLL")
+                            if (tid > 0) break
                             Thread.sleep(50)
                         }
 
-                        // If we found it instantly (already running), delay is minimal (50ms).
-                        // If it took time, we wait a tiny bit for the window surface to be ready.
-                        val wasInstant = (System.currentTimeMillis() - startPoll < 150)
-                        if (!wasInstant) Thread.sleep(200)
+                        if (tid > 0) {
+                            // If we found it instantly (already running), delay is minimal (50ms).
+                            // If it took time, we wait a tiny bit for the window surface to be ready.
+                            val wasInstant = (System.currentTimeMillis() - startPoll < 150)
+                            if (!wasInstant) Thread.sleep(200)
 
-                        // PASS 1: Set Mode & Resize
-                        shellService?.repositionTask(basePkg, cls, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            // PASS 1: Set Mode & Resize by resolved taskId.
+                            shellService?.runCommand("am task set-windowing-mode $tid 5")
+                            shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
 
-                        // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
-                        // If we are just swapping active windows, Pass 1 is usually enough.
-                        // We do a quick check-up resize.
-                        if (!wasInstant) Thread.sleep(200)
+                            // PASS 2: Redundant Resize for Samsung (Only if not instant swap)
+                            if (!wasInstant) Thread.sleep(120)
 
-                        val finalTid = shellService?.getTaskId(basePkg, cls) ?: -1
-                        if (finalTid != -1) {
-                            shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            packageTaskIdCache[basePkg] = finalTid
+                            val finalTid = resolveTaskIdForApp(app, "EXECUTE_TILE_FINAL")
+                            if (finalTid > 0) {
+                                shellService?.runCommand("am task resize $finalTid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                                packageTaskIdCache[basePkg] = finalTid
+                            }
                         }
-
-
-
                     } catch (e: Exception) {
                     }
 
@@ -7420,12 +7915,12 @@ private var isSoftKeyboardSupport = false
                         val basePkg = app.getBasePackage()
                         packagesToMinimize.add(basePkg)
                         try {
-                            val tid = shellService?.getTaskId(basePkg, app.className) ?: -1
-                            if (tid != -1) shellService?.moveTaskToBack(tid)
+                            minimizeTaskForQueueEntry(app, "EXECUTE_OVERFLOW_MINIMIZE")
                         } catch (e: Exception) {}
                         // Mark as minimized in the queue
-                        val queueIndex = selectedAppsQueue.indexOfFirst { 
-                            it.packageName == app.packageName && it.className == app.className 
+                        val targetEntryId = getQueueEntryId(app)
+                        val queueIndex = selectedAppsQueue.indexOfFirst {
+                            getQueueEntryId(it) == targetEntryId
                         }
                         if (queueIndex != -1) {
                             selectedAppsQueue[queueIndex].isMinimized = true
@@ -8320,17 +8815,11 @@ private var isSoftKeyboardSupport = false
                     // [FIX] Actually restore windows
                     for (app in appsToRestore) {
                         val basePkg = app.getBasePackage()
-                        val cls = app.className
-                        
+
                         manualStateOverrides[basePkg] = System.currentTimeMillis()
                         minimizedAtTimestamps.remove(basePkg)
-                        
-                        Thread {
-                            try {
-                                val cmd = buildFreeformStartCommand(basePkg, cls)
-                                shellService?.runCommand(cmd)
-                            } catch (e: Exception) {}
-                        }.start()
+
+                        restoreAppTaskToCurrentDisplay(app)
                     }
 
                     // LOGIC: Remove Inactive Blanks (Auto-Delete)
@@ -8444,17 +8933,11 @@ private var isSoftKeyboardSupport = false
                     // Execute restore operations
                     for (app in appsToRestore) {
                         val basePkg = app.getBasePackage()
-                        val cls = app.className
-                        
+
                         manualStateOverrides[basePkg] = System.currentTimeMillis()
                         minimizedAtTimestamps.remove(basePkg)
-                        
-                        Thread {
-                            try {
-                                val cmd = buildFreeformStartCommand(basePkg, cls)
-                                shellService?.runCommand(cmd)
-                            } catch (e: Exception) {}
-                        }.start()
+
+                        restoreAppTaskToCurrentDisplay(app)
                     }
                     
                     // Remove inactive blanks (same cleanup as SWAP)
@@ -8551,19 +9034,15 @@ private var isSoftKeyboardSupport = false
                 Thread {
                     try {
                         for (app in appsToMinimize) {
-                            val basePkg = app.getBasePackage()
-                            val cls = app.className
                             if (currentDisplayId >= 2) {
                                 val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
                                 if (visibleCount <= 1) {
                                     showWallpaper()
                                 } else {
-                                    val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                    if (tid != -1) shellService?.moveTaskToBack(tid)
+                                    minimizeTaskForQueueEntry(app, "MINIMIZE_ALL")
                                 }
                             } else {
-                                val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                if (tid != -1) shellService?.moveTaskToBack(tid)
+                                minimizeTaskForQueueEntry(app, "MINIMIZE_ALL")
                             }
                         }
                     } catch (e: Exception) {
@@ -8703,15 +9182,8 @@ private var isSoftKeyboardSupport = false
                     // NOTE: Only apply to explicit UNMINIMIZE, not TOGGLE_MINIMIZE (which should toggle)
                     if (cmd == "UNMINIMIZE" && !app.isMinimized) {
                         lastExplicitTiledLaunchAt = System.currentTimeMillis()
-                        val basePkg = app.getBasePackage()
-                        val cls = app.className
-                        Thread {
-                            try {
-                                val cmd = buildFreeformStartCommand(basePkg, cls)
-                                shellService?.runCommand(cmd)
-                            } catch (e: Exception) {
-                            }
-                        }.start()
+                        val restoreBounds = getBoundsForQueueIndex(index)
+                        restoreAppTaskToCurrentDisplay(app, restoreBounds)
                         refreshQueueAndLayout("Restored ${app.label}", forceRetile = true, retileDelayMs = 350L)
                         return
                     }
@@ -8754,39 +9226,20 @@ private var isSoftKeyboardSupport = false
     // MINIMIZING: Move to Back
                                      Thread {
                                          try {
-                                             // Virtual Display Strategy
                                              if (currentDisplayId >= 2) {
                                                  // Check if this is the ONLY visible app
                                                  val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
-                                                 val isLastApp = visibleCount <= 1 
+                                                 val isLastApp = visibleCount <= 1
 
                                                  if (isLastApp) {
                                                      // LAST APP: "Launch" the wallpaper to cover it.
                                                      // This avoids the system hanging while searching for a Home screen.
                                                      showWallpaper()
                                                  } else {
-                                                     // NOT LAST: Standard minimize works fine (focus transfers to app behind)
-                                                     val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                                     if (tid != -1) {
-                                                         // A14 (SDK 34-35): Samsung API blocked, use hidden display
-                                                         if (Build.VERSION.SDK_INT < 36) {
-                                                             minimizeToHiddenDisplay(tid, basePkg, cls)
-                                                         } else {
-                                                             shellService?.moveTaskToBack(tid)
-                                                         }
-                                                     }
+                                                     minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
                                                  }
                                              } else {
-                                                 // Standard Display (Phone/Cover)
-                                                 val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                                 if (tid != -1) {
-                                                     // A14 (SDK 34-35): Samsung API blocked, use hidden display
-                                                     if (Build.VERSION.SDK_INT < 36) {
-                                                         minimizeToHiddenDisplay(tid, basePkg, cls)
-                                                     } else {
-                                                         shellService?.moveTaskToBack(tid)
-                                                     }
-                                                 }
+                                                 minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
                                              }
                                          } catch(e: Exception){}
                                      }.start()
@@ -8843,33 +9296,8 @@ private var isSoftKeyboardSupport = false
                                  }
                              } catch (e: Exception) { }
 
-                             Thread {
-                                 try {
-                                     // Use launchViaShell which forces display ID and windowing mode
-                                     // We calculate the target bounds based on current layout to ensure it snaps back correctly
-                                     val rects = getLayoutRects()
-                                     val bounds = if (index < rects.size) rects[index] else null
-
-                                     // This command forces the activity to the top of the stack on current display
-                                     val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                                     val cmd = if (component != null) {
-                                         "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-                                     } else {
-                                         "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                                     }
-                                     shellService?.runCommand(cmd)
-
-                                     // If we have bounds, apply them immediately
-                                     if (bounds != null) {
-                                         Thread.sleep(300) // Wait for start
-                                         val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                         if (tid != -1) {
-                                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                                         }
-                                     }
-                                 } catch(e: Exception) {
-                                 }
-                             }.start()
+                             val restoreBounds = getBoundsForQueueIndex(index)
+                             restoreAppTaskToCurrentDisplay(app, restoreBounds)
                         }
 
                         val retileDelay = if (newState) 200L else 350L
@@ -8918,10 +9346,9 @@ private var isSoftKeyboardSupport = false
                                     activePackageName = null
                                 }
 
-                                Thread { 
-                                    try { 
-                                        val tid = shellService?.getTaskId(basePkg, cls) ?: -1
-                                        if (tid != -1) shellService?.moveTaskToBack(tid)
+                                Thread {
+                                    try {
+                                        minimizeTaskForQueueEntry(targetApp, "HIDE")
                                         // [DEPRECATED] if (killAppOnExecute) shellService?.forceStop(basePkg)
                                     } catch(e: Exception){}
                                 }.start()
@@ -9004,7 +9431,7 @@ private var isSoftKeyboardSupport = false
                             val alreadyFocused = activeFocusEntryId == targetEntryId
                             
                             val targetStillInQueue = selectedAppsQueue.any {
-                                it.packageName == app.packageName && it.className == app.className
+                                getQueueEntryId(it) == targetEntryId
                             }
 
                             if (!targetStillInQueue) {
@@ -9272,10 +9699,10 @@ private var isSoftKeyboardSupport = false
             safeToast(msg)
 
             // Trigger Tiling (skip when just opening drawer/visual queue to prevent restoring minimized apps)
-            if (isInstantMode && !skipTiling) {
-                applyLayoutImmediate(focusPackage)
-            } else if (forceRetile && !skipTiling) {
+            if (forceRetile && !skipTiling) {
                 requestHeadlessRetile("refreshQueue:$msg", retileDelayMs)
+            } else if (isInstantMode && !skipTiling) {
+                applyLayoutImmediate(focusPackage)
             }
         }
     }

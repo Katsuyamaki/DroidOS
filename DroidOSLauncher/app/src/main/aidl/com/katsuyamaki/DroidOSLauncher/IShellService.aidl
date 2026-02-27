@@ -8,6 +8,7 @@ interface IShellService {
     void repositionTask(String packageName, String className, int left, int top, int right, int bottom);
     List<String> getVisiblePackages(int displayId);
     List<String> getVisibleComponents(int displayId);
+    List<String> getVisibleTaskComponents(int displayId);
     List<String> getWindowLayouts(int displayId);
     List<String> getAllRunningPackages();
     int getTaskId(String packageName, String className);
@@ -15,6 +16,7 @@ interface IShellService {
     void moveTaskToFront(int taskId, int displayId);
     void batchResize(in List<String> packages, in int[] bounds);
     void batchResizeComponents(in List<String> packages, in List<String> classes, in int[] bounds);
+    String getTaskDebugSnapshot(String packageName);
     boolean isTaskFreeform(String packageName);
 
 

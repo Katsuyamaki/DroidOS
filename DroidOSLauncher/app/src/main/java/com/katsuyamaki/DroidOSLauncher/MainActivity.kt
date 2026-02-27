@@ -26,7 +26,8 @@ class MainActivity : AppCompatActivity() {
         val packageName: String,
         val className: String? = null,
         var isFavorite: Boolean = false,
-        var isMinimized: Boolean = false
+        var isMinimized: Boolean = false,
+        var taskIdHint: Int? = null
     ) {
         // Returns unique identifier for the app
         fun getIdentifier(): String {
@@ -56,13 +57,17 @@ class MainActivity : AppCompatActivity() {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (other !is AppInfo) return false
-            return packageName == other.packageName && className == other.className && label == other.label
+            return packageName == other.packageName &&
+                className == other.className &&
+                label == other.label &&
+                taskIdHint == other.taskIdHint
         }
 
         override fun hashCode(): Int {
             var result = packageName.hashCode()
             result = 31 * result + (className?.hashCode() ?: 0)
             result = 31 * result + label.hashCode()
+            result = 31 * result + (taskIdHint ?: 0)
             return result
         }
     }
