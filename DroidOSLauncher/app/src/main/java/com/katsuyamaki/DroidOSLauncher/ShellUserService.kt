@@ -477,25 +477,27 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 
     override fun getTaskId(packageName: String, className: String?): Int {
         var exactTaskId = -1      // Best: full component match
-        var packageTaskId = -1    // Good: package name match
+        var packageTaskId = -1    // Good: package/equivalent package match
         var fallbackTaskId = -1   // Last resort: short activity name match
-        
+
+        val normalizedTargetPackage = AppCompatibilityRegistry.normalizePackage(packageName)
+        val taskMatchPackages = AppCompatibilityRegistry.taskMatchPackagesFor(normalizedTargetPackage)
+        val preferPackageTask = AppCompatibilityRegistry.shouldPreferPackageTaskMatch(normalizedTargetPackage)
+        val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(normalizedTargetPackage, className)
+
+        val isGemini = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
+            normalizedTargetPackage,
+            "com.google.android.apps.bard"
+        ) || AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
+            normalizedTargetPackage,
+            "com.google.android.googlequicksearchbox"
+        ) || (className?.contains("Bard", ignoreCase = true) == true)
+
         val token = Binder.clearCallingIdentity()
         try {
-            
-            // === GEMINI DETECTION ===
-            val isGemini = packageName == "com.google.android.apps.bard" || 
-                          (className?.contains("Bard") == true) ||
-                          (className?.contains("bard") == true)
-            
-            // === GEMINI CACHE CHECK - START ===
-            // For Gemini, we use a very short cache validity because the original task
-            // gets destroyed quickly. After ~500ms, we should always search fresh
-            // to find the trampoline target instead of the dead original task.
+            // For Gemini, keep very short cache because trampoline task IDs expire quickly.
             if (isGemini && cachedGeminiTaskId > 0) {
                 val cacheAge = System.currentTimeMillis() - cachedGeminiTaskTime
-                // Use very short validity - 500ms max, not 30 seconds
-                // After trampoline completes, the cached ID is useless
                 val shortValidity = 500L
                 if (cacheAge < shortValidity) {
                     return cachedGeminiTaskId
@@ -503,122 +505,72 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     cachedGeminiTaskId = -1
                 }
             }
-            // === GEMINI CACHE CHECK - END ===
-            
-            if (isGemini) {
-            }
-            
+
             val cmd = arrayOf("sh", "-c", "am stack list")
             val p = Runtime.getRuntime().exec(cmd)
             val r = BufferedReader(InputStreamReader(p.inputStream))
             var line: String?
-            
-            // Build component string for exact matching
-            val fullComponent = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$packageName/$className"
+
+            val fullComponent = if (resolvedClass != null) {
+                "$normalizedTargetPackage/$resolvedClass"
             } else {
                 null
             }
-            
-            // Short activity name (fallback only)
-            val shortActivity = className?.substringAfterLast(".")
-            
+
+            val shortActivity = resolvedClass?.substringAfterLast(".")
+
             while (r.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-                
+
                 if (!l.contains("taskId=") || !l.contains(":")) continue
-                
-                // Extract task ID from line
+
                 val match = Regex("taskId=(\\d+):").find(l)
                 if (match == null) continue
-                
+
                 val foundId = match.groupValues[1].toIntOrNull() ?: continue
                 if (foundId <= 0) continue
-                
-                // PRIORITY 1: Exact full component match (highest priority)
+
                 if (fullComponent != null && l.contains(fullComponent)) {
                     exactTaskId = foundId
-                    // Keep searching - want most recent exact match
-                }
-                // PRIORITY 2: Package name match
-                else if (l.contains("$packageName/")) {
+                } else if (taskMatchPackages.any { taskPkg -> l.contains("$taskPkg/") }) {
                     packageTaskId = foundId
-                }
-                // PRIORITY 3: Gemini trampoline - check for Google Quick Search Box with Assistant activity
-                // The actual Gemini UI runs in Google QSB with an assistant/robin activity
-                // Avoid matching Android Auto ghost activities
-                else if (isGemini && l.contains("com.google.android.googlequicksearchbox")) {
-                    // Check if this is the actual assistant activity (not Auto ghost)
-                    val isAssistantActivity = l.contains("assistant") || l.contains("robin") || l.contains("MainActivity")
-                    val isAutoGhost = l.contains("auto") || l.contains("ghost")
-                    
-                    if (isAssistantActivity && !isAutoGhost) {
-                        if (foundId > packageTaskId) {
-                            packageTaskId = foundId
-                        }
-                    } else {
-                    }
-                }
-
-                // PRIORITY 4: Short activity name (ONLY if no better match exists)
-                // Skip generic names that cause false positives
-                else if (shortActivity != null && 
-                         shortActivity != "MainActivity" &&  // Too generic
-                         shortActivity != "default" &&       // Too generic
-                         l.contains(shortActivity)) {
+                } else if (shortActivity != null &&
+                    shortActivity != "MainActivity" &&
+                    shortActivity != "default" &&
+                    l.contains(shortActivity)
+                ) {
                     fallbackTaskId = foundId
                 }
             }
             r.close()
             p.waitFor()
-            
-            // Return best match in priority order
+
             val result = when {
+                preferPackageTask && packageTaskId > 0 -> packageTaskId
                 exactTaskId > 0 -> exactTaskId
                 packageTaskId > 0 -> packageTaskId
                 fallbackTaskId > 0 -> fallbackTaskId
                 else -> -1
             }
-            
-            // === GEMINI TASK HANDLING - START ===
-            // Gemini (com.google.android.apps.bard) is a trampolining app:
-            // - BardEntryPointActivity creates a task, then DESTROYS it within ~40ms
-            // - User is redirected to Google Quick Search Box
-            // - The original task ID is useless because the task no longer exists
-            // 
-            // Strategy: Don't cache the destroyed task. Instead:
-            // - If we have an exact match AND the task has activities, cache it
-            // - If task has trampolined (no exact match), use the trampoline target
-            // - For repositioning, the trampoline target (Google QSB) is what's actually running
-            
+
             if (isGemini) {
                 if (exactTaskId > 0) {
-                    // We found an exact match - but is the task still alive?
-                    // Check if this task actually has activities (not destroyed)
-                    // For now, we'll cache it but with a very short validity
                     cachedGeminiTaskId = exactTaskId
                     cachedGeminiTaskTime = System.currentTimeMillis()
                 } else if (packageTaskId > 0) {
-                    // No exact match means trampoline completed
-                    // The packageTaskId is the Google QSB task that Gemini is running in
-                    // This is actually what we should reposition!
-                    // DON'T use cached ID - it's destroyed. Use the live trampoline target.
-                    // Clear any stale cache
                     if (cachedGeminiTaskId > 0) {
                         cachedGeminiTaskId = -1
                     }
-                    
                     return packageTaskId
                 }
             }
-            // === GEMINI TASK HANDLING - END ===
-            
+
             return result
-            
+
         } catch (e: Exception) {
             return -1
-        } finally { 
-            Binder.restoreCallingIdentity(token) 
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
     }
     // === GET TASK ID - END ===

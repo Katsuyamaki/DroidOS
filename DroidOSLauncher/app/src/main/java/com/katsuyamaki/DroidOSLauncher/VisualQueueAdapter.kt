@@ -37,8 +37,10 @@ class VisualQueueAdapter(
         val app = handler.selectedAppsQueue[position]
         val slotNum = position + 1
 
-        val isFocused = (app.packageName == handler.activePackageName) ||
-                        (app.packageName == "com.google.android.apps.bard" && handler.activePackageName == "com.google.android.googlequicksearchbox")
+        val isFocused = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
+            app.packageName,
+            handler.activePackageName
+        )
 
 
         holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE

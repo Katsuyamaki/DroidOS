@@ -902,6 +902,69 @@ private var isSoftKeyboardSupport = false
         return ((navBarPx.toFloat() / screenHeight.toFloat()) * 100f).toInt().coerceAtLeast(0)
     }
 
+    private fun queueAppMatchesObservedPackage(app: MainActivity.AppInfo, observedPkg: String): Boolean {
+        val observed = AppCompatibilityRegistry.normalizePackage(observedPkg)
+        if (observed.isEmpty()) return false
+        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(app.getBasePackage(), observed) ||
+            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(app.packageName, observed)
+    }
+
+    private fun focusIdentityMatches(lhs: String?, rhs: String?): Boolean {
+        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(lhs, rhs)
+    }
+
+    private fun tryCreateObservedPackageEntry(observedPkg: String): MainActivity.AppInfo? {
+        val pkg = AppCompatibilityRegistry.normalizePackage(observedPkg)
+        if (pkg.isEmpty() || pkg == packageName || pkg == PACKAGE_TRACKPAD || pkg == PACKAGE_BLANK) return null
+
+        return try {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            val label = packageManager.getApplicationLabel(appInfo).toString()
+            MainActivity.AppInfo(
+                label = label,
+                packageName = pkg,
+                className = null,
+                isFavorite = AppPreferences.isFavorite(this, pkg),
+                isMinimized = false
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun findAppByObservedPackage(observedPkg: String): MainActivity.AppInfo? {
+        val observed = AppCompatibilityRegistry.normalizePackage(observedPkg)
+        if (observed.isEmpty()) return null
+
+        val exact = allAppsList.find {
+            AppCompatibilityRegistry.normalizePackage(it.packageName) == observed ||
+                AppCompatibilityRegistry.normalizePackage(it.getBasePackage()) == observed
+        }
+        if (exact != null) return exact
+
+        val alias = allAppsList.find { queueAppMatchesObservedPackage(it, observed) }
+        if (alias != null) return alias
+
+        return tryCreateObservedPackageEntry(observed)
+    }
+
+    private fun buildFreeformStartCommand(
+        basePkg: String,
+        className: String?,
+        displayId: Int = currentDisplayId,
+        broughtToFront: Boolean = false
+    ): String {
+        val normalizedBasePkg = AppCompatibilityRegistry.normalizePackage(basePkg)
+        val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(normalizedBasePkg, className)
+        val frontFlag = if (broughtToFront) " --activity-brought-to-front" else ""
+
+        return if (resolvedClass != null) {
+            "am start -n $normalizedBasePkg/$resolvedClass$frontFlag --display $displayId --windowingMode 5 --user 0"
+        } else {
+            "am start -p $normalizedBasePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER$frontFlag --display $displayId --windowingMode 5 --user 0"
+        }
+    }
+
     private fun hasManagedTiledWindowsForIme(focusedPkgOverride: String? = null): Boolean {
         val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
         if (activeNonMinimized.size <= 1) return false
@@ -910,12 +973,7 @@ private var isSoftKeyboardSupport = false
         if (focusedRaw.isNullOrBlank()) return true
 
         val focusedPkg = focusedRaw.substringBefore("/")
-        val isGeminiDetect = focusedPkg == "com.google.android.googlequicksearchbox"
-        val focusedManaged = activeNonMinimized.any {
-            val base = it.getBasePackage()
-            base == focusedPkg || it.packageName == focusedPkg ||
-                (isGeminiDetect && base == "com.google.android.apps.bard")
-        }
+        val focusedManaged = activeNonMinimized.any { queueAppMatchesObservedPackage(it, focusedPkg) }
         return focusedManaged
     }
 
@@ -2420,11 +2478,7 @@ private var isSoftKeyboardSupport = false
                         selectedAppsQueue.any { !it.isMinimized } &&
                         !tiledAppsAutoMinimized) {
                         val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
-                        val isGeminiDetect = detectedPkg == "com.google.android.googlequicksearchbox"
-                        val isManagedApp = activeNonMinimized.any { 
-                            val base = it.getBasePackage()
-                            base == detectedPkg || it.packageName == detectedPkg || (isGeminiDetect && base == "com.google.android.apps.bard")
-                        }
+                        val isManagedApp = activeNonMinimized.any { queueAppMatchesObservedPackage(it, detectedPkg) }
                         val isSystemOverlay = detectedPkg.contains("systemui") ||
                             detectedPkg.contains("launcher") ||
                             detectedPkg.contains("cocktail") ||
@@ -2497,11 +2551,7 @@ private var isSoftKeyboardSupport = false
                         // We notify the IME to suppress insets for ANY managed app (even single apps) 
                         // to prevent double-resizing/pushing.
                         val activeNonMinimized = selectedAppsQueue.filter { !it.isMinimized }
-                        val isGeminiDetect = detectedPkg == "com.google.android.googlequicksearchbox"
-                        val isManagedApp = activeNonMinimized.any { 
-                            val base = it.getBasePackage()
-                            base == detectedPkg || it.packageName == detectedPkg || (isGeminiDetect && base == "com.google.android.apps.bard")
-                        }
+                        val isManagedApp = activeNonMinimized.any { queueAppMatchesObservedPackage(it, detectedPkg) }
                         
                         // Traditional Tiled state (multi-window) for auto-minimize logic
                         val isTiledApp = activeNonMinimized.size > 1 && isManagedApp
@@ -4342,18 +4392,9 @@ private var isSoftKeyboardSupport = false
         // This ensures Android gives input focus to the app even while keyboard processes CAPTURE=false
         if (restoreFocusToActive && activePackageName != null && !isExpanded) {
             val basePkg = if (activePackageName!!.contains(":")) activePackageName!!.substringBefore(":") else activePackageName!!
-            val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+            val appEntry = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, basePkg) }
             val className = appEntry?.className
-            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$basePkg/$className"
-            } else {
-                null
-            }
-            val cmd = if (component != null) {
-                "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-            } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-            }
+            val cmd = buildFreeformStartCommand(basePkg, className, currentDisplayId, broughtToFront = true)
             Thread { shellService?.runCommand(cmd) }.start()
         }
 
@@ -4674,7 +4715,7 @@ private var isSoftKeyboardSupport = false
                     var className: String? = null
                     
                     // Fallback to queue + get Class Name
-                    val appEntry = selectedAppsQueue.find { it.packageName == pkg || it.getBasePackage() == pkg }
+                    val appEntry = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, pkg) }
                     if (appEntry != null) {
                          className = appEntry.className
                          if (bounds == null) {
@@ -4716,7 +4757,8 @@ private var isSoftKeyboardSupport = false
 
                         // Check success
                         // We check BOTH display ID and visibility
-                        val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)?.contains(pkg) == true
+                        val visibleOnTarget = shellService?.getVisiblePackages(targetDisplayId)
+                            ?.any { visiblePkg -> AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(visiblePkg, pkg) } == true
                         if (visibleOnTarget) {
                             // One final resize to ensure it stuck
                             if (bounds != null) shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
@@ -4862,7 +4904,7 @@ private var isSoftKeyboardSupport = false
                 // (Or the current active one if we didn't switch away)
                 val target = activePackageName
                 Thread {
-                    val app = selectedAppsQueue.find { it.packageName == target }
+                    val app = selectedAppsQueue.find { focusIdentityMatches(it.packageName, target) }
                     if (app != null) {
                         try {
                             val rects = getLayoutRects()
@@ -5573,10 +5615,11 @@ private var isSoftKeyboardSupport = false
             debugShowAppIdentification("LAUNCH_API", basePkg, className)
 
             val intent: Intent?
+            val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
 
-            if (!className.isNullOrEmpty() && className != "null" && className != "default") {
+            if (resolvedClass != null) {
                 intent = Intent()
-                intent.setClassName(basePkg, className)
+                intent.setClassName(basePkg, resolvedClass)
                 intent.action = Intent.ACTION_MAIN
                 intent.addCategory(Intent.CATEGORY_LAUNCHER)
             } else {
@@ -5614,18 +5657,7 @@ private var isSoftKeyboardSupport = false
 
             debugShowAppIdentification("LAUNCH_SHELL", basePkg, className)
 
-            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$basePkg/$className"
-            } else {
-                null
-            }
-
-            // Build launch command with freeform mode (--windowingMode 5)
-            val cmd = if (component != null) {
-                "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-            } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-            }
+            val cmd = buildFreeformStartCommand(basePkg, className)
 
 
             Thread {
@@ -5646,7 +5678,7 @@ private var isSoftKeyboardSupport = false
     private fun focusViaTask(pkg: String, bounds: Rect?) {
         try {
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
-            val appEntry = selectedAppsQueue.find { it.getBasePackage() == basePkg }
+            val appEntry = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, basePkg) }
 
             // Skip stale focus targets (already removed/minimized/hidden)
             if (appEntry == null || appEntry.packageName == PACKAGE_BLANK || appEntry.isMinimized) {
@@ -5654,18 +5686,7 @@ private var isSoftKeyboardSupport = false
             }
 
             val className = appEntry.className
-            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$basePkg/$className"
-            } else {
-                null
-            }
-
-            val cmd = if (component != null) {
-                "am start -n $component --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-            } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId --windowingMode 5 --user 0"
-            }
-
+            val cmd = buildFreeformStartCommand(basePkg, className, currentDisplayId, broughtToFront = true)
             shellService?.runCommand(cmd)
         } catch (e: Exception) {
         }
@@ -5757,15 +5778,7 @@ private var isSoftKeyboardSupport = false
             shellService?.runCommand("am task move-task-to-display $taskId $targetId")
             
             // ATTEMPT 2: Fallback relaunch on hidden display
-            val component = if (!className.isNullOrEmpty() && className != "null" && className != "default") {
-                "$packageName/$className"
-            } else null
-            
-            val startCmd = if (component != null) {
-                "am start -n $component --display $targetId --windowingMode 5 --user 0"
-            } else {
-                "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --user 0"
-            }
+            val startCmd = buildFreeformStartCommand(packageName, className, targetId)
             shellService?.runCommand(startCmd)
             
             return true
@@ -6143,22 +6156,14 @@ private var isSoftKeyboardSupport = false
                             if (appInfo != null) {
                                 val basePkg = appInfo.getBasePackage()
 
-                                // Check if running - handle Gemini special case
-                                val isRunning = if (basePkg == "com.google.android.apps.bard") {
-                                    // Gemini trampolines through Google Quick Search Box
-                                    allRunning.contains(basePkg) ||
-                                    allRunning.contains("com.google.android.googlequicksearchbox")
-                                } else {
-                                    allRunning.contains(basePkg)
+                                // Check if running/visible for this task identity.
+                                val isRunning = allRunning.any { runningPkg ->
+                                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(runningPkg, basePkg)
                                 }
 
                                 if (isRunning) {
-                                    // Check visibility - handle Gemini special case
-                                    val isVisible = if (basePkg == "com.google.android.apps.bard") {
-                                        visiblePackages.contains(basePkg) ||
-                                        visiblePackages.contains("com.google.android.googlequicksearchbox")
-                                    } else {
-                                        visiblePackages.contains(basePkg)
+                                    val isVisible = visiblePackages.any { visiblePkg ->
+                                        AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(visiblePkg, basePkg)
                                     }
 
                                     // [FIX] Check for recent manual override (within 5 seconds)
@@ -6185,26 +6190,12 @@ private var isSoftKeyboardSupport = false
 
                     // === PHASE 2: Add newly visible apps not already in queue ===
                     for (pkg in visiblePackages) {
-                        // Skip if it's Google Quick Search Box - we handle Gemini specifically
-                        // and don't want to auto-add Google if the user has Gemini in queue
-                        val isGoogleQSB = pkg == "com.google.android.googlequicksearchbox"
-
-                        // Check if already in queue by package or related package
                         val alreadyInQueue = selectedAppsQueue.any { queuedApp ->
-                            val queuedBasePkg = queuedApp.getBasePackage()
-                            when {
-                                // Direct match
-                                queuedBasePkg == pkg -> true
-                                // Gemini is in queue, and we see Google QSB (trampoline case)
-                                isGoogleQSB && queuedBasePkg == "com.google.android.apps.bard" -> true
-                                // Google QSB is in queue, and we see Google QSB
-                                isGoogleQSB && queuedBasePkg == "com.google.android.googlequicksearchbox" -> true
-                                else -> false
-                            }
+                            queueAppMatchesObservedPackage(queuedApp, pkg)
                         }
 
                         if (!alreadyInQueue) {
-                            val appInfo = allAppsList.find { it.packageName == pkg }
+                            val appInfo = findAppByObservedPackage(pkg)
                             if (appInfo != null) {
                                 appInfo.isMinimized = false
                                 selectedAppsQueue.add(appInfo)
@@ -6788,7 +6779,7 @@ private var isSoftKeyboardSupport = false
 
         // Get currently visible apps on this display, excluding ourselves and the trackpad
         val activeApps = shellService?.getVisiblePackages(currentDisplayId)
-            ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+            ?.mapNotNull { pkgName -> findAppByObservedPackage(pkgName) }
             ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
             ?: emptyList()
 
@@ -7907,12 +7898,7 @@ private var isSoftKeyboardSupport = false
                         
                         Thread {
                             try {
-                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                                val cmd = if (component != null) {
-                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-                                } else {
-                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                                }
+                                val cmd = buildFreeformStartCommand(basePkg, cls)
                                 shellService?.runCommand(cmd)
                             } catch (e: Exception) {}
                         }.start()
@@ -8036,12 +8022,7 @@ private var isSoftKeyboardSupport = false
                         
                         Thread {
                             try {
-                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                                val cmd = if (component != null) {
-                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-                                } else {
-                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                                }
+                                val cmd = buildFreeformStartCommand(basePkg, cls)
                                 shellService?.runCommand(cmd)
                             } catch (e: Exception) {}
                         }.start()
@@ -8297,12 +8278,7 @@ private var isSoftKeyboardSupport = false
                         val cls = app.className
                         Thread {
                             try {
-                                val component = if (!cls.isNullOrEmpty() && cls != "null" && cls != "default") "$basePkg/$cls" else null
-                                val cmd = if (component != null) {
-                                    "am start -n $component --display $currentDisplayId --windowingMode 5 --user 0"
-                                } else {
-                                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
-                                }
+                                val cmd = buildFreeformStartCommand(basePkg, cls)
                                 shellService?.runCommand(cmd)
                             } catch (e: Exception) {
                             }
@@ -8406,7 +8382,7 @@ private var isSoftKeyboardSupport = false
                                      if (pkg == packageName || pkg == PACKAGE_TRACKPAD ||
                                          pkg.contains("systemui") || isImeOrKeyboardPackage(pkg) ||
                                          pkg.startsWith("com.android.") || pkg.startsWith("com.samsung.")) null
-                                     else allAppsList.find { it.getBasePackage() == pkg }
+                                     else findAppByObservedPackage(pkg)
                                  }.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
                                  
                                  val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
@@ -8425,7 +8401,7 @@ private var isSoftKeyboardSupport = false
                              // Continue with existing logic for multiple visible apps
                              try {
                                  val activeApps = shellService?.getVisiblePackages(currentDisplayId)
-                                     ?.mapNotNull { pkgName -> allAppsList.find { it.packageName == pkgName } }
+                                     ?.mapNotNull { pkgName -> findAppByObservedPackage(pkgName) }
                                      ?.filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
                                      ?: emptyList()
                                  val queuePkgs = selectedAppsQueue.map { it.getBasePackage() }.toSet()
@@ -8594,8 +8570,7 @@ private var isSoftKeyboardSupport = false
                             val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
                             
                             // [FIX] Skip focusViaTask if app is already focused - avoids 3-5 second Android delay
-                            val alreadyFocused = (activePackageName == app.packageName) || 
-                                (app.packageName == "com.google.android.apps.bard" && activePackageName == "com.google.android.googlequicksearchbox")
+                            val alreadyFocused = focusIdentityMatches(activePackageName, app.packageName)
                             
                             val targetStillInQueue = selectedAppsQueue.any {
                                 it.packageName == app.packageName && it.className == app.className
@@ -8642,7 +8617,7 @@ private var isSoftKeyboardSupport = false
                 val target = if (lastValidPackageName == activePackageName) secondLastValidPackageName else lastValidPackageName
 
                 if (target != null) {
-                    val app = selectedAppsQueue.find { it.packageName == target }
+                    val app = selectedAppsQueue.find { focusIdentityMatches(it.packageName, target) }
                     if (app != null) {
                         if (app.packageName == PACKAGE_BLANK || app.isMinimized) {
                             safeToast("Last app is hidden/minimized")
