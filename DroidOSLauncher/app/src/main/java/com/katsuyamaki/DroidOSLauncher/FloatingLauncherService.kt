@@ -381,6 +381,9 @@ private var isSoftKeyboardSupport = false
     private val AUTO_QUEUE_SYNC_DEBOUNCE_MS = 900L
     @Volatile private var lastAutoQueueSyncAt = 0L
     @Volatile private var lastObservedVisibleSignature: String? = null
+    @Volatile private var shizukuBindRequested = false
+    @Volatile private var lastShizukuBindAttemptAt = 0L
+    private val SHIZUKU_BIND_DEBOUNCE_MS = 1500L
     // === EXECUTION DEBOUNCE - END ===
 
     private var manualRefreshRateSet = false // [NEW] Prevents auto-force from overwriting user choice
@@ -1540,6 +1543,7 @@ private var isSoftKeyboardSupport = false
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             shellService = IShellService.Stub.asInterface(binder)
             isBound = true
+            shizukuBindRequested = false
             updateExecuteButtonColor(true)
             updateBubbleIcon()
             safeToast("Shizuku Connected")
@@ -1556,7 +1560,14 @@ private var isSoftKeyboardSupport = false
                 uiHandler.postDelayed({ restartTrackpad() }, 1000) // Delay to ensure stability
             }
         }
-        override fun onServiceDisconnected(name: ComponentName?) { shellService = null; isBound = false; updateExecuteButtonColor(false); updateBubbleIcon() }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            shellService = null
+            isBound = false
+            shizukuBindRequested = false
+            updateExecuteButtonColor(false)
+            updateBubbleIcon()
+        }
     }
 
 
@@ -3419,6 +3430,8 @@ private var isSoftKeyboardSupport = false
         } catch (e: Exception) {
         }
 
+        shizukuBindRequested = false
+
         if (isBound) { try { ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection); isBound = false } catch (e: Exception) {} }
     setKeepScreenOn(false)
     wakeLock = null
@@ -3499,7 +3512,29 @@ private var isSoftKeyboardSupport = false
     }
     private fun refreshDisplayId() { val id = displayContext?.display?.displayId ?: Display.DEFAULT_DISPLAY; currentDisplayId = id }
     private fun startForegroundService() { val channelId = if (android.os.Build.VERSION.SDK_INT >= 26) { val channel = android.app.NotificationChannel(CHANNEL_ID, "Floating Launcher", android.app.NotificationManager.IMPORTANCE_LOW); getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(channel); CHANNEL_ID } else ""; val notification = NotificationCompat.Builder(this, channelId).setContentTitle("CoverScreen Launcher Active").setSmallIcon(R.drawable.ic_launcher_bubble).setPriority(NotificationCompat.PRIORITY_MIN).build(); if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, notification) }
-    private fun bindShizuku() { try { val component = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(component, userServiceConnection, true, 1) } catch (e: Exception) { } }
+    private fun bindShizuku() {
+        try {
+            val alive = shellService?.asBinder()?.isBinderAlive == true
+            if (isBound || alive || shizukuBindRequested) return
+
+            val now = System.currentTimeMillis()
+            if (now - lastShizukuBindAttemptAt < SHIZUKU_BIND_DEBOUNCE_MS) return
+
+            shizukuBindRequested = true
+            lastShizukuBindAttemptAt = now
+
+            val component = ComponentName(packageName, ShellUserService::class.java.name)
+            ShizukuBinder.bind(component, userServiceConnection, true, 1)
+
+            uiHandler.postDelayed({
+                if (!isBound && (shellService?.asBinder()?.isBinderAlive != true)) {
+                    shizukuBindRequested = false
+                }
+            }, 3000)
+        } catch (e: Exception) {
+            shizukuBindRequested = false
+        }
+    }
     private fun updateExecuteButtonColor(isReady: Boolean) { uiHandler.post { val executeBtn = drawerView?.findViewById<ImageView>(R.id.icon_execute); if (isReady) executeBtn?.setColorFilter(Color.GREEN) else executeBtn?.setColorFilter(Color.RED) } }
 
     private fun saveOrientationState(os: String = orientSuffix()) {
@@ -5930,9 +5965,9 @@ private var isSoftKeyboardSupport = false
             val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
 
             val cmd = if (resolvedClass != null) {
-                "am start -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                "am start -W -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
             } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                "am start -W -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
             }
             shellService?.runCommand(cmd)
 
@@ -5963,6 +5998,27 @@ private var isSoftKeyboardSupport = false
             } catch (e: Exception) {
             }
         }.start()
+    }
+
+    private fun focusTapDelayForApp(app: MainActivity.AppInfo): Long {
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        return when (basePkg) {
+            "com.google.android.apps.docs", "com.google.android.apps.docs.editors.docs" -> 260L
+            else -> 120L
+        }
+    }
+
+    private fun needsSecondaryFocusTap(app: MainActivity.AppInfo): Boolean {
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        return basePkg == "com.google.android.apps.docs" || basePkg == "com.google.android.apps.docs.editors.docs"
+    }
+
+    private fun scheduleFocusFallbackForApp(app: MainActivity.AppInfo, bounds: Rect?) {
+        val primaryDelay = focusTapDelayForApp(app)
+        scheduleWindowActivationTap(bounds, delayMs = primaryDelay)
+        if (needsSecondaryFocusTap(app)) {
+            scheduleWindowActivationTap(bounds, delayMs = primaryDelay + 180L)
+        }
     }
 
     // [CURSOR] Send cursor to center of app bounds when focusing via DroidOS
@@ -8928,11 +8984,11 @@ private var isSoftKeyboardSupport = false
                             
                             if (alreadyFocused) {
                                 // App already focused - perform caption tap to refresh input focus target.
-                                scheduleWindowActivationTap(bounds, delayMs = 0L)
+                                scheduleFocusFallbackForApp(app, bounds)
                             } else if (!app.isMinimized) {
                                 focusViaTask(app, bounds)
                                 // Deterministic fallback when WM fronting updates visual focus but IME target lags.
-                                scheduleWindowActivationTap(bounds)
+                                scheduleFocusFallbackForApp(app, bounds)
                             } else {
                                 launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
@@ -8991,7 +9047,7 @@ private var isSoftKeyboardSupport = false
                         val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                         val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
                         focusViaTask(app, bounds)
-                        scheduleWindowActivationTap(bounds)
+                        scheduleFocusFallbackForApp(app, bounds)
                         sendCursorToAppCenter(bounds)
 
                         // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events

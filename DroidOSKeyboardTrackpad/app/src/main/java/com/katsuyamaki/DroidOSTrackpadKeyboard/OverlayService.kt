@@ -142,6 +142,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     internal lateinit var inputHandler: ShizukuInputHandler
     private var appWindowManager: WindowManager? = null
     private var isBound = false
+    @Volatile private var shizukuBindRequested = false
+    @Volatile private var lastShizukuBindAttemptAt = 0L
+    private val SHIZUKU_BIND_DEBOUNCE_MS = 1500L
     internal val handler = Handler(Looper.getMainLooper())
 
     // =================================================================================
@@ -965,6 +968,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             mirrorManager = MirrorModeManager(this@OverlayService, displayManager)
             imeManager = SystemImeManager(this@OverlayService, shellService)
             isBound = true
+            shizukuBindRequested = false
             updateBubbleStatus()
             showToast("Shizuku Connected")
             initCustomKeyboard()
@@ -983,6 +987,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         override fun onServiceDisconnected(name: ComponentName?) {
             shellService = null
             isBound = false
+            shizukuBindRequested = false
             updateBubbleStatus()
         }
     }
@@ -2434,7 +2439,29 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
 
 
-    private fun bindShizuku() { try { val c = ComponentName(packageName, ShellUserService::class.java.name); ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE) } catch (e: Exception) {  } }
+    private fun bindShizuku() {
+        try {
+            val alive = shellService?.asBinder()?.isBinderAlive == true
+            if (isBound || alive || shizukuBindRequested) return
+
+            val now = System.currentTimeMillis()
+            if (now - lastShizukuBindAttemptAt < SHIZUKU_BIND_DEBOUNCE_MS) return
+
+            shizukuBindRequested = true
+            lastShizukuBindAttemptAt = now
+
+            val c = ComponentName(packageName, ShellUserService::class.java.name)
+            ShizukuBinder.bind(c, userServiceConnection, BuildConfig.DEBUG, BuildConfig.VERSION_CODE)
+
+            handler.postDelayed({
+                if (!isBound && (shellService?.asBinder()?.isBinderAlive != true)) {
+                    shizukuBindRequested = false
+                }
+            }, 3000)
+        } catch (e: Exception) {
+            shizukuBindRequested = false
+        }
+    }
 
     // Helper to retry binding if connection is dead/null
 
@@ -2444,6 +2471,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     private fun checkAndBindShizuku() {
         // 1. If already bound and alive, do nothing
         if (shellService != null && shellService!!.asBinder().isBinderAlive) {
+            shizukuBindRequested = false
             return
         }
 
@@ -2451,6 +2479,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         if (shellService != null && !shellService!!.asBinder().isBinderAlive) {
             isBound = false
             shellService = null
+            shizukuBindRequested = false
         }
 
         // Use existing safe bind method
@@ -2460,6 +2489,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         // We use 'handler' here (not uiHandler)
         handler.postDelayed({
             if (shellService == null) {
+                shizukuBindRequested = false
                 bindShizuku()
             }
         }, 2500)
@@ -3941,6 +3971,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         try { unregisterReceiver(switchReceiver) } catch(e: Exception){};
         try { val im = getSystemService(Context.INPUT_SERVICE) as InputManager; im.unregisterInputDeviceListener(this) } catch (e: Exception) {}
         if (isBound) ShizukuBinder.unbind(ComponentName(packageName, ShellUserService::class.java.name), userServiceConnection)
+        shizukuBindRequested = false
         imeManager?.stopMonitoring()
     }
 
