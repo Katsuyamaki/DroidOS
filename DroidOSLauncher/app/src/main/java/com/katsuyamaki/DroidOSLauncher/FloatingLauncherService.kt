@@ -167,11 +167,14 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     private var lastPhysicalDisplayId = Display.DEFAULT_DISPLAY
     // Tracks the currently focused app package for "Active Window" commands
     override var activePackageName: String? = null
+    private var activeFocusEntryId: String? = null
     private var manualFocusLockUntil: Long = 0L  // Timestamp until A11Y should not override activePackageName
     private val minimizedAtTimestamps = mutableMapOf<String, Long>() // Track when apps were minimized (newest first)
     // History for focus restoration (ignoring overlays)
     private var lastValidPackageName: String? = null
     private var secondLastValidPackageName: String? = null
+    private var lastValidFocusEntryId: String? = null
+    private var secondLastValidFocusEntryId: String? = null
 
     // === KEYBIND SYSTEM ===
     private var visualQueueView: View? = null
@@ -375,6 +378,9 @@ private var isSoftKeyboardSupport = false
     @Volatile private var pendingHeadlessRetile = false
     private var pendingHeadlessRetileReason: String? = null
     private val headlessRetileRunnable = Runnable { runPendingHeadlessRetile() }
+    private val AUTO_QUEUE_SYNC_DEBOUNCE_MS = 900L
+    @Volatile private var lastAutoQueueSyncAt = 0L
+    @Volatile private var lastObservedVisibleSignature: String? = null
     // === EXECUTION DEBOUNCE - END ===
 
     private var manualRefreshRateSet = false // [NEW] Prevents auto-force from overwriting user choice
@@ -959,6 +965,51 @@ private var isSoftKeyboardSupport = false
         val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
         val normalizedClass = normalizeActivityClass(basePkg, app.className)
         return if (normalizedClass != null) "$basePkg|$normalizedClass" else basePkg
+    }
+
+    private fun findAppByQueueEntryId(entryId: String?): MainActivity.AppInfo? {
+        if (entryId.isNullOrBlank()) return null
+        return selectedAppsQueue.firstOrNull { getQueueEntryId(it) == entryId }
+    }
+
+    private fun pushFocusEntryHistory(newEntryId: String?) {
+        if (newEntryId.isNullOrBlank() || activeFocusEntryId == newEntryId) return
+
+        if (!activeFocusEntryId.isNullOrBlank()) {
+            secondLastValidFocusEntryId = lastValidFocusEntryId
+            lastValidFocusEntryId = activeFocusEntryId
+        }
+        activeFocusEntryId = newEntryId
+    }
+
+    private fun setFocusedApp(app: MainActivity.AppInfo, lockFocusFromA11y: Boolean = false) {
+        pushFocusEntryHistory(getQueueEntryId(app))
+
+        if (activePackageName != app.packageName) {
+            if (activePackageName != null) lastValidPackageName = activePackageName
+            activePackageName = app.packageName
+        }
+
+        if (lockFocusFromA11y) {
+            manualFocusLockUntil = System.currentTimeMillis() + 2000L
+        }
+    }
+
+    private fun focusEntryMatchesPackage(entryId: String?, pkg: String): Boolean {
+        val parsed = parseQueueEntryId(entryId ?: return false) ?: return false
+        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(parsed.packageName, pkg) || parsed.packageName == pkg
+    }
+
+    override fun isAppFocused(app: MainActivity.AppInfo): Boolean {
+        val focusedEntryId = activeFocusEntryId
+        if (!focusedEntryId.isNullOrBlank()) {
+            return focusedEntryId == getQueueEntryId(app)
+        }
+
+        return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
+            app.packageName,
+            activePackageName
+        )
     }
 
     private fun parseQueueEntryId(identifier: String): ObservedComponent? {
@@ -2086,15 +2137,13 @@ private var isSoftKeyboardSupport = false
                     if (queueCommandPending == null && queueSelectedIndex in selectedAppsQueue.indices) {
                         val app = selectedAppsQueue[queueSelectedIndex]
                         if (app.packageName != PACKAGE_BLANK) {
-                            val pkg = app.packageName
-                            val isGemini = pkg == "com.google.android.apps.bard"
-                            val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
-                            val isActive = (activePackageName == pkg) || (isGemini && activeIsGoogle)
+                            val targetEntryId = getQueueEntryId(app)
+                            val isActive = activeFocusEntryId == targetEntryId
                             if (isActive) {
+                                activeFocusEntryId = null
                                 activePackageName = null
                             } else {
-                                if (activePackageName != null) lastValidPackageName = activePackageName
-                                activePackageName = pkg
+                                setFocusedApp(app)
                             }
                             uiHandler.post { updateAllUIs() }
                         }
@@ -2655,6 +2704,10 @@ private var isSoftKeyboardSupport = false
                         }
                     }
                     
+                    if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                        maybeAutoSyncQueueForObservedChange(detectedPkg)
+                    }
+
                     // Update history if package changed
                     // Skip if we recently manually set focus via SET_FOCUS command
                     if (activePackageName != detectedPkg && System.currentTimeMillis() > manualFocusLockUntil) {
@@ -2665,6 +2718,14 @@ private var isSoftKeyboardSupport = false
                             lastValidPackageName = activePackageName
                         }
                         activePackageName = detectedPkg
+
+                        // Update component-aware focus only when we can resolve one unique managed queue entry.
+                        val managedMatches = selectedAppsQueue.filter {
+                            !it.isMinimized && queueAppMatchesObservedPackage(it, detectedPkg)
+                        }
+                        if (managedMatches.size == 1) {
+                            pushFocusEntryHistory(getQueueEntryId(managedMatches.first()))
+                        }
 
                         // [FULLSCREEN] Auto-minimize/restore tiled apps
                         // Only react to actual app window changes, not system overlays
@@ -4234,20 +4295,16 @@ private var isSoftKeyboardSupport = false
                                 // [FIX] DEFAULT SPACE: Toggle Internal Focus (Green Underline)
                                 val app = selectedAppsQueue[queueSelectedIndex]
                                 if (app.packageName != PACKAGE_BLANK) {
-                                    val pkg = app.packageName
-                                    
-                                    // Handle Gemini alias for matching
-                                    val isGemini = pkg == "com.google.android.apps.bard"
-                                    val activeIsGoogle = activePackageName == "com.google.android.googlequicksearchbox"
-                                    val isActive = (activePackageName == pkg) || (isGemini && activeIsGoogle)
+                                    val targetEntryId = getQueueEntryId(app)
+                                    val isActive = activeFocusEntryId == targetEntryId
 
                                     if (isActive) {
                                         // CLEAR Focus
+                                        activeFocusEntryId = null
                                         activePackageName = null
                                     } else {
                                         // SET Focus
-                                        if (activePackageName != null) lastValidPackageName = activePackageName
-                                        activePackageName = pkg
+                                        setFocusedApp(app)
                                     }
                                     updateAllUIs()
                                 }
@@ -5552,7 +5609,7 @@ private var isSoftKeyboardSupport = false
         val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
         val alias = if (basePkg == "com.google.android.apps.bard") "com.google.android.googlequicksearchbox" else null
 
-        // Shift history down if the killed app was the active one
+        // Shift package history down if the killed app was the active one
         if (activePackageName == basePkg || activePackageName == alias) {
             activePackageName = lastValidPackageName
             lastValidPackageName = secondLastValidPackageName
@@ -5565,6 +5622,20 @@ private var isSoftKeyboardSupport = false
                 secondLastValidPackageName = null
             } else if (secondLastValidPackageName == basePkg || secondLastValidPackageName == alias) {
                 secondLastValidPackageName = null
+            }
+        }
+
+        // Scrub entry-level focus history for this package family as well.
+        if (focusEntryMatchesPackage(activeFocusEntryId, basePkg)) {
+            activeFocusEntryId = lastValidFocusEntryId
+            lastValidFocusEntryId = secondLastValidFocusEntryId
+            secondLastValidFocusEntryId = null
+        } else {
+            if (focusEntryMatchesPackage(lastValidFocusEntryId, basePkg)) {
+                lastValidFocusEntryId = secondLastValidFocusEntryId
+                secondLastValidFocusEntryId = null
+            } else if (focusEntryMatchesPackage(secondLastValidFocusEntryId, basePkg)) {
+                secondLastValidFocusEntryId = null
             }
         }
     }
@@ -5592,6 +5663,15 @@ private var isSoftKeyboardSupport = false
             return matches.none { !it.isMinimized && it.packageName != PACKAGE_BLANK }
         }
 
+        fun shouldDropEntry(entryId: String?): Boolean {
+            if (entryId.isNullOrEmpty()) return false
+
+            val matches = selectedAppsQueue.filter { getQueueEntryId(it) == entryId }
+            if (matches.isEmpty()) return true
+
+            return matches.none { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+        }
+
         var changed = false
 
         if (shouldDrop(activePackageName)) {
@@ -5615,6 +5695,30 @@ private var isSoftKeyboardSupport = false
         }
         if (lastValidPackageName != null && lastValidPackageName == secondLastValidPackageName) {
             secondLastValidPackageName = null
+            changed = true
+        }
+
+        if (shouldDropEntry(activeFocusEntryId)) {
+            activeFocusEntryId = null
+            changed = true
+        }
+
+        if (shouldDropEntry(lastValidFocusEntryId)) {
+            lastValidFocusEntryId = secondLastValidFocusEntryId?.takeUnless { shouldDropEntry(it) }
+            secondLastValidFocusEntryId = null
+            changed = true
+        } else if (shouldDropEntry(secondLastValidFocusEntryId)) {
+            secondLastValidFocusEntryId = null
+            changed = true
+        }
+
+        if (activeFocusEntryId != null && activeFocusEntryId == lastValidFocusEntryId) {
+            lastValidFocusEntryId = secondLastValidFocusEntryId
+            secondLastValidFocusEntryId = null
+            changed = true
+        }
+        if (lastValidFocusEntryId != null && lastValidFocusEntryId == secondLastValidFocusEntryId) {
+            secondLastValidFocusEntryId = null
             changed = true
         }
 
@@ -5809,8 +5913,8 @@ private var isSoftKeyboardSupport = false
     // === LAUNCH VIA SHELL - END ===
 
     // === FOCUS VIA TASK - START ===
-    // Focuses an already-visible freeform window using am start --activity-brought-to-front.
-    // Executed inline from WM command queue to preserve command ordering.
+    // Focuses an already-visible freeform window without UI click simulation.
+    // Prefer task-fronting to preserve state; reinforce with brought-to-front start as fallback.
     private fun focusViaTask(app: MainActivity.AppInfo, bounds: Rect?) {
         try {
             if (app.packageName == PACKAGE_BLANK || app.isMinimized) return
@@ -5822,6 +5926,15 @@ private var isSoftKeyboardSupport = false
 
             val basePkg = app.getBasePackage()
             val className = app.className
+
+            val taskId = shellService?.getTaskId(basePkg, className) ?: -1
+            if (taskId != -1) {
+                shellService?.moveTaskToFront(taskId)
+                if (bounds != null) {
+                    shellService?.repositionTask(basePkg, className, bounds.left, bounds.top, bounds.right, bounds.bottom)
+                }
+            }
+
             val cmd = buildFreeformStartCommand(basePkg, className, currentDisplayId, broughtToFront = true)
             shellService?.runCommand(cmd)
         } catch (e: Exception) {
@@ -6227,6 +6340,73 @@ private var isSoftKeyboardSupport = false
         pendingHeadlessRetileReason = null
         refreshDisplayId()
         retileExistingWindows()
+    }
+
+    private fun maybeAutoSyncQueueForObservedChange(triggerPkg: String) {
+        if (!isInstantMode) return
+        if (!isBound || shellService == null) return
+        if (isExecuting || isProcessingWmCommand || pendingHeadlessRetile) return
+        if (selectedAppsQueue.none { !it.isMinimized && it.packageName != PACKAGE_BLANK }) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastAutoQueueSyncAt < AUTO_QUEUE_SYNC_DEBOUNCE_MS) return
+        lastAutoQueueSyncAt = now
+
+        Thread {
+            try {
+                val observedVisible = getObservedVisibleComponents(currentDisplayId)
+                    .filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                if (observedVisible.isEmpty()) return@Thread
+
+                val signature = buildString {
+                    append("d")
+                    append(currentDisplayId)
+                    append("|")
+                    append(
+                        observedVisible
+                            .map { observed -> "${observed.packageName}/${observed.className ?: ""}" }
+                            .distinct()
+                            .sorted()
+                            .joinToString("|")
+                    )
+                }
+
+                if (signature == lastObservedVisibleSignature) return@Thread
+
+                val queueMatchesTriggerPackage = selectedAppsQueue.any { queued ->
+                    !queued.isMinimized &&
+                        queued.packageName != PACKAGE_BLANK &&
+                        queueAppMatchesObservedPackage(queued, triggerPkg)
+                }
+                if (!queueMatchesTriggerPackage) {
+                    lastObservedVisibleSignature = signature
+                    return@Thread
+                }
+
+                val hasUntrackedManagedComponent = observedVisible.any { observed ->
+                    val hasManagedPackage = selectedAppsQueue.any { queued ->
+                        !queued.isMinimized &&
+                            queued.packageName != PACKAGE_BLANK &&
+                            queueAppMatchesObservedPackage(queued, observed.packageName)
+                    }
+                    val hasExactEntry = selectedAppsQueue.any { queued ->
+                        !queued.isMinimized &&
+                            queued.packageName != PACKAGE_BLANK &&
+                            queueAppMatchesObservedComponent(queued, observed)
+                    }
+                    hasManagedPackage && !hasExactEntry
+                }
+
+                lastObservedVisibleSignature = signature
+                if (!hasUntrackedManagedComponent) return@Thread
+
+                uiHandler.post {
+                    fetchRunningApps()
+                    requestHeadlessRetile("observed-component-sync", 260L)
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
     }
 
     private fun tryBindShizukuIfPermitted() {
@@ -8678,8 +8858,11 @@ private var isSoftKeyboardSupport = false
                 // }
                 // Wipe all history
                 activePackageName = null
+                activeFocusEntryId = null
                 lastValidPackageName = null
                 secondLastValidPackageName = null
+                lastValidFocusEntryId = null
+                secondLastValidFocusEntryId = null
                 
                 selectedAppsQueue.clear()
                 refreshQueueAndLayout("Cleared All")
@@ -8697,9 +8880,8 @@ private var isSoftKeyboardSupport = false
                         // [FIX] Internal Focus vs System Launch
                         if (isExpanded) {
                             // Drawer Open: Update Internal Variable Only (Green Underline)
-                            if (activePackageName != app.packageName) {
-                                if (activePackageName != null) lastValidPackageName = activePackageName
-                                activePackageName = app.packageName
+                            if (!isAppFocused(app)) {
+                                setFocusedApp(app)
                                 updateAllUIs()
                             }
                         } else {
@@ -8710,7 +8892,8 @@ private var isSoftKeyboardSupport = false
                             val bounds = if (layoutIdx < rects.size) rects[layoutIdx] else null
                             
                             // [FIX] Skip focusViaTask if app is already focused - avoids 3-5 second Android delay
-                            val alreadyFocused = focusIdentityMatches(activePackageName, app.packageName)
+                            val targetEntryId = getQueueEntryId(app)
+                            val alreadyFocused = activeFocusEntryId == targetEntryId
                             
                             val targetStillInQueue = selectedAppsQueue.any {
                                 it.packageName == app.packageName && it.className == app.className
@@ -8739,9 +8922,7 @@ private var isSoftKeyboardSupport = false
                             
                             if (!alreadyFocused) {
                                 // Update focus state only when changing apps
-                                if (activePackageName != null) lastValidPackageName = activePackageName
-                                activePackageName = app.packageName
-                                manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
+                                setFocusedApp(app, lockFocusFromA11y = true)
                                 try {
                                     updateAllUIs2()
                                 } catch (e: Exception) {
@@ -8753,53 +8934,63 @@ private var isSoftKeyboardSupport = false
                 }
             }
             "FOCUS_LAST" -> {
-                // Switch to previous valid app
-                val target = if (lastValidPackageName == activePackageName) secondLastValidPackageName else lastValidPackageName
+                // Switch to previous valid app (entry-aware first, package-aware fallback)
+                val targetEntry = if (lastValidFocusEntryId == activeFocusEntryId) {
+                    secondLastValidFocusEntryId
+                } else {
+                    lastValidFocusEntryId
+                }
 
-                if (target != null) {
-                    val app = selectedAppsQueue.find { focusIdentityMatches(it.packageName, target) }
-                    if (app != null) {
-                        if (app.packageName == PACKAGE_BLANK || app.isMinimized) {
-                            safeToast("Last app is hidden/minimized")
-                            return
-                        }
+                val packageFallbackTarget = if (lastValidPackageName == activePackageName) {
+                    secondLastValidPackageName
+                } else {
+                    lastValidPackageName
+                }
 
-                        // [FIX] Internal Focus vs System Launch
-                        if (isExpanded) {
-                            // Drawer Open: Update Internal Variable Only
-                            if (activePackageName != app.packageName) {
-                                activePackageName = app.packageName
-                                // Swap logic for history
-                                lastValidPackageName = target
-                                updateAllUIs()
-                            }
-                        } else {
-                            // Drawer Closed: Focus or Launch
-                            val idx = selectedAppsQueue.indexOf(app)
-                            val rects = getLayoutRects()
-                            // Layout rects only include non-minimized slots, so find the layout index
-                            val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
-                            val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
-                            focusViaTask(app, bounds)
-                            sendCursorToAppCenter(bounds)
-                            
-                            // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
-                            if (activePackageName != app.packageName) {
-                                if (activePackageName != null) lastValidPackageName = activePackageName
-                                activePackageName = app.packageName
-                                manualFocusLockUntil = System.currentTimeMillis() + 2000L  // Lock for 2 seconds
-                                try {
-                                    updateAllUIs2()
-                                } catch (e: Exception) {
-                                }
-                            }
-                            safeToast("Focused: ${app.label}")
+                val app = findAppByQueueEntryId(targetEntry)
+                    ?: packageFallbackTarget?.let { fallback ->
+                        selectedAppsQueue.find { focusIdentityMatches(it.packageName, fallback) }
+                    }
+
+                if (app != null) {
+                    if (app.packageName == PACKAGE_BLANK || app.isMinimized) {
+                        safeToast("Last app is hidden/minimized")
+                        return
+                    }
+
+                    // [FIX] Internal Focus vs System Launch
+                    if (isExpanded) {
+                        // Drawer Open: Update Internal Variable Only
+                        if (!isAppFocused(app)) {
+                            setFocusedApp(app)
+                            updateAllUIs()
                         }
                     } else {
-                        safeToast("Last app not in layout")
+                        // Drawer Closed: Focus or Launch
+                        val idx = selectedAppsQueue.indexOf(app)
+                        val rects = getLayoutRects()
+                        // Layout rects only include non-minimized slots, so find the layout index
+                        val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
+                        val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
+                        focusViaTask(app, bounds)
+                        sendCursorToAppCenter(bounds)
+
+                        // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
+                        if (!isAppFocused(app)) {
+                            setFocusedApp(app, lockFocusFromA11y = true)
+                            try {
+                                updateAllUIs2()
+                            } catch (e: Exception) {
+                            }
+                        }
+                        safeToast("Focused: ${app.label}")
                     }
                 } else {
-                    safeToast("No history found")
+                    if (targetEntry != null || packageFallbackTarget != null) {
+                        safeToast("Last app not in layout")
+                    } else {
+                        safeToast("No history found")
+                    }
                 }
             }
         }

@@ -50,6 +50,7 @@ interface LauncherActionHandler {
     fun refreshSearchList()
     fun isAppLocked(app: MainActivity.AppInfo): Boolean
     fun toggleLockForApp(app: MainActivity.AppInfo)
+    fun isAppFocused(app: MainActivity.AppInfo): Boolean
     
     // Layout/profile actions
     fun selectLayout(layout: LayoutOption)

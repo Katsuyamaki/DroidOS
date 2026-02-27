@@ -37,10 +37,7 @@ class VisualQueueAdapter(
         val app = handler.selectedAppsQueue[position]
         val slotNum = position + 1
 
-        val isFocused = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
-            app.packageName,
-            handler.activePackageName
-        )
+        val isFocused = handler.isAppFocused(app)
 
 
         holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE

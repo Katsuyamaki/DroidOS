@@ -31,10 +31,7 @@ class SelectedAppsAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val app = handler.selectedAppsQueue[position]
 
-        val isFocused = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
-            app.packageName,
-            handler.activePackageName
-        )
+        val isFocused = handler.isAppFocused(app)
         holder.underline.visibility = if (isFocused) View.VISIBLE else View.GONE
 
         val isNavSelected = (handler.currentFocusArea == FocusAreas.FOCUS_QUEUE && position == handler.queueSelectedIndex)
