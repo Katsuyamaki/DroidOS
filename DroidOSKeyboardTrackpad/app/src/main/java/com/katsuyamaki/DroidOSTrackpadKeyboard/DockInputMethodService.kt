@@ -80,6 +80,19 @@ class DockInputMethodService : InputMethodService() {
     private val inputRescueWatchdogDelayMs = 280L
     private var pendingInputRescueWatchdog: Runnable? = null
 
+    // Focus-switch guard: when the launcher is about to switch focus between tiled apps,
+    // onWindowHidden fires transiently. We use requestShowSelf(0) to keep the IME alive
+    // so the margin/retile cascade never fires.
+    private var focusSwitchUntil = 0L
+    private val FOCUS_SWITCH_GUARD_MS = 1200L
+
+    private val focusSwitchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            focusSwitchUntil = System.currentTimeMillis() + FOCUS_SWITCH_GUARD_MS
+            traceDockState("FOCUS_SWITCH_RECV", "guardUntil=$focusSwitchUntil")
+        }
+    }
+
     private val tiledStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val newState = intent?.getBooleanExtra("TILED_ACTIVE", false) ?: false
@@ -547,6 +560,24 @@ class DockInputMethodService : InputMethodService() {
         val explicitHide = explicitHideRequestedRecently(now)
         val hasActiveInputConnection = currentInputConnection != null
 
+        // Focus-switch guard: the launcher told us a focus switch is about to happen.
+        // The onWindowHidden is transient — the IME will reactivate on the target app.
+        // Keep the IME alive so the margin/retile cascade never fires.
+        val inFocusSwitch = !explicitHide && System.currentTimeMillis() < focusSwitchUntil
+        if (inFocusSwitch) {
+            traceDockState(
+                "HIDE_DEFER",
+                "reason=focus_switch elapsedMs=$elapsedSinceShow explicit=$explicitHide"
+            )
+            imeVisibilityHandler.post {
+                try {
+                    requestShowSelf(0)
+                } catch (_: Exception) {
+                }
+            }
+            return
+        }
+
         val shouldDeferTransientHide =
             !explicitHide &&
             prefAutoShowOverlay &&
@@ -668,16 +699,19 @@ class DockInputMethodService : InputMethodService() {
             addAction(ACTION_HIDE_DOCK_IME)
             addAction(ACTION_SHOW_DOCK_IME)
         }
+        val focusSwitchFilter = IntentFilter("com.katsuyamaki.DroidOSTrackpadKeyboard.FOCUS_SWITCHING")
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(inputReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(marginReceiver, IntentFilter(ACTION_MARGIN_CHANGED), Context.RECEIVER_EXPORTED)
             registerReceiver(tiledStateReceiver, tiledFilter, Context.RECEIVER_EXPORTED)
             registerReceiver(hideDockReceiver, hideFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(focusSwitchReceiver, focusSwitchFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(inputReceiver, filter)
             registerReceiver(marginReceiver, IntentFilter(ACTION_MARGIN_CHANGED))
             registerReceiver(tiledStateReceiver, tiledFilter)
             registerReceiver(hideDockReceiver, hideFilter)
+            registerReceiver(focusSwitchReceiver, focusSwitchFilter)
         }
         android.util.Log.d("DockIME", "onCreate: receivers registered OK")
         traceDockState("SERVICE_CREATE")
@@ -699,6 +733,7 @@ class DockInputMethodService : InputMethodService() {
         try { unregisterReceiver(marginReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(tiledStateReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(hideDockReceiver) } catch (e: Exception) {}
+        try { unregisterReceiver(focusSwitchReceiver) } catch (e: Exception) {}
     }
 
 

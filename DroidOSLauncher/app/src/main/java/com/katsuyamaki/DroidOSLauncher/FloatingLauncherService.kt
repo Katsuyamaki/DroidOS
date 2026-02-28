@@ -6141,6 +6141,18 @@ private var isSoftKeyboardSupport = false
             }
             if (!targetStillInQueue) return
 
+            // Tell DockIME that a focus switch is about to happen so it can keep the IME
+            // alive through the transient onWindowHidden/onWindowShown cycle. Without this,
+            // the IME deactivates, the launcher retiles to 0 margin, and the IME never
+            // reactivates — leaving the overlay keyboard covering the app.
+            if (isDroidOsImeCurrentlyActive()) {
+                try {
+                    val focusSwitchIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.FOCUS_SWITCHING")
+                    focusSwitchIntent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+                    sendBroadcast(focusSwitchIntent)
+                } catch (_: Exception) {}
+            }
+
             val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
             val className = app.className
             val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
