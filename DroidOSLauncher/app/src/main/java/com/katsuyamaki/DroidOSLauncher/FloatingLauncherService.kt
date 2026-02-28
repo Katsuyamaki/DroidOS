@@ -1165,7 +1165,15 @@ private var isSoftKeyboardSupport = false
                     // Treat those proxy classes as one identity so we don't create duplicate hidden main slots.
                     val appIsProxy = AppCompatibilityRegistry.isProxyActivity(appPkg, appClass)
                     val observedIsProxy = AppCompatibilityRegistry.isProxyActivity(observed.packageName, observed.className)
-                    appPkg == observed.packageName && appIsProxy && observedIsProxy
+                    if (appPkg == observed.packageName && appIsProxy && observedIsProxy) {
+                        true
+                    } else {
+                        // For non-task-scoped apps (e.g. WhatsApp, Calendar), different runtime
+                        // activity classes from the same package are still the same app — not
+                        // real subactivities. Only task-scoped apps (Docs/Sheets) need strict
+                        // class-level differentiation for separate document windows.
+                        !taskScoped && !observedTaskScoped && appPkg == observed.packageName
+                    }
                 }
             }
             appClass == null && observed.className == null -> true
