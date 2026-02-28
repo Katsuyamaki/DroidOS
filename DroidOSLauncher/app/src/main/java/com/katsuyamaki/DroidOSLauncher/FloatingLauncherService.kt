@@ -6291,6 +6291,7 @@ private var isSoftKeyboardSupport = false
 
         val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: app.className)
         val hintedTaskId = if (taskScoped) app.taskIdHint else null
+        android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp START reason=$reason pkg=$basePkg cls=$queueClass taskScoped=$taskScoped hint=$hintedTaskId")
         if (hintedTaskId != null && hintedTaskId > 0) {
             val hintSnapshot = try {
                 shellService?.getTaskDebugSnapshot(basePkg) ?: ""
@@ -6345,6 +6346,7 @@ private var isSoftKeyboardSupport = false
             val uniqueObservedTid = observedMatches.mapNotNull { it.taskId }.distinct().singleOrNull()
             if (uniqueObservedTid != null && uniqueObservedTid > 0) {
                 app.taskIdHint = uniqueObservedTid
+                android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp OBSERVED pkg=$basePkg tid=$uniqueObservedTid observed=$observedSummary")
                 if (traceEnabled) {
                     logTaskResolutionTrace(
                         reason = reason,
@@ -6369,6 +6371,7 @@ private var isSoftKeyboardSupport = false
         var chosenClass: String? = null
         for (candidateClass in classCandidates) {
             val tid = shellService?.getTaskId(basePkg, candidateClass) ?: -1
+            android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp AIDL pkg=$basePkg candidate=$candidateClass tid=$tid")
             if (tid > 0) {
                 resolvedTid = tid
                 chosenClass = candidateClass
@@ -6815,6 +6818,7 @@ private var isSoftKeyboardSupport = false
         val entryId = getQueueEntryId(app)
 
         val tid = resolveTaskIdForApp(app, reason)
+        android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry reason=$reason pkg=$basePkg cls=$queueClass entryId=$entryId tid=$tid hint=${app.taskIdHint} taskScoped=$taskScoped displayId=$currentDisplayId")
         if (tid <= 0) return -1
 
         minimizedTaskIdByEntryId[entryId] = tid
