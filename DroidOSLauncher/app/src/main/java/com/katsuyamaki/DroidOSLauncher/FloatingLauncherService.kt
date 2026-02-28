@@ -6145,22 +6145,23 @@ private var isSoftKeyboardSupport = false
             val className = app.className
             val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
 
-            // Resolve the task ID for setFocusedTask — this is the proper API for
-            // transferring real input focus (IME target) to the correct task.
+            // Resolve the task ID for focus transfer.
             val taskId = resolveTaskIdForApp(app, "FOCUS")
 
-            val cmd = if (resolvedClass != null) {
-                "am start -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
-            } else {
-                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
-            }
-            shellService?.runCommand(cmd)
-
-            // Transfer real input focus via setFocusedTask. am start brings the window
-            // to front visually but does not always transfer the IME input connection,
-            // especially for subactivities (e.g. Google Sheets opened from Docs).
             if (taskId > 0) {
+                // Preferred path: bring existing task to front and transfer input focus
+                // without relaunching the activity. This preserves app state (e.g. WhatsApp
+                // stays in the current chat instead of resetting to main screen).
+                shellService?.moveTaskToFront(taskId, currentDisplayId)
                 shellService?.setFocusedTask(taskId)
+            } else {
+                // Fallback: no task found, launch via am start
+                val cmd = if (resolvedClass != null) {
+                    "am start -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                } else {
+                    "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                }
+                shellService?.runCommand(cmd)
             }
 
             if (bounds != null && taskId > 0) {
