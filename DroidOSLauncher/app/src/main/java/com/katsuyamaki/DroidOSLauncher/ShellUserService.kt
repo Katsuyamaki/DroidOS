@@ -872,6 +872,23 @@ override fun getWindowLayouts(displayId: Int): List<String> {
         }
     }
 
+    // Checks visibility using stack snapshot (independent of Samsung binder helpers).
+    // This catches states where minimize API returns but the task still remains visible.
+    private fun isTaskVisibleInStack(taskId: Int): Boolean {
+        if (taskId <= 0) return false
+        return try {
+            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "am stack list"))
+            val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
+            p.waitFor()
+            lines.any { line ->
+                val trimmed = line.trim()
+                trimmed.contains("taskId=$taskId:") && trimmed.contains("visible=true")
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // Direct ATM resizeTask via reflection — bypasses `am task resize` shell command.
     // Shell `am task resize` is silently ignored on Samsung DeX; this direct API works.
     private fun resizeTaskViaATM(taskId: Int, left: Int, top: Int, right: Int, bottom: Int): Boolean {
@@ -900,12 +917,13 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // === MOVE TASK TO BACK / MINIMIZE TASK - START ===
     // Minimizes a task using Samsung's IMultiTaskingBinder from ActivityTaskManager
     // This is what Android's freeform minimize button uses on Samsung devices
-    override fun moveTaskToBack(taskId: Int) {
+    override fun moveTaskToBack(taskId: Int): Boolean {
         val isSamsung = hasSamsungMultiTaskingBinder()
         android.util.Log.d("DROIDOS_DEX", "moveTaskToBack START tid=$taskId samsung=$isSamsung")
         val token = Binder.clearCallingIdentity()
         try {
             var success = false
+            var samsungConfirmed = false
 
             try {
                 // Get ActivityTaskManager service
@@ -926,15 +944,21 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     minimizeMethod.invoke(multiTaskingBinder, taskId)
                     android.util.Log.d("DROIDOS_DEX", "moveTaskToBack minimizeTaskById invoked tid=$taskId")
 
-                    // Verify minimize actually took effect
+                    // Verify minimize actually took effect.
+                    // DeX can report no longer focused/visible while task is still present in stack,
+                    // which appears as "hidden behind slot 1" in UI.
                     Thread.sleep(150)
-                    val stillVisible = isVisibleTaskOnDex(taskId)
-                    val minimizedIds = getMinimizedFreeformTaskIds()
-                    val confirmed = minimizedIds.contains(taskId)
-                    android.util.Log.d("DROIDOS_DEX", "moveTaskToBack VERIFY tid=$taskId stillVisible=$stillVisible inMinimizedSet=$confirmed minimizedIds=$minimizedIds")
+                    var stillVisible = isVisibleTaskOnDex(taskId)
+                    var minimizedIds = getMinimizedFreeformTaskIds()
+                    var confirmed = minimizedIds.contains(taskId)
+                    var visibleInStack = isTaskVisibleInStack(taskId)
+                    android.util.Log.d(
+                        "DROIDOS_DEX",
+                        "moveTaskToBack VERIFY tid=$taskId stillVisible=$stillVisible visibleInStack=$visibleInStack inMinimizedSet=$confirmed minimizedIds=$minimizedIds"
+                    )
 
-                    if (!confirmed && stillVisible) {
-                        // minimizeTaskById didn't work — try minimizeTaskToSpecificPosition
+                    if (!confirmed || visibleInStack) {
+                        // Retry with positional minimize when initial minimize is not confirmed.
                         android.util.Log.d("DROIDOS_DEX", "moveTaskToBack RETRY minimizeTaskToSpecificPosition tid=$taskId")
                         try {
                             val posMinimize = multiTaskingBinder.javaClass.getMethod(
@@ -950,11 +974,19 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                             android.util.Log.w("DROIDOS_DEX", "moveTaskToBack minimizeTaskToSpecificPosition failed: ${e.message}")
                         }
 
-                        // Check again
+                        // Re-check after positional minimize.
                         Thread.sleep(150)
-                        val stillVisible2 = isVisibleTaskOnDex(taskId)
-                        if (stillVisible2) {
-                            // Try removeFocusedTask as last Samsung API attempt
+                        stillVisible = isVisibleTaskOnDex(taskId)
+                        minimizedIds = getMinimizedFreeformTaskIds()
+                        confirmed = minimizedIds.contains(taskId)
+                        visibleInStack = isTaskVisibleInStack(taskId)
+                        android.util.Log.d(
+                            "DROIDOS_DEX",
+                            "moveTaskToBack VERIFY2 tid=$taskId stillVisible=$stillVisible visibleInStack=$visibleInStack inMinimizedSet=$confirmed minimizedIds=$minimizedIds"
+                        )
+
+                        if ((!confirmed || visibleInStack) && stillVisible) {
+                            // Last Samsung API attempt if still visible after retries.
                             android.util.Log.d("DROIDOS_DEX", "moveTaskToBack RETRY removeFocusedTask tid=$taskId")
                             try {
                                 val removeFocused = multiTaskingBinder.javaClass.getMethod(
@@ -969,14 +1001,37 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                         }
                     }
 
-                    success = true
-                    android.util.Log.d("DROIDOS_DEX", "moveTaskToBack SAMSUNG_API done tid=$taskId")
+                    samsungConfirmed = confirmed
+                    success = if (isSamsung) {
+                        // On DeX, "not visible" can still mean task is merely behind another window.
+                        // Require explicit minimized-set confirmation for Samsung success.
+                        confirmed
+                    } else {
+                        confirmed || (!stillVisible && !visibleInStack)
+                    }
+                    android.util.Log.d(
+                        "DROIDOS_DEX",
+                        "moveTaskToBack SAMSUNG_API done tid=$taskId success=$success confirmed=$confirmed"
+                    )
                 } else {
                     android.util.Log.w("DROIDOS_DEX", "moveTaskToBack SAMSUNG_API multiTaskingBinder=null tid=$taskId")
                 }
 
             } catch (e: Exception) {
                 android.util.Log.w("DROIDOS_DEX", "moveTaskToBack SAMSUNG_API failed tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
+            }
+
+            // For Samsung, stop here and let caller decide alternate minimize strategy
+            // (hidden-display fallback) when native minimize is not confirmed.
+            if (isSamsung) {
+                if (!samsungConfirmed) {
+                    android.util.Log.w(
+                        "DROIDOS_DEX",
+                        "moveTaskToBack SAMSUNG_UNCONFIRMED tid=$taskId -> caller fallback required"
+                    )
+                }
+                android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=$samsungConfirmed")
+                return samsungConfirmed
             }
 
             // FALLBACK 1: platform task minimize command.
@@ -987,6 +1042,19 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     val moveBackExit = moveBackProc.waitFor()
                     val moveBackStderr = moveBackProc.errorStream.bufferedReader().readText().trim()
                     success = moveBackExit == 0
+
+                    if (success) {
+                        Thread.sleep(120)
+                        val visibleAfterMoveBack = isTaskVisibleInStack(taskId)
+                        if (visibleAfterMoveBack) {
+                            success = false
+                        }
+                        android.util.Log.d(
+                            "DROIDOS_DEX",
+                            "moveTaskToBack FALLBACK1_VERIFY tid=$taskId visibleInStack=$visibleAfterMoveBack"
+                        )
+                    }
+
                     android.util.Log.d("DROIDOS_DEX", "moveTaskToBack FALLBACK1_MOVE_BACK tid=$taskId exit=$moveBackExit success=$success stderr='$moveBackStderr'")
                 } catch (e: Exception) {
                     android.util.Log.w("DROIDOS_DEX", "moveTaskToBack FALLBACK1 exception tid=$taskId: ${e.message}")
@@ -997,16 +1065,24 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             if (!success) {
                 android.util.Log.d("DROIDOS_DEX", "moveTaskToBack FALLBACK2_OFFSCREEN tid=$taskId")
                 val modeCmd = "am task set-windowing-mode $taskId 5"
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
+                val modeExit = Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
                 Thread.sleep(100)
                 val resizeCmd = "am task resize $taskId 99999 99999 100000 100000"
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
+                val resizeExit = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
+                Thread.sleep(120)
+                success = modeExit == 0 && resizeExit == 0 && !isTaskVisibleInStack(taskId)
+                android.util.Log.d(
+                    "DROIDOS_DEX",
+                    "moveTaskToBack FALLBACK2_RESULT tid=$taskId modeExit=$modeExit resizeExit=$resizeExit success=$success"
+                )
             }
 
             android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=$success")
+            return success
 
         } catch (e: Exception) {
             android.util.Log.e("DROIDOS_DEX", "moveTaskToBack OUTER_EXCEPTION tid=$taskId", e)
+            return false
         } finally {
             Binder.restoreCallingIdentity(token)
         }

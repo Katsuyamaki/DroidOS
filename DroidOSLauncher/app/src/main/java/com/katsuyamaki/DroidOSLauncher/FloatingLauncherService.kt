@@ -6704,7 +6704,12 @@ private var isSoftKeyboardSupport = false
 
     // Minimize task using hidden display (A14/A15 fallback).
     // IMPORTANT: Do not relaunch as fallback here; relaunch can spawn duplicate main/sub tasks.
-    private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
+    private fun minimizeToHiddenDisplay(
+        taskId: Int,
+        packageName: String,
+        className: String?,
+        allowLaunchFallback: Boolean = true
+    ): Boolean {
         val targetId = ensureHiddenMinimizeDisplay()
         if (targetId <= 0) return false
 
@@ -6736,14 +6741,16 @@ private var isSoftKeyboardSupport = false
             if (!isStillVisibleOnCurrentDisplay()) return true
 
             // Attempt 2 (legacy A14 fallback): start target on hidden display.
-            val startCmd = if (!normalizedClass.isNullOrEmpty()) {
-                "am start -n $packageName/$normalizedClass --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
-            } else {
-                "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
+            if (allowLaunchFallback) {
+                val startCmd = if (!normalizedClass.isNullOrEmpty()) {
+                    "am start -n $packageName/$normalizedClass --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
+                } else {
+                    "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
+                }
+                shellService?.runCommand(startCmd)
+                Thread.sleep(180)
+                if (!isStillVisibleOnCurrentDisplay()) return true
             }
-            shellService?.runCommand(startCmd)
-            Thread.sleep(180)
-            if (!isStillVisibleOnCurrentDisplay()) return true
 
             // Attempt 3 (Samsung task-scoped only): use startActivityFromRecents to move existing task
             // to hidden display. Unlike am-start, this reuses the existing task — no duplicates.
@@ -6843,17 +6850,43 @@ private var isSoftKeyboardSupport = false
                 method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
             } else {
                 // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
-                shellService?.moveTaskToBack(tid)
-                method = if (taskScoped) {
-                    "hidden-display-failed-fallback-taskScoped"
+                val movedBack = shellService?.moveTaskToBack(tid) ?: false
+                method = if (movedBack) {
+                    if (taskScoped) "hidden-display-failed-fallback-taskScoped" else "hidden-display-failed-fallback"
                 } else {
-                    "hidden-display-failed-fallback"
+                    val offscreen = minimizeTaskOffscreen(tid)
+                    if (offscreen) {
+                        if (taskScoped) "hidden-display-failed-offscreen-taskScoped" else "hidden-display-failed-offscreen"
+                    } else {
+                        if (taskScoped) "hidden-display-failed-none-taskScoped" else "hidden-display-failed-none"
+                    }
                 }
             }
         } else {
             // Samsung minimize API path.
-            shellService?.moveTaskToBack(tid)
-            method = if (taskScoped) "samsung-taskScoped" else "samsung"
+            val samsungMinimized = shellService?.moveTaskToBack(tid) ?: false
+            if (samsungMinimized) {
+                method = if (taskScoped) "samsung-taskScoped" else "samsung"
+            } else {
+                // Critical fallback on DeX: force task off current display so it cannot stay
+                // behind a tiled window when native Samsung minimize is unconfirmed.
+                val hiddenMinimized = minimizeToHiddenDisplay(
+                    tid,
+                    basePkg,
+                    queueClass ?: cls,
+                    allowLaunchFallback = false
+                )
+                if (hiddenMinimized) {
+                    method = if (taskScoped) "samsung-fallback-hidden-display-taskScoped" else "samsung-fallback-hidden-display"
+                } else {
+                    val offscreen = minimizeTaskOffscreen(tid)
+                    method = if (offscreen) {
+                        if (taskScoped) "samsung-fallback-offscreen-taskScoped" else "samsung-fallback-offscreen"
+                    } else {
+                        if (taskScoped) "samsung-fallback-none-taskScoped" else "samsung-fallback-none"
+                    }
+                }
+            }
         }
 
         if (shouldTraceTaskResolution(basePkg)) {
