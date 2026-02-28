@@ -14,6 +14,7 @@ interface IShellService {
     int getTaskId(String packageName, String className);
     void moveTaskToBack(int taskId);
     void moveTaskToFront(int taskId, int displayId);
+    void setFocusedTask(int taskId);
     boolean restoreMinimizedTask(int taskId, int displayId);
     String dumpMultiTaskingMethods();
     void batchResize(in List<String> packages, in int[] bounds);

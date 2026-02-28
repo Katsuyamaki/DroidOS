@@ -962,6 +962,29 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     }
     // === MOVE TASK TO FRONT / FOCUS TASK - END ===
 
+    // === SET FOCUSED TASK - START ===
+    // Transfers real input focus (IME target) to a task using ActivityTaskManager.setFocusedTask().
+    // Unlike moveTaskToFront which only changes Z-order, this properly transfers the IME
+    // input connection so text input goes to the correct app — critical for subactivities.
+    override fun setFocusedTask(taskId: Int) {
+        val token = Binder.clearCallingIdentity()
+        try {
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getServiceMethod = atmClass.getMethod("getService")
+            val atm = getServiceMethod.invoke(null)
+
+            val setFocusMethod = atm.javaClass.getMethod(
+                "setFocusedTask",
+                Int::class.javaPrimitiveType
+            )
+            setFocusMethod.invoke(atm, taskId)
+        } catch (e: Exception) {
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+    // === SET FOCUSED TASK - END ===
+
     private fun isUserApp(pkg: String): Boolean {
         if (pkg == "com.android.systemui") return false
         if (pkg == "com.android.launcher3") return false 

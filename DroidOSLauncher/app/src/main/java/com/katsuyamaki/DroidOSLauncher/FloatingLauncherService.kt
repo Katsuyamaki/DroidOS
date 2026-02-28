@@ -6141,34 +6141,30 @@ private var isSoftKeyboardSupport = false
             }
             if (!targetStillInQueue) return
 
-            // Tell DockIME that a focus switch is about to happen so it can keep the IME
-            // alive through the transient onWindowHidden/onWindowShown cycle. Without this,
-            // the IME deactivates, the launcher retiles to 0 margin, and the IME never
-            // reactivates — leaving the overlay keyboard covering the app.
-            if (isDroidOsImeCurrentlyActive()) {
-                try {
-                    val focusSwitchIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.FOCUS_SWITCHING")
-                    focusSwitchIntent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
-                    sendBroadcast(focusSwitchIntent)
-                } catch (_: Exception) {}
-            }
-
             val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
             val className = app.className
             val resolvedClass = AppCompatibilityRegistry.resolveLaunchClass(basePkg, className)
 
+            // Resolve the task ID for setFocusedTask — this is the proper API for
+            // transferring real input focus (IME target) to the correct task.
+            val taskId = resolveTaskIdForApp(app, "FOCUS")
+
             val cmd = if (resolvedClass != null) {
-                "am start -W -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                "am start -n $basePkg/$resolvedClass --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
             } else {
-                "am start -W -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
+                "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-brought-to-front --display $currentDisplayId -f 0x10200000 --user 0"
             }
             shellService?.runCommand(cmd)
 
-            if (bounds != null) {
-                val taskId = resolveTaskIdForApp(app, "FOCUS")
-                if (taskId > 0) {
-                    shellService?.runCommand("am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                }
+            // Transfer real input focus via setFocusedTask. am start brings the window
+            // to front visually but does not always transfer the IME input connection,
+            // especially for subactivities (e.g. Google Sheets opened from Docs).
+            if (taskId > 0) {
+                shellService?.setFocusedTask(taskId)
+            }
+
+            if (bounds != null && taskId > 0) {
+                shellService?.runCommand("am task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
             }
         } catch (e: Exception) {
         }
