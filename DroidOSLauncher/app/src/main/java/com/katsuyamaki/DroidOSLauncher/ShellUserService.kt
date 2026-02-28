@@ -973,11 +973,37 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             val getServiceMethod = atmClass.getMethod("getService")
             val atm = getServiceMethod.invoke(null)
 
-            val setFocusMethod = atm.javaClass.getMethod(
-                "setFocusedTask",
-                Int::class.javaPrimitiveType
-            )
-            setFocusMethod.invoke(atm, taskId)
+            // setFocusedTask: available in AOSP since Android 10 (IActivityTaskManager)
+            try {
+                val setFocusMethod = atm.javaClass.getMethod(
+                    "setFocusedTask",
+                    Int::class.javaPrimitiveType
+                )
+                setFocusMethod.invoke(atm, taskId)
+                return
+            } catch (_: NoSuchMethodException) {
+            }
+
+            // Fallback: setFocusedStack (Android 7-11, some OEM builds)
+            try {
+                val setFocusMethod = atm.javaClass.getMethod(
+                    "setFocusedStack",
+                    Int::class.javaPrimitiveType
+                )
+                setFocusMethod.invoke(atm, taskId)
+                return
+            } catch (_: NoSuchMethodException) {
+            }
+
+            // Last resort: setFocusedRootTask (Android 12+ renamed API)
+            try {
+                val setFocusMethod = atm.javaClass.getMethod(
+                    "setFocusedRootTask",
+                    Int::class.javaPrimitiveType
+                )
+                setFocusMethod.invoke(atm, taskId)
+            } catch (_: NoSuchMethodException) {
+            }
         } catch (e: Exception) {
         } finally {
             Binder.restoreCallingIdentity(token)
