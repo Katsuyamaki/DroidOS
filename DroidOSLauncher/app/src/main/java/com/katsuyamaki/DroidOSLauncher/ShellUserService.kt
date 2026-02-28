@@ -914,125 +914,28 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     }
     // === SAMSUNG DETECTION HELPERS - END ===
 
+    // moveRootTaskToDisplay crashes SystemUI/WindowManager on Samsung DeX.
+    // Stub kept for AIDL compatibility; callers should use shell am task move-task-to-display instead.
+    override fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
+        android.util.Log.w("DROIDOS_DEX", "moveTaskToDisplay DISABLED (crashes system) tid=$taskId displayId=$displayId")
+        return false
+    }
+
     // === MOVE TASK TO BACK / MINIMIZE TASK - START ===
-    // Minimizes a task using Samsung's IMultiTaskingBinder from ActivityTaskManager
-    // This is what Android's freeform minimize button uses on Samsung devices
+    // On Samsung: complete no-op. Samsung binder APIs (minimizeTaskById, saveFreeformBounds,
+    // minimizeTaskToSpecificPosition, removeFocusedTask) dont work for 3rd party apps and
+    // add system stress with multiple reflection calls + Thread.sleep. Real minimize goes
+    // through minimizeToHiddenDisplay (am task move-task-to-display / am start --display).
     override fun moveTaskToBack(taskId: Int): Boolean {
         val isSamsung = hasSamsungMultiTaskingBinder()
         android.util.Log.d("DROIDOS_DEX", "moveTaskToBack START tid=$taskId samsung=$isSamsung")
+        if (isSamsung) {
+            android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=false (samsung-noop)")
+            return false
+        }
         val token = Binder.clearCallingIdentity()
         try {
             var success = false
-            var samsungConfirmed = false
-
-            try {
-                // Get ActivityTaskManager service
-                val atmClass = Class.forName("android.app.ActivityTaskManager")
-                val getServiceMethod = atmClass.getMethod("getService")
-                val atm = getServiceMethod.invoke(null)
-
-                // Call getMultiTaskingBinder()
-                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
-                val multiTaskingBinder = getMultiTaskingBinder.invoke(atm)
-
-                if (multiTaskingBinder != null) {
-                    // Call minimizeTaskById(taskId)
-                    val minimizeMethod = multiTaskingBinder.javaClass.getMethod(
-                        "minimizeTaskById",
-                        Int::class.javaPrimitiveType
-                    )
-                    minimizeMethod.invoke(multiTaskingBinder, taskId)
-                    android.util.Log.d("DROIDOS_DEX", "moveTaskToBack minimizeTaskById invoked tid=$taskId")
-
-                    // Verify minimize actually took effect.
-                    // DeX can report no longer focused/visible while task is still present in stack,
-                    // which appears as "hidden behind slot 1" in UI.
-                    Thread.sleep(150)
-                    var stillVisible = isVisibleTaskOnDex(taskId)
-                    var minimizedIds = getMinimizedFreeformTaskIds()
-                    var confirmed = minimizedIds.contains(taskId)
-                    var visibleInStack = isTaskVisibleInStack(taskId)
-                    android.util.Log.d(
-                        "DROIDOS_DEX",
-                        "moveTaskToBack VERIFY tid=$taskId stillVisible=$stillVisible visibleInStack=$visibleInStack inMinimizedSet=$confirmed minimizedIds=$minimizedIds"
-                    )
-
-                    if (!confirmed || visibleInStack) {
-                        // Retry with positional minimize when initial minimize is not confirmed.
-                        android.util.Log.d("DROIDOS_DEX", "moveTaskToBack RETRY minimizeTaskToSpecificPosition tid=$taskId")
-                        try {
-                            val posMinimize = multiTaskingBinder.javaClass.getMethod(
-                                "minimizeTaskToSpecificPosition",
-                                Int::class.javaPrimitiveType,
-                                Boolean::class.javaPrimitiveType,
-                                Int::class.javaPrimitiveType,
-                                Int::class.javaPrimitiveType
-                            )
-                            posMinimize.invoke(multiTaskingBinder, taskId, true, 0, 0)
-                            android.util.Log.d("DROIDOS_DEX", "moveTaskToBack minimizeTaskToSpecificPosition invoked tid=$taskId")
-                        } catch (e: Exception) {
-                            android.util.Log.w("DROIDOS_DEX", "moveTaskToBack minimizeTaskToSpecificPosition failed: ${e.message}")
-                        }
-
-                        // Re-check after positional minimize.
-                        Thread.sleep(150)
-                        stillVisible = isVisibleTaskOnDex(taskId)
-                        minimizedIds = getMinimizedFreeformTaskIds()
-                        confirmed = minimizedIds.contains(taskId)
-                        visibleInStack = isTaskVisibleInStack(taskId)
-                        android.util.Log.d(
-                            "DROIDOS_DEX",
-                            "moveTaskToBack VERIFY2 tid=$taskId stillVisible=$stillVisible visibleInStack=$visibleInStack inMinimizedSet=$confirmed minimizedIds=$minimizedIds"
-                        )
-
-                        if ((!confirmed || visibleInStack) && stillVisible) {
-                            // Last Samsung API attempt if still visible after retries.
-                            android.util.Log.d("DROIDOS_DEX", "moveTaskToBack RETRY removeFocusedTask tid=$taskId")
-                            try {
-                                val removeFocused = multiTaskingBinder.javaClass.getMethod(
-                                    "removeFocusedTask",
-                                    Int::class.javaPrimitiveType
-                                )
-                                removeFocused.invoke(multiTaskingBinder, taskId)
-                                android.util.Log.d("DROIDOS_DEX", "moveTaskToBack removeFocusedTask invoked tid=$taskId")
-                            } catch (e: Exception) {
-                                android.util.Log.w("DROIDOS_DEX", "moveTaskToBack removeFocusedTask failed: ${e.message}")
-                            }
-                        }
-                    }
-
-                    samsungConfirmed = confirmed
-                    success = if (isSamsung) {
-                        // On DeX, "not visible" can still mean task is merely behind another window.
-                        // Require explicit minimized-set confirmation for Samsung success.
-                        confirmed
-                    } else {
-                        confirmed || (!stillVisible && !visibleInStack)
-                    }
-                    android.util.Log.d(
-                        "DROIDOS_DEX",
-                        "moveTaskToBack SAMSUNG_API done tid=$taskId success=$success confirmed=$confirmed"
-                    )
-                } else {
-                    android.util.Log.w("DROIDOS_DEX", "moveTaskToBack SAMSUNG_API multiTaskingBinder=null tid=$taskId")
-                }
-
-            } catch (e: Exception) {
-                android.util.Log.w("DROIDOS_DEX", "moveTaskToBack SAMSUNG_API failed tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
-            }
-
-            // For Samsung, stop here and let caller decide alternate minimize strategy
-            // (hidden-display fallback) when native minimize is not confirmed.
-            if (isSamsung) {
-                if (!samsungConfirmed) {
-                    android.util.Log.w(
-                        "DROIDOS_DEX",
-                        "moveTaskToBack SAMSUNG_UNCONFIRMED tid=$taskId -> caller fallback required"
-                    )
-                }
-                android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=$samsungConfirmed")
-                return samsungConfirmed
-            }
 
             // FALLBACK 1: platform task minimize command.
             if (!success) {
@@ -1128,30 +1031,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask FROM_RECENTS failed tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
             }
 
-            // Fallback: try Samsung MultiTaskingBinder for a restore/maximize method.
-            try {
-                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
-                val binder = getMultiTaskingBinder.invoke(atm)
-                if (binder != null) {
-                    // Try common Samsung restore method names.
-                    for (methodName in listOf("maximizeTaskById", "restoreTaskById", "unminimizeTaskById")) {
-                        try {
-                            val method = binder.javaClass.getMethod(methodName, Int::class.javaPrimitiveType)
-                            method.invoke(binder, taskId)
-                            android.util.Log.d("DROIDOS_DEX", "restoreMinimizedTask SAMSUNG_BINDER tid=$taskId method=$methodName success")
-                            return true
-                        } catch (e: Exception) {
-                            android.util.Log.d("DROIDOS_DEX", "restoreMinimizedTask SAMSUNG_BINDER tid=$taskId method=$methodName failed: ${e.message}")
-                        }
-                    }
-                } else {
-                    android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask SAMSUNG_BINDER=null tid=$taskId")
-                }
-            } catch (e: Exception) {
-                android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask SAMSUNG_BINDER exception tid=$taskId: ${e.message}")
-            }
-
-            android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask ALL_METHODS_FAILED tid=$taskId")
+            android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask FAILED tid=$taskId")
             return false
         } catch (e: Exception) {
             android.util.Log.e("DROIDOS_DEX", "restoreMinimizedTask OUTER_EXCEPTION tid=$taskId", e)

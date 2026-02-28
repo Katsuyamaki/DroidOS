@@ -6682,6 +6682,7 @@ private var isSoftKeyboardSupport = false
 
     private fun ensureHiddenMinimizeDisplay(): Int {
         if (hiddenMinimizeDisplayId > 0 && hiddenMinimizeDisplay != null) {
+            android.util.Log.d("DROIDOS_DEX", "ensureHiddenMinimizeDisplay CACHED id=$hiddenMinimizeDisplayId")
             return hiddenMinimizeDisplayId
         }
         try {
@@ -6696,8 +6697,12 @@ private var isSoftKeyboardSupport = false
             )
             if (hiddenMinimizeDisplay != null) {
                 hiddenMinimizeDisplayId = hiddenMinimizeDisplay!!.display.displayId
+                android.util.Log.d("DROIDOS_DEX", "ensureHiddenMinimizeDisplay CREATED id=$hiddenMinimizeDisplayId")
+            } else {
+                android.util.Log.w("DROIDOS_DEX", "ensureHiddenMinimizeDisplay FAILED createVirtualDisplay returned null")
             }
         } catch (e: Exception) {
+            android.util.Log.w("DROIDOS_DEX", "ensureHiddenMinimizeDisplay EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
         }
         return hiddenMinimizeDisplayId
     }
@@ -6711,7 +6716,11 @@ private var isSoftKeyboardSupport = false
         allowLaunchFallback: Boolean = true
     ): Boolean {
         val targetId = ensureHiddenMinimizeDisplay()
-        if (targetId <= 0) return false
+        android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay START tid=$taskId pkg=$packageName targetDisplay=$targetId currentDisplay=$currentDisplayId allowLaunch=$allowLaunchFallback")
+        if (targetId <= 0) {
+            android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ABORT no hidden display")
+            return false
+        }
 
         try {
             val normalizedClass = normalizeActivityClass(packageName, className)
@@ -6719,11 +6728,10 @@ private var isSoftKeyboardSupport = false
 
             fun isStillVisibleOnCurrentDisplay(): Boolean {
                 val currentVisible = getObservedVisibleComponents(currentDisplayId)
-                // When we have a specific taskId, check only by taskId — not by package.
-                // This avoids false positives when sibling tasks (e.g. subactivities)
-                // from the same package are still visible on the current display.
                 if (taskId > 0) {
-                    return currentVisible.any { it.taskId != null && it.taskId == taskId }
+                    val found = currentVisible.any { it.taskId != null && it.taskId == taskId }
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay VISIBLE_CHECK tid=$taskId byTaskId=$found visibleCount=${currentVisible.size} displayId=$currentDisplayId")
+                    return found
                 }
                 return currentVisible.any { observed ->
                     AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName) &&
@@ -6735,10 +6743,26 @@ private var isSoftKeyboardSupport = false
                 }
             }
 
-            // Attempt 1: move existing task to hidden display.
-            shellService?.runCommand("am task move-task-to-display $taskId $targetId")
+            // Early exit: if task is already NOT visible on current display, it is
+            // already minimized (on hidden display or gone). Skip to prevent
+            // EXECUTE_MINIMIZE_PASS from spam-looping am task move-task-to-display
+            // on already-minimized tasks every ~2 seconds.
+            if (!isStillVisibleOnCurrentDisplay()) {
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ALREADY_HIDDEN tid=$taskId pkg=$packageName — skipping")
+                return true
+            }
+
+            // Attempt 1: move existing task to hidden display via shell.
+            val moveCmd = "am task move-task-to-display $taskId $targetId"
+            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 cmd='$moveCmd'")
+            shellService?.runCommand(moveCmd)
             Thread.sleep(140)
-            if (!isStillVisibleOnCurrentDisplay()) return true
+            if (!isStillVisibleOnCurrentDisplay()) {
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 SUCCESS tid=$taskId")
+                // Remove from freeform mode so Samsung DeX 5-app limit doesnt count it.
+                shellService?.runCommand("am task set-windowing-mode $taskId 0")
+                return true
+            }
 
             // Attempt 2 (legacy A14 fallback): start target on hidden display.
             if (allowLaunchFallback) {
@@ -6747,38 +6771,58 @@ private var isSoftKeyboardSupport = false
                 } else {
                     "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
                 }
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2 cmd='$startCmd'")
                 shellService?.runCommand(startCmd)
                 Thread.sleep(180)
-                if (!isStillVisibleOnCurrentDisplay()) return true
+                if (!isStillVisibleOnCurrentDisplay()) {
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2 SUCCESS tid=$taskId")
+                    shellService?.runCommand("am task set-windowing-mode $taskId 0")
+                    return true
+                }
             }
 
-            // Attempt 3 (Samsung task-scoped only): use startActivityFromRecents to move existing task
+            // Attempt 3 (Samsung): use startActivityFromRecents to move existing task
             // to hidden display. Unlike am-start, this reuses the existing task — no duplicates.
-            if (taskScoped && isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
+            if (isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3 restoreMinimizedTask tid=$taskId targetDisplay=$targetId")
                 try {
                     val moved = shellService?.restoreMinimizedTask(taskId, targetId) ?: false
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3 moved=$moved")
                     if (moved) {
                         Thread.sleep(180)
-                        if (!isStillVisibleOnCurrentDisplay()) return true
+                        if (!isStillVisibleOnCurrentDisplay()) {
+                            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3 SUCCESS tid=$taskId")
+                            shellService?.runCommand("am task set-windowing-mode $taskId 0")
+                            return true
+                        }
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3 EXCEPTION: ${e.message}")
+                }
             }
 
             // Final signal: check if the task landed on the hidden display.
             val hiddenVisible = getObservedVisibleComponents(targetId)
+            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK tid=$taskId hiddenDisplayComponents=${hiddenVisible.size}")
             if (taskId > 0) {
                 if (hiddenVisible.any { it.taskId != null && it.taskId == taskId }) {
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK SUCCESS tid=$taskId found on hidden display")
+                    shellService?.runCommand("am task set-windowing-mode $taskId 0")
                     return true
                 }
             } else if (hiddenVisible.any { observed ->
                     AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName)
                 }
             ) {
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK SUCCESS pkg=$packageName found on hidden display")
+                shellService?.runCommand("am task set-windowing-mode $taskId 0")
                 return true
             }
 
+            android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay FAILED tid=$taskId all attempts exhausted")
             return false
         } catch (e: Exception) {
+            android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay EXCEPTION tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
             return false
         }
     }
@@ -6842,49 +6886,26 @@ private var isSoftKeyboardSupport = false
             } catch (e: Exception) {}
         }
 
-        val useSamsung = !DEBUG_FORCE_NON_SAMSUNG && !shouldUseHiddenMinimizeStrategy(basePkg, queueClass ?: cls)
+        // Samsung DeX: skip moveTaskToBack entirely — Samsung minimize APIs dont work
+        // for 3rd party apps and corrupt task state causing SystemUI crashes.
+        // Go directly to hidden display approach (startActivityFromRecents to virtual display).
+        android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry STRATEGY tid=$tid samsung=${isSamsungBuild()} displayId=$currentDisplayId")
 
-        if (!useSamsung) {
-            val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, queueClass ?: cls)
-            if (hiddenMinimized) {
-                method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
-            } else {
-                // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
-                val movedBack = shellService?.moveTaskToBack(tid) ?: false
-                method = if (movedBack) {
-                    if (taskScoped) "hidden-display-failed-fallback-taskScoped" else "hidden-display-failed-fallback"
-                } else {
-                    val offscreen = minimizeTaskOffscreen(tid)
-                    if (offscreen) {
-                        if (taskScoped) "hidden-display-failed-offscreen-taskScoped" else "hidden-display-failed-offscreen"
-                    } else {
-                        if (taskScoped) "hidden-display-failed-none-taskScoped" else "hidden-display-failed-none"
-                    }
-                }
-            }
+        val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, queueClass ?: cls)
+        if (hiddenMinimized) {
+            method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
         } else {
-            // Samsung minimize API path.
-            val samsungMinimized = shellService?.moveTaskToBack(tid) ?: false
-            if (samsungMinimized) {
-                method = if (taskScoped) "samsung-taskScoped" else "samsung"
+            // Hidden display failed. Try moveTaskToBack as fallback (works on non-Samsung).
+            val movedBack = shellService?.moveTaskToBack(tid) ?: false
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry FALLBACK_MOVEBACK tid=$tid result=$movedBack")
+            if (movedBack) {
+                method = if (taskScoped) "fallback-moveback-taskScoped" else "fallback-moveback"
             } else {
-                // Critical fallback on DeX: force task off current display so it cannot stay
-                // behind a tiled window when native Samsung minimize is unconfirmed.
-                val hiddenMinimized = minimizeToHiddenDisplay(
-                    tid,
-                    basePkg,
-                    queueClass ?: cls,
-                    allowLaunchFallback = false
-                )
-                if (hiddenMinimized) {
-                    method = if (taskScoped) "samsung-fallback-hidden-display-taskScoped" else "samsung-fallback-hidden-display"
+                val offscreen = minimizeTaskOffscreen(tid)
+                method = if (offscreen) {
+                    if (taskScoped) "fallback-offscreen-taskScoped" else "fallback-offscreen"
                 } else {
-                    val offscreen = minimizeTaskOffscreen(tid)
-                    method = if (offscreen) {
-                        if (taskScoped) "samsung-fallback-offscreen-taskScoped" else "samsung-fallback-offscreen"
-                    } else {
-                        if (taskScoped) "samsung-fallback-none-taskScoped" else "samsung-fallback-none"
-                    }
+                    if (taskScoped) "fallback-none-taskScoped" else "fallback-none"
                 }
             }
         }

@@ -13,6 +13,7 @@ interface IShellService {
     List<String> getAllRunningPackages();
     int getTaskId(String packageName, String className);
     boolean moveTaskToBack(int taskId);
+    boolean moveTaskToDisplay(int taskId, int displayId);
     void moveTaskToFront(int taskId, int displayId);
     void setFocusedTask(int taskId);
     boolean restoreMinimizedTask(int taskId, int displayId);
