@@ -6401,9 +6401,22 @@ private var isSoftKeyboardSupport = false
                             android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE1_A14 entry=$entryId tid=$tid visible=$visibleNow")
                         }
 
-                        // A14/A15 Phase 2: startActivityFromRecents — handles subactivities
-                        // that were moved to hidden display via recents API.
+                        // A14/A15 Phase 2: extra command/binder front focus pass.
                         if (!visibleNow) {
+                            shellService?.runCommand("am task focus $tid")
+                            shellService?.runCommand("am task set-windowing-mode $tid 5")
+                            shellService?.runCommand("am task move-task-to-front $tid")
+                            shellService?.moveTaskToFront(tid, currentDisplayId)
+                            applyBoundsIfPossible(tid)
+                            Thread.sleep(220)
+                            visibleNow = isVisibleNow()
+                            if (traceRestore) {
+                                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE2_A14_COMMAND entry=$entryId tid=$tid visible=$visibleNow")
+                            }
+                        }
+
+                        // Samsung-only fallback on A14/A15: recents restore API.
+                        if (!visibleNow && isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
                             val restored = try {
                                 shellService?.restoreMinimizedTask(tid, currentDisplayId) ?: false
                             } catch (e: Exception) { false }
@@ -6414,7 +6427,7 @@ private var isSoftKeyboardSupport = false
                                 visibleNow = isVisibleNow()
                             }
                             if (traceRestore) {
-                                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE2_A14_RECENTS entry=$entryId tid=$tid restored=$restored visible=$visibleNow")
+                                android.util.Log.d("DROIDOS_TASK_TRACE", "reason=RESTORE_PHASE3_A14_SAMSUNG_RECENTS entry=$entryId tid=$tid restored=$restored visible=$visibleNow")
                             }
                         }
                     } else if (isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
@@ -6680,9 +6693,9 @@ private var isSoftKeyboardSupport = false
             Thread.sleep(180)
             if (!isStillVisibleOnCurrentDisplay()) return true
 
-            // Attempt 3 (task-scoped safe): use startActivityFromRecents to move existing task
+            // Attempt 3 (Samsung task-scoped only): use startActivityFromRecents to move existing task
             // to hidden display. Unlike am-start, this reuses the existing task — no duplicates.
-            if (taskScoped) {
+            if (taskScoped && isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
                 try {
                     val moved = shellService?.restoreMinimizedTask(taskId, targetId) ?: false
                     if (moved) {
