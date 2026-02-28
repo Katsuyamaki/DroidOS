@@ -1058,10 +1058,41 @@ private var isSoftKeyboardSupport = false
         return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(parsed.packageName, pkg) || parsed.packageName == pkg
     }
 
+    private fun remapFocusEntryId(entryId: String?): String? {
+        if (entryId.isNullOrBlank()) return null
+
+        val exactVisible = selectedAppsQueue.firstOrNull {
+            getQueueEntryId(it) == entryId && !it.isMinimized && it.packageName != PACKAGE_BLANK
+        }
+        if (exactVisible != null) return getQueueEntryId(exactVisible)
+
+        val parsed = parseQueueEntryId(entryId) ?: return null
+        val visibleQueue = selectedAppsQueue.filter { !it.isMinimized && it.packageName != PACKAGE_BLANK }
+        if (visibleQueue.isEmpty()) return null
+
+        val strictMatches = visibleQueue.filter { queueAppMatchesObservedComponent(it, parsed) }
+        if (strictMatches.size == 1) return getQueueEntryId(strictMatches.first())
+        if (strictMatches.size > 1) return null
+
+        // Task IDs can churn on restore/minimize cycles; retry class/package match without taskId.
+        val relaxedObserved = if (parsed.taskId != null) parsed.copy(taskId = null) else parsed
+        val relaxedMatches = visibleQueue.filter { queueAppMatchesObservedComponent(it, relaxedObserved) }
+        if (relaxedMatches.size == 1) return getQueueEntryId(relaxedMatches.first())
+
+        return null
+    }
+
     override fun isAppFocused(app: MainActivity.AppInfo): Boolean {
         val focusedEntryId = activeFocusEntryId
         if (!focusedEntryId.isNullOrBlank()) {
             return focusedEntryId == getQueueEntryId(app)
+        }
+
+        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+        if (shouldUseTaskScopedIdentityForClass(basePkg, app.className)) {
+            // For task-scoped entries (Docs/Sheets main/sub tasks), package fallback would
+            // highlight multiple queue entries at once.
+            return false
         }
 
         return AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
@@ -5874,16 +5905,17 @@ private var isSoftKeyboardSupport = false
         }
 
         if (shouldDropEntry(activeFocusEntryId)) {
-            activeFocusEntryId = null
+            activeFocusEntryId = remapFocusEntryId(activeFocusEntryId)
             changed = true
         }
 
         if (shouldDropEntry(lastValidFocusEntryId)) {
-            lastValidFocusEntryId = secondLastValidFocusEntryId?.takeUnless { shouldDropEntry(it) }
+            val remappedLast = remapFocusEntryId(lastValidFocusEntryId)
+            lastValidFocusEntryId = remappedLast ?: secondLastValidFocusEntryId?.let { remapFocusEntryId(it) }
             secondLastValidFocusEntryId = null
             changed = true
         } else if (shouldDropEntry(secondLastValidFocusEntryId)) {
-            secondLastValidFocusEntryId = null
+            secondLastValidFocusEntryId = remapFocusEntryId(secondLastValidFocusEntryId)
             changed = true
         }
 
