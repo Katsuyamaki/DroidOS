@@ -9709,12 +9709,9 @@ private var isSoftKeyboardSupport = false
                             }
                             
                             if (alreadyFocused) {
-                                // App already focused - perform caption tap to refresh input focus target.
-                                scheduleFocusFallbackForApp(app, bounds)
+                                // Already focused — no action needed.
                             } else if (!app.isMinimized) {
                                 focusViaTask(app, bounds)
-                                // Deterministic fallback when WM fronting updates visual focus but IME target lags.
-                                scheduleFocusFallbackForApp(app, bounds)
                             } else {
                                 launchViaShell(app.getBasePackage(), app.className, bounds)
                             }
@@ -9773,7 +9770,6 @@ private var isSoftKeyboardSupport = false
                         val layoutIdx = if (idx >= 0) selectedAppsQueue.take(idx).count { !it.isMinimized } else -1
                         val bounds = if (layoutIdx >= 0 && layoutIdx < rects.size) rects[layoutIdx] else null
                         focusViaTask(app, bounds)
-                        scheduleFocusFallbackForApp(app, bounds)
                         sendCursorToAppCenter(bounds)
 
                         // [FIX] Manually update focus state since moveTaskToFront doesn't trigger accessibility events
