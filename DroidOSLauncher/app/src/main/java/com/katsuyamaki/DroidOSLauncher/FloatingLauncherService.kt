@@ -6999,6 +6999,8 @@ private var isSoftKeyboardSupport = false
                                 shellService?.moveTaskToBack(taskId)
                                 android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay MOVEBACK_ON_PHONE tid=$taskId")
                             } catch (e: Exception) {}
+                            // Refocus a task on the DeX display so input doesn't stay on display 0.
+                            refocusDeXDisplay(taskId)
                             android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS SUCCESS tid=$taskId")
                             return true
                         }
@@ -7022,6 +7024,7 @@ private var isSoftKeyboardSupport = false
             shellService?.runCommand(startCmd)
             Thread.sleep(180)
             if (!isStillVisibleOnCurrentDisplay()) {
+                refocusDeXDisplay(taskId)
                 android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_AMSTART SUCCESS tid=$taskId")
                 return true
             }
@@ -7031,6 +7034,7 @@ private var isSoftKeyboardSupport = false
             android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK tid=$taskId hiddenDisplayComponents=${hiddenVisible.size}")
             if (taskId > 0) {
                 if (hiddenVisible.any { it.taskId != null && it.taskId == taskId }) {
+                    refocusDeXDisplay(taskId)
                     android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK SUCCESS tid=$taskId")
                     return true
                 }
@@ -7038,6 +7042,7 @@ private var isSoftKeyboardSupport = false
                     AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName)
                 }
             ) {
+                refocusDeXDisplay(taskId)
                 android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay FINAL_CHECK SUCCESS pkg=$packageName")
                 return true
             }
@@ -7050,6 +7055,34 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+
+    // After minimizing to display 0, Android moves input focus off the DeX display.
+    // Find the next visible task on currentDisplayId and transfer focus to it so
+    // keyboard/dpad input stays on the DeX screen.
+    private fun refocusDeXDisplay(excludeTaskId: Int) {
+        try {
+            val visible = getObservedVisibleComponents(currentDisplayId)
+            val nextTask = visible.firstOrNull { observed ->
+                observed.taskId != null && observed.taskId > 0 && observed.taskId != excludeTaskId &&
+                    observed.packageName != packageName &&
+                    observed.packageName != PACKAGE_TRACKPAD &&
+                    !observed.packageName.contains("systemui") &&
+                    !isImeOrKeyboardPackage(observed.packageName)
+            }
+            if (nextTask?.taskId != null && nextTask.taskId > 0) {
+                shellService?.setFocusedTask(nextTask.taskId)
+                android.util.Log.d("DROIDOS_DEX", "refocusDeXDisplay FOCUSED tid=${nextTask.taskId} pkg=${nextTask.packageName}")
+            } else {
+                // No visible app tasks — focus the wallpaper/home on DeX display.
+                // Use input key injection (HOME) to ensure DeX display gets focus back.
+                shellService?.injectKey(android.view.KeyEvent.KEYCODE_APP_SWITCH, android.view.KeyEvent.ACTION_DOWN, 0, currentDisplayId, 0)
+                shellService?.injectKey(android.view.KeyEvent.KEYCODE_APP_SWITCH, android.view.KeyEvent.ACTION_UP, 0, currentDisplayId, 0)
+                android.util.Log.d("DROIDOS_DEX", "refocusDeXDisplay NO_VISIBLE_TASKS — injected APP_SWITCH on display $currentDisplayId")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DROIDOS_DEX", "refocusDeXDisplay EXCEPTION: ${e.message}")
+        }
+    }
 
     private fun isSamsungBuild(): Boolean {
         val manufacturer = Build.MANUFACTURER?.lowercase() ?: ""
