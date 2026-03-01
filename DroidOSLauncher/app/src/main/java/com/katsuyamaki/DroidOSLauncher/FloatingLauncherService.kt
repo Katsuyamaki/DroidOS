@@ -3623,6 +3623,10 @@ private var isSoftKeyboardSupport = false
             retileExecutor.shutdownNow()
         } catch (e: Exception) {
         }
+        try {
+            dexTaskExecutor.shutdownNow()
+        } catch (e: Exception) {
+        }
 
         shizukuBindRequested = false
 
@@ -6570,7 +6574,7 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        Thread {
+        dexTaskExecutor.execute {
             try {
                 var tid = minimizedTaskIdByEntryId[entryId] ?: -1
                 if (tid <= 0) {
@@ -6789,7 +6793,7 @@ private var isSoftKeyboardSupport = false
                 }
             } catch (e: Exception) {
             }
-        }.start()
+        }
     }
 
     private fun toggleVirtualDisplay() {
@@ -6823,6 +6827,12 @@ private var isSoftKeyboardSupport = false
     private var hiddenMinimizeImageReader: android.media.ImageReader? = null
     private var hiddenMinimizeDisplayId: Int = -1
 
+    // Single-thread executor that serializes ALL DeX minimize/restore operations.
+    // Prevents race conditions where minimize and restore threads overlap (e.g. minimize
+    // moves task to hidden display AFTER restore brought it to front). Replaces raw Thread{}.
+    private val dexTaskExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DroidOS-DexTask").apply { isDaemon = true }
+    }
     // Serialize all hidden-display minimize operations to prevent concurrent am commands
     // from triggering Samsung security lockout. Only one minimize runs at a time.
     private val hiddenMinimizeLock = java.util.concurrent.locks.ReentrantLock()
@@ -9663,8 +9673,8 @@ private var isSoftKeyboardSupport = false
                 minimizeAllInProgress = true
                 android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL ENTER count=${appsToMinimize.size} display=$currentDisplayId")
 
-                // Move all to back in background thread — serialized one-by-one with delay.
-                Thread {
+                // Move all to back — serialized via dexTaskExecutor with delay between apps.
+                dexTaskExecutor.execute {
                     try {
                         var first = true
                         for ((idx, app) in appsToMinimize.withIndex()) {
@@ -9693,7 +9703,7 @@ private var isSoftKeyboardSupport = false
                         android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL EXIT")
                         minimizeAllInProgress = false
                     }
-                }.start()
+                }
                 
                 // Also mark blanks as minimized to preserve layout positions
                 for (app in selectedAppsQueue) {
@@ -9877,8 +9887,8 @@ private var isSoftKeyboardSupport = false
                                                                          activePackageName = null
                                                                      }
                                                                      
-    // MINIMIZING: Move to Back
-                                     Thread {
+    // MINIMIZING: Move to Back (serialized via dexTaskExecutor)
+                                     dexTaskExecutor.execute {
                                          try {
                                              var minimizeResult = -1
                                              if (currentDisplayId >= 2) {
@@ -9907,7 +9917,7 @@ private var isSoftKeyboardSupport = false
                                              app.isMinimized = false
                                              uiHandler.post { updateAllUIs() }
                                          }
-                                     }.start()
+                                     }
                                                                      // We removed the redundant thread here to prevent race conditions and double-execution lag.
 
                                                                 } else {
