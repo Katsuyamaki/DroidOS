@@ -6899,6 +6899,12 @@ private var isSoftKeyboardSupport = false
                         packageTaskIdCache[basePkg] = actualHiddenTid
                     }
                 }
+                // Now Samsung-minimize on hidden display to drop from freeform tracking.
+                // Hidden display is a regular virtual display (not DeX), so Samsung
+                // minimizeTaskById works here — same as on display 0/1.
+                val finalTid = minimizedTaskIdByEntryId[entryId] ?: tid
+                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry MOVEBACK_ON_HIDDEN tid=$finalTid pkg=$basePkg")
+                shellService?.moveTaskToBack(finalTid)
             } else {
                 // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
                 shellService?.moveTaskToBack(tid)
