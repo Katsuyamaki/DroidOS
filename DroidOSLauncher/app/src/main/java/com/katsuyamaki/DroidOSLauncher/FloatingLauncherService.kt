@@ -6429,6 +6429,22 @@ private var isSoftKeyboardSupport = false
             classCandidates.add(null)
         }
 
+        // Short-circuit: if observed components on the current display already have a valid
+        // task ID, use it directly and skip the global getTaskId call. This prevents stale
+        // cross-display task IDs for apps with subactivities — getTaskId prefers exact class
+        // matches (e.g. com.whatsapp/com.whatsapp.Main on hidden display) over package matches
+        // (com.whatsapp/com.whatsapp.HomeActivity on current display). Observed data is already
+        // filtered to currentDisplayId so no cross-display risk.
+        val observedDirectTid = observedMatches.mapNotNull { it.taskId }.firstOrNull { it > 0 }
+        if (observedDirectTid != null) {
+            val observedClasses = observedMatches.filter { it.taskId != null && it.taskId > 0 }.joinToString(",") { "${it.className ?: "null"}#${it.taskId}" }
+            android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp USE_OBSERVED_DIRECT pkg=$basePkg observed=$observedDirectTid display=$currentDisplayId queueClass=${queueClass ?: "null"} observedClasses=[$observedClasses]")
+            if (taskScoped && (app.taskIdHint == null || app.taskIdHint ?: -1 <= 0)) {
+                app.taskIdHint = observedDirectTid
+            }
+            return observedDirectTid
+        }
+
         var resolvedTid = -1
         var chosenClass: String? = null
         for (candidateClass in classCandidates) {
@@ -6887,15 +6903,43 @@ private var isSoftKeyboardSupport = false
                 android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay NOT_ON_CURRENT_DISPLAY tid=$taskId — not on hidden display $targetId either, re-minimizing")
             }
 
-            // Attempt 1: move existing task to hidden display.
-            shellService?.runCommand("am task move-task-to-display $taskId $targetId")
-            Thread.sleep(140)
-            if (!isStillVisibleOnCurrentDisplay()) {
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 SUCCESS tid=$taskId")
-                return true
+            // Attempt 1: move existing task to hidden display via binder.
+            // Shell command `am task move-task-to-display` silently fails (no privileges).
+            // Binder call IActivityTaskManager.moveRootTaskToDisplay has Shizuku privileges
+            // and moves the task without creating a ghost activity instance.
+            val binderMoved = try { shellService?.moveTaskToDisplay(taskId, targetId) ?: false } catch (e: Exception) { false }
+            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 binder=$binderMoved tid=$taskId targetDisplay=$targetId")
+            if (binderMoved) {
+                Thread.sleep(200)
+                if (!isStillVisibleOnCurrentDisplay()) {
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 SUCCESS tid=$taskId")
+                    return true
+                }
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 binder returned true but task still visible tid=$taskId")
             }
 
-            // Attempt 2: start target activity on hidden display in freeform (5).
+            // Attempt 2: use startActivityFromRecents to move existing task to hidden display.
+            // This MOVES the existing task without creating a new activity instance — critical
+            // for apps like WhatsApp where am start creates a ghost duplicate that Samsung detects.
+            if (taskId > 0) {
+                try {
+                    val moved = shellService?.restoreMinimizedTask(taskId, targetId) ?: false
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS binder=$moved tid=$taskId targetDisplay=$targetId")
+                    if (moved) {
+                        Thread.sleep(200)
+                        if (!isStillVisibleOnCurrentDisplay()) {
+                            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS SUCCESS tid=$taskId")
+                            return true
+                        }
+                        android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS binder=true but still visible tid=$taskId")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS EXCEPTION tid=$taskId err=${e.message}")
+                }
+            }
+
+            // Attempt 3: start target activity on hidden display in freeform (5).
+            // LAST RESORT — creates a new activity instance which may trigger Samsung ghost detection.
             // Testing confirmed Samsung 5-app freeform limit does NOT apply to virtual displays.
             // windowingMode 1 (fullscreen) crashes Samsung DeX display manager.
             val startCmd = if (!normalizedClass.isNullOrEmpty()) {
@@ -6903,27 +6947,12 @@ private var isSoftKeyboardSupport = false
             } else {
                 "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
             }
-            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2 cmd='$startCmd'")
+            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3_AMSTART cmd='$startCmd'")
             shellService?.runCommand(startCmd)
             Thread.sleep(180)
             if (!isStillVisibleOnCurrentDisplay()) {
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2 SUCCESS tid=$taskId")
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3_AMSTART SUCCESS tid=$taskId")
                 return true
-            }
-
-            // Attempt 3: use startActivityFromRecents to move existing task to hidden display.
-            // Ungated — works for all apps, not just task-scoped.
-            if (isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
-                try {
-                    val moved = shellService?.restoreMinimizedTask(taskId, targetId) ?: false
-                    if (moved) {
-                        Thread.sleep(180)
-                        if (!isStillVisibleOnCurrentDisplay()) {
-                            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3 SUCCESS tid=$taskId")
-                            return true
-                        }
-                    }
-                } catch (e: Exception) {}
             }
 
             // Final signal: check if the task landed on the hidden display.
@@ -7054,10 +7083,25 @@ private var isSoftKeyboardSupport = false
             } catch (e: Exception) {}
         }
 
+        // Resolve the ACTUAL running class from observed components on the current display.
+        // The queue class (e.g. com.whatsapp.Main) may differ from the running subactivity
+        // (e.g. com.whatsapp.HomeActivity). Starting the queue class on hidden display creates
+        // a ghost duplicate that Samsung detects → security lockout. Use the observed class instead.
+        val observedRunningClass = try {
+            getObservedVisibleComponents(currentDisplayId).firstOrNull { observed ->
+                (observed.taskId != null && observed.taskId == tid) ||
+                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+            }?.className
+        } catch (e: Exception) { null }
+        val minimizeClass = observedRunningClass ?: queueClass ?: cls
+        if (observedRunningClass != null && observedRunningClass != (queueClass ?: cls)) {
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SUBACTIVITY_DETECTED pkg=$basePkg queue=${queueClass ?: cls} observed=$observedRunningClass tid=$tid")
+        }
+
         val useSamsung = !DEBUG_FORCE_NON_SAMSUNG && !shouldUseHiddenMinimizeStrategy(basePkg, queueClass ?: cls)
 
         if (!useSamsung) {
-            val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, queueClass ?: cls)
+            val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, minimizeClass)
             if (hiddenMinimized) {
                 method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
                 // ATTEMPT2 (am start) creates a new task on hidden display. The original
@@ -7247,6 +7291,20 @@ private var isSoftKeyboardSupport = false
             }
         }
 
+        // [DEX] Clear isMinimized for all queue apps when switching to a new DeX display.
+        // Apps minimized on the old display have stale task IDs. EXECUTE_MINIMIZE_PASS would
+        // try am start --display with those stale IDs, causing Samsung security lockout.
+        // The queue will be re-synced with observed visible apps via fetchRunningApps below.
+        if (newId >= 2) {
+            for (app in selectedAppsQueue) {
+                if (app.isMinimized && app.packageName != PACKAGE_BLANK) {
+                    app.isMinimized = false
+                }
+            }
+            minimizedAtTimestamps.clear()
+            android.util.Log.d("DROIDOS_DEX", "performDisplayChange MINIMIZED_CLEARED newDisplay=$newId — all apps set active")
+        }
+
         // 3. REBUILD
         loadDisplaySettings(currentDisplayId)
         setupBubble()
@@ -7256,6 +7314,13 @@ private var isSoftKeyboardSupport = false
         isExpanded = false
         isLockSelectionMode = false
         safeToast("Switched to Display $currentDisplayId (${targetDisplay.name})")
+
+        // [DEX] Sync queue with observed visible apps on the new display.
+        // This applies existing subactivity/multi-activity matching logic (queueAppMatchesObservedComponent)
+        // to DeX — detecting apps by package even when running a subactivity different from the launch class.
+        if (newId >= 2) {
+            uiHandler.postDelayed({ fetchRunningApps() }, 1500)
+        }
 
         // [FIX] Apply layout immediately if in Instant Mode
         if (isInstantMode) {
@@ -9558,16 +9623,17 @@ private var isSoftKeyboardSupport = false
                 minimizeAllInProgress = true
                 android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL ENTER count=${appsToMinimize.size} display=$currentDisplayId")
 
-                // Move all to back in background thread — serialized one-by-one.
+                // Move all to back in background thread — serialized one-by-one with delay.
                 Thread {
                     try {
                         var first = true
                         for ((idx, app) in appsToMinimize.withIndex()) {
-                            // Small delay between apps to avoid rapid-fire am commands
-                            // that trigger Samsung security lockout. First app starts immediately.
-                            if (!first) {
-                                android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL DELAY 50ms before app ${idx+1}/${appsToMinimize.size} pkg=${app.getBasePackage()}")
-                                Thread.sleep(50)
+                            // 1500ms delay between hidden display am start commands.
+                            // Samsung detects rapid-fire am start --display as security threat.
+                            // First app starts immediately.
+                            if (!first && currentDisplayId >= 2) {
+                                android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL DELAY 1500ms before app ${idx+1}/${appsToMinimize.size} pkg=${app.getBasePackage()}")
+                                Thread.sleep(1500)
                             }
                             first = false
                             if (currentDisplayId >= 2) {

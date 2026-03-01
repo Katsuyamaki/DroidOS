@@ -911,6 +911,38 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     }
     // === DUMP MULTITASKING METHODS - END ===
 
+    // === MOVE TASK TO DISPLAY - START ===
+    // Moves an existing task to a different display using IActivityTaskManager.moveRootTaskToDisplay().
+    // Unlike `am start --display`, this MOVES the existing task without creating a new activity
+    // instance — critical for apps like WhatsApp where a ghost duplicate triggers Samsung lockout.
+    override fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
+        val token = Binder.clearCallingIdentity()
+        try {
+            val atmClass = Class.forName("android.app.ActivityTaskManager")
+            val getServiceMethod = atmClass.getMethod("getService")
+            val atm = getServiceMethod.invoke(null)
+
+            try {
+                val moveMethod = atm.javaClass.getMethod(
+                    "moveRootTaskToDisplay",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType
+                )
+                moveMethod.invoke(atm, taskId, displayId)
+                return true
+            } catch (e: Exception) {
+                android.util.Log.w("DROIDOS_DEX", "moveRootTaskToDisplay FAILED taskId=$taskId displayId=$displayId err=${e.cause?.message ?: e.message}")
+            }
+            return false
+        } catch (e: Exception) {
+            android.util.Log.e("DROIDOS_SHELL", "moveTaskToDisplay EXCEPTION taskId=$taskId", e)
+            return false
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+    // === MOVE TASK TO DISPLAY - END ===
+
     // === MOVE TASK TO FRONT / FOCUS TASK - START ===
     // Brings a task to front using ActivityTaskManager.moveTaskToFront() via reflection.
     // This focuses the window WITHOUT re-launching any activity, preserving in-app nav state.
