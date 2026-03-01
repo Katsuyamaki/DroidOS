@@ -6400,6 +6400,22 @@ private var isSoftKeyboardSupport = false
             if (observedTid != null && observedTid != resolvedTid) {
                 android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp PREFER_OBSERVED pkg=$basePkg observed=$observedTid global=$resolvedTid — using observed (display-local)")
                 resolvedTid = observedTid
+            } else if (observedTid == null && resolvedTid > 0) {
+                // No observed match on current display — the global getTaskId result may be
+                // from a different display (stale task from DeX, display 0, or hidden display).
+                // Validate by checking if this task ID actually exists on the current display.
+                val onCurrentDisplay = try {
+                    val visibleTasks = shellService?.getVisibleTaskComponents(currentDisplayId) ?: emptyList()
+                    visibleTasks.any { entry ->
+                        val parts = entry.split("|", limit = 2)
+                        val tid = parts.getOrNull(0)?.toIntOrNull() ?: -1
+                        tid == resolvedTid
+                    }
+                } catch (e: Exception) { false }
+                if (!onCurrentDisplay) {
+                    android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp REJECT_GLOBAL pkg=$basePkg global=$resolvedTid — not on current display $currentDisplayId")
+                    resolvedTid = -1
+                }
             }
         }
 
