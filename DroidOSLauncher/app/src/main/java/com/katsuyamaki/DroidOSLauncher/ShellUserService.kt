@@ -641,7 +641,11 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 } else if (shortActivity != null &&
                     shortActivity != "MainActivity" &&
                     shortActivity != "default" &&
-                    l.contains(shortActivity)
+                    shortActivity != "Main" &&
+                    shortActivity != "Home" &&
+                    shortActivity != "Activity" &&
+                    shortActivity.length > 4 &&
+                    (l.contains("/$shortActivity") || l.contains(".$shortActivity"))
                 ) {
                     fallbackTaskId = maxOf(fallbackTaskId, foundId)
                     if (isVisible) fallbackVisibleTaskId = maxOf(fallbackVisibleTaskId, foundId)

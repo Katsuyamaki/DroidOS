@@ -6743,7 +6743,9 @@ private var isSoftKeyboardSupport = false
                 return true
             }
 
-            // Attempt 2: start target activity on hidden display.
+            // Attempt 2: start target activity on hidden display in freeform (5).
+            // Testing confirmed Samsung 5-app freeform limit does NOT apply to virtual displays.
+            // windowingMode 1 (fullscreen) crashes Samsung DeX display manager.
             val startCmd = if (!normalizedClass.isNullOrEmpty()) {
                 "am start -n $packageName/$normalizedClass --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
             } else {
@@ -6842,6 +6844,26 @@ private var isSoftKeyboardSupport = false
         val tid = resolveTaskIdForApp(app, reason)
         if (tid <= 0) return -1
 
+        // Early exit: if task is already on the hidden minimize display, skip.
+        // Prevents EXECUTE_MINIMIZE_PASS from calling Samsung moveTaskToBack on
+        // tasks that are already hidden, which corrupts Samsung task state.
+        if (hiddenMinimizeDisplayId > 0) {
+            val hiddenVisible = getObservedVisibleComponents(hiddenMinimizeDisplayId)
+            val alreadyOnHidden = if (tid > 0) {
+                hiddenVisible.any { it.taskId != null && it.taskId == tid }
+            } else {
+                hiddenVisible.any { observed ->
+                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+                }
+            }
+            if (alreadyOnHidden) {
+                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_ALREADY_HIDDEN tid=$tid pkg=$basePkg")
+                minimizedTaskIdByEntryId[entryId] = tid
+                packageTaskIdCache[basePkg] = tid
+                return tid
+            }
+        }
+
         minimizedTaskIdByEntryId[entryId] = tid
         packageTaskIdCache[basePkg] = tid
 
@@ -6862,6 +6884,21 @@ private var isSoftKeyboardSupport = false
             val hiddenMinimized = minimizeToHiddenDisplay(tid, basePkg, queueClass ?: cls)
             if (hiddenMinimized) {
                 method = if (taskScoped) "hidden-display-taskScoped" else "hidden-display"
+                // ATTEMPT2 (am start) creates a new task on hidden display. The original
+                // task ID may have been destroyed and recycled by Android. Re-resolve the
+                // actual task ID on the hidden display to keep caches accurate for restore.
+                if (hiddenMinimizeDisplayId > 0) {
+                    val hiddenComponents = getObservedVisibleComponents(hiddenMinimizeDisplayId)
+                    val actualHiddenTid = hiddenComponents.firstOrNull { observed ->
+                        AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg) &&
+                            observed.taskId != null && observed.taskId > 0
+                    }?.taskId
+                    if (actualHiddenTid != null && actualHiddenTid > 0 && actualHiddenTid != tid) {
+                        android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry TASK_ID_REFRESHED pkg=$basePkg old=$tid new=$actualHiddenTid")
+                        minimizedTaskIdByEntryId[entryId] = actualHiddenTid
+                        packageTaskIdCache[basePkg] = actualHiddenTid
+                    }
+                }
             } else {
                 // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
                 shellService?.moveTaskToBack(tid)
@@ -6877,14 +6914,12 @@ private var isSoftKeyboardSupport = false
             method = if (taskScoped) "samsung-taskScoped" else "samsung"
         }
 
-        if (shouldTraceTaskResolution(basePkg)) {
-            android.util.Log.d(
-                "DROIDOS_TASK_TRACE",
-                "reason=MINIMIZE_METHOD entry=$entryId pkg=$basePkg tid=$tid method=$method taskScoped=$taskScoped"
-            )
-        }
+        android.util.Log.d(
+            "DROIDOS_DEX",
+            "minimizeTaskForQueueEntry DONE entry=$entryId pkg=$basePkg tid=${minimizedTaskIdByEntryId[entryId] ?: tid} method=$method taskScoped=$taskScoped"
+        )
 
-        return tid
+        return minimizedTaskIdByEntryId[entryId] ?: tid
     }
     
     // Check if a package is on the hidden minimize display
