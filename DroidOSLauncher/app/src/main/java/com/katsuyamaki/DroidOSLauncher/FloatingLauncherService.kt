@@ -9743,27 +9743,37 @@ private var isSoftKeyboardSupport = false
                 minimizeAllInProgress = true
                 android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL ENTER count=${appsToMinimize.size} display=$currentDisplayId")
 
-                // Move all to back — serialized via dexTaskExecutor with delay between apps.
+                // Minimize all apps. On DeX (display 0 strategy), batch all
+                // restoreMinimizedTask binder calls at once — no per-app delay needed.
                 dexTaskExecutor.execute {
                     try {
-                        var first = true
-                        for ((idx, app) in appsToMinimize.withIndex()) {
-                            // 1500ms delay between hidden display am start commands.
-                            // Samsung detects rapid-fire am start --display as security threat.
-                            // First app starts immediately.
-                            if (!first && currentDisplayId >= 2) {
-                                android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL DELAY 1500ms before app ${idx+1}/${appsToMinimize.size} pkg=${app.getBasePackage()}")
-                                Thread.sleep(1500)
-                            }
-                            first = false
-                            if (currentDisplayId >= 2) {
-                                val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
-                                if (visibleCount <= 1) {
-                                    showWallpaper()
-                                } else {
-                                    minimizeTaskForQueueEntry(app, "MINIMIZE_ALL")
+                        if (currentDisplayId >= 2) {
+                            // DeX: fire all startActivityFromRecents(tid, display=0) at once,
+                            // then bulk moveTaskToBack. No per-app sleep or visibility check.
+                            val taskIds = mutableListOf<Int>()
+                            for (app in appsToMinimize) {
+                                val tid = resolveTaskIdForApp(app, "MINIMIZE_ALL")
+                                if (tid > 0) {
+                                    try {
+                                        shellService?.restoreMinimizedTask(tid, 0)
+                                        taskIds.add(tid)
+                                    } catch (e: Exception) {}
                                 }
-                            } else {
+                            }
+                            // Single sleep after all binder calls, then push all behind phone launcher.
+                            if (taskIds.isNotEmpty()) {
+                                Thread.sleep(250)
+                                for (tid in taskIds) {
+                                    try { shellService?.moveTaskToBack(tid) } catch (e: Exception) {}
+                                }
+                            }
+                            // Show wallpaper if no visible apps remain on DeX.
+                            val remaining = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
+                            if (remaining <= 1) showWallpaper()
+                            android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL BATCH_DONE moved=${taskIds.size} remaining=$remaining")
+                        } else {
+                            // Non-DeX: standard per-app moveTaskToBack (instant, no sleep).
+                            for (app in appsToMinimize) {
                                 minimizeTaskForQueueEntry(app, "MINIMIZE_ALL")
                             }
                         }
