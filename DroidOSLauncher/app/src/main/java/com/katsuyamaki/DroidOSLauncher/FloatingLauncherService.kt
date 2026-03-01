@@ -398,18 +398,34 @@ private var isSoftKeyboardSupport = false
     //          the launcher from jumping back to physical screens during virtual display use.
     // =================================================================================
     private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayAdded(displayId: Int) {
+            android.util.Log.d("DROIDOS_DISPLAY", "onDisplayAdded displayId=$displayId currentDisplayId=$currentDisplayId")
+        }
         override fun onDisplayRemoved(displayId: Int) {
+            android.util.Log.d("DROIDOS_DISPLAY", "onDisplayRemoved displayId=$displayId currentDisplayId=$currentDisplayId")
             // If a virtual display (ID >= 2) is removed, release wake lock
             if (displayId >= 2) {
                 setKeepScreenOn(false)
             }
             if (displayId == currentDisplayId) {
                 // If current display disconnects (e.g. glasses), revert to Default
+                android.util.Log.d("DROIDOS_DISPLAY", "onDisplayRemoved CURRENT_DISPLAY_LOST — reverting to display 0")
                 performDisplayChange(Display.DEFAULT_DISPLAY)
             }
         }
         override fun onDisplayChanged(displayId: Int) {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+            val display = dm?.getDisplay(displayId)
+            val state = display?.state ?: -1
+            val stateName = when (state) {
+                Display.STATE_OFF -> "OFF"
+                Display.STATE_ON -> "ON"
+                Display.STATE_DOZE -> "DOZE"
+                Display.STATE_DOZE_SUSPEND -> "DOZE_SUSPEND"
+                Display.STATE_ON_SUSPEND -> "ON_SUSPEND"
+                else -> "UNKNOWN($state)"
+            }
+            android.util.Log.d("DROIDOS_DISPLAY", "onDisplayChanged displayId=$displayId state=$stateName currentDisplayId=$currentDisplayId")
             // =================================================================================
             // VIRTUAL DISPLAY PROTECTION
             // SUMMARY: Skip auto-switch logic when targeting a virtual display (ID >= 2).
