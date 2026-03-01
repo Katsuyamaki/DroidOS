@@ -5364,22 +5364,50 @@ private var isSoftKeyboardSupport = false
                         val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
                         if (basePkg.isEmpty()) continue
                         val entryId = getQueueEntryId(app)
-                        val match = observed.firstOrNull { obs ->
-                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(obs.packageName, basePkg) &&
-                                obs.taskId != null && obs.taskId > 0
+                        val queueClass = normalizeActivityClass(basePkg, app.className)
+                        val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: app.className)
+
+                        // For task-scoped entries, match by hint tid or class — not just package.
+                        // Without this, both Sheets entries (NewMainProxyActivity + RitzActivity)
+                        // match the SAME observed component, corrupting each other's task IDs.
+                        val match = if (taskScoped) {
+                            val hintTid = app.taskIdHint
+                            if (hintTid != null && hintTid > 0) {
+                                observed.firstOrNull { obs -> obs.taskId == hintTid }
+                            } else {
+                                observed.firstOrNull { obs ->
+                                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(obs.packageName, basePkg) &&
+                                        obs.className == queueClass &&
+                                        obs.taskId != null && obs.taskId > 0
+                                }
+                            }
+                        } else {
+                            observed.firstOrNull { obs ->
+                                AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(obs.packageName, basePkg) &&
+                                    obs.taskId != null && obs.taskId > 0
+                            }
                         }
+
                         if (match != null) {
                             val freshTid = match.taskId!!
                             val cachedTid = packageTaskIdCache[basePkg]
-                            if (cachedTid != null && cachedTid != freshTid) {
+                            if (cachedTid != null && cachedTid != freshTid && !taskScoped) {
+                                // Only update package-level cache for non-task-scoped entries.
                                 android.util.Log.d("DROIDOS_DEX", "DRAWER_REFRESH pkg=$basePkg stale=$cachedTid fresh=$freshTid — updated")
                             }
-                            packageTaskIdCache[basePkg] = freshTid
-                            if (minimizedTaskIdByEntryId.containsKey(entryId)) {
+                            if (!taskScoped) {
+                                packageTaskIdCache[basePkg] = freshTid
+                            }
+                            // NEVER overwrite minimizedTaskIdByEntryId for task-scoped entries.
+                            // The minimized tid was set correctly during minimize and must not be
+                            // replaced with a sibling task's tid (e.g. RitzActivity -> NewMainProxy).
+                            if (!taskScoped && minimizedTaskIdByEntryId.containsKey(entryId)) {
                                 minimizedTaskIdByEntryId[entryId] = freshTid
                             }
-                        } else {
-                            // App not visible on current display — clear cached ID to force fresh resolve
+                        } else if (!taskScoped) {
+                            // App not visible on current display — clear cached ID to force fresh resolve.
+                            // Skip for task-scoped: minimized task-scoped entries are expected to be
+                            // on hidden display, not visible on current display.
                             val removed = packageTaskIdCache.remove(basePkg)
                             if (removed != null) {
                                 android.util.Log.d("DROIDOS_DEX", "DRAWER_REFRESH pkg=$basePkg removed stale cached=$removed — not visible on display $currentDisplayId")
@@ -6351,9 +6379,14 @@ private var isSoftKeyboardSupport = false
                 ""
             }
 
+            // For restore operations, accept the hint even when it is on a hidden display.
+            // The task was intentionally moved there by minimize — we need the tid to bring it back.
+            val isRestoreReason = reason.startsWith("RESTORE") || reason.startsWith("MINIMIZE_TOGGLE")
+            val hintTaskExists = hintSnapshot.contains("taskId=$hintedTaskId:")
+
             // Validate hint is on current display — getTaskDebugSnapshot is cross-display.
             // Extract displayId from snapshot for this taskId entry.
-            val hintOnCurrentDisplay = hintSnapshot.contains("taskId=$hintedTaskId:") && try {
+            val hintOnCurrentDisplay = hintTaskExists && try {
                 val visibleTasks = shellService?.getVisibleTaskComponents(currentDisplayId) ?: emptyList()
                 visibleTasks.any { entry ->
                     val parts = entry.split("|", limit = 2)
@@ -6362,7 +6395,7 @@ private var isSoftKeyboardSupport = false
                 }
             } catch (e: Exception) { false }
 
-            if (hintOnCurrentDisplay) {
+            if (hintOnCurrentDisplay || (isRestoreReason && hintTaskExists)) {
                 if (traceEnabled) {
                     logTaskResolutionTrace(
                         reason = reason,
@@ -6903,38 +6936,23 @@ private var isSoftKeyboardSupport = false
                 android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay NOT_ON_CURRENT_DISPLAY tid=$taskId — not on hidden display $targetId either, re-minimizing")
             }
 
-            // Attempt 1: move existing task to hidden display via binder.
-            // Shell command `am task move-task-to-display` silently fails (no privileges).
-            // Binder call IActivityTaskManager.moveRootTaskToDisplay has Shizuku privileges
-            // and moves the task without creating a ghost activity instance.
-            val binderMoved = try { shellService?.moveTaskToDisplay(taskId, targetId) ?: false } catch (e: Exception) { false }
-            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 binder=$binderMoved tid=$taskId targetDisplay=$targetId")
-            if (binderMoved) {
-                Thread.sleep(200)
-                if (!isStillVisibleOnCurrentDisplay()) {
-                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 SUCCESS tid=$taskId")
-                    return true
-                }
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1 binder returned true but task still visible tid=$taskId")
-            }
-
-            // Attempt 2: use startActivityFromRecents to move existing task to hidden display.
+            // Attempt 1: use startActivityFromRecents to move existing task to hidden display.
             // This MOVES the existing task without creating a new activity instance — critical
             // for apps like WhatsApp where am start creates a ghost duplicate that Samsung detects.
             if (taskId > 0) {
                 try {
                     val moved = shellService?.restoreMinimizedTask(taskId, targetId) ?: false
-                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS binder=$moved tid=$taskId targetDisplay=$targetId")
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS binder=$moved tid=$taskId targetDisplay=$targetId")
                     if (moved) {
                         Thread.sleep(200)
                         if (!isStillVisibleOnCurrentDisplay()) {
-                            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS SUCCESS tid=$taskId")
+                            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS SUCCESS tid=$taskId")
                             return true
                         }
-                        android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS binder=true but still visible tid=$taskId")
+                        android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS binder=true but still visible tid=$taskId")
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_RECENTS EXCEPTION tid=$taskId err=${e.message}")
+                    android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS EXCEPTION tid=$taskId err=${e.message}")
                 }
             }
 
@@ -6947,11 +6965,11 @@ private var isSoftKeyboardSupport = false
             } else {
                 "am start -p $packageName -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $targetId --windowingMode 5 --activity-brought-to-front --user 0"
             }
-            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3_AMSTART cmd='$startCmd'")
+            android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_AMSTART cmd='$startCmd'")
             shellService?.runCommand(startCmd)
             Thread.sleep(180)
             if (!isStillVisibleOnCurrentDisplay()) {
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT3_AMSTART SUCCESS tid=$taskId")
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT2_AMSTART SUCCESS tid=$taskId")
                 return true
             }
 
@@ -7040,18 +7058,23 @@ private var isSoftKeyboardSupport = false
         }
 
         try {
-        // Early exit: if this PACKAGE is already on the hidden minimize display, skip.
-        // Must match by package (not just task ID) because task IDs are unreliable —
-        // different apps can resolve to each others stale/recycled task IDs.
+        // Early exit: if this task is already on the hidden minimize display, skip.
+        // For task-scoped apps (e.g. Sheets), check by task ID — the package has multiple
+        // tasks and one being hidden should not skip the others.
+        // For non-task-scoped apps, check by package.
         if (hiddenMinimizeDisplayId > 0) {
             val hiddenVisible = getObservedVisibleComponents(hiddenMinimizeDisplayId)
-            val alreadyOnHidden = hiddenVisible.any { observed ->
-                AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+            val alreadyOnHidden = if (taskScoped && tid > 0) {
+                hiddenVisible.any { it.taskId != null && it.taskId == tid }
+            } else {
+                hiddenVisible.any { observed ->
+                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+                }
             }
             if (alreadyOnHidden) {
-                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_ALREADY_HIDDEN tid=$tid pkg=$basePkg")
+                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_ALREADY_HIDDEN tid=$tid pkg=$basePkg taskScoped=$taskScoped")
                 minimizedTaskIdByEntryId[entryId] = tid
-                packageTaskIdCache[basePkg] = tid
+                if (!taskScoped) packageTaskIdCache[basePkg] = tid
                 return tid
             }
         }
@@ -7250,13 +7273,22 @@ private var isSoftKeyboardSupport = false
         // Using them on the new display causes cross-display am commands → crashes/lockouts.
         packageTaskIdCache.clear()
         minimizedTaskIdByEntryId.clear()
-        android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — packageTaskIdCache + minimizedTaskIdByEntryId")
 
-        // Clear all task ID caches — IDs from the old display are stale and dangerous.
-        // Using them on the new display causes cross-display am commands → crashes/lockouts.
-        packageTaskIdCache.clear()
-        minimizedTaskIdByEntryId.clear()
-        android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — packageTaskIdCache + minimizedTaskIdByEntryId")
+        // Destroy the hidden minimize display. Stale tasks from the previous DeX session
+        // remain on the old hidden display. When isMinimized is cleared on reconnect, the
+        // tiling pass re-launches apps on the new display → duplicates → Samsung crash.
+        // Releasing forces Android to clean up the ghost tasks.
+        try {
+            hiddenMinimizeDisplay?.release()
+            hiddenMinimizeDisplay = null
+            hiddenMinimizeImageReader?.close()
+            hiddenMinimizeImageReader = null
+            val oldHiddenId = hiddenMinimizeDisplayId
+            hiddenMinimizeDisplayId = -1
+            android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — caches + hidden display $oldHiddenId destroyed")
+        } catch (e: Exception) {
+            android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — caches cleared, hidden display release failed: ${e.message}")
+        }
         targetDisplayIndex = currentDisplayId
         AppPreferences.setTargetDisplayIndex(this, targetDisplayIndex)
         
