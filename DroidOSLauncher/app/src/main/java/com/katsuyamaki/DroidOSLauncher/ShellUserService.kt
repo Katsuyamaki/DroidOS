@@ -261,37 +261,25 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         val tid = getTaskId(packageName, className)
 
         if (tid == -1) {
-            android.util.Log.w("DROIDOS_DEX", "repositionTask SKIP pkg=$packageName cls=$className tid=-1 (task not found)")
             return
         }
-
-        android.util.Log.d("DROIDOS_DEX", "repositionTask START pkg=$packageName cls=$className tid=$tid bounds=[$left,$top,$right,$bottom]")
 
         val token = Binder.clearCallingIdentity()
         try {
             // Set freeform windowing mode (mode 5)
             val modeCmd = "am task set-windowing-mode $tid 5"
             val modeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd))
-            val modeExit = modeProc.waitFor()
-            val modeStderr = modeProc.errorStream.bufferedReader().readText().trim()
-            android.util.Log.d("DROIDOS_DEX", "repositionTask SET_MODE tid=$tid exit=$modeExit stderr='$modeStderr'")
+            modeProc.waitFor()
             
             // Wait for OS animation/state-change (Samsung needs ~300ms)
             Thread.sleep(300)
 
-            // Always try ATM resizeTask first — works on DeX where shell is silently ignored
-            val atmOk = resizeTaskViaATM(tid, left, top, right, bottom)
-            if (!atmOk) {
-                // ATM unavailable — fall back to shell command
-                val resizeCmd = "am task resize $tid $left $top $right $bottom"
-                val resizeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd))
-                val exitCode = resizeProc.waitFor()
-                val resizeStderr = resizeProc.errorStream.bufferedReader().readText().trim()
-                android.util.Log.d("DROIDOS_DEX", "repositionTask SHELL_FALLBACK tid=$tid exit=$exitCode stderr='$resizeStderr'")
-            }
+            // Apply resize
+            val resizeCmd = "am task resize $tid $left $top $right $bottom"
+            val resizeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd))
+            val exitCode = resizeProc.waitFor()
 
         } catch (e: Exception) {
-            android.util.Log.e("DROIDOS_DEX", "repositionTask EXCEPTION pkg=$packageName tid=$tid", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -573,17 +561,12 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // For Gemini: caches the exact task ID when found since it becomes invisible after trampoline
 
     override fun getTaskId(packageName: String, className: String?): Int {
-        // Display-aware task IDs: prefer tasks on the active display
         var exactVisibleTaskId = -1
         var exactTaskId = -1
         var packageVisibleTaskId = -1
         var packageTaskId = -1
         var fallbackVisibleTaskId = -1
         var fallbackTaskId = -1
-        // Off-display fallbacks (tasks on wrong display, only used if no on-display match)
-        var offDisplayExactTaskId = -1
-        var offDisplayPackageTaskId = -1
-        var offDisplayFallbackTaskId = -1
 
         val normalizedTargetPackage = AppCompatibilityRegistry.normalizePackage(packageName)
         val taskMatchPackages = AppCompatibilityRegistry.taskMatchPackagesFor(normalizedTargetPackage)
@@ -595,7 +578,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 !AppCompatibilityRegistry.isProxyActivity(normalizedTargetPackage, resolvedClass)
         val shouldTrace = AppCompatibilityRegistry.shouldAutoSyncObservedComponents(normalizedTargetPackage)
         val traceCandidates = mutableListOf<String>()
-        val activeDisplay = cachedDisplayId
 
         val isGemini = AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(
             normalizedTargetPackage,
@@ -630,17 +612,9 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             }
 
             val shortActivity = resolvedClass?.substringAfterLast(".")
-            val displayPattern = Regex("displayId=(\\d+)")
-            var currentDisplayId = -1
 
             while (r.readLine().also { line = it } != null) {
                 val l = line!!.trim()
-
-                // Track display context from stack/root-task headers
-                val displayMatch = displayPattern.find(l)
-                if (displayMatch != null) {
-                    currentDisplayId = displayMatch.groupValues[1].toIntOrNull() ?: -1
-                }
 
                 if (!l.contains("taskId=") || !l.contains(":")) continue
 
@@ -651,41 +625,28 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 if (foundId <= 0) continue
 
                 val isVisible = l.contains("visible=true")
-                val onActiveDisplay = activeDisplay < 0 || currentDisplayId < 0 || currentDisplayId == activeDisplay
 
                 if (fullComponent != null && l.contains(fullComponent)) {
-                    if (onActiveDisplay) {
-                        exactTaskId = maxOf(exactTaskId, foundId)
-                        if (isVisible) exactVisibleTaskId = maxOf(exactVisibleTaskId, foundId)
-                    } else {
-                        offDisplayExactTaskId = maxOf(offDisplayExactTaskId, foundId)
-                    }
+                    exactTaskId = maxOf(exactTaskId, foundId)
+                    if (isVisible) exactVisibleTaskId = maxOf(exactVisibleTaskId, foundId)
                     if (shouldTrace && traceCandidates.size < 10) {
-                        traceCandidates.add("exact:tid=$foundId vis=$isVisible disp=$currentDisplayId onActive=$onActiveDisplay")
+                        traceCandidates.add("exact:tid=$foundId vis=$isVisible")
                     }
                 } else if (taskMatchPackages.any { taskPkg -> l.contains("$taskPkg/") }) {
-                    if (onActiveDisplay) {
-                        packageTaskId = maxOf(packageTaskId, foundId)
-                        if (isVisible) packageVisibleTaskId = maxOf(packageVisibleTaskId, foundId)
-                    } else {
-                        offDisplayPackageTaskId = maxOf(offDisplayPackageTaskId, foundId)
-                    }
+                    packageTaskId = maxOf(packageTaskId, foundId)
+                    if (isVisible) packageVisibleTaskId = maxOf(packageVisibleTaskId, foundId)
                     if (shouldTrace && traceCandidates.size < 10) {
-                        traceCandidates.add("pkg:tid=$foundId vis=$isVisible disp=$currentDisplayId onActive=$onActiveDisplay")
+                        traceCandidates.add("pkg:tid=$foundId vis=$isVisible")
                     }
                 } else if (shortActivity != null &&
                     shortActivity != "MainActivity" &&
                     shortActivity != "default" &&
                     l.contains(shortActivity)
                 ) {
-                    if (onActiveDisplay) {
-                        fallbackTaskId = maxOf(fallbackTaskId, foundId)
-                        if (isVisible) fallbackVisibleTaskId = maxOf(fallbackVisibleTaskId, foundId)
-                    } else {
-                        offDisplayFallbackTaskId = maxOf(offDisplayFallbackTaskId, foundId)
-                    }
+                    fallbackTaskId = maxOf(fallbackTaskId, foundId)
+                    if (isVisible) fallbackVisibleTaskId = maxOf(fallbackVisibleTaskId, foundId)
                     if (shouldTrace && traceCandidates.size < 10) {
-                        traceCandidates.add("fallback:tid=$foundId vis=$isVisible disp=$currentDisplayId onActive=$onActiveDisplay")
+                        traceCandidates.add("fallback:tid=$foundId vis=$isVisible")
                     }
                 }
             }
@@ -696,8 +657,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 when {
                     exactVisibleTaskId > 0 -> exactVisibleTaskId
                     exactTaskId > 0 -> exactTaskId
-                    // Off-display fallback for strict scoped
-                    offDisplayExactTaskId > 0 -> offDisplayExactTaskId
                     else -> -1
                 }
             } else if (preferPackageTask) {
@@ -708,10 +667,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     exactTaskId > 0 -> exactTaskId
                     fallbackVisibleTaskId > 0 -> fallbackVisibleTaskId
                     fallbackTaskId > 0 -> fallbackTaskId
-                    // Off-display fallbacks (last resort)
-                    offDisplayPackageTaskId > 0 -> offDisplayPackageTaskId
-                    offDisplayExactTaskId > 0 -> offDisplayExactTaskId
-                    offDisplayFallbackTaskId > 0 -> offDisplayFallbackTaskId
                     else -> -1
                 }
             } else {
@@ -722,22 +677,16 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     packageTaskId > 0 -> packageTaskId
                     fallbackVisibleTaskId > 0 -> fallbackVisibleTaskId
                     fallbackTaskId > 0 -> fallbackTaskId
-                    // Off-display fallbacks (last resort)
-                    offDisplayExactTaskId > 0 -> offDisplayExactTaskId
-                    offDisplayPackageTaskId > 0 -> offDisplayPackageTaskId
-                    offDisplayFallbackTaskId > 0 -> offDisplayFallbackTaskId
                     else -> -1
                 }
             }
 
-            if (shouldTrace || (activeDisplay >= 0 && (offDisplayExactTaskId > 0 || offDisplayPackageTaskId > 0 || offDisplayFallbackTaskId > 0))) {
+            if (shouldTrace) {
                 android.util.Log.d(
                     "DROIDOS_TASK_RESOLVE",
                     "pkg=$normalizedTargetPackage cls=${resolvedClass ?: "<pkg>"} preferPkg=$preferPackageTask strictTaskScoped=$strictTaskScopedClass " +
                         "exactV=$exactVisibleTaskId exact=$exactTaskId pkgV=$packageVisibleTaskId pkg=$packageTaskId " +
-                        "fbV=$fallbackVisibleTaskId fb=$fallbackTaskId " +
-                        "offExact=$offDisplayExactTaskId offPkg=$offDisplayPackageTaskId offFb=$offDisplayFallbackTaskId " +
-                        "activeDisplay=$activeDisplay result=$result candidates=${traceCandidates.joinToString("|")}"
+                        "fbV=$fallbackVisibleTaskId fb=$fallbackTaskId result=$result candidates=${traceCandidates.joinToString("|")}"
                 )
             }
 
@@ -791,201 +740,60 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     }
     // === DEBUG DUMP TASKS - END ===
 
-    // === SAMSUNG DETECTION HELPERS - START ===
-    // Detects Samsung devices by checking if MultiTaskingBinder exists.
-    // Used to gate Samsung-specific minimize verification and ATM API paths.
-    private var samsungMultiTaskingChecked = false
-    private var samsungMultiTaskingAvailable = false
-
-    private fun hasSamsungMultiTaskingBinder(): Boolean {
-        if (samsungMultiTaskingChecked) return samsungMultiTaskingAvailable
-        samsungMultiTaskingChecked = true
-        try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getService").invoke(null)
-            val binder = atm.javaClass.getMethod("getMultiTaskingBinder").invoke(atm)
-            samsungMultiTaskingAvailable = binder != null
-        } catch (e: Exception) {
-            samsungMultiTaskingAvailable = false
-        }
-        android.util.Log.d("DROIDOS_DEX", "hasSamsungMultiTaskingBinder=$samsungMultiTaskingAvailable")
-        return samsungMultiTaskingAvailable
-    }
-
-    // Queries Samsung MultiTaskingBinder for the list of actually-minimized freeform task IDs.
-    // Used to verify whether a minimize call truly took effect on DeX.
-    private fun getMinimizedFreeformTaskIds(): Set<Int> {
-        try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getService").invoke(null)
-            val binder = atm.javaClass.getMethod("getMultiTaskingBinder").invoke(atm) ?: return emptySet()
-            val rawResult = binder.javaClass.getMethod("getMinimizedFreeformTasksForCurrentUser").invoke(binder)
-            // Unwrap ParceledListSlice → List if needed
-            val tasks: List<*>? = when {
-                rawResult is List<*> -> rawResult
-                rawResult != null -> {
-                    try {
-                        val getListMethod = rawResult.javaClass.getMethod("getList")
-                        getListMethod.invoke(rawResult) as? List<*>
-                    } catch (_: Exception) { null }
-                }
-                else -> null
-            }
-            if (tasks != null) {
-                val ids = mutableSetOf<Int>()
-                for (task in tasks) {
-                    if (task == null) continue
-                    try {
-                        val taskIdField = task.javaClass.getField("taskId")
-                        ids.add(taskIdField.getInt(task))
-                    } catch (e: Exception) {
-                        try {
-                            val idField = task.javaClass.getField("id")
-                            ids.add(idField.getInt(task))
-                        } catch (_: Exception) {}
-                    }
-                }
-                android.util.Log.d("DROIDOS_DEX", "getMinimizedFreeformTaskIds ids=$ids")
-                return ids
-            }
-            android.util.Log.d("DROIDOS_DEX", "getMinimizedFreeformTaskIds result type=${rawResult?.javaClass?.name} value=$rawResult")
-            return emptySet()
-        } catch (e: Exception) {
-            android.util.Log.w("DROIDOS_DEX", "getMinimizedFreeformTaskIds failed: ${e.message}")
-            return emptySet()
-        }
-    }
-
-    // Checks whether a specific task is visible on the DeX display using Samsung API.
-    private fun isVisibleTaskOnDex(taskId: Int): Boolean {
-        try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getService").invoke(null)
-            val binder = atm.javaClass.getMethod("getMultiTaskingBinder").invoke(atm) ?: return false
-            val result = binder.javaClass.getMethod(
-                "isVisibleTaskByTaskIdInDexDisplay",
-                Int::class.javaPrimitiveType
-            ).invoke(binder, taskId)
-            return result == true
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    // Checks visibility using stack snapshot (independent of Samsung binder helpers).
-    // This catches states where minimize API returns but the task still remains visible.
-    private fun isTaskVisibleInStack(taskId: Int): Boolean {
-        if (taskId <= 0) return false
-        return try {
-            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "am stack list"))
-            val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
-            p.waitFor()
-            lines.any { line ->
-                val trimmed = line.trim()
-                trimmed.contains("taskId=$taskId:") && trimmed.contains("visible=true")
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    // Direct ATM resizeTask via reflection — bypasses `am task resize` shell command.
-    // Shell `am task resize` is silently ignored on Samsung DeX; this direct API works.
-    private fun resizeTaskViaATM(taskId: Int, left: Int, top: Int, right: Int, bottom: Int): Boolean {
-        try {
-            val atmClass = Class.forName("android.app.ActivityTaskManager")
-            val atm = atmClass.getMethod("getService").invoke(null)
-            val rect = android.graphics.Rect(left, top, right, bottom)
-            // resizeTask(int taskId, Rect bounds, int resizeMode)
-            // resizeMode 0 = RESIZE_MODE_SYSTEM
-            val resizeMethod = atm.javaClass.getMethod(
-                "resizeTask",
-                Int::class.javaPrimitiveType,
-                android.graphics.Rect::class.java,
-                Int::class.javaPrimitiveType
-            )
-            resizeMethod.invoke(atm, taskId, rect, 0)
-            android.util.Log.d("DROIDOS_DEX", "resizeTaskViaATM SUCCESS tid=$taskId bounds=[$left,$top,$right,$bottom]")
-            return true
-        } catch (e: Exception) {
-            android.util.Log.w("DROIDOS_DEX", "resizeTaskViaATM FAILED tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
-            return false
-        }
-    }
-    // === SAMSUNG DETECTION HELPERS - END ===
-
-    // moveRootTaskToDisplay crashes SystemUI/WindowManager on Samsung DeX.
-    // Stub kept for AIDL compatibility; callers should use shell am task move-task-to-display instead.
-    override fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
-        android.util.Log.w("DROIDOS_DEX", "moveTaskToDisplay DISABLED (crashes system) tid=$taskId displayId=$displayId")
-        return false
-    }
-
     // === MOVE TASK TO BACK / MINIMIZE TASK - START ===
-    // On Samsung: complete no-op. Samsung binder APIs (minimizeTaskById, saveFreeformBounds,
-    // minimizeTaskToSpecificPosition, removeFocusedTask) dont work for 3rd party apps and
-    // add system stress with multiple reflection calls + Thread.sleep. Real minimize goes
-    // through minimizeToHiddenDisplay (am task move-task-to-display / am start --display).
-    override fun moveTaskToBack(taskId: Int): Boolean {
-        val isSamsung = hasSamsungMultiTaskingBinder()
-        android.util.Log.d("DROIDOS_DEX", "moveTaskToBack START tid=$taskId samsung=$isSamsung")
-        if (isSamsung) {
-            android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=false (samsung-noop)")
-            return false
-        }
+    // Minimizes a task using Samsung's IMultiTaskingBinder from ActivityTaskManager
+    // This is what Android's freeform minimize button uses on Samsung devices
+    override fun moveTaskToBack(taskId: Int) {
         val token = Binder.clearCallingIdentity()
         try {
             var success = false
 
+            try {
+                // Get ActivityTaskManager service
+                val atmClass = Class.forName("android.app.ActivityTaskManager")
+                val getServiceMethod = atmClass.getMethod("getService")
+                val atm = getServiceMethod.invoke(null)
+
+                // Call getMultiTaskingBinder()
+                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
+                val multiTaskingBinder = getMultiTaskingBinder.invoke(atm)
+
+                if (multiTaskingBinder != null) {
+                    // Call minimizeTaskById(taskId)
+                    val minimizeMethod = multiTaskingBinder.javaClass.getMethod(
+                        "minimizeTaskById",
+                        Int::class.javaPrimitiveType
+                    )
+                    minimizeMethod.invoke(multiTaskingBinder, taskId)
+
+                    success = true
+                } else {
+                }
+
+            } catch (e: Exception) {
+            }
+
             // FALLBACK 1: platform task minimize command.
             if (!success) {
                 try {
-                    val moveBackProc = Runtime.getRuntime()
+                    val moveBackExit = Runtime.getRuntime()
                         .exec(arrayOf("sh", "-c", "am task move-task-to-back $taskId"))
-                    val moveBackExit = moveBackProc.waitFor()
-                    val moveBackStderr = moveBackProc.errorStream.bufferedReader().readText().trim()
+                        .waitFor()
                     success = moveBackExit == 0
-
-                    if (success) {
-                        Thread.sleep(120)
-                        val visibleAfterMoveBack = isTaskVisibleInStack(taskId)
-                        if (visibleAfterMoveBack) {
-                            success = false
-                        }
-                        android.util.Log.d(
-                            "DROIDOS_DEX",
-                            "moveTaskToBack FALLBACK1_VERIFY tid=$taskId visibleInStack=$visibleAfterMoveBack"
-                        )
-                    }
-
-                    android.util.Log.d("DROIDOS_DEX", "moveTaskToBack FALLBACK1_MOVE_BACK tid=$taskId exit=$moveBackExit success=$success stderr='$moveBackStderr'")
                 } catch (e: Exception) {
-                    android.util.Log.w("DROIDOS_DEX", "moveTaskToBack FALLBACK1 exception tid=$taskId: ${e.message}")
                 }
             }
 
             // FALLBACK 2: off-screen positioning only as last resort.
             if (!success) {
-                android.util.Log.d("DROIDOS_DEX", "moveTaskToBack FALLBACK2_OFFSCREEN tid=$taskId")
                 val modeCmd = "am task set-windowing-mode $taskId 5"
-                val modeExit = Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd)).waitFor()
                 Thread.sleep(100)
                 val resizeCmd = "am task resize $taskId 99999 99999 100000 100000"
-                val resizeExit = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
-                Thread.sleep(120)
-                success = modeExit == 0 && resizeExit == 0 && !isTaskVisibleInStack(taskId)
-                android.util.Log.d(
-                    "DROIDOS_DEX",
-                    "moveTaskToBack FALLBACK2_RESULT tid=$taskId modeExit=$modeExit resizeExit=$resizeExit success=$success"
-                )
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd)).waitFor()
             }
 
-            android.util.Log.d("DROIDOS_DEX", "moveTaskToBack DONE tid=$taskId success=$success")
-            return success
-
         } catch (e: Exception) {
-            android.util.Log.e("DROIDOS_DEX", "moveTaskToBack OUTER_EXCEPTION tid=$taskId", e)
-            return false
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -997,7 +805,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // This is the API Android launchers use internally to bring back recent/minimized tasks.
     // Unlike moveTaskToFront, this properly handles Samsung's minimized state.
     override fun restoreMinimizedTask(taskId: Int, displayId: Int): Boolean {
-        android.util.Log.d("DROIDOS_DEX", "restoreMinimizedTask START tid=$taskId displayId=$displayId")
         val token = Binder.clearCallingIdentity()
         try {
             val atmClass = Class.forName("android.app.ActivityTaskManager")
@@ -1010,9 +817,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 try {
                     val setWindowingMode = javaClass.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
                     setWindowingMode.invoke(this, 5)
-                } catch (e: Exception) {
-                    android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask setLaunchWindowingMode not available: ${e.message}")
-                }
+                } catch (e: Exception) {}
             }.toBundle()
 
             // Primary: startActivityFromRecents — this is how Android restores minimized/recent tasks.
@@ -1023,18 +828,31 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     android.os.Bundle::class.java
                 )
                 val result = startFromRecents.invoke(atm, taskId, options)
-                android.util.Log.d("DROIDOS_DEX", "restoreMinimizedTask FROM_RECENTS tid=$taskId result=$result")
                 if (result is Int && result >= 0) {
                     return true
                 }
             } catch (e: Exception) {
-                android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask FROM_RECENTS failed tid=$taskId: ${e.javaClass.simpleName}: ${e.message}")
+                android.util.Log.w("DROIDOS_SHELL", "startActivityFromRecents failed: ${e.message}")
             }
 
-            android.util.Log.w("DROIDOS_DEX", "restoreMinimizedTask FAILED tid=$taskId")
+            // Fallback: try Samsung MultiTaskingBinder for a restore/maximize method.
+            try {
+                val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
+                val binder = getMultiTaskingBinder.invoke(atm)
+                if (binder != null) {
+                    // Try common Samsung restore method names.
+                    for (methodName in listOf("maximizeTaskById", "restoreTaskById", "unminimizeTaskById")) {
+                        try {
+                            val method = binder.javaClass.getMethod(methodName, Int::class.javaPrimitiveType)
+                            method.invoke(binder, taskId)
+                            return true
+                        } catch (e: Exception) {}
+                    }
+                }
+            } catch (e: Exception) {}
+
             return false
         } catch (e: Exception) {
-            android.util.Log.e("DROIDOS_DEX", "restoreMinimizedTask OUTER_EXCEPTION tid=$taskId", e)
             return false
         } finally {
             Binder.restoreCallingIdentity(token)
@@ -1217,21 +1035,16 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
             p.waitFor()
             var currentStackFreeform = false
-            var currentStackHeader = ""
             for (line in lines) {
                 val trimmed = line.trim()
                 if (trimmed.startsWith("Stack #") || trimmed.startsWith("RootTask #")) {
                     currentStackFreeform = trimmed.contains("type=freeform") || trimmed.contains("windowing-mode=freeform") || trimmed.contains("windowingMode=5")
-                    currentStackHeader = trimmed
                 }
                 if (trimmed.contains("taskId=") && trimmed.contains("$packageName/")) {
-                    android.util.Log.d("DROIDOS_DEX", "isTaskFreeform pkg=$packageName freeform=$currentStackFreeform stack='$currentStackHeader' task='$trimmed'")
                     if (currentStackFreeform) return true
                 }
             }
-            android.util.Log.d("DROIDOS_DEX", "isTaskFreeform pkg=$packageName result=false (not found in freeform stack)")
         } catch (e: Exception) {
-            android.util.Log.e("DROIDOS_DEX", "isTaskFreeform pkg=$packageName exception", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
@@ -1241,9 +1054,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     private data class StackTaskInfo(
         val taskId: Int,
         val packageName: String,
-        val className: String?,
-        val displayId: Int = -1,
-        val visible: Boolean = false
+        val className: String?
     )
 
     private fun normalizeResizeClass(packageName: String, className: String?): String? {
@@ -1259,25 +1070,13 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             val lines = BufferedReader(InputStreamReader(p.inputStream)).readLines()
             p.waitFor()
 
-            val displayPattern = Regex("displayId=(\\d+)")
             val taskPattern = Regex("taskId=(\\d+):\\s+([^\\s]+)")
-            var currentDisplayId = -1
-
             for (line in lines) {
                 val trimmed = line.trim()
-
-                // Track display context from stack/root-task header lines
-                val displayMatch = displayPattern.find(trimmed)
-                if (displayMatch != null) {
-                    currentDisplayId = displayMatch.groupValues[1].toIntOrNull() ?: -1
-                }
-
                 val match = taskPattern.find(trimmed) ?: continue
 
                 val tid = match.groupValues[1].toIntOrNull() ?: continue
                 if (tid <= 0) continue
-
-                val isVisible = trimmed.contains("visible=true")
 
                 val rawComponent = match.groupValues[2]
                 val rawPackage = rawComponent.substringBefore("/")
@@ -1291,9 +1090,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     StackTaskInfo(
                         taskId = tid,
                         packageName = normalizedPackage,
-                        className = normalizedClass,
-                        displayId = currentDisplayId,
-                        visible = isVisible
+                        className = normalizedClass
                     )
                 )
             }
@@ -1343,7 +1140,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 
         val tasks = parseStackTasksForResize()
         val usedTaskIds = mutableSetOf<Int>()
-        val activeDisplay = cachedDisplayId
 
         for (i in packages.indices) {
             val requestPackage = AppCompatibilityRegistry.normalizePackage(packages[i])
@@ -1355,14 +1151,8 @@ override fun getWindowLayouts(displayId: Int): List<String> {
 
             for (task in tasks) {
                 if (task.taskId in usedTaskIds) continue
-                var score = scoreTaskForResizeRequest(task, requestPackage, requestClass)
+                val score = scoreTaskForResizeRequest(task, requestPackage, requestClass)
                 if (score <= Int.MIN_VALUE) continue
-
-                // Strongly prefer tasks on the active display (DeX display 8 vs phone display 0)
-                if (activeDisplay >= 0 && task.displayId >= 0 && task.displayId != activeDisplay) {
-                    score -= 200
-                    android.util.Log.d("DROIDOS_DEX", "resolveTaskIdsForResize DISPLAY_MISMATCH pkg=$requestPackage tid=${task.taskId} taskDisplay=${task.displayId} activeDisplay=$activeDisplay score=$score")
-                }
 
                 val shouldReplace =
                     score > bestScore ||
@@ -1397,8 +1187,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     override fun batchResizeComponents(packages: List<String>, classes: List<String>, bounds: IntArray) {
         if (packages.isEmpty() || bounds.isEmpty()) return
 
-        android.util.Log.d("DROIDOS_DEX", "batchResizeComponents START count=${packages.size} boundsLen=${bounds.size} activeDisplay=$cachedDisplayId")
-
         val token = Binder.clearCallingIdentity()
         try {
             val normalizedPackages = packages.map { AppCompatibilityRegistry.normalizePackage(it) }
@@ -1407,40 +1195,20 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             }
             val taskIds = resolveTaskIdsForResize(normalizedPackages, normalizedClasses)
 
-            for (i in normalizedPackages.indices) {
-                android.util.Log.d("DROIDOS_DEX", "batchResizeComponents [$i] pkg=${normalizedPackages[i]} cls=${normalizedClasses.getOrNull(i)} tid=${taskIds.getOrNull(i) ?: -1}")
-            }
-
-            // Always try ATM resizeTask first (works on DeX + non-DeX), shell fallback
-            var resizedCount = 0
+            val procs = mutableListOf<Process>()
             for (i in normalizedPackages.indices) {
                 val tid = taskIds.getOrNull(i) ?: -1
-                if (tid <= 0) {
-                    android.util.Log.w("DROIDOS_DEX", "batchResizeComponents SKIP [$i] pkg=${normalizedPackages[i]} tid=$tid")
-                    continue
-                }
+                if (tid <= 0) continue
 
                 val off = i * 4
-                if (off + 3 >= bounds.size) {
-                    android.util.Log.w("DROIDOS_DEX", "batchResizeComponents BOUNDS_OVERFLOW [$i] off=$off boundsLen=${bounds.size}")
-                    break
-                }
+                if (off + 3 >= bounds.size) break
 
-                val left = bounds[off]; val top = bounds[off + 1]; val right = bounds[off + 2]; val bottom = bounds[off + 3]
-                val atmOk = resizeTaskViaATM(tid, left, top, right, bottom)
-                if (!atmOk) {
-                    // ATM reflection unavailable — fall back to shell command
-                    val cmd = "am task resize $tid $left $top $right $bottom"
-                    val proc = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                    val exitCode = proc.waitFor()
-                    android.util.Log.d("DROIDOS_DEX", "batchResizeComponents SHELL_FALLBACK [$i] tid=$tid exit=$exitCode")
-                }
-                resizedCount++
+                val cmd = "am task resize $tid ${bounds[off]} ${bounds[off + 1]} ${bounds[off + 2]} ${bounds[off + 3]}"
+                procs.add(Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd)))
             }
 
-            android.util.Log.d("DROIDOS_DEX", "batchResizeComponents DONE resized=$resizedCount/${packages.size}")
+            for (proc in procs) proc.waitFor()
         } catch (e: Exception) {
-            android.util.Log.e("DROIDOS_DEX", "batchResizeComponents EXCEPTION", e)
         } finally {
             Binder.restoreCallingIdentity(token)
         }
