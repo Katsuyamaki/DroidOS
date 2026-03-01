@@ -6881,6 +6881,24 @@ private var isSoftKeyboardSupport = false
                 hiddenMinimizeDisplayId = hiddenMinimizeDisplay!!.display.displayId
                 hiddenDisplayCreateCount++
                 android.util.Log.d("DROIDOS_DEX", "ensureHiddenMinimizeDisplay CREATED displayId=$hiddenMinimizeDisplayId createCount=$hiddenDisplayCreateCount")
+
+                // PREWARM: On first creation, launch a throwaway task on the hidden display
+                // to trigger Samsung's FreeformTaskTransitionObserver crash BEFORE any real
+                // minimize. Samsung SystemUI crashes with "Expected a desk in display: N"
+                // when a freeform task transitions to our unknown virtual display. By crashing
+                // it now, SystemUI restarts fresh and subsequent minimizes work cleanly.
+                // Blocks for 4s — only happens once per DeX session on the very first minimize.
+                if (hiddenDisplayCreateCount == 1 && isSamsungBuild() && !DEBUG_FORCE_NON_SAMSUNG) {
+                    try {
+                        val prewarmCmd = "am start -n $packageName/${MainActivity::class.java.name} --display $hiddenMinimizeDisplayId --windowingMode 5 -f 0x10000000 --ez WALLPAPER_MODE true --user 0"
+                        android.util.Log.d("DROIDOS_DEX", "PREWARM_HIDDEN_DISPLAY launching on display=$hiddenMinimizeDisplayId")
+                        shellService?.runCommand(prewarmCmd)
+                        Thread.sleep(4000)
+                        android.util.Log.d("DROIDOS_DEX", "PREWARM_HIDDEN_DISPLAY complete — SystemUI should have restarted")
+                    } catch (e: Exception) {
+                        android.util.Log.w("DROIDOS_DEX", "PREWARM_HIDDEN_DISPLAY failed: ${e.message}")
+                    }
+                }
             } else {
                 android.util.Log.e("DROIDOS_DEX", "ensureHiddenMinimizeDisplay FAILED createVirtualDisplay returned null")
             }
