@@ -6376,6 +6376,17 @@ private var isSoftKeyboardSupport = false
             }
         }
 
+        // Validate: prefer observed task ID (display-filtered) over getTaskId (global).
+        // getTaskId searches all displays and can return stale IDs from display 0
+        // or hidden displays. Observed components are filtered to currentDisplayId.
+        if (resolvedTid > 0 && !taskScoped) {
+            val observedTid = observedMatches.mapNotNull { it.taskId }.firstOrNull { it > 0 }
+            if (observedTid != null && observedTid != resolvedTid) {
+                android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp PREFER_OBSERVED pkg=$basePkg observed=$observedTid global=$resolvedTid — using observed (display-local)")
+                resolvedTid = observedTid
+            }
+        }
+
         if (resolvedTid > 0 && taskScoped && (app.taskIdHint == null || app.taskIdHint ?: -1 <= 0)) {
             app.taskIdHint = resolvedTid
         }
@@ -6677,11 +6688,33 @@ private var isSoftKeyboardSupport = false
     private var hiddenMinimizeImageReader: android.media.ImageReader? = null
     private var hiddenMinimizeDisplayId: Int = -1
 
+    private var hiddenDisplayCreateCount = 0
+
     private fun ensureHiddenMinimizeDisplay(): Int {
         if (hiddenMinimizeDisplayId > 0 && hiddenMinimizeDisplay != null) {
-            return hiddenMinimizeDisplayId
+            // Verify the display is still valid
+            try {
+                val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+                val allDisplays = dm.displays
+                val stillExists = allDisplays.any { it.displayId == hiddenMinimizeDisplayId }
+                if (!stillExists) {
+                    android.util.Log.w("DROIDOS_DEX", "ensureHiddenMinimizeDisplay STALE displayId=$hiddenMinimizeDisplayId no longer exists — recreating")
+                    hiddenMinimizeDisplay?.release()
+                    hiddenMinimizeDisplay = null
+                    hiddenMinimizeImageReader?.close()
+                    hiddenMinimizeImageReader = null
+                    hiddenMinimizeDisplayId = -1
+                } else {
+                    return hiddenMinimizeDisplayId
+                }
+            } catch (e: Exception) {
+                return hiddenMinimizeDisplayId
+            }
         }
         try {
+            // Release any previous display before creating new one
+            hiddenMinimizeDisplay?.release()
+            hiddenMinimizeImageReader?.close()
             val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
             hiddenMinimizeImageReader = android.media.ImageReader.newInstance(480, 800, PixelFormat.RGBA_8888, 1)
             val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
@@ -6693,8 +6726,13 @@ private var isSoftKeyboardSupport = false
             )
             if (hiddenMinimizeDisplay != null) {
                 hiddenMinimizeDisplayId = hiddenMinimizeDisplay!!.display.displayId
+                hiddenDisplayCreateCount++
+                android.util.Log.d("DROIDOS_DEX", "ensureHiddenMinimizeDisplay CREATED displayId=$hiddenMinimizeDisplayId createCount=$hiddenDisplayCreateCount")
+            } else {
+                android.util.Log.e("DROIDOS_DEX", "ensureHiddenMinimizeDisplay FAILED createVirtualDisplay returned null")
             }
         } catch (e: Exception) {
+            android.util.Log.e("DROIDOS_DEX", "ensureHiddenMinimizeDisplay EXCEPTION", e)
         }
         return hiddenMinimizeDisplayId
     }
@@ -6728,11 +6766,25 @@ private var isSoftKeyboardSupport = false
                 }
             }
 
-            // Early exit: task already not visible on current display — already minimized.
-            // Prevents EXECUTE_MINIMIZE_PASS from spam-looping on already-hidden tasks.
+            // Early exit: task already on the current hidden display — truly minimized.
+            // Only skip if we can confirm the task is on THIS hidden display, not just
+            // absent from the current display (could be on a stale old hidden display).
             if (!isStillVisibleOnCurrentDisplay()) {
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ALREADY_HIDDEN tid=$taskId — skipping")
-                return true
+                val onThisHiddenDisplay = try {
+                    val hiddenComponents = getObservedVisibleComponents(targetId)
+                    if (taskId > 0) {
+                        hiddenComponents.any { it.taskId != null && it.taskId == taskId }
+                    } else {
+                        hiddenComponents.any { observed ->
+                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName)
+                        }
+                    }
+                } catch (e: Exception) { false }
+                if (onThisHiddenDisplay) {
+                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ALREADY_HIDDEN tid=$taskId — on hidden display $targetId, skipping")
+                    return true
+                }
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay NOT_ON_CURRENT_DISPLAY tid=$taskId — not on hidden display $targetId either, re-minimizing")
             }
 
             // Attempt 1: move existing task to hidden display.
@@ -6844,17 +6896,13 @@ private var isSoftKeyboardSupport = false
         val tid = resolveTaskIdForApp(app, reason)
         if (tid <= 0) return -1
 
-        // Early exit: if task is already on the hidden minimize display, skip.
-        // Prevents EXECUTE_MINIMIZE_PASS from calling Samsung moveTaskToBack on
-        // tasks that are already hidden, which corrupts Samsung task state.
+        // Early exit: if this PACKAGE is already on the hidden minimize display, skip.
+        // Must match by package (not just task ID) because task IDs are unreliable —
+        // different apps can resolve to each others stale/recycled task IDs.
         if (hiddenMinimizeDisplayId > 0) {
             val hiddenVisible = getObservedVisibleComponents(hiddenMinimizeDisplayId)
-            val alreadyOnHidden = if (tid > 0) {
-                hiddenVisible.any { it.taskId != null && it.taskId == tid }
-            } else {
-                hiddenVisible.any { observed ->
-                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
-                }
+            val alreadyOnHidden = hiddenVisible.any { observed ->
+                AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
             }
             if (alreadyOnHidden) {
                 android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_ALREADY_HIDDEN tid=$tid pkg=$basePkg")
@@ -6862,6 +6910,17 @@ private var isSoftKeyboardSupport = false
                 packageTaskIdCache[basePkg] = tid
                 return tid
             }
+        }
+
+        // Also check: is the app NOT visible on the current display?
+        // If so, it may be on a stale old display or display 0. Still need to minimize.
+        val visibleOnCurrent = try {
+            getObservedVisibleComponents(currentDisplayId).any { observed ->
+                AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+            }
+        } catch (e: Exception) { false }
+        if (!visibleOnCurrent) {
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry NOT_VISIBLE_ON_CURRENT tid=$tid pkg=$basePkg display=$currentDisplayId — will attempt minimize anyway")
         }
 
         minimizedTaskIdByEntryId[entryId] = tid
@@ -6899,12 +6958,6 @@ private var isSoftKeyboardSupport = false
                         packageTaskIdCache[basePkg] = actualHiddenTid
                     }
                 }
-                // Now Samsung-minimize on hidden display to drop from freeform tracking.
-                // Hidden display is a regular virtual display (not DeX), so Samsung
-                // minimizeTaskById works here — same as on display 0/1.
-                val finalTid = minimizedTaskIdByEntryId[entryId] ?: tid
-                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry MOVEBACK_ON_HIDDEN tid=$finalTid pkg=$basePkg")
-                shellService?.moveTaskToBack(finalTid)
             } else {
                 // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
                 shellService?.moveTaskToBack(tid)
