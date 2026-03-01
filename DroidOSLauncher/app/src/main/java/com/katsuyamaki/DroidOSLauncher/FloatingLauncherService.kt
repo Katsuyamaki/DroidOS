@@ -6688,6 +6688,14 @@ private var isSoftKeyboardSupport = false
     private var hiddenMinimizeImageReader: android.media.ImageReader? = null
     private var hiddenMinimizeDisplayId: Int = -1
 
+    // Serialize all hidden-display minimize operations to prevent concurrent am commands
+    // from triggering Samsung security lockout. Only one minimize runs at a time.
+    private val hiddenMinimizeLock = java.util.concurrent.locks.ReentrantLock()
+    // Track packages currently being minimized to skip duplicate requests from concurrent threads.
+    private val minimizeInFlight = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // Flag to prevent EXECUTE_MINIMIZE_PASS from re-minimizing while MINIMIZE_ALL is running.
+    @Volatile private var minimizeAllInProgress = false
+
     private var hiddenDisplayCreateCount = 0
 
     private fun ensureHiddenMinimizeDisplay(): Int {
@@ -6746,6 +6754,18 @@ private var isSoftKeyboardSupport = false
             android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ABORT no hidden display")
             return false
         }
+
+        // Serialize: only one hidden-display minimize at a time to avoid rapid-fire am commands
+        // that trigger Samsung security lockout.
+        hiddenMinimizeLock.lock()
+        try {
+            return minimizeToHiddenDisplayLocked(taskId, packageName, className, targetId)
+        } finally {
+            hiddenMinimizeLock.unlock()
+        }
+    }
+
+    private fun minimizeToHiddenDisplayLocked(taskId: Int, packageName: String, className: String?, targetId: Int): Boolean {
 
         try {
             val normalizedClass = normalizeActivityClass(packageName, className)
@@ -6850,6 +6870,7 @@ private var isSoftKeyboardSupport = false
         }
     }
 
+
     private fun isSamsungBuild(): Boolean {
         val manufacturer = Build.MANUFACTURER?.lowercase() ?: ""
         val brand = Build.BRAND?.lowercase() ?: ""
@@ -6896,6 +6917,20 @@ private var isSoftKeyboardSupport = false
         val tid = resolveTaskIdForApp(app, reason)
         if (tid <= 0) return -1
 
+        // Skip EXECUTE_MINIMIZE_PASS if MINIMIZE_ALL is already handling minimize operations.
+        // Both run on separate threads and would duplicate the same am commands.
+        if (reason == "EXECUTE_MINIMIZE_PASS" && minimizeAllInProgress) {
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_MINIMIZE_ALL_ACTIVE tid=$tid pkg=$basePkg reason=$reason")
+            return tid
+        }
+
+        // Skip if this package is already being minimized by another thread.
+        if (!minimizeInFlight.add(basePkg)) {
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_IN_FLIGHT tid=$tid pkg=$basePkg reason=$reason")
+            return tid
+        }
+
+        try {
         // Early exit: if this PACKAGE is already on the hidden minimize display, skip.
         // Must match by package (not just task ID) because task IDs are unreliable —
         // different apps can resolve to each others stale/recycled task IDs.
@@ -6979,6 +7014,9 @@ private var isSoftKeyboardSupport = false
         )
 
         return minimizedTaskIdByEntryId[entryId] ?: tid
+        } finally {
+            minimizeInFlight.remove(basePkg)
+        }
     }
     
     // Check if a package is on the hidden minimize display
@@ -9416,8 +9454,10 @@ private var isSoftKeyboardSupport = false
                     minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
                 }
                 
-                // Move all to back in background thread
+                // Move all to back in background thread — serialized with delay to avoid
+                // rapid-fire am commands that trigger Samsung security lockout.
                 Thread {
+                    minimizeAllInProgress = true
                     try {
                         for (app in appsToMinimize) {
                             if (currentDisplayId >= 2) {
@@ -9432,6 +9472,8 @@ private var isSoftKeyboardSupport = false
                             }
                         }
                     } catch (e: Exception) {
+                    } finally {
+                        minimizeAllInProgress = false
                     }
                 }.start()
                 
@@ -9496,6 +9538,12 @@ private var isSoftKeyboardSupport = false
                 // Clear auto-minimized flag since we're explicitly restoring
                 tiledAppsAutoMinimized = false
                 lastExplicitTiledLaunchAt = System.currentTimeMillis()
+
+                // Explicitly restore each app from hidden display before retiling.
+                // The retile am start alone may not move tasks from hidden display on DeX.
+                for (app in appsToRestore) {
+                    restoreAppTaskToCurrentDisplay(app)
+                }
                 
                 refreshQueueAndLayout("Restored ${appsToRestore.size} apps", forceRetile = true, retileDelayMs = 300L)
             }
