@@ -6468,7 +6468,13 @@ private var isSoftKeyboardSupport = false
         // matches (e.g. com.whatsapp/com.whatsapp.Main on hidden display) over package matches
         // (com.whatsapp/com.whatsapp.HomeActivity on current display). Observed data is already
         // filtered to currentDisplayId so no cross-display risk.
-        val observedDirectTid = observedMatches.mapNotNull { it.taskId }.firstOrNull { it > 0 }
+        // Prefer class match: for apps with task-scoped siblings (e.g. Sheets), the package
+        // fallback can pull in ALL components. Without class preference, NewMainProxyActivity
+        // could get RitzActivity's tid, causing wrong-task minimize.
+        val classMatchTid = if (queueClass != null) {
+            observedMatches.firstOrNull { it.className == queueClass && it.taskId != null && it.taskId > 0 }?.taskId
+        } else null
+        val observedDirectTid = classMatchTid ?: observedMatches.mapNotNull { it.taskId }.firstOrNull { it > 0 }
         if (observedDirectTid != null) {
             val observedClasses = observedMatches.filter { it.taskId != null && it.taskId > 0 }.joinToString(",") { "${it.className ?: "null"}#${it.taskId}" }
             android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp USE_OBSERVED_DIRECT pkg=$basePkg observed=$observedDirectTid display=$currentDisplayId queueClass=${queueClass ?: "null"} observedClasses=[$observedClasses]")
@@ -7059,12 +7065,14 @@ private var isSoftKeyboardSupport = false
 
         try {
         // Early exit: if this task is already on the hidden minimize display, skip.
-        // For task-scoped apps (e.g. Sheets), check by task ID — the package has multiple
-        // tasks and one being hidden should not skip the others.
-        // For non-task-scoped apps, check by package.
+        // For apps whose PACKAGE supports task-scoped identity (e.g. Sheets), always check
+        // by task ID — the package has multiple tasks and one being hidden should not skip
+        // the others. This applies even to non-task-scoped entries like NewMainProxyActivity.
+        // For other apps, check by package.
         if (hiddenMinimizeDisplayId > 0) {
             val hiddenVisible = getObservedVisibleComponents(hiddenMinimizeDisplayId)
-            val alreadyOnHidden = if (taskScoped && tid > 0) {
+            val appHasTaskScopedClasses = shouldUseTaskScopedIdentity(basePkg)
+            val alreadyOnHidden = if ((taskScoped || appHasTaskScopedClasses) && tid > 0) {
                 hiddenVisible.any { it.taskId != null && it.taskId == tid }
             } else {
                 hiddenVisible.any { observed ->
@@ -9872,6 +9880,7 @@ private var isSoftKeyboardSupport = false
     // MINIMIZING: Move to Back
                                      Thread {
                                          try {
+                                             var minimizeResult = -1
                                              if (currentDisplayId >= 2) {
                                                  // Check if this is the ONLY visible app
                                                  val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
@@ -9881,13 +9890,23 @@ private var isSoftKeyboardSupport = false
                                                      // LAST APP: "Launch" the wallpaper to cover it.
                                                      // This avoids the system hanging while searching for a Home screen.
                                                      showWallpaper()
+                                                     minimizeResult = 0
                                                  } else {
-                                                     minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
+                                                     minimizeResult = minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
                                                  }
                                              } else {
-                                                 minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
+                                                 minimizeResult = minimizeTaskForQueueEntry(app, "MINIMIZE_TOGGLE")
                                              }
-                                         } catch(e: Exception){}
+                                             // Revert isMinimized if minimize actually failed (task ID not found).
+                                             if (minimizeResult <= 0) {
+                                                 app.isMinimized = false
+                                                 uiHandler.post { updateAllUIs() }
+                                                 android.util.Log.w("DROIDOS_DEX", "MINIMIZE_TOGGLE REVERTED pkg=${app.getBasePackage()} — minimize failed (tid=$minimizeResult)")
+                                             }
+                                         } catch(e: Exception){
+                                             app.isMinimized = false
+                                             uiHandler.post { updateAllUIs() }
+                                         }
                                      }.start()
                                                                      // We removed the redundant thread here to prevent race conditions and double-execution lag.
 
