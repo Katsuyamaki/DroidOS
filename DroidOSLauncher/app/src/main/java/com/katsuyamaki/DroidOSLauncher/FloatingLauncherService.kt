@@ -2849,6 +2849,12 @@ private var isSoftKeyboardSupport = false
                      detectedPkg = event.packageName?.toString()
                 }
 
+                // [DEX] Start subactivity poll on any TYPE_WINDOWS_CHANGED — must be outside
+                // the detectedPkg filter since DeX events may have null/launcher/systemui pkg.
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                    scheduleDexSubactivityPoll()
+                }
+
                 // Filter & Update History
                 if (!detectedPkg.isNullOrEmpty() &&
                     detectedPkg != packageName &&
@@ -7440,6 +7446,10 @@ private var isSoftKeyboardSupport = false
         // to DeX — detecting apps by package even when running a subactivity different from the launch class.
         if (newId >= 2) {
             uiHandler.postDelayed({ fetchRunningApps() }, 1500)
+            // Start subactivity poll — accessibility events don't fire on DeX external display.
+            scheduleDexSubactivityPoll()
+        } else {
+            stopDexSubactivityPoll()
         }
 
         // [FIX] Apply layout immediately if in Instant Mode
@@ -7616,6 +7626,93 @@ private var isSoftKeyboardSupport = false
         pendingHeadlessRetileReason = null
         refreshDisplayId()
         retileExistingWindows()
+    }
+
+    // ===================================================================================
+    // DEX SUBACTIVITY POLL
+    // ===================================================================================
+    // On DeX (display >= 2), Android's AccessibilityService does not reliably fire
+    // TYPE_WINDOWS_CHANGED for freeform window spawns on the external display. The
+    // non-DeX subactivity auto-sync (maybeAutoSyncQueueForObservedChange) relies on
+    // these events, so it never triggers on DeX. This poller compensates by periodically
+    // checking observed components for untracked subactivities from managed apps
+    // (e.g. Google Sheets RitzActivity spawned from NewMainProxyActivity).
+    // ===================================================================================
+    private var lastDexSubactivityPollAt = 0L
+    private val DEX_SUBACTIVITY_POLL_INTERVAL_MS = 2000L
+    private val dexSubactivityPollRunnable = Runnable { pollDexSubactivities() }
+
+    private fun scheduleDexSubactivityPoll() {
+        if (currentDisplayId < 2) return
+        uiHandler.removeCallbacks(dexSubactivityPollRunnable)
+        uiHandler.postDelayed(dexSubactivityPollRunnable, DEX_SUBACTIVITY_POLL_INTERVAL_MS)
+    }
+
+    private fun stopDexSubactivityPoll() {
+        uiHandler.removeCallbacks(dexSubactivityPollRunnable)
+    }
+
+    private fun pollDexSubactivities() {
+        if (currentDisplayId < 2) return
+        if (!isBound || shellService == null) {
+            scheduleDexSubactivityPoll()
+            return
+        }
+        if (isExecuting || isProcessingWmCommand || pendingHeadlessRetile) {
+            scheduleDexSubactivityPoll()
+            return
+        }
+
+        val hasAutoSyncApps = selectedAppsQueue.any { queued ->
+            !queued.isMinimized &&
+                queued.packageName != PACKAGE_BLANK &&
+                AppCompatibilityRegistry.shouldAutoSyncObservedComponents(
+                    AppCompatibilityRegistry.normalizePackage(queued.getBasePackage())
+                )
+        }
+        if (!hasAutoSyncApps) {
+            scheduleDexSubactivityPoll()
+            return
+        }
+
+        Thread {
+            try {
+                val observedVisible = getObservedVisibleComponents(currentDisplayId)
+                    .filter { it.packageName != packageName && it.packageName != PACKAGE_TRACKPAD }
+                if (observedVisible.isEmpty()) {
+                    uiHandler.post { scheduleDexSubactivityPoll() }
+                    return@Thread
+                }
+
+                val hasUntrackedManagedComponent = observedVisible.any { observed ->
+                    if (!AppCompatibilityRegistry.shouldAutoSyncObservedComponents(observed.packageName)) return@any false
+                    val hasManagedPackage = selectedAppsQueue.any { queued ->
+                        !queued.isMinimized &&
+                            queued.packageName != PACKAGE_BLANK &&
+                            queueAppMatchesObservedPackage(queued, observed.packageName)
+                    }
+                    val hasExactEntry = selectedAppsQueue.any { queued ->
+                        !queued.isMinimized &&
+                            queued.packageName != PACKAGE_BLANK &&
+                            queueAppMatchesObservedComponent(queued, observed)
+                    }
+                    hasManagedPackage && !hasExactEntry
+                }
+
+                if (hasUntrackedManagedComponent) {
+                    android.util.Log.d("DROIDOS_DEX", "pollDexSubactivities UNTRACKED_FOUND — triggering sync+retile")
+                    uiHandler.post {
+                        fetchRunningApps()
+                        requestHeadlessRetile("dex-subactivity-poll", 260L)
+                        scheduleDexSubactivityPoll()
+                    }
+                } else {
+                    uiHandler.post { scheduleDexSubactivityPoll() }
+                }
+            } catch (e: Exception) {
+                uiHandler.post { scheduleDexSubactivityPoll() }
+            }
+        }.start()
     }
 
     private fun maybeAutoSyncQueueForObservedChange(triggerPkg: String) {
