@@ -8308,8 +8308,12 @@ private var isSoftKeyboardSupport = false
                 // Handle minimized apps
                 val minimizedApps = selectedAppsQueue.filter { it.isMinimized }
                 
-                // If on Virtual Display and NO active apps (Show Desktop), just launch Wallpaper
-                if (currentDisplayId >= 2 && activeApps.isEmpty() && minimizedApps.isNotEmpty()) {
+                // Skip entire minimize pass if MINIMIZE_ALL is already handling it.
+                // Delayed applyLayoutImmediate() calls (300-800ms postDelayed) can fire
+                // during MINIMIZE_ALL, causing concurrent am commands → Samsung lockout.
+                if (minimizeAllInProgress) {
+                    android.util.Log.d("DROIDOS_DEX", "EXECUTE_MINIMIZE_PASS BLOCKED — MINIMIZE_ALL in progress (${minimizedApps.size} apps skipped)")
+                } else if (currentDisplayId >= 2 && activeApps.isEmpty() && minimizedApps.isNotEmpty()) {
                     showWallpaper()
                 } else {
                     // Standard Loop
@@ -9548,12 +9552,24 @@ private var isSoftKeyboardSupport = false
                     minimizedAtTimestamps[basePkg] = System.currentTimeMillis()
                 }
                 
-                // Move all to back in background thread — serialized with delay to avoid
-                // rapid-fire am commands that trigger Samsung security lockout.
+                // Set flag BEFORE spawning thread to prevent race with EXECUTE_MINIMIZE_PASS.
+                // If set inside the thread, there's a window where refreshQueueAndLayout triggers
+                // executeLaunch → EXECUTE_MINIMIZE_PASS before the flag is set.
+                minimizeAllInProgress = true
+                android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL ENTER count=${appsToMinimize.size} display=$currentDisplayId")
+
+                // Move all to back in background thread — serialized one-by-one.
                 Thread {
-                    minimizeAllInProgress = true
                     try {
-                        for (app in appsToMinimize) {
+                        var first = true
+                        for ((idx, app) in appsToMinimize.withIndex()) {
+                            // Small delay between apps to avoid rapid-fire am commands
+                            // that trigger Samsung security lockout. First app starts immediately.
+                            if (!first) {
+                                android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL DELAY 50ms before app ${idx+1}/${appsToMinimize.size} pkg=${app.getBasePackage()}")
+                                Thread.sleep(50)
+                            }
+                            first = false
                             if (currentDisplayId >= 2) {
                                 val visibleCount = shellService?.getVisiblePackages(currentDisplayId)?.size ?: 0
                                 if (visibleCount <= 1) {
@@ -9566,7 +9582,9 @@ private var isSoftKeyboardSupport = false
                             }
                         }
                     } catch (e: Exception) {
+                        android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL ERROR: ${e.message}")
                     } finally {
+                        android.util.Log.d("DROIDOS_DEX", "MINIMIZE_ALL EXIT")
                         minimizeAllInProgress = false
                     }
                 }.start()
@@ -9578,7 +9596,9 @@ private var isSoftKeyboardSupport = false
                     }
                 }
                 
-                refreshQueueAndLayout("Minimized ${appsToMinimize.size} apps")
+                // skipTiling = true prevents executeLaunch from spawning a duplicate
+                // EXECUTE_MINIMIZE_PASS thread that would race with MINIMIZE_ALL above.
+                refreshQueueAndLayout("Minimized ${appsToMinimize.size} apps", skipTiling = true)
             }
             // =====================================================================
             // RESTORE_ALL - Restore minimized apps up to available layout slots
