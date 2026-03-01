@@ -410,7 +410,6 @@ private var isSoftKeyboardSupport = false
             if (displayId == currentDisplayId) {
                 // If current display disconnects (e.g. glasses), revert to Default
                 android.util.Log.d("DROIDOS_DISPLAY", "onDisplayRemoved CURRENT_DISPLAY_LOST — reverting to display 0")
-                hiddenDisplayMinimizedPackages.clear()
                 performDisplayChange(Display.DEFAULT_DISPLAY)
             }
         }
@@ -5354,7 +5353,44 @@ private var isSoftKeyboardSupport = false
 
             // bubbleView?.visibility = View.GONE // Keep bubble visible
             isExpanded = true
-            
+
+            // Refresh task IDs for all queued apps on drawer open.
+            // This catches stale IDs from apps opened/closed/moved outside DroidOS
+            // (e.g. via Samsung DeX launcher, recent apps, or display changes).
+            Thread {
+                try {
+                    val observed = getObservedVisibleComponents(currentDisplayId)
+                    for (app in selectedAppsQueue.toList()) {
+                        val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+                        if (basePkg.isEmpty()) continue
+                        val entryId = getQueueEntryId(app)
+                        val match = observed.firstOrNull { obs ->
+                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(obs.packageName, basePkg) &&
+                                obs.taskId != null && obs.taskId > 0
+                        }
+                        if (match != null) {
+                            val freshTid = match.taskId!!
+                            val cachedTid = packageTaskIdCache[basePkg]
+                            if (cachedTid != null && cachedTid != freshTid) {
+                                android.util.Log.d("DROIDOS_DEX", "DRAWER_REFRESH pkg=$basePkg stale=$cachedTid fresh=$freshTid — updated")
+                            }
+                            packageTaskIdCache[basePkg] = freshTid
+                            if (minimizedTaskIdByEntryId.containsKey(entryId)) {
+                                minimizedTaskIdByEntryId[entryId] = freshTid
+                            }
+                        } else {
+                            // App not visible on current display — clear cached ID to force fresh resolve
+                            val removed = packageTaskIdCache.remove(basePkg)
+                            if (removed != null) {
+                                android.util.Log.d("DROIDOS_DEX", "DRAWER_REFRESH pkg=$basePkg removed stale cached=$removed — not visible on display $currentDisplayId")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.d("DROIDOS_DEX", "DRAWER_REFRESH error: ${e.message}")
+                }
+            }.start()
+
             // [FIX] Reset all navigation/focus state to prevent ghost highlights
             currentFocusArea = FOCUS_SEARCH
             queueSelectedIndex = -1
@@ -6315,7 +6351,18 @@ private var isSoftKeyboardSupport = false
                 ""
             }
 
-            if (hintSnapshot.contains("taskId=$hintedTaskId:")) {
+            // Validate hint is on current display — getTaskDebugSnapshot is cross-display.
+            // Extract displayId from snapshot for this taskId entry.
+            val hintOnCurrentDisplay = hintSnapshot.contains("taskId=$hintedTaskId:") && try {
+                val visibleTasks = shellService?.getVisibleTaskComponents(currentDisplayId) ?: emptyList()
+                visibleTasks.any { entry ->
+                    val parts = entry.split("|", limit = 2)
+                    val tid = parts.getOrNull(0)?.toIntOrNull() ?: -1
+                    tid == hintedTaskId
+                }
+            } catch (e: Exception) { false }
+
+            if (hintOnCurrentDisplay) {
                 if (traceEnabled) {
                     logTaskResolutionTrace(
                         reason = reason,
@@ -6396,17 +6443,27 @@ private var isSoftKeyboardSupport = false
         // Validate: prefer observed task ID (display-filtered) over getTaskId (global).
         // getTaskId searches all displays and can return stale IDs from display 0
         // or hidden displays. Observed components are filtered to currentDisplayId.
-        if (resolvedTid > 0 && !taskScoped) {
+        if (resolvedTid > 0) {
             val observedTid = observedMatches.mapNotNull { it.taskId }.firstOrNull { it > 0 }
             if (observedTid != null && observedTid != resolvedTid) {
                 android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp PREFER_OBSERVED pkg=$basePkg observed=$observedTid global=$resolvedTid — using observed (display-local)")
                 resolvedTid = observedTid
             } else if (observedTid == null && resolvedTid > 0) {
-                // No observed match on current display — global result may be from another display.
-                // Only log a warning; do NOT reject. The visible=true check is too strict —
-                // tasks temporarily lose visibility during minimize/tile transitions.
-                // PREFER_OBSERVED handles the important case when both sources have results.
-                android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp WARN_GLOBAL_ONLY pkg=$basePkg global=$resolvedTid — no observed match on display $currentDisplayId")
+                // No observed match on current display — the global getTaskId result may be
+                // from a different display (stale task from DeX, display 0, or hidden display).
+                // Validate by checking if this task ID actually exists on the current display.
+                val onCurrentDisplay = try {
+                    val visibleTasks = shellService?.getVisibleTaskComponents(currentDisplayId) ?: emptyList()
+                    visibleTasks.any { entry ->
+                        val parts = entry.split("|", limit = 2)
+                        val tid = parts.getOrNull(0)?.toIntOrNull() ?: -1
+                        tid == resolvedTid
+                    }
+                } catch (e: Exception) { false }
+                if (!onCurrentDisplay) {
+                    android.util.Log.d("DROIDOS_DEX", "resolveTaskIdForApp REJECT_GLOBAL pkg=$basePkg global=$resolvedTid — not on current display $currentDisplayId")
+                    resolvedTid = -1
+                }
             }
         }
 
@@ -6627,7 +6684,6 @@ private var isSoftKeyboardSupport = false
                     if (tid > 0) {
                         packageTaskIdCache[basePkg] = tid
                         minimizedTaskIdByEntryId.remove(entryId)
-                        hiddenDisplayMinimizedPackages.remove(basePkg)
                         applyBoundsIfPossible(tid)
                     }
                 } else {
@@ -6719,12 +6775,6 @@ private var isSoftKeyboardSupport = false
     private val minimizeInFlight = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     // Flag to prevent EXECUTE_MINIMIZE_PASS from re-minimizing while MINIMIZE_ALL is running.
     @Volatile private var minimizeAllInProgress = false
-    // Track packages that have been successfully hidden-display + moveTaskToBack minimized.
-    // After moveTaskToBack on hidden display, apps are invisible on BOTH displays, so
-    // SKIP_ALREADY_HIDDEN (which checks visibility) won't catch them. This set prevents
-    // the expensive resolveTaskIdForApp loop (2x am stack list per app per retile cycle).
-    // Cleared on restore.
-    private val hiddenDisplayMinimizedPackages = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private var hiddenDisplayCreateCount = 0
 
@@ -6944,21 +6994,6 @@ private var isSoftKeyboardSupport = false
         val taskScoped = shouldUseTaskScopedIdentityForClass(basePkg, queueClass ?: cls)
         val entryId = getQueueEntryId(app)
 
-        // Fast path: if this package was already hidden-display + moveTaskToBack minimized,
-        // verify it's still hidden (not re-opened by user) before skipping.
-        if (hiddenDisplayMinimizedPackages.contains(basePkg)) {
-            val stillHidden = try {
-                !getObservedVisibleComponents(currentDisplayId).any { observed ->
-                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
-                }
-            } catch (e: Exception) { true }
-            if (stillHidden) {
-                return minimizedTaskIdByEntryId[entryId] ?: packageTaskIdCache[basePkg] ?: -1
-            }
-            // App was re-opened — clear from set and proceed with normal minimize flow.
-            hiddenDisplayMinimizedPackages.remove(basePkg)
-        }
-
         val tid = resolveTaskIdForApp(app, reason)
         if (tid <= 0) return -1
 
@@ -6992,18 +7027,16 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        // Check: is the app NOT visible on the current display?
-        // If not visible, skip — the global-only task ID likely belongs to a different display
-        // and moving it to hidden display causes crashes/lockouts.
+        // Check: is the app visible on the current display?
+        // If not visible here, the task ID is likely from a different display.
+        // Skip minimize to avoid cross-display am commands that cause crashes/lockouts.
         val visibleOnCurrent = try {
             getObservedVisibleComponents(currentDisplayId).any { observed ->
                 AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
             }
         } catch (e: Exception) { false }
         if (!visibleOnCurrent) {
-            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_NOT_VISIBLE tid=$tid pkg=$basePkg display=$currentDisplayId — skipping minimize (not on this display)")
-            minimizedTaskIdByEntryId[entryId] = tid
-            packageTaskIdCache[basePkg] = tid
+            android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry SKIP_NOT_VISIBLE tid=$tid pkg=$basePkg display=$currentDisplayId — not on this display, skipping")
             return tid
         }
 
@@ -7042,13 +7075,6 @@ private var isSoftKeyboardSupport = false
                         packageTaskIdCache[basePkg] = actualHiddenTid
                     }
                 }
-                // Now Samsung-minimize on hidden display to drop from freeform tracking.
-                // Hidden display is a regular virtual display (not DeX), so Samsung
-                // minimizeTaskById works here — same as on display 0/1.
-                val finalTid = minimizedTaskIdByEntryId[entryId] ?: tid
-                android.util.Log.d("DROIDOS_DEX", "minimizeTaskForQueueEntry MOVEBACK_ON_HIDDEN tid=$finalTid pkg=$basePkg")
-                shellService?.moveTaskToBack(finalTid)
-                hiddenDisplayMinimizedPackages.add(basePkg)
             } else {
                 // Last resort to avoid total no-op minimize on devices that block hidden-display flow.
                 shellService?.moveTaskToBack(tid)
@@ -7175,6 +7201,18 @@ private var isSoftKeyboardSupport = false
         // 2. SWITCH
         currentDisplayId = newId
         setupDisplayContext(currentDisplayId)
+
+        // Clear all task ID caches — IDs from the old display are stale and dangerous.
+        // Using them on the new display causes cross-display am commands → crashes/lockouts.
+        packageTaskIdCache.clear()
+        minimizedTaskIdByEntryId.clear()
+        android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — packageTaskIdCache + minimizedTaskIdByEntryId")
+
+        // Clear all task ID caches — IDs from the old display are stale and dangerous.
+        // Using them on the new display causes cross-display am commands → crashes/lockouts.
+        packageTaskIdCache.clear()
+        minimizedTaskIdByEntryId.clear()
+        android.util.Log.d("DROIDOS_DEX", "performDisplayChange CACHES_CLEARED newDisplay=$newId — packageTaskIdCache + minimizedTaskIdByEntryId")
         targetDisplayIndex = currentDisplayId
         AppPreferences.setTargetDisplayIndex(this, targetDisplayIndex)
         
@@ -9577,7 +9615,6 @@ private var isSoftKeyboardSupport = false
                     val basePkg = app.getBasePackage()
                     manualStateOverrides[basePkg] = System.currentTimeMillis()
                     minimizedAtTimestamps.remove(basePkg)
-                    hiddenDisplayMinimizedPackages.remove(basePkg)
                 }
                 
                 // Also restore minimized blanks up to remaining available slots
@@ -9698,7 +9735,6 @@ private var isSoftKeyboardSupport = false
                                                                     // This prevents minimized apps from showing as active
                                                                     manualStateOverrides[basePkg] = System.currentTimeMillis()
                                                                     minimizedAtTimestamps.remove(basePkg)
-                                                                    hiddenDisplayMinimizedPackages.remove(basePkg)
                                                                 }
                                                                 
                                                                 val cls = app.className
