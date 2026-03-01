@@ -6908,15 +6908,44 @@ private var isSoftKeyboardSupport = false
         return hiddenMinimizeDisplayId
     }
 
-    // Minimize task using hidden display (A14/A15 fallback).
-    // IMPORTANT: Do not relaunch as fallback here; relaunch can spawn duplicate main/sub tasks.
+    // ===================================================================================
+    // DEX MINIMIZE STRATEGY: Move task to display 0 (phone screen)
+    // ===================================================================================
+    // On Samsung DeX, there is no public API to minimize a 3rd-party freeform window.
+    // Samsung's own minimize APIs (moveTaskToBack, minimizeTaskById) only work for Samsung
+    // apps, not 3rd-party freeform tasks on the external display.
+    //
+    // Our approach: use startActivityFromRecents(taskId, {displayId=0}) to move the task
+    // from the DeX external display to the phone's built-in display (display 0). This
+    // removes it from DeX (achieving the visual "minimize") while keeping the task alive
+    // for instant restore. The phone screen is typically off or showing the DeX companion
+    // launcher during DeX, so the user doesn't notice the task appearing there.
+    // After the move, moveTaskToBack() pushes the task behind the phone launcher.
+    //
+    // Restore: startActivityFromRecents(taskId, {displayId=dexDisplay, windowingMode=5})
+    // moves the task back to DeX as a freeform window. This is the standard Android API
+    // that launchers use to bring back recent tasks — works on all Android versions.
+    //
+    // WHY NOT a hidden virtual display?
+    // We tried creating a VirtualDisplay and moving tasks there. Samsung's SystemUI crashes
+    // EVERY time with either:
+    //   - "Could not get display layout for display=N" (DesktopModeUtils.isTaskMaximized)
+    //   - "Expected a desk in display: N" (DesktopRepository.updateTask)
+    // because Samsung's FreeformTaskListener/TransitionObserver doesn't know about our
+    // virtual display. The crash kills SystemUI → phone freezes → kicks user to lockscreen.
+    // Tried: OWN_CONTENT_ONLY, PRESENTATION, PUBLIC flags, set-windowing-mode before move,
+    // prewarm crash approach — none work reliably. Display 0 avoids this entirely because
+    // Samsung's SystemUI fully supports the phone's built-in display.
+    //
+    // OTHER DEAD ENDS (do not re-attempt):
+    //   - Samsung moveTaskToBack/minimizeTaskById: No-op for 3rd party freeform on DeX
+    //   - Resize to 1x1 offscreen: Android enforces minimum freeform window size
+    //   - am task move-task-to-display: Requires root task IDs, not leaf task IDs
+    //   - moveRootTaskToDisplay via reflection: Same root task ID requirement
+    // ===================================================================================
     private fun minimizeToHiddenDisplay(taskId: Int, packageName: String, className: String?): Boolean {
-        val targetId = ensureHiddenMinimizeDisplay()
+        val targetId = 0
         android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay START tid=$taskId pkg=$packageName targetDisplay=$targetId currentDisplay=$currentDisplayId")
-        if (targetId <= 0) {
-            android.util.Log.w("DROIDOS_DEX", "minimizeToHiddenDisplay ABORT no hidden display")
-            return false
-        }
 
         // Serialize: only one hidden-display minimize at a time to avoid rapid-fire am commands
         // that trigger Samsung security lockout.
@@ -6949,25 +6978,10 @@ private var isSoftKeyboardSupport = false
                 }
             }
 
-            // Early exit: task already on the current hidden display — truly minimized.
-            // Only skip if we can confirm the task is on THIS hidden display, not just
-            // absent from the current display (could be on a stale old hidden display).
+            // Early exit: task not visible on current DeX display — already minimized.
             if (!isStillVisibleOnCurrentDisplay()) {
-                val onThisHiddenDisplay = try {
-                    val hiddenComponents = getObservedVisibleComponents(targetId)
-                    if (taskId > 0) {
-                        hiddenComponents.any { it.taskId != null && it.taskId == taskId }
-                    } else {
-                        hiddenComponents.any { observed ->
-                            AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, packageName)
-                        }
-                    }
-                } catch (e: Exception) { false }
-                if (onThisHiddenDisplay) {
-                    android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ALREADY_HIDDEN tid=$taskId — on hidden display $targetId, skipping")
-                    return true
-                }
-                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay NOT_ON_CURRENT_DISPLAY tid=$taskId — not on hidden display $targetId either, re-minimizing")
+                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ALREADY_OFF_DEX tid=$taskId pkg=$packageName — not on display $currentDisplayId, skipping")
+                return true
             }
 
             // Attempt 1: use startActivityFromRecents to move existing task to hidden display.
@@ -6980,6 +6994,11 @@ private var isSoftKeyboardSupport = false
                     if (moved) {
                         Thread.sleep(200)
                         if (!isStillVisibleOnCurrentDisplay()) {
+                            // Push task behind phone launcher/lockscreen so it's not visible
+                            try {
+                                shellService?.moveTaskToBack(taskId)
+                                android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay MOVEBACK_ON_PHONE tid=$taskId")
+                            } catch (e: Exception) {}
                             android.util.Log.d("DROIDOS_DEX", "minimizeToHiddenDisplay ATTEMPT1_RECENTS SUCCESS tid=$taskId")
                             return true
                         }
