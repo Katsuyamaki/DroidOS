@@ -1,3 +1,9 @@
+IMPORTANT LICENSE BOUNDARY NOTICE
+
+- GPLv3 (FOSS) applies to all code up to and including tag `foss-final` (release v4.0).
+- The FOSS-only line is maintained in branch `community/fdroid`.
+- This file (FSL-1.1-Apache-2.0) applies to commits after `foss-final` on `main`.
+
 Functional Source License, Version 1.1, Apache 2.0 Future License
 
 Abbreviation: FSL-1.1-Apache-2.0
@@ -55,10 +61,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Note: All code in this repository up to and including the git tag `foss-final`
-(corresponding to release v4.0) remains licensed under the GNU General Public
-License v3. See the `community/fdroid` branch for the FOSS-licensed codebase.
-This FSL license applies only to commits after the `foss-final` tag.

@@ -251,7 +251,13 @@ Contributions are welcome.
 
 ## License
 
-GPLv3. See `LICENSE.txt`.
+Licensing is split by git history boundary:
+
+- **GPLv3 (FOSS):** all code up to and including tag `foss-final` (release v4.0).
+- **FSL-1.1 (source-available):** commits after `foss-final` on `main`.
+
+For a fully FOSS codebase, use the `community/fdroid` branch (GPLv3).
+See `LICENSE.txt` for the current branch license details.
 
 ---
 
