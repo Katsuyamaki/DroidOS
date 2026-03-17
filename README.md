@@ -40,6 +40,7 @@ Important: open each app folder separately in Android Studio. Do not open the mo
 2. Open `DroidOS Launcher` and grant required permissions.
 3. Open `DroidOS Trackpad Keyboard` and complete the setup steps (Accessibility, overlay, keyboard/IME related steps).
 4. Use Launcher `Launch/Reset Trackpad` in Settings if the input overlay needs to be reattached.
+5. Full install walkthrough video: https://www.youtube.com/watch?v=GNpT8bgoe3w
 
 ---
 
