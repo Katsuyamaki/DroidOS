@@ -9041,158 +9041,16 @@ private var isSoftKeyboardSupport = false
             }
             MODE_KEYBINDS -> {
                 searchBar.hint = "Configure Hotkeys"
-                refreshUnlockedFeatureState()
 
-                when {
-                    BuildConfig.IS_INTERNAL_TESTING_BINARY -> {
-                        displayList.add(LegendOption("INTERNAL TESTING BINARY: feature locks are bypassed for local validation."))
-
-                        displayList.add(ActionOption("Google Play: Open Unlock Flow") {
-                            openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
-                        })
-                        displayList.add(ActionOption("Google Play: Open Keyboard Listing") {
-                            openGooglePlayKeyboardListing()
-                        })
-
-                        displayList.add(ActionOption("GitHub: Open Authorization Request Page") {
-                            openGithubAuthorizationPortal()
-                        })
-                        displayList.add(ActionOption("GitHub: Exchange Claim Code (Clipboard)") {
-                            exchangeGithubClaimCodeFromClipboard()
-                        })
-                        if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
-                            displayList.add(ActionOption("GitHub: Temporary Apply Access Token (Clipboard)") {
-                                importGithubAccessTokenFromClipboardTemporarily()
-                            })
-                        }
-                        displayList.add(ActionOption("GitHub: Clear Authorization Token") {
-                            clearGithubAuthorizationToken()
-                            switchMode(MODE_KEYBINDS)
-                        })
-
-                        displayList.add(ActionOption("Samsung: Open Keyboard Listing") {
-                            openSamsungKeyboardListing()
-                        })
-                        displayList.add(LegendOption("Samsung: Billing flow remains in samsung binary; wire Samsung IAP there when ready."))
-
-                        displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
-                            allowExternalBroadcastCommands = it
-                            AppPreferences.setAllowExternalBroadcastCommands(this, it)
-                            switchMode(MODE_KEYBINDS)
-                        })
-                        if (allowExternalBroadcastCommands) {
-                            displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
-                        }
+                displayList.add(ActionOption("Upgrade for Advanced Features") {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Katsuyamaki/DroidOS"))
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                        safeToast("Unable to open community GitHub page")
                     }
-
-                    BuildConfig.USE_PLAY_BILLING -> {
-                        val unlockLabel = if (externalBroadcastAccessUnlocked) {
-                            "Manage Feature Unlocks (Google Play)"
-                        } else {
-                            "Unlock Features (Google Play)"
-                        }
-                        displayList.add(ActionOption(unlockLabel) {
-                            openFeatureUnlockPurchase(FeatureUnlockCatalog.FEATURE_EXTERNAL_BROADCAST_ACCESS)
-                        })
-                        displayList.add(ActionOption("Get DroidOS Keyboard (Google Play)") {
-                            openGooglePlayKeyboardListing()
-                        })
-
-                        if (externalBroadcastAccessUnlocked) {
-                            displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
-                                allowExternalBroadcastCommands = it
-                                AppPreferences.setAllowExternalBroadcastCommands(this, it)
-                                switchMode(MODE_KEYBINDS) // Refresh to show/hide warning
-                            })
-                            if (allowExternalBroadcastCommands) {
-                                displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
-                            }
-                        } else {
-                            displayList.add(
-                                ToggleOption(
-                                    "Allow External App Broadcast Access",
-                                    false,
-                                    canToggle = false,
-                                    disabledNote = "Requires Google Play purchase. Tap 'Unlock Features (Google Play)'.",
-                                    onToggle = { _ -> }
-                                )
-                            )
-                            displayList.add(LegendOption("NOTE: Locked by default for security. Unlock with Google Play purchase."))
-                        }
-                    }
-
-                    BuildConfig.USE_GITHUB_AUTH -> {
-                        displayList.add(ActionOption("Open Authorization Request Page") {
-                            openGithubAuthorizationPortal()
-                        })
-                        displayList.add(ActionOption("Exchange Claim Code (Clipboard)") {
-                            exchangeGithubClaimCodeFromClipboard()
-                        })
-                        if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
-                            displayList.add(ActionOption("Temporary: Apply Access Token (Clipboard)") {
-                                importGithubAccessTokenFromClipboardTemporarily()
-                            })
-                        }
-
-                        if (externalBroadcastAccessUnlocked) {
-                            displayList.add(ActionOption("Clear Authorization Token") {
-                                clearGithubAuthorizationToken()
-                                switchMode(MODE_KEYBINDS)
-                            })
-
-                            displayList.add(ToggleOption("Allow External App Broadcast Access", allowExternalBroadcastCommands) {
-                                allowExternalBroadcastCommands = it
-                                AppPreferences.setAllowExternalBroadcastCommands(this, it)
-                                switchMode(MODE_KEYBINDS)
-                            })
-                            if (allowExternalBroadcastCommands) {
-                                displayList.add(LegendOption("NOTE: External apps can trigger Launcher commands. Disable if you don't use automation apps."))
-                            }
-                        } else {
-                            val disabledReason = when {
-                                BuildConfig.AUTH_EXCHANGE_URL.isBlank() && BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT -> {
-                                    "Auth API endpoint missing. Use temporary access-token import from clipboard."
-                                }
-                                BuildConfig.AUTH_EXCHANGE_URL.isBlank() -> {
-                                    "GitHub build missing auth API endpoint. Set GITHUB_AUTH_EXCHANGE_URL before release."
-                                }
-                                else -> {
-                                    "GitHub build: request claim at https://katsuyamaki.github.io/, then exchange claim code from clipboard."
-                                }
-                            }
-
-                            displayList.add(
-                                ToggleOption(
-                                    "Allow External App Broadcast Access",
-                                    false,
-                                    canToggle = false,
-                                    disabledNote = disabledReason,
-                                    onToggle = { _ -> }
-                                )
-                            )
-                            displayList.add(LegendOption("NOTE: Claim and token issuance stay on backend API; app only exchanges claim codes."))
-                            if (BuildConfig.ALLOW_GITHUB_MANUAL_TOKEN_IMPORT) {
-                                displayList.add(LegendOption("NOTE: Temporary manual access-token import is enabled in this GitHub build."))
-                            }
-                        }
-                    }
-
-                    else -> {
-                        displayList.add(ActionOption("Get DroidOS Keyboard (Galaxy Store)") {
-                            openSamsungKeyboardListing()
-                        })
-                        displayList.add(
-                            ToggleOption(
-                                "Allow External App Broadcast Access",
-                                false,
-                                canToggle = false,
-                                disabledNote = "This store build requires store-specific unlock integration.",
-                                onToggle = { _ -> }
-                            )
-                        )
-                        displayList.add(LegendOption("NOTE: Samsung/Galaxy Store unlock flow can be wired to Samsung IAP next."))
-                    }
-                }
+                })
 
                 displayList.add(ActionOption("How to use: Set modifier + key. Press to trigger.") {})
                 

@@ -26,6 +26,7 @@ Important: open each app folder separately in Android Studio. Do not open the mo
 ## Core Requirements
 
 - Shizuku installed and running
+- Recommended Shizuku fork (watchdog + auto-start): https://github.com/thedjchi/Shizuku
 - Accessibility permissions granted to both apps as prompted
 - Recommended Android developer options:
   - Force activities to be resizable

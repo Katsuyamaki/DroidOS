@@ -286,7 +286,17 @@ class TrackpadMenuManager(
         val p = service.prefs
         
         list.add(TrackpadMenuAdapter.MenuItem("MAIN CONTROLS", 0, TrackpadMenuAdapter.Type.HEADER))
-        
+
+        list.add(TrackpadMenuAdapter.MenuItem("Upgrade for Advanced Features", android.R.drawable.ic_menu_info_details, TrackpadMenuAdapter.Type.ACTION) {
+            try {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Katsuyamaki/DroidOS"))
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(context, "Unable to open community GitHub page", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        })
+
         // --- COMMENTED OUT PER REQUEST ---
         /*
         list.add(TrackpadMenuAdapter.MenuItem("Switch Screen (0 <-> 1)", android.R.drawable.ic_menu_rotate, TrackpadMenuAdapter.Type.ACTION) { 
