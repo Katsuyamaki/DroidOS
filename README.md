@@ -9,8 +9,6 @@ It is designed for phones, foldables, cover displays, external monitors, and AR 
 | ![DroidOS v5 Screenshot 1](images/screenshots/v5/1_processed.jpg) | ![DroidOS v5 Screenshot 2](images/screenshots/v5/2_processed.jpg) |
 | --- | --- |
 
-[![DroidOS Pro - Introducing Power Module!](https://img.youtube.com/vi/owVLii3bzjI/hqdefault.jpg)](https://www.youtube.com/watch?v=owVLii3bzjI)
-
 Video demos: https://katsuyamaki.github.io/
 
 Pro features and pricing: https://katsuyamaki.github.io/pricing.html
