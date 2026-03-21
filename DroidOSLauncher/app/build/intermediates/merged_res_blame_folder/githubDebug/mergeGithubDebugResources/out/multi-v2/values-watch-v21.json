@@ -1,0 +1,20 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.katsuyamaki.DroidOSLauncher.app-mergeGithubDebugResources-32:/values-watch-v21/values-watch-v21.xml",
+            "map": [
+                {
+                    "source": "/data/data/com.termux/files/home/.gradle/caches/8.13/transforms/547904d3a439861c44e5d9384998c1b9/transformed/appcompat-1.6.1/res/values-watch-v21/values-watch-v21.xml",
+                    "from": {
+                        "startLines": "2,6,10",
+                        "startColumns": "4,4,4",
+                        "startOffsets": "55,271,499",
+                        "endLines": "5,9,13",
+                        "endColumns": "12,12,12",
+                        "endOffsets": "266,494,724"
+                    }
+                }
+            ]
+        }
+    ]
+}

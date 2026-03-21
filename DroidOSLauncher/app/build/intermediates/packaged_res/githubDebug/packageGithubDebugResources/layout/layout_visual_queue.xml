@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_drawer"
+    android:padding="12dp"
+    android:gravity="center_horizontal"
+    android:layout_marginBottom="50dp">
+
+    <TextView
+        android:id="@+id/visual_queue_prompt"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="COMMAND"
+        android:textColor="#00FF00"
+        android:textSize="@dimen/text_size_10sp"
+        android:textStyle="normal"
+        android:background="@null"
+        android:layout_marginBottom="4dp"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/visual_queue_recycler"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:minWidth="200dp"
+        android:orientation="horizontal"/>
+
+<!-- Dummy input to hold keyboard focus -->
+    <EditText
+        android:id="@+id/vq_dummy_input"
+        android:layout_width="1px"
+        android:layout_height="1px"
+        android:background="@null"
+        android:cursorVisible="false"
+        android:inputType="text"
+        android:imeOptions="actionNone"
+        android:alpha="0"/>
+</LinearLayout>

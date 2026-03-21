@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 class TrackpadPrefs {
     var cursorSpeed = 2.5f

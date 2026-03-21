@@ -1,4 +1,4 @@
-package com.example.quadrantlauncher
+package com.katsuyamaki.DroidOSFOSSLauncher
 
 import android.accessibilityservice.AccessibilityService
 import android.app.ActivityManager
@@ -63,13 +63,13 @@ class FloatingLauncherService : AccessibilityService() {
 
     private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
     private var virtualImageReader: ImageReader? = null // Keeps surface alive
-    private val ACTION_TOGGLE_VIRTUAL = "com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL_DISPLAY"
+    private val ACTION_TOGGLE_VIRTUAL = "com.katsuyamaki.DroidOSFOSSLauncher.TOGGLE_VIRTUAL_DISPLAY"
 
     // === RECEIVER - START ===
     private val launcherReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                "com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY" -> {
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.MOVE_TO_DISPLAY" -> {
                     val targetId = intent.getIntExtra("displayId", 0)
                     Log.d(TAG, "Launcher moving to Display: $targetId")
                     uiHandler.post {
@@ -131,9 +131,9 @@ class FloatingLauncherService : AccessibilityService() {
         const val CHANNEL_ID = "OverlayServiceChannel"
         const val TAG = "FloatingService"
         const val DEBUG_TAG = "DROIDOS_DEBUG"
-        const val ACTION_OPEN_DRAWER = "com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER"
-        const val ACTION_UPDATE_ICON = "com.katsuyamaki.DroidOSLauncher.UPDATE_ICON"
-        const val ACTION_CYCLE_DISPLAY = "com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY"
+        const val ACTION_OPEN_DRAWER = "com.katsuyamaki.DroidOSFOSSLauncher.OPEN_DRAWER"
+        const val ACTION_UPDATE_ICON = "com.katsuyamaki.DroidOSFOSSLauncher.UPDATE_ICON"
+        const val ACTION_CYCLE_DISPLAY = "com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY"
         const val HIGHLIGHT_COLOR = 0xFF00A0E9.toInt()
     }
 
@@ -394,7 +394,7 @@ private var isSoftKeyboardSupport = false
     private var isReorderTapEnabled = true
     
     private val PACKAGE_BLANK = "internal.blank.spacer"
-    private val PACKAGE_TRACKPAD = "com.katsuyamaki.DroidOSTrackpadKeyboard"
+    private val PACKAGE_TRACKPAD = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
     
     private var shellService: IShellService? = null
     private var isBound = false
@@ -404,7 +404,7 @@ private var isSoftKeyboardSupport = false
         
         // Register ADB Receiver
         val filter = IntentFilter().apply {
-            addAction("com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY")
+            addAction("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.MOVE_TO_DISPLAY")
         }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(launcherReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -440,22 +440,22 @@ private var isSoftKeyboardSupport = false
                 val enable = intent?.getBooleanExtra("ENABLE", true) ?: true
                 setKeepScreenOn(enable)
                 safeToast(if (enable) "Screen: Always On" else "Screen: Normal Timeout")
-            } else if (action == "com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER") {
+            } else if (action == "com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER") {
                 handleWindowManagerCommand(intent)
-} else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_CUSTOM_MOD_SYNC") {
+} else if (action == "com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_CUSTOM_MOD_SYNC") {
                 // Trackpad is asking for the key, send it
                 if (customModKey != 0) {
                     sendCustomModToTrackpad()
                     Log.d(TAG, "Synced Custom Mod ($customModKey) to Trackpad")
                 }
-            } else if (action == "com.katsuyamaki.DroidOSLauncher.REMOTE_KEY") {
+            } else if (action == "com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY") {
                 val keyCode = intent?.getIntExtra("keyCode", 0) ?: 0
                 val metaState = intent?.getIntExtra("metaState", 0) ?: 0
                 if (keyCode != 0) {
                     // Simulate the event passing through the same logic as hardware keys
                     handleRemoteKeyEvent(keyCode, metaState)
                 }
-            } else if (action == "com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") {
+            } else if (action == "com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_KEYBINDS") {
                 broadcastKeybindsToKeyboard()
             }
         }
@@ -472,8 +472,8 @@ private var isSoftKeyboardSupport = false
             }
         }
 
-        val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.UPDATE_KEYBINDS")
-        intent.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+        val intent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.UPDATE_KEYBINDS")
+        intent.setPackage("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad")
         intent.putStringArrayListExtra("KEYBINDS", binds)
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
         sendBroadcast(intent)
@@ -618,9 +618,9 @@ private var isSoftKeyboardSupport = false
                 Log.d(TAG, "Saving Target Display ID: $targetId")
                 shellService?.runCommand("settings put global droidos_target_display $targetId")
                 
-                val pkgName = "com.katsuyamaki.DroidOSTrackpadKeyboard"
-                val legacyPkg = "com.example.coverscreentester"
-                val serviceComponent = "$pkgName/com.example.coverscreentester.OverlayService"
+                val pkgName = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
+                val legacyPkg = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
+                val serviceComponent = "$pkgName/com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.OverlayService"
                 
                 // 2. DISABLE SERVICE (Reset Crash Backoff)
                 val currentList = android.provider.Settings.Secure.getString(
@@ -667,7 +667,7 @@ private var isSoftKeyboardSupport = false
                 val serviceCmd = "am start-foreground-service -n $serviceComponent --ez force_start true"
                 shellService?.runCommand(serviceCmd)
                 
-                val legacyCmd = "am start-foreground-service -n $legacyPkg/com.example.coverscreentester.OverlayService --ez force_start true"
+                val legacyCmd = "am start-foreground-service -n $legacyPkg/com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.OverlayService --ez force_start true"
                 shellService?.runCommand(legacyCmd)
 
             } catch (e: Exception) {
@@ -1172,10 +1172,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction("KEEP_SCREEN_ON")
-            addAction("com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER")
-            addAction("com.katsuyamaki.DroidOSLauncher.REQUEST_CUSTOM_MOD_SYNC")
-            addAction("com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS") // [FIX] Added this
-            addAction("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_CUSTOM_MOD_SYNC")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_KEYBINDS") // [FIX] Added this
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED) else registerReceiver(commandReceiver, filter)
 
@@ -1226,7 +1226,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     }
 
     private fun sendCustomModToTrackpad() {
-        val intent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_CUSTOM_MOD")
+        val intent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_CUSTOM_MOD")
         intent.setPackage(PACKAGE_TRACKPAD)
         intent.putExtra("KEYCODE", customModKey)
         sendBroadcast(intent)
@@ -1865,13 +1865,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         uiHandler.removeCallbacks(commandTimeoutRunnable)
 
         // Tell Trackpad to redirect input to us
-        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        val captureIntent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_INPUT_CAPTURE")
         captureIntent.setPackage(PACKAGE_TRACKPAD)
         captureIntent.putExtra("CAPTURE", true)
         sendBroadcast(captureIntent)
 
         // NEW: Auto-switch keyboard to Number Layer
-        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        val layerIntent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_NUM_LAYER")
         layerIntent.setPackage(PACKAGE_TRACKPAD)
         layerIntent.putExtra("ACTIVE", true)
         sendBroadcast(layerIntent)
@@ -1888,13 +1888,13 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         uiHandler.removeCallbacks(commandTimeoutRunnable)
 
         // Release Trackpad input
-        val captureIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_INPUT_CAPTURE")
+        val captureIntent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_INPUT_CAPTURE")
         captureIntent.setPackage(PACKAGE_TRACKPAD)
         captureIntent.putExtra("CAPTURE", false)
         sendBroadcast(captureIntent)
 
         // NEW: Restore previous keyboard layer
-        val layerIntent = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_NUM_LAYER")
+        val layerIntent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_NUM_LAYER")
         layerIntent.setPackage(PACKAGE_TRACKPAD)
         layerIntent.putExtra("ACTIVE", false)
         sendBroadcast(layerIntent)
@@ -2380,8 +2380,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         try {
             val serviceIntent = Intent()
             serviceIntent.component = ComponentName(
-                "com.katsuyamaki.DroidOSTrackpadKeyboard", 
-                "com.example.coverscreentester.OverlayService" 
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad", 
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.OverlayService" 
             )
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent) else startService(serviceIntent)
             safeToast("Starting Trackpad Service...")
@@ -2392,7 +2392,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // 2. Try to Launch the Main Activity (Guaranteed to wake app)
         try {
-            val launchIntent = packageManager.getLaunchIntentForPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+            val launchIntent = packageManager.getLaunchIntentForPackage("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad")
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launchIntent)
@@ -2403,30 +2403,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             // New package not found -> Proceed to Step 3
         }
 
-        // 3. Legacy Fallback (Old Package Name)
-        try {
-            val oldIntent = Intent()
-            oldIntent.component = ComponentName(
-                "com.example.coverscreentester", 
-                "com.example.coverscreentester.OverlayService"
-            )
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(oldIntent) else startService(oldIntent)
-            return
-        } catch (e: Exception) {
-            // Legacy Service failed -> Try Legacy Activity
-            try {
-                val oldLaunchIntent = packageManager.getLaunchIntentForPackage("com.example.coverscreentester")
-                if (oldLaunchIntent != null) {
-                    oldLaunchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(oldLaunchIntent)
-                    return
-                }
-            } catch (e2: Exception) {}
-        }
-
-        // 4. Final Resort: Broadcast (Only works if app is already alive)
-        val broadcastNew = Intent("com.katsuyamaki.DroidOSTrackpadKeyboard.SET_TRACKPAD_VISIBILITY")
-        broadcastNew.setPackage("com.katsuyamaki.DroidOSTrackpadKeyboard")
+        // 3. Final Resort: Broadcast (Only works if app is already alive)
+        val broadcastNew = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SET_TRACKPAD_VISIBILITY")
+        broadcastNew.setPackage("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad")
         broadcastNew.putExtra("VISIBLE", true)
         sendBroadcast(broadcastNew)
         
@@ -4327,14 +4306,14 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
     private fun buildAdbCommand(cmdId: String): String? {
         return when (cmdId) {
-            "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
-            "SWAP_ACTIVE_LEFT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_LEFT"
-            "SWAP_ACTIVE_RIGHT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_RIGHT"
-            "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
-            "MINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE --ei INDEX 1"
-            "UNMINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND UNMINIMIZE --ei INDEX 1"
-            "KILL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.WINDOW_MANAGER --es COMMAND KILL --ei INDEX 1"
-            "OPEN_DRAWER" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER"
+            "SWAP" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND SWAP --ei INDEX_A 1 --ei INDEX_B 2"
+            "SWAP_ACTIVE_LEFT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_LEFT"
+            "SWAP_ACTIVE_RIGHT" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND SWAP_ACTIVE_RIGHT"
+            "HIDE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND HIDE --ei INDEX 1"
+            "MINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND MINIMIZE --ei INDEX 1"
+            "UNMINIMIZE" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND UNMINIMIZE --ei INDEX 1"
+            "KILL" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.WINDOW_MANAGER --es COMMAND KILL --ei INDEX 1"
+            "OPEN_DRAWER" -> "adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSLauncher.OPEN_DRAWER"
             else -> null
         }
     }

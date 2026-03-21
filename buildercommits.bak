@@ -1,0 +1,9 @@
+* Trackpad: AndroidManifest.xml: Remove RECORD_AUDIO because voice typing is delegated to system voice IME and app does not capture audio directly.
+* Trackpad: OverlayService.kt: Remove dependency on RECORD_AUDIO by replacing mic recording inspection with voice-IME state polling.
+* Trackpad: OverlayService.kt: Keep voice button active only while voice IME remains selected, without requiring microphone permission.
+* Trackpad: KeyboardOverlay.kt: Remove audio-recording API imports because voice status no longer inspects active recording configurations.
+* Trackpad: KeyboardOverlay.kt: Replace microphone-recording polling with voice-IME polling so voice button state works without RECORD_AUDIO permission.
+
+* Launcher: FloatingLauncherService.kt: Bump bubble z-order above keyboard by nudging it 1px when IME becomes visible
+
+* Launcher: FloatingLauncherService.kt: Bump bubble z-order above keyboard by nudging it 1px when IME becomes visible

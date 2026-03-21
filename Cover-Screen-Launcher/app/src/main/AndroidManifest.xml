@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="com.katsuyamaki.DroidOSFOSSLauncher.permission.INTERNAL_COMMAND"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -10,6 +14,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <queries>
+        <package android:name="com.katsuyamaki.DroidOSFOSSKeyboardTrackpad" />
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="rikka.shizuku.ui" />
     </queries>

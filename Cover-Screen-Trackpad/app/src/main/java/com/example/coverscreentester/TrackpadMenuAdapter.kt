@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.graphics.Color
 import android.util.TypedValue

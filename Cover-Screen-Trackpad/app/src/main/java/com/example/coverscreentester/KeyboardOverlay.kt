@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.content.Context
 import android.graphics.Color
@@ -955,11 +955,11 @@ fun setCustomModKey(keyCode: Int) {
     private fun syncMirrorRatio(width: Int, height: Int) {
         try {
             val ratio = width.toFloat() / height.toFloat()
-            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.SYNC_KEYBOARD_RATIO")
+            val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.SYNC_KEYBOARD_RATIO")
             intent.putExtra("ratio", ratio)
             intent.putExtra("width", width)
             intent.putExtra("height", height)
-            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
             context.sendBroadcast(intent)
         } catch (e: Exception) {
             android.util.Log.e("KeyboardOverlay", "Failed to sync mirror ratio", e)

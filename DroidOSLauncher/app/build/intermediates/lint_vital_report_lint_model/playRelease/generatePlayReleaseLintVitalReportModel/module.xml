@@ -1,0 +1,18 @@
+<lint-module
+    format="1"
+    dir="/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app"
+    name=":app"
+    type="APP"
+    maven="DroidOSLauncher:app:unspecified"
+    agpVersion="8.13.1"
+    buildFolder="build"
+    bootClassPath="/data/data/com.termux/files/home/android-sdk/platforms/android-35/android.jar:/data/data/com.termux/files/home/android-sdk/build-tools/35.0.0/core-lambda-stubs.jar"
+    javaSourceLevel="17"
+    compileTarget="android-35">
+  <lintOptions
+      abortOnError="true"
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="playRelease"/>
+</lint-module>

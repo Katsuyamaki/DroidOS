@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    tools:context=".TriSplitActivity">
+
+    <Button
+        android:id="@+id/app1_button_tri"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App 1 (Left)" />
+
+    <Button
+        android:id="@+id/app2_button_tri"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App 2 (Middle)" />
+
+    <Button
+        android:id="@+id/app3_button_tri"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App 3 (Right)" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/launch_button_tri_split"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="LAUNCH 3-APP SPLIT"
+        style="@style/Widget.AppCompat.Button.Colored" />
+
+</LinearLayout>

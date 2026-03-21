@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_item_press">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingEnd="8dp">
+        
+        <TextView
+            android:id="@+id/kb_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Command Name"
+            android:textColor="#FFFFFF"
+            android:textSize="@dimen/text_size_14sp"
+            android:textStyle="bold"/>
+            
+        <TextView
+            android:id="@+id/kb_desc"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tap to copy ADB command"
+            android:textColor="#888888"
+            android:textSize="@dimen/text_size_10sp"/>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btn_mod"
+        android:layout_width="60dp"
+        android:layout_height="36dp"
+        android:text="ALT"
+        android:textSize="@dimen/text_size_10sp"
+        android:backgroundTint="#444444"
+        android:textColor="#FFFFFF"
+        android:padding="0dp"
+        android:layout_marginEnd="4dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="+"
+        android:textColor="#888888"
+        android:paddingEnd="4dp"/>
+
+    <Button
+        android:id="@+id/btn_key"
+        android:layout_width="60dp"
+        android:layout_height="36dp"
+        android:text="A"
+        android:textSize="@dimen/text_size_10sp"
+        android:backgroundTint="#444444"
+        android:textColor="#FFFFFF"
+        android:padding="0dp"/>
+
+</LinearLayout>

@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -14,12 +14,12 @@ import android.util.Log
  *          OverlayService's dynamic receiver isn't registered (background state).
  * 
  * USAGE (ADB):
- *   adb shell am broadcast -a com.example.coverscreentester.SOFT_RESTART
- *   adb shell am broadcast -a com.example.coverscreentester.MOVE_TO_VIRTUAL --ei DISPLAY_ID 2
- *   adb shell am broadcast -a com.example.coverscreentester.RETURN_TO_PHYSICAL --ei DISPLAY_ID 0
- *   adb shell am broadcast -a com.example.coverscreentester.ENFORCE_ZORDER
- *   adb shell am broadcast -a com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR
- *   adb shell am broadcast -a com.example.coverscreentester.GET_STATUS
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SOFT_RESTART
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.MOVE_TO_VIRTUAL --ei DISPLAY_ID 2
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.RETURN_TO_PHYSICAL --ei DISPLAY_ID 0
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.ENFORCE_ZORDER
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.TOGGLE_VIRTUAL_MIRROR
+ *   adb shell am broadcast -a com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.GET_STATUS
  * =================================================================================
  */
 class InterAppCommandReceiver : BroadcastReceiver() {
@@ -28,12 +28,12 @@ class InterAppCommandReceiver : BroadcastReceiver() {
         private const val TAG = "InterAppCmdReceiver"
         
         // Action constants
-        const val ACTION_SOFT_RESTART = "com.example.coverscreentester.SOFT_RESTART"
-        const val ACTION_MOVE_TO_VIRTUAL = "com.example.coverscreentester.MOVE_TO_VIRTUAL"
-        const val ACTION_RETURN_TO_PHYSICAL = "com.example.coverscreentester.RETURN_TO_PHYSICAL"
-        const val ACTION_ENFORCE_ZORDER = "com.example.coverscreentester.ENFORCE_ZORDER"
-        const val ACTION_TOGGLE_VIRTUAL_MIRROR = "com.example.coverscreentester.TOGGLE_VIRTUAL_MIRROR"
-        const val ACTION_GET_STATUS = "com.example.coverscreentester.GET_STATUS"
+        const val ACTION_SOFT_RESTART = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.SOFT_RESTART"
+        const val ACTION_MOVE_TO_VIRTUAL = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.MOVE_TO_VIRTUAL"
+        const val ACTION_RETURN_TO_PHYSICAL = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.RETURN_TO_PHYSICAL"
+        const val ACTION_ENFORCE_ZORDER = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.ENFORCE_ZORDER"
+        const val ACTION_TOGGLE_VIRTUAL_MIRROR = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.TOGGLE_VIRTUAL_MIRROR"
+        const val ACTION_GET_STATUS = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.GET_STATUS"
         
         // Extra keys
         const val EXTRA_DISPLAY_ID = "DISPLAY_ID"

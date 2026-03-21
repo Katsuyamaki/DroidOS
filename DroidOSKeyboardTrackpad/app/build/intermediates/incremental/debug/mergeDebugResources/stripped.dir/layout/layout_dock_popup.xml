@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dock_popup_container"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#2A2A2A"
+    android:padding="8dp"
+    android:elevation="8dp">
+
+    <!-- Option 1 (Auto-show) removed - always ON -->
+
+    <!-- Option 2: Dock mode (snap overlay KB to bottom) -->
+    <LinearLayout
+        android:id="@+id/option_dock_mode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_dock_mode"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_dock_paste"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Dock Keyboard to Bottom"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <View
+            android:id="@+id/toggle_dock_mode"
+            android:layout_width="36dp"
+            android:layout_height="20dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
+    <!-- Option 2b: Show KB Above Dock (sub-option of Dock Mode) -->
+    <LinearLayout
+        android:id="@+id/option_kb_above_dock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="32dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_kb_above_dock"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:src="@drawable/ic_dock_keyboard"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/text_kb_above_dock"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Show Keyboard Above Toolbar"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"/>
+
+        <View
+            android:id="@+id/toggle_kb_above_dock"
+            android:layout_width="32dp"
+            android:layout_height="16dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#444444"/>
+
+    <!-- Option 3: Auto Resize Apps (only when dock mode enabled) -->
+    <LinearLayout
+        android:id="@+id/option_auto_resize"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="?android:attr/selectableItemBackground">
+
+        <ImageView
+            android:id="@+id/icon_auto_resize"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_dock_switch"
+            android:tint="#888888"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/text_auto_resize"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Auto Resize Full Screen Apps"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <View
+            android:id="@+id/toggle_auto_resize"
+            android:layout_width="36dp"
+            android:layout_height="20dp"
+            android:background="#555555"/>
+    </LinearLayout>
+
+    <View
+        android:id="@+id/divider_resize"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#444444"
+        android:visibility="gone"/>
+
+    <!-- Option 4: Resize Slider (Sub-menu) -->
+    <LinearLayout
+        android:id="@+id/container_resize_slider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/text_resize_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Height Adjustment: 100%"
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp"
+            android:layout_gravity="center_horizontal"/>
+
+        <SeekBar
+            android:id="@+id/seekbar_resize_height"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="50"
+            android:progress="0"
+            android:progressTint="#3DDC84"
+            android:thumbTint="#3DDC84"/>
+
+
+    </LinearLayout>
+
+</LinearLayout>
+
+
+
+
+

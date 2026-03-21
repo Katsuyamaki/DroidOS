@@ -1,0 +1,362 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.katsuyamaki.DroidOSLauncher"
+4    android:versionCode="5"
+5    android:versionName="2.2" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="29"
+9        android:targetSdkVersion="35" />
+10
+11    <permission
+11-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:5:5-7:47
+12        android:name="com.katsuyamaki.DroidOSLauncher.permission.INTERNAL_COMMAND"
+12-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:6:9-83
+13        android:protectionLevel="signature" />
+13-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:7:9-44
+14
+15    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+15-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:9:5-78
+15-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:9:22-75
+16    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+16-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:10:5-77
+16-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:10:22-74
+17    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+17-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:11:5-89
+17-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:11:22-86
+18    <uses-permission android:name="android.permission.WAKE_LOCK" />
+18-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:12:5-68
+18-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:12:22-65
+19    <uses-permission android:name="android.permission.INTERNET" />
+19-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:13:5-67
+19-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:13:22-64
+20    <uses-permission android:name="com.android.vending.BILLING" />
+20-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:14:5-67
+20-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:14:22-64
+21    <uses-permission android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND" />
+21-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:15:5-107
+21-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:15:22-104
+22
+23    <queries>
+23-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:17:5-24:15
+24        <package android:name="moe.shizuku.privileged.api" />
+24-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:18:9-62
+24-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:18:18-59
+25        <package android:name="rikka.shizuku.ui" />
+25-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:19:9-52
+25-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:19:18-49
+26
+27        <intent>
+27-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:20:9-23:18
+28            <action android:name="android.intent.action.MAIN" />
+28-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:21:13-65
+28-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:21:21-62
+29
+30            <category android:name="android.intent.category.LAUNCHER" />
+30-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:22:13-73
+30-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:22:23-70
+31        </intent>
+32        <intent>
+32-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:13:9-15:18
+33            <action android:name="com.android.vending.billing.InAppBillingService.BIND" />
+33-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:14:13-91
+33-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:14:21-88
+34        </intent>
+35        <intent>
+35-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:16:9-18:18
+36            <action android:name="com.google.android.apps.play.billingtestcompanion.BillingOverrideService.BIND" />
+36-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:17:13-116
+36-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:17:21-113
+37        </intent>
+38    </queries>
+39
+40    <permission
+40-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:22:5-24:47
+41        android:name="com.katsuyamaki.DroidOSLauncher.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+41-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:23:9-81
+42        android:protectionLevel="signature" />
+42-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:24:9-44
+43
+44    <uses-permission android:name="com.katsuyamaki.DroidOSLauncher.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+44-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:26:5-97
+44-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:26:22-94
+45    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" /> <!-- Although the *SdkVersion is captured in gradle build files, this is required for non gradle builds -->
+45-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/60b11d83827bf5ae109f7ebd49c2dcb4/transformed/provider-13.1.5/AndroidManifest.xml:8:5-78
+45-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/60b11d83827bf5ae109f7ebd49c2dcb4/transformed/provider-13.1.5/AndroidManifest.xml:8:22-75
+46    <!-- <uses-sdk android:minSdkVersion="14"/> -->
+47    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+47-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:24:5-79
+47-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:24:22-76
+48
+49    <application
+49-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:26:5-95:19
+50        android:allowBackup="true"
+50-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:27:9-35
+51        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+51-->[androidx.core:core:1.10.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e0a624629211807dd212ae4665044dcb/transformed/core-1.10.1/AndroidManifest.xml:28:18-86
+52        android:dataExtractionRules="@xml/data_extraction_rules"
+52-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:28:9-65
+53        android:extractNativeLibs="false"
+54        android:icon="@mipmap/ic_launcher_adaptive"
+54-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:29:9-52
+55        android:label="@string/app_name"
+55-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:30:9-41
+56        android:roundIcon="@mipmap/ic_launcher_adaptive"
+56-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:31:9-57
+57        android:supportsRtl="true"
+57-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:32:9-35
+58        android:theme="@style/Theme.QuadrantLauncher" >
+58-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:33:9-54
+59        <provider
+60            android:name="rikka.shizuku.ShizukuProvider"
+60-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:37:13-57
+61            android:authorities="com.katsuyamaki.DroidOSLauncher.shizuku"
+61-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:38:13-59
+62            android:enabled="true"
+62-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:39:13-35
+63            android:exported="true"
+63-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:40:13-36
+64            android:multiprocess="false" />
+64-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:41:13-41
+65
+66        <activity
+66-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:43:9-50:20
+67            android:name="com.katsuyamaki.DroidOSLauncher.MainActivity"
+67-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:44:13-41
+68            android:exported="true" >
+68-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:45:13-36
+69            <intent-filter>
+69-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:46:13-49:29
+70                <action android:name="android.intent.action.MAIN" />
+70-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:21:13-65
+70-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:21:21-62
+71
+72                <category android:name="android.intent.category.LAUNCHER" />
+72-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:22:13-73
+72-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:22:23-70
+73            </intent-filter>
+74        </activity>
+75        <activity
+75-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:52:9-54:46
+76            android:name="com.katsuyamaki.DroidOSLauncher.IconPickerActivity"
+76-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:52:19-53
+77            android:exported="false"
+77-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:54:19-43
+78            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+78-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:53:19-78
+79        <activity
+79-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:56:9-59:61
+80            android:name="com.katsuyamaki.DroidOSLauncher.FeatureUnlockPurchaseActivity"
+80-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:57:13-58
+81            android:exported="false"
+81-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:58:13-37
+82            android:theme="@style/Theme.QuadrantLauncher" />
+82-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:59:13-58
+83
+84        <service
+84-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:61:9-82:19
+85            android:name="com.katsuyamaki.DroidOSLauncher.FloatingLauncherService"
+85-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:62:13-52
+86            android:description="@string/accessibility_service_description"
+86-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:66:13-76
+87            android:enabled="true"
+87-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:63:13-35
+88            android:exported="true"
+88-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:64:13-36
+89            android:foregroundServiceType="specialUse"
+89-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:67:13-55
+90            android:label="@string/app_name"
+90-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:65:13-45
+91            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
+91-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:68:13-79
+92            <property
+92-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:70:13-72:62
+93                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+93-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:71:17-76
+94                android:value="floating_window_management" />
+94-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:72:17-59
+95
+96            <intent-filter>
+96-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:74:13-78:29
+97                <action android:name="android.accessibilityservice.AccessibilityService" />
+97-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:77:17-92
+97-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:77:25-89
+98            </intent-filter>
+99
+100            <meta-data
+100-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:79:13-81:72
+101                android:name="android.accessibilityservice"
+101-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:80:17-60
+102                android:resource="@xml/accessibility_service_config" />
+102-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:81:17-69
+103        </service>
+104
+105        <activity
+105-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:84:9-76
+106            android:name="com.katsuyamaki.DroidOSLauncher.SplitActivity"
+106-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:84:19-48
+107            android:exported="false" />
+107-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:84:49-73
+108        <activity
+108-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:86:9-89:52
+109            android:name="com.katsuyamaki.DroidOSLauncher.PermissionActivity"
+109-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:87:13-47
+110            android:screenOrientation="portrait"
+110-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:89:13-49
+111            android:theme="@android:style/Theme.NoTitleBar" />
+111-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:88:13-60
+112        <activity
+112-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:91:9-93:40
+113            android:name="com.katsuyamaki.DroidOSLauncher.MenuActivity"
+113-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:92:13-41
+114            android:exported="false" />
+114-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/src/main/AndroidManifest.xml:93:13-37
+115
+116        <meta-data
+116-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:22:9-24:37
+117            android:name="com.google.android.play.billingclient.version"
+117-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:23:13-73
+118            android:value="7.1.1" />
+118-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:24:13-34
+119
+120        <activity
+120-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:26:9-30:75
+121            android:name="com.android.billingclient.api.ProxyBillingActivity"
+121-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:27:13-78
+122            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+122-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:28:13-96
+123            android:exported="false"
+123-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:29:13-37
+124            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+124-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:30:13-72
+125        <activity
+125-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:31:9-35:75
+126            android:name="com.android.billingclient.api.ProxyBillingActivityV2"
+126-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:32:13-80
+127            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+127-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:33:13-96
+128            android:exported="false"
+128-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:34:13-37
+129            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+129-->[com.android.billingclient:billing:7.1.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0ddebe9fdbb93b283cb17088b567e757/transformed/billing-7.1.1/AndroidManifest.xml:35:13-72
+130        <activity
+130-->[com.google.android.gms:play-services-base:18.5.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/09bcd41fb3327704a0f1edf750cb6ea5/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:9-173
+131            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+131-->[com.google.android.gms:play-services-base:18.5.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/09bcd41fb3327704a0f1edf750cb6ea5/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:19-85
+132            android:exported="false"
+132-->[com.google.android.gms:play-services-base:18.5.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/09bcd41fb3327704a0f1edf750cb6ea5/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:146-170
+133            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+133-->[com.google.android.gms:play-services-base:18.5.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/09bcd41fb3327704a0f1edf750cb6ea5/transformed/play-services-base-18.5.0/AndroidManifest.xml:5:86-145
+134
+135        <meta-data
+135-->[com.google.android.gms:play-services-basement:18.4.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/18116a29a6e37b59ad733d4c5a4c6240/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:9-122
+136            android:name="com.google.android.gms.version"
+136-->[com.google.android.gms:play-services-basement:18.4.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/18116a29a6e37b59ad733d4c5a4c6240/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:20-65
+137            android:value="@integer/google_play_services_version" />
+137-->[com.google.android.gms:play-services-basement:18.4.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/18116a29a6e37b59ad733d4c5a4c6240/transformed/play-services-basement-18.4.0/AndroidManifest.xml:6:66-119
+138
+139        <provider
+139-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:24:9-32:20
+140            android:name="androidx.startup.InitializationProvider"
+140-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:25:13-67
+141            android:authorities="com.katsuyamaki.DroidOSLauncher.androidx-startup"
+141-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:26:13-68
+142            android:exported="false" >
+142-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:27:13-37
+143            <meta-data
+143-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:29:13-31:52
+144                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+144-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:30:17-75
+145                android:value="androidx.startup" />
+145-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/056368bebb050a81c5a3483792fc5520/transformed/emoji2-1.2.0/AndroidManifest.xml:31:17-49
+146            <meta-data
+146-->[androidx.lifecycle:lifecycle-process:2.6.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e762013eff1218150f5fe2ac425c135e/transformed/lifecycle-process-2.6.1/AndroidManifest.xml:29:13-31:52
+147                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+147-->[androidx.lifecycle:lifecycle-process:2.6.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e762013eff1218150f5fe2ac425c135e/transformed/lifecycle-process-2.6.1/AndroidManifest.xml:30:17-78
+148                android:value="androidx.startup" />
+148-->[androidx.lifecycle:lifecycle-process:2.6.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/e762013eff1218150f5fe2ac425c135e/transformed/lifecycle-process-2.6.1/AndroidManifest.xml:31:17-49
+149            <meta-data
+149-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:29:13-31:52
+150                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+150-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:30:17-85
+151                android:value="androidx.startup" />
+151-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:31:17-49
+152        </provider>
+153
+154        <meta-data
+154-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/60b11d83827bf5ae109f7ebd49c2dcb4/transformed/provider-13.1.5/AndroidManifest.xml:11:9-13:36
+155            android:name="moe.shizuku.client.V3_SUPPORT"
+155-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/60b11d83827bf5ae109f7ebd49c2dcb4/transformed/provider-13.1.5/AndroidManifest.xml:12:13-57
+156            android:value="true" />
+156-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/60b11d83827bf5ae109f7ebd49c2dcb4/transformed/provider-13.1.5/AndroidManifest.xml:13:13-33
+157
+158        <receiver
+158-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:34:9-52:20
+159            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+159-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:35:13-76
+160            android:directBootAware="false"
+160-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:36:13-44
+161            android:enabled="true"
+161-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:37:13-35
+162            android:exported="true"
+162-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:38:13-36
+163            android:permission="android.permission.DUMP" >
+163-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:39:13-57
+164            <intent-filter>
+164-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:40:13-42:29
+165                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+165-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:41:17-91
+165-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:41:25-88
+166            </intent-filter>
+167            <intent-filter>
+167-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:43:13-45:29
+168                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+168-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:44:17-85
+168-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:44:25-82
+169            </intent-filter>
+170            <intent-filter>
+170-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:46:13-48:29
+171                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+171-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:47:17-88
+171-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:47:25-85
+172            </intent-filter>
+173            <intent-filter>
+173-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:49:13-51:29
+174                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+174-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:50:17-95
+174-->[androidx.profileinstaller:profileinstaller:1.3.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/ca4f63e98ed68f03b26cfe3adaafe5e6/transformed/profileinstaller-1.3.0/AndroidManifest.xml:50:25-92
+175            </intent-filter>
+176        </receiver>
+177
+178        <service
+178-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:28:9-34:19
+179            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+179-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:29:13-103
+180            android:exported="false" >
+180-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:30:13-37
+181            <meta-data
+181-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:31:13-33:39
+182                android:name="backend:com.google.android.datatransport.cct.CctBackendFactory"
+182-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:32:17-94
+183                android:value="cct" />
+183-->[com.google.android.datatransport:transport-backend-cct:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/14c03db7d658dad66890946e0f76dd5b/transformed/transport-backend-cct-3.1.8/AndroidManifest.xml:33:17-36
+184        </service>
+185        <service
+185-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:26:9-30:19
+186            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService"
+186-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:27:13-117
+187            android:exported="false"
+187-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:28:13-37
+188            android:permission="android.permission.BIND_JOB_SERVICE" >
+188-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:29:13-69
+189        </service>
+190
+191        <receiver
+191-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:32:9-34:40
+192            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+192-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:33:13-132
+193            android:exported="false" />
+193-->[com.google.android.datatransport:transport-runtime:3.1.8] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/a6a4eab66a1deaaa5b76587efee5e7ca/transformed/transport-runtime-3.1.8/AndroidManifest.xml:34:13-37
+194    </application>
+195
+196</manifest>

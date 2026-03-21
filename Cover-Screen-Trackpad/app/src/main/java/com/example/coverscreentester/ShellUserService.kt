@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.os.Binder
 import android.os.IBinder
@@ -9,7 +9,7 @@ import android.view.InputDevice
 import android.view.InputEvent
 import android.view.KeyEvent
 import android.view.MotionEvent
-import com.example.coverscreentester.IShellService
+import com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.IShellService
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.lang.reflect.Method

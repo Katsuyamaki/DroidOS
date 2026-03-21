@@ -1,4 +1,4 @@
-package com.example.quadrantlauncher
+package com.katsuyamaki.DroidOSFOSSLauncher
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity

@@ -1,0 +1,33 @@
+<variant
+    name="playRelease"
+    package="com.katsuyamaki.DroidOSLauncher"
+    minSdkVersion="29"
+    targetSdkVersion="35"
+    shrinking="true"
+    mergedManifest="build/intermediates/merged_manifest/playRelease/processPlayReleaseMainManifest/AndroidManifest.xml"
+    proguardFiles="build/intermediates/default_proguard_files/global/proguard-android-optimize.txt-8.13.1:proguard-rules.pro"
+    partialResultsDir="build/intermediates/lint_vital_partial_results/playRelease/lintVitalAnalyzePlayRelease/out"
+    desugaredMethodsFiles="/data/data/com.termux/files/home/.gradle/caches/8.13/transforms/9e2d9e96f31df1db5663b5379f9e6a28/transformed/D8BackportedDesugaredMethods.txt">
+  <buildFeatures
+      viewBinding="true"
+      namespacing="REQUIRED"/>
+  <sourceProviders>
+    <sourceProvider
+        manifests="src/main/AndroidManifest.xml"
+        javaDirectories="src/main/java:build/generated/source/aidl/debug:src/play/java:src/release/java:src/playRelease/java:src/main/kotlin:src/play/kotlin:src/release/kotlin:src/playRelease/kotlin"
+        resDirectories="src/main/res:src/play/res:src/release/res:src/playRelease/res"
+        assetsDirectories="src/main/assets:src/play/assets:src/release/assets:src/playRelease/assets"/>
+  </sourceProviders>
+  <testSourceProviders>
+  </testSourceProviders>
+  <testFixturesSourceProviders>
+  </testFixturesSourceProviders>
+  <artifact
+      classOutputs="build/intermediates/javac/playRelease/compilePlayReleaseJavaWithJavac/classes:build/tmp/kotlin-classes/playRelease:build/kotlinToolingMetadata:build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/playRelease/processPlayReleaseResources/R.jar"
+      type="MAIN"
+      applicationId="com.katsuyamaki.DroidOSLauncher"
+      generatedSourceFolders="build/generated/ap_generated_sources/playRelease/out:build/generated/aidl_source_output_dir/playRelease/out:build/generated/source/buildConfig/play/release:build/generated/data_binding_base_class_source_out/playRelease/out"
+      generatedResourceFolders="build/generated/res/resValues/play/release"
+      desugaredMethodsFiles="/data/data/com.termux/files/home/.gradle/caches/8.13/transforms/9e2d9e96f31df1db5663b5379f9e6a28/transformed/D8BackportedDesugaredMethods.txt">
+  </artifact>
+</variant>

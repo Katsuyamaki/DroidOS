@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    tools:context=".QuadrantActivity">
+
+    <Button
+        android:id="@+id/q1_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App for Quadrant 1" />
+
+    <Button
+        android:id="@+id/q2_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App for Quadrant 2" />
+
+    <Button
+        android:id="@+id/q3_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App for Quadrant 3" />
+
+    <Button
+        android:id="@+id/q4_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select App for Quadrant 4" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/launch_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="LAUNCH"
+        style="@style/Widget.AppCompat.Button.Colored" /> </LinearLayout>

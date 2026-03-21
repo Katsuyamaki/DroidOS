@@ -1,0 +1,16 @@
+#Mon Mar 09 21:42:15 GMT 2026
+path.4=classes2.dex
+path.3=9/classes.dex
+path.2=15/classes.dex
+path.1=0/classes.dex
+path.0=classes.dex
+base.4=/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/intermediates/dex/githubDebug/mergeExtDexGithubDebug/classes2.dex
+base.3=/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/intermediates/dex/githubDebug/mergeProjectDexGithubDebug/9/classes.dex
+base.2=/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/intermediates/dex/githubDebug/mergeProjectDexGithubDebug/15/classes.dex
+base.1=/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/intermediates/dex/githubDebug/mergeProjectDexGithubDebug/0/classes.dex
+base.0=/data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/intermediates/dex/githubDebug/mergeExtDexGithubDebug/classes.dex
+renamed.3=classes4.dex
+renamed.2=classes3.dex
+renamed.1=classes2.dex
+renamed.0=classes.dex
+renamed.4=classes5.dex

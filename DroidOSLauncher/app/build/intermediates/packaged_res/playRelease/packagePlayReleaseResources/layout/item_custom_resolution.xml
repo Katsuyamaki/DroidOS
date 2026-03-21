@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_item_press">
+
+    <EditText
+        android:id="@+id/input_res_w"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:hint="W"
+        android:inputType="number"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#888888"
+        android:gravity="center"
+        android:background="@null"
+        android:imeOptions="actionNext"
+        android:textSize="@dimen/text_size_16sp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="x"
+        android:textColor="#AAAAAA"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"/>
+
+    <EditText
+        android:id="@+id/input_res_h"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:hint="H"
+        android:inputType="number"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#888888"
+        android:gravity="center"
+        android:background="@null"
+        android:imeOptions="actionDone"
+        android:textSize="@dimen/text_size_16sp"/>
+
+    <ImageView
+        android:id="@+id/btn_save_res"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="10dp"
+        android:src="@android:drawable/ic_menu_save"
+        android:tint="#00A0E9"
+        android:background="?attr/selectableItemBackgroundBorderless"/>
+
+</LinearLayout>

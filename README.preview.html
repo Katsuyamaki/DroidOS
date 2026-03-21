@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>DroidOS README Preview (Local)</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">DroidOS README Preview (Local)</h1>
+</header>
+<h1 id="droidos">DroidOS</h1>
+<p>DroidOS is a two-app Android productivity suite: -
+<code>DroidOS Launcher</code>: floating launcher, queue-based tiling
+window manager, display control, and automation hotkeys. -
+<code>DroidOS Trackpad Keyboard</code>: overlay trackpad + keyboard +
+Dock IME toolbar for keyboard/mouse control and typing workflows.</p>
+<p>It is designed for phones, foldables, cover displays, external
+monitors, and AR glasses.</p>
+<figure>
+<img src="images/screenshots/v5/1_processed.jpg"
+alt="DroidOS v5 Screenshot 1" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 1</figcaption>
+</figure>
+<h2 id="video-demos-httpskatsuyamaki.github.io">Video demos:
+https://katsuyamaki.github.io/</h2>
+<h2 id="project-layout-monorepo">Project Layout (Monorepo)</h2>
+<ul>
+<li><code>DroidOSLauncher</code>: Launcher app (window/display
+management)</li>
+<li><code>DroidOSKeyboardTrackpad</code>: Trackpad + keyboard app (input
+and typing)</li>
+</ul>
+<p>Important: open each app folder separately in Android Studio. Do not
+open the monorepo root as a single Android Studio project.</p>
+<hr />
+<h2 id="core-requirements">Core Requirements</h2>
+<ul>
+<li>Shizuku installed and running</li>
+<li>Accessibility permissions granted to both apps as prompted</li>
+<li>Recommended Android developer options:
+<ul>
+<li>Force activities to be resizable</li>
+<li>Enable freeform windows</li>
+</ul></li>
+</ul>
+<hr />
+<h2 id="install-and-first-run">Install and First Run</h2>
+<ol type="1">
+<li>Install both APKs from Releases.</li>
+<li>Open <code>DroidOS Launcher</code> and grant required
+permissions.</li>
+<li>Open <code>DroidOS Trackpad Keyboard</code> and complete the setup
+steps (Accessibility, overlay, keyboard/IME related steps).</li>
+<li>Use Launcher <code>Launch/Reset Trackpad</code> in Settings if the
+input overlay needs to be reattached.</li>
+</ol>
+<hr />
+<h2 id="launcher-overview">Launcher Overview</h2>
+<h3 id="bubble-and-drawer">Bubble and Drawer</h3>
+<ul>
+<li>Tap bubble: open launcher drawer</li>
+<li>Drag bubble: reposition</li>
+<li>Fling bubble: close/restart launcher service</li>
+</ul>
+<h3 id="queue-based-tiling-always-instant">Queue-Based Tiling (Always
+Instant)</h3>
+<p>Launcher now runs in instant behavior only.</p>
+<p>There is no separate Execute mode anymore. Queue/layout changes apply
+immediately.</p>
+<h3 id="queue-operations">Queue Operations</h3>
+<ul>
+<li>Add app: tap app in search list</li>
+<li>Reorder: drag in queue</li>
+<li>Minimize toggle: tap queue icon</li>
+<li>Remove/close: swipe queue icon</li>
+<li>Spacer item: use blank slot entry when needed to keep layout
+gaps</li>
+</ul>
+<h3 id="queue-order---tile-placement">Queue Order -&gt; Tile
+Placement</h3>
+<p>Tile placement follows queue order.</p>
+<ul>
+<li>Apps are mapped left-to-right from the queue into the active layout
+tiles in layout order.</li>
+<li>The 1st queue item goes to tile 1, the 2nd goes to tile 2, and so
+on.</li>
+<li>If you want a specific app in a specific tile, drag that app to the
+matching queue position.</li>
+</ul>
+<p>Example with a 4-tile layout: - tile 1 = queue item 1 - tile 2 =
+queue item 2 - tile 3 = queue item 3 - tile 4 = queue item 4</p>
+<h3 id="favorites-and-blacklist">Favorites and Blacklist</h3>
+<ul>
+<li>In Search tab:
+<ul>
+<li>Swipe left on app to add to blacklist</li>
+<li>Favorite controls remain available from app list interactions</li>
+</ul></li>
+<li>In Blacklist tab:
+<ul>
+<li>Review blacklisted entries</li>
+<li>Swipe to remove from blacklist</li>
+</ul></li>
+</ul>
+<hr />
+<h2 id="display-and-window-management">Display and Window
+Management</h2>
+<h3 id="display-controls">Display Controls</h3>
+<p>Launcher Settings includes: - <code>Screen Off (Standard)</code> -
+<code>Screen Off (Alternate)</code> -
+<code>Switch Display (Current X)</code> -
+<code>Virtual Display (1080p)</code> - resolution controls - DPI
+controls - orientation controls - refresh rate controls</p>
+<h3 id="virtual-display-quick-setup-recommended">Virtual Display Quick
+Setup (Recommended)</h3>
+<ol type="1">
+<li>Enable <code>Virtual Display (1080p)</code> in Launcher
+Settings.</li>
+<li>Tap <code>Switch Display</code> to move launcher targeting to the
+virtual display.</li>
+<li>Start/reset Trackpad from launcher if needed.</li>
+<li>Use trackpad keyboard mirror features if running headless or on AR
+glasses.</li>
+</ol>
+<h3 id="manual-virtual-display-path">Manual Virtual Display Path</h3>
+<p>Advanced/manual users can still use shell-style display workflows,
+but the in-app toggle flow above is the easiest and most reliable path
+for normal use.</p>
+<h3 id="tiled-and-full-screen-integration">Tiled and Full Screen
+Integration</h3>
+<p>DroidOS coordinates tiled windows with normal full-screen apps: -
+Tiled apps can auto-minimize when a full-screen app takes focus. - Tiled
+apps restore when returning to managed/tiled context. - This avoids
+tiled overlays blocking normal full-screen workflows.</p>
+<hr />
+<h2 id="keyboard-and-margin-integration">Keyboard and Margin
+Integration</h2>
+<h3 id="margin-controls-launcher">Margin Controls (Launcher)</h3>
+<p>Launcher Settings contains: - top/bottom manual margins -
+<code>Auto-Adjust Margin for Keyboard (Tiled Apps)</code> -
+<code>Auto-Shrink for Keyboard</code></p>
+<p>When DroidOS toolbar keyboard/IME is active, launcher can adjust
+tiled app space dynamically based on keyboard visibility and
+dock/toolbar state.</p>
+<h3 id="why-this-matters">Why This Matters</h3>
+<p>This integration prevents overlap between: - tiled app windows -
+keyboard UI - dock/toolbar area</p>
+<p>Result: more stable typing layouts in multi-window use.</p>
+<hr />
+<h2 id="trackpad-keyboard-overview">Trackpad Keyboard Overview</h2>
+<h3 id="core-input-features">Core Input Features</h3>
+<ul>
+<li>On-screen trackpad with tap, right-click, drag, and edge
+scrolling</li>
+<li>Overlay keyboard for typing on local or remote displays</li>
+<li>Dock IME toolbar mode for bottom-docked keyboard workflows</li>
+</ul>
+<h3 id="mirror-mode">Mirror Mode</h3>
+<p>Mirror mode is for remote/virtual usage where you need to type
+without directly viewing the phone display.</p>
+<p>Typical use cases: - external monitor - AR glasses -
+screen-off/headless workflows</p>
+<h3 id="spacebar-mouse-modes">Spacebar Mouse Modes</h3>
+<ul>
+<li>Normal: hold spacebar to move cursor, release to return to
+typing</li>
+<li>Extended: toggle <code>Spacebar Mouse Extended Mode</code> to keep
+mouse mode active until turned off</li>
+<li>Click actions come from trackpad gestures or mapped
+keys/hardkeys</li>
+</ul>
+<h3 id="keyboard-blocking">Keyboard Blocking</h3>
+<p>Keyboard blocking is for devices that force OEM keyboards in unwanted
+situations (for example some cover-screen Samsung flows).</p>
+<p>Use it when the system keyboard interrupts DroidOS keyboard
+workflows.</p>
+<h3 id="prediction-and-swipe-typing">Prediction and Swipe Typing</h3>
+<p>The keyboard supports: - swipe prediction - tap prediction -
+learned/custom dictionary words - prediction updates in both normal and
+mirror workflows</p>
+<h3 id="user-dictionary">User Dictionary</h3>
+<p>Add words: - tap new-word predictions to learn/save into custom
+dictionary</p>
+<p>Delete learned words: - touch and hold a prediction, then use
+trash/delete action</p>
+<p>Persistence behavior: - kept during app upgrades - deleted if app
+storage is cleared or app is uninstalled</p>
+<hr />
+<h2 id="virtual-mirror-display-switching-behavior">Virtual Mirror +
+Display Switching Behavior</h2>
+<p>Trackpad keyboard and launcher coordinate display state with
+broadcasts.</p>
+<p>In virtual workflows, display/mode-aware settings (position/size and
+related layout preferences) are remembered by
+display/resolution/orientation/mode, with shared handling for remote
+display IDs (display <code>2+</code>) to keep behavior consistent across
+reconnects.</p>
+<hr />
+<h2 id="automation-and-broadcast-integration">Automation and Broadcast
+Integration</h2>
+<h3 id="launcher-hotkey-security-toggle">Launcher Hotkey Security
+Toggle</h3>
+<p>In Launcher Hotkeys tab: -
+<code>Allow External App Broadcast Access</code></p>
+<p>When ON, third-party automation tools can trigger launcher commands.
+When OFF, external launcher command access is blocked (except trusted
+internal app coordination as designed).</p>
+<h3 id="inter-app-coordination">Inter-App Coordination</h3>
+<p>Launcher and Keyboard exchange broadcast state for: - keybind updates
+- remote key forwarding - IME visibility/tiled state sync - margin and
+display coordination - virtual/physical display transitions</p>
+<h3 id="third-party-automation">Third-Party Automation</h3>
+<p>DroidOS can be integrated with automation apps (for example Tasker or
+MacroDroid) and with ADB broadcast commands.</p>
+<p>This supports advanced workflows such as: - one-tap virtual workspace
+startup - mirror/display mode switching - scripted launcher command
+execution</p>
+<hr />
+<h2 id="other-useful-notes">Other Useful Notes</h2>
+<ul>
+<li>If trackpad/cursor appears on wrong display after big display
+changes, use Launcher <code>Launch/Reset Trackpad</code>.</li>
+<li>If UI overlays feel out of order, restart the relevant service from
+app settings.</li>
+<li>For launcher recovery, fling the launcher bubble.</li>
+</ul>
+<hr />
+<h2 id="contributing">Contributing</h2>
+<p>Contributions are welcome.</p>
+<ul>
+<li>Launcher changes: submit against <code>DroidOSLauncher</code></li>
+<li>Keyboard/trackpad changes: submit against
+<code>DroidOSKeyboardTrackpad</code></li>
+</ul>
+<hr />
+<h2 id="license">License</h2>
+<p>Licensing is split by git history boundary:</p>
+<ul>
+<li><strong>GPLv3 (FOSS):</strong> all code up to and including tag
+<code>foss-final</code> (release v4.0).</li>
+<li><strong>FSL-1.1 (source-available):</strong> commits after
+<code>foss-final</code> on <code>main</code>.</li>
+</ul>
+<p>For a fully FOSS codebase, use the <code>community/fdroid</code>
+branch (GPLv3). See <code>LICENSE.txt</code> for the current branch
+license details.</p>
+<hr />
+<h2 id="support">Support</h2>
+<p>If you want to support development: https://ko-fi.com/katsuyamaki</p>
+<figure>
+<img src="images/screenshots/v5/1_processed.jpg"
+alt="DroidOS v5 Screenshot 1" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 1</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/2_processed.jpg"
+alt="DroidOS v5 Screenshot 2" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 2</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/3_processed.jpg"
+alt="DroidOS v5 Screenshot 3" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 3</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/4_processed.jpg"
+alt="DroidOS v5 Screenshot 4" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 4</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/5_processed.jpg"
+alt="DroidOS v5 Screenshot 5" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 5</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/6_processed.jpg"
+alt="DroidOS v5 Screenshot 6" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 6</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/7_processed.jpg"
+alt="DroidOS v5 Screenshot 7" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 7</figcaption>
+</figure>
+<figure>
+<img src="images/screenshots/v5/8_processed.jpg"
+alt="DroidOS v5 Screenshot 8" />
+<figcaption aria-hidden="true">DroidOS v5 Screenshot 8</figcaption>
+</figure>
+<p><br> <br></p>
+<hr />
+</body>
+</html>

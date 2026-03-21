@@ -1,0 +1,58 @@
+[
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/item_dpi_custom.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/item_dpi_custom.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/layout_trackpad.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/layout_trackpad.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/layout_trackpad_drawer.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/layout_trackpad_drawer.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_settings.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_settings.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/item_trackpad_menu.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/item_trackpad_menu.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_main.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/service_overlay.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/service_overlay.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/layout_dock_popup.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/layout_dock_popup.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_manual_adjust.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_manual_adjust.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_menu.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_menu.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/layout_input_dock.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/layout_input_dock.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/layout_trackpad_bubble.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/layout_trackpad_bubble.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_profiles.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_profiles.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-mergeDebugResources-30:/layout/activity_keyboard.xml",
+        "source": "com.katsuyamaki.DroidOSTrackpadKeyboard.app-main-33:/layout/activity_keyboard.xml"
+    }
+]

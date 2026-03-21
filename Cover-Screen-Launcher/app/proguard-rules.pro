@@ -1,3 +1,3 @@
--keep class com.example.quadrantlauncher.ShellUserService { *; }
--keep class com.example.quadrantlauncher.IShellService { *; }
--keep interface com.example.quadrantlauncher.IShellService { *; }
+-keep class com.katsuyamaki.DroidOSFOSSLauncher.ShellUserService { *; }
+-keep class com.katsuyamaki.DroidOSFOSSLauncher.IShellService { *; }
+-keep interface com.katsuyamaki.DroidOSFOSSLauncher.IShellService { *; }

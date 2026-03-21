@@ -1,0 +1,8 @@
+INSTRUMENTATION_STATUS: class=com.katsuyamaki.DroidOSLauncher.QueueLockModeEspressoTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.katsuyamaki.DroidOSLauncher.QueueLockModeEspressoTest:
+INSTRUMENTATION_STATUS: test=queueTap_whenLockModeOff_dispatchesToggleMinimizeCommand
+INSTRUMENTATION_STATUS_CODE: 1

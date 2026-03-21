@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -44,7 +44,7 @@ class NullInputMethodService : InputMethodService() {
                 // SUMMARY: Commits text directly to the input field.
                 //          Used for normal character input and word completion.
                 // =====================================================================
-                "com.example.coverscreentester.INJECT_TEXT" -> {
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_TEXT" -> {
                     val text = intent.getStringExtra("text")
                     if (!text.isNullOrEmpty()) {
                         ic.commitText(text, 1)
@@ -59,7 +59,7 @@ class NullInputMethodService : InputMethodService() {
                 //          Previously used sendDownUpKeyEvents() which ignores metaState.
                 //          Now constructs full KeyEvent objects with metaState included.
                 // =====================================================================
-                "com.example.coverscreentester.INJECT_KEY" -> {
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_KEY" -> {
                     val code = intent.getIntExtra("keyCode", 0)
                     val metaState = intent.getIntExtra("metaState", 0)
                     
@@ -73,7 +73,7 @@ class NullInputMethodService : InputMethodService() {
                 // SUMMARY: Deletes characters before the cursor.
                 //          Used for backspace and bulk delete operations.
                 // =====================================================================
-                "com.example.coverscreentester.INJECT_DELETE" -> {
+                "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_DELETE" -> {
                     val length = intent.getIntExtra("length", 1)
                     if (length > 0) {
                         ic.deleteSurroundingText(length, 0)
@@ -152,9 +152,9 @@ class NullInputMethodService : InputMethodService() {
         
         // Register receiver for OverlayService communication
         val filter = IntentFilter().apply {
-            addAction("com.example.coverscreentester.INJECT_TEXT")
-            addAction("com.example.coverscreentester.INJECT_KEY")
-            addAction("com.example.coverscreentester.INJECT_DELETE")
+            addAction("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_TEXT")
+            addAction("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_KEY")
+            addAction("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_DELETE")
         }
         
         if (Build.VERSION.SDK_INT >= 33) { // TIRAMISU

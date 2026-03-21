@@ -1,0 +1,13 @@
+#Thu Mar 05 10:10:22 GMT 2026
+path.3=3/classes.dex
+path.2=14/classes.dex
+path.1=0/classes.dex
+path.0=classes.dex
+base.3=/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/build/intermediates/dex/debug/mergeProjectDexDebug/3/classes.dex
+base.2=/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/build/intermediates/dex/debug/mergeProjectDexDebug/14/classes.dex
+base.1=/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/build/intermediates/dex/debug/mergeProjectDexDebug/0/classes.dex
+base.0=/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/build/intermediates/dex/debug/mergeExtDexDebug/classes.dex
+renamed.3=classes4.dex
+renamed.2=classes3.dex
+renamed.1=classes2.dex
+renamed.0=classes.dex

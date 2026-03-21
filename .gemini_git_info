@@ -1,0 +1,5 @@
+commit 6c882c37e26707322d1a97c27dd1a34beb931694
+Author: Katsuyamaki <cmak414@gmail.com>
+Date:   Wed Feb 11 19:23:27 2026 -0500
+
+    * Launcher: FloatingLauncherService.kt: Fix margin slider snap-back by also updating unfilteredDisplayList

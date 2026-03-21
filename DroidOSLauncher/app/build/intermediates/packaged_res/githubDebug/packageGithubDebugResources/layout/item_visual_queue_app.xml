@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="56dp"
+    android:layout_height="56dp"
+    android:padding="4dp">
+
+    <ImageView
+        android:id="@+id/vq_app_icon"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@mipmap/ic_launcher_round"
+        android:padding="4dp"/>
+        
+    <!-- Selection Highlight Border (For Command Targeting) -->
+    <View
+        android:id="@+id/vq_highlight"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_item_active"
+        android:alpha="0.5"
+        android:visibility="gone"/>
+
+    <!-- Focus Indicator (Current System Focus) -->
+    <View
+        android:id="@+id/focus_underline"
+        android:layout_width="30dp"
+        android:layout_height="4dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:background="#00FF00"
+        android:visibility="gone"/>
+
+    <!-- Number Badge -->
+    <TextView
+        android:id="@+id/vq_slot_number"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|start"
+        android:text="1"
+        android:textColor="#FFFFFF"
+        android:textSize="@dimen/text_size_10sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:background="@drawable/bg_bubble"
+        android:backgroundTint="#000000"/>
+
+</FrameLayout>

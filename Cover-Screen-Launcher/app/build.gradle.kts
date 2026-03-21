@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.quadrantlauncher"
+    namespace = "com.katsuyamaki.DroidOSFOSSLauncher"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.katsuyamaki.DroidOSLauncher"
+        applicationId = "com.katsuyamaki.DroidOSFOSSLauncher"
         minSdk = 30
         targetSdk = 34
         versionCode = 3

@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context

@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "artifactType": {
+    "type": "LINKED_RESOURCES_BINARY_FORMAT",
+    "kind": "Directory"
+  },
+  "applicationId": "com.katsuyamaki.DroidOSLauncher",
+  "variantName": "githubDebug",
+  "elements": [
+    {
+      "type": "SINGLE",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 4,
+      "versionName": "2.2",
+      "outputFile": "linked-resources-binary-format-githubDebug.ap_"
+    }
+  ],
+  "elementType": "File"
+}

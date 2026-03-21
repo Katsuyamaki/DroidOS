@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="360dp"
+    android:layout_height="520dp"
+    android:orientation="vertical"
+    android:background="@drawable/bg_drawer"
+    android:elevation="20dp"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/icon_picker_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Pick Lucide Icon"
+        android:textColor="#FFFFFF"
+        android:textSize="@dimen/text_size_18sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <EditText
+        android:id="@+id/icon_picker_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Search icon name..."
+        android:singleLine="true"
+        android:imeOptions="actionDone"
+        android:inputType="text"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#88FFFFFF"
+        android:background="@drawable/bg_item_press"
+        android:padding="10dp"
+        android:layout_marginBottom="10dp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/icon_picker_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="vertical" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp">
+
+        <Button
+            android:id="@+id/btn_reset_icon_picker"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Reset"
+            android:backgroundTint="#555555"
+            android:textColor="#FFFFFF"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/btn_cancel_icon_picker"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Cancel"
+            android:backgroundTint="#555555"
+            android:textColor="#FFFFFF"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+</LinearLayout>

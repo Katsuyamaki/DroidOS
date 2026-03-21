@@ -1,0 +1,282 @@
+[
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_custom_resolution.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_custom_resolution.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_wolf_main.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_wolf_main.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_custom_mod.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_custom_mod.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_block.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_block.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_layout_icon_picker.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_icon_picker.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_main.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_main.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_scaler_bubble.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/scaler_bubble.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_permissions.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_permissions.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_lucide_icon_option.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_lucide_icon_option.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_tri_split.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_tri_split.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_layout_bubble.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_bubble.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_layout_option.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_layout_option.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_dpi_custom.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_dpi_custom.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/xml_backup_rules.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_img_wolf_logo.png.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/img_wolf_logo.png"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_visual_queue_app.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_visual_queue_app.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_cover_final_scale.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_cover_final_scale.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_bg_item_active.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/bg_item_active.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_app_rofi_edit.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_app_rofi_edit.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_simple_text.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_simple_text.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_lock_closed.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_lock_closed.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_cover_tiny.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_cover_tiny.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_launcher_foreground_scaled.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_launcher_foreground_scaled.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_window_split.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_window_split.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_lock_open.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_lock_open.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_scaler_cover_tiny.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_scaler_cover_tiny.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/xml_accessibility_service_config.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/xml/accessibility_service_config.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_mode_resolution.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_mode_resolution.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_scaler_cover.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/scaler_cover.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_wolf_cover_icon.png.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/wolf_cover_icon.png"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_bg_item_press.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/bg_item_press.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_profile_rich.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_profile_rich.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_lock_badge.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_lock_badge.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_mode_profiles.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_mode_profiles.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_bubble.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_bubble.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_box_outline.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_box_outline.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_star_filled.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_star_filled.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_icon_setting.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_icon_setting.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_launcher_adaptive.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_launcher_adaptive.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_bg_bubble.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/bg_bubble.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_layout_key_picker.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_key_picker.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/xml_data_extraction_rules.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_scaler_cover_final.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_scaler_cover_final.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_launcher_cover_final.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_launcher_cover_final.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_wolf_cover.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_wolf_cover.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_cover_v2.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_cover_v2.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_launcher_bubble.png.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_launcher_bubble.png"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_selected_app.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_selected_app.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_layout_rofi_drawer.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_rofi_drawer.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_quadrant.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_quadrant.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_margin_setting.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_margin_setting.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_layout_visual_queue.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_visual_queue.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_launcher.png.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_launcher.png"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_width_setting.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_width_setting.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_scaler_main.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/scaler_main.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_list_item_app.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/list_item_app.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_app_rofi.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_app_rofi.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_scaler_bubble.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_scaler_bubble.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_star_border.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_star_border.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_menu.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_menu.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_font_size.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_font_size.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_mode_keybinds.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_mode_keybinds.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_bubble_icon.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_bubble_icon.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_bg_drawer.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/bg_drawer.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_activity_split.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_split.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_keybind.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_keybind.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/drawable_ic_mode_dpi.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/drawable/ic_mode_dpi.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-internalDebug-34:/layout_item_height_setting.xml.flat",
+        "source": "/data/data/com.termux/files/home/.gradle/daemon/8.13/com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_height_setting.xml"
+    }
+]

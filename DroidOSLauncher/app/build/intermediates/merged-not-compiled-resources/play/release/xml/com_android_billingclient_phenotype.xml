@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated file by com.google.experiments.mobile.metadata.codegen.RegistrationResourceGenerator.java -->
+<phenotype-registrations>
+    <phenotype-registration>
+        <configuration-package>com.android.billingclient</configuration-package>
+        <auto-subpackage>true</auto-subpackage>
+    </phenotype-registration>
+</phenotype-registrations>

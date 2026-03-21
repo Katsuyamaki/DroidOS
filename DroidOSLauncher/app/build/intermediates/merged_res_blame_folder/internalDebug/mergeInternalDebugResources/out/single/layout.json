@@ -1,0 +1,118 @@
+[
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/layout_icon_picker.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_icon_picker.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_app_rofi.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_app_rofi.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_profile_rich.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_profile_rich.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_tri_split.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_tri_split.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_custom_resolution.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_custom_resolution.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_visual_queue_app.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_visual_queue_app.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_selected_app.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_selected_app.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_main.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_margin_setting.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_margin_setting.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_quadrant.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_quadrant.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_simple_text.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_simple_text.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_height_setting.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_height_setting.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_font_size.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_font_size.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_permissions.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_permissions.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_split.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_split.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_layout_option.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_layout_option.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/layout_key_picker.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_key_picker.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_custom_mod.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_custom_mod.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/list_item_app.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/list_item_app.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_app_rofi_edit.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_app_rofi_edit.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_width_setting.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_width_setting.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_icon_setting.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_icon_setting.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/layout_rofi_drawer.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_rofi_drawer.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_lucide_icon_option.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_lucide_icon_option.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/layout_visual_queue.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_visual_queue.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_dpi_custom.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_dpi_custom.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/layout_bubble.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/layout_bubble.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/item_keybind.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/item_keybind.xml"
+    },
+    {
+        "merged": "com.katsuyamaki.DroidOSLauncher.app-mergeInternalDebugResources-33:/layout/activity_menu.xml",
+        "source": "com.katsuyamaki.DroidOSLauncher.app-main-38:/layout/activity_menu.xml"
+    }
+]

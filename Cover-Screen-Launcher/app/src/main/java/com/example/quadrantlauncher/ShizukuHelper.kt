@@ -1,4 +1,4 @@
-package com.example.quadrantlauncher
+package com.katsuyamaki.DroidOSFOSSLauncher
 
 import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku

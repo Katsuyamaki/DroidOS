@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_item_press">
+
+    <TextView
+        android:id="@+id/icon_setting_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="Launcher Icon"
+        android:textColor="#FFFFFF"
+        android:textSize="@dimen/text_size_16sp" />
+
+    <TextView
+        android:id="@+id/icon_setting_reset"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/bg_item_active"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:text="Reset"
+        android:textColor="#FFFFFF"
+        android:textSize="@dimen/text_size_14sp" />
+
+    <ImageView
+        android:id="@+id/icon_setting_preview"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@mipmap/ic_launcher_round"
+        android:background="@drawable/bg_item_active"
+        android:padding="2dp"
+        android:clipToOutline="true"/>
+
+</LinearLayout>

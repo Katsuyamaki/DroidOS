@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:layout_marginBottom="4dp"
+    android:background="@drawable/bg_item_press">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <EditText
+            android:id="@+id/profile_name_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Profile Name"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="@dimen/text_size_16sp"
+            android:background="@null"
+            android:singleLine="true"
+            android:imeOptions="actionDone"
+            android:padding="4dp"
+            android:clickable="false"
+            android:focusable="false"
+            android:longClickable="false"
+            android:focusableInTouchMode="false"/>
+
+        <ImageView
+            android:id="@+id/btn_save_profile_rich"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@android:drawable/ic_menu_save"
+            android:tint="#00A0E9"
+            android:visibility="gone"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/profile_icons_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/profile_details_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Details"
+        android:textColor="#AAAAAA"
+        android:textSize="@dimen/text_size_12sp" />
+
+</LinearLayout>

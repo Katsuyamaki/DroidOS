@@ -1,0 +1,443 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.katsuyamaki.DroidOSTrackpadKeyboard"
+4    android:versionCode="4"
+5    android:versionName="3.1" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="29"
+9        android:targetSdkVersion="35" />
+10
+11    <permission
+11-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:5:5-7:47
+12        android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND"
+12-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:6:9-91
+13        android:protectionLevel="signature" />
+13-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:7:9-44
+14
+15    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+15-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:9:5-78
+15-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:9:22-75
+16    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+16-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:10:5-77
+16-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:10:22-74
+17    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+17-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:11:5-77
+17-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:11:22-74
+18    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+18-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:12:5-89
+18-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:12:22-86
+19    <uses-permission android:name="android.permission.VIBRATE" />
+19-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:13:5-66
+19-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:13:22-63
+20    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+20-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:14:5-71
+20-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:14:22-68
+21    <uses-permission android:name="com.katsuyamaki.DroidOSLauncher.permission.INTERNAL_COMMAND" />
+21-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:15:5-99
+21-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:15:22-96
+22
+23    <queries>
+23-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:17:5-30:15
+24        <package android:name="moe.shizuku.privileged.api" />
+24-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:18:9-62
+24-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:18:18-59
+25        <package android:name="rikka.shizuku.ui" />
+25-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:19:9-52
+25-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:19:18-49
+26
+27        <intent>
+27-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:20:9-22:18
+28            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+28-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:21:13-77
+28-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:21:21-74
+29        </intent>
+30        <intent>
+30-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:23:9-25:18
+31            <action android:name="android.intent.action.VOICE_COMMAND" />
+31-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:24:13-74
+31-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:24:21-71
+32        </intent>
+33        <intent>
+33-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:26:9-28:18
+34            <action android:name="android.view.InputMethod" />
+34-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:27:13-63
+34-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:27:21-60
+35        </intent>
+36
+37        <package android:name="com.google.android.googlequicksearchbox" />
+37-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:29:9-75
+37-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:29:18-72
+38    </queries>
+39
+40    <permission
+40-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
+41        android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+41-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
+42        android:protectionLevel="signature" />
+42-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
+43
+44    <uses-permission android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+44-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
+44-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
+45    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+45-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/b0e07a8f883afc15416344e2fbdb27b4/transformed/provider-13.1.5/AndroidManifest.xml:8:5-78
+45-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/b0e07a8f883afc15416344e2fbdb27b4/transformed/provider-13.1.5/AndroidManifest.xml:8:22-75
+46
+47    <application
+47-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:32:5-174:19
+48        android:allowBackup="true"
+48-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:33:9-35
+49        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+49-->[androidx.core:core:1.13.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/0191a4d215e2716b5fc94116d888225b/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
+50        android:dataExtractionRules="@xml/data_extraction_rules"
+50-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:34:9-65
+51        android:debuggable="true"
+52        android:extractNativeLibs="false"
+53        android:fullBackupContent="@xml/backup_rules"
+53-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:35:9-54
+54        android:icon="@mipmap/ic_trackpad_adaptive"
+54-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:36:9-52
+55        android:label="@string/app_name"
+55-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:37:9-41
+56        android:resizeableActivity="true"
+56-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:41:9-42
+57        android:roundIcon="@mipmap/ic_trackpad_adaptive"
+57-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:38:9-57
+58        android:supportsRtl="true"
+58-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:39:9-35
+59        android:theme="@style/Theme.CoverScreenTester" >
+59-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:40:9-55
+60        <activity
+60-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:43:9-54:20
+61            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.MainActivity"
+61-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:44:13-41
+62            android:configChanges="orientation|screenSize|screenLayout|density|smallestScreenSize"
+62-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:46:13-99
+63            android:exported="true"
+63-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:45:13-36
+64            android:windowSoftInputMode="adjustResize" >
+64-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:47:13-55
+65            <intent-filter>
+65-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:48:13-51:29
+66                <action android:name="android.intent.action.MAIN" />
+66-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:49:17-69
+66-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:49:25-66
+67
+68                <category android:name="android.intent.category.LAUNCHER" />
+68-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:50:17-77
+68-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:50:27-74
+69            </intent-filter>
+70
+71            <meta-data
+71-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:53:13-80
+72                android:name="android.max_aspect"
+72-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:53:24-57
+73                android:value="4.0" />
+73-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:53:58-77
+74        </activity>
+75        <activity
+75-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:56:9-59:62
+76            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.SettingsActivity"
+76-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:57:13-45
+77            android:exported="false"
+77-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:58:13-37
+78            android:theme="@style/Theme.CoverScreenTester" />
+78-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:59:13-59
+79        <activity
+79-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:61:9-64:62
+80            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.ProfilesActivity"
+80-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:62:13-45
+81            android:exported="false"
+81-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:63:13-37
+82            android:theme="@style/Theme.CoverScreenTester" />
+82-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:64:13-59
+83        <activity
+83-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:66:9-69:62
+84            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.ManualAdjustActivity"
+84-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:67:13-49
+85            android:exported="false"
+85-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:68:13-37
+86            android:theme="@style/Theme.CoverScreenTester" />
+86-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:69:13-59
+87        <activity
+87-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:71:9-76:40
+88            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.KeyboardActivity"
+88-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:72:13-45
+89            android:excludeFromRecents="true"
+89-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:75:13-46
+90            android:exported="false"
+90-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:73:13-37
+91            android:noHistory="true"
+91-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:76:13-37
+92            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+92-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:74:13-72
+93        <activity
+93-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:78:9-84:40
+94            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.KeyboardPickerActivity"
+94-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:79:13-51
+95            android:excludeFromRecents="true"
+95-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:81:13-46
+96            android:exported="false"
+96-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:84:13-37
+97            android:launchMode="singleInstance"
+97-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:83:13-48
+98            android:taskAffinity=""
+98-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:82:13-36
+99            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+99-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:80:13-72
+100
+101        <service
+101-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:86:9-118:19
+102            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.OverlayService"
+102-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:87:13-43
+103            android:description="@string/accessibility_service_description"
+103-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:89:13-76
+104            android:exported="true"
+104-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:90:13-36
+105            android:foregroundServiceType="specialUse"
+105-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:91:13-55
+106            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" >
+106-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:88:13-79
+107            <property
+107-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:93:13-95:62
+108                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+108-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:94:17-76
+109                android:value="input_interception_overlay" />
+109-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:95:17-59
+110
+111            <intent-filter>
+111-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:97:13-114:29
+112                <action android:name="android.accessibilityservice.AccessibilityService" />
+112-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:98:17-92
+112-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:98:25-89
+113                <action android:name="PREVIEW_UPDATE" />
+113-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:99:17-57
+113-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:99:25-54
+114                <action android:name="RESET_POSITION" />
+114-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:100:17-57
+114-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:100:25-54
+115                <action android:name="ROTATE" />
+115-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:101:17-49
+115-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:101:25-46
+116                <action android:name="SAVE_LAYOUT" />
+116-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:102:17-54
+116-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:102:25-51
+117                <action android:name="LOAD_LAYOUT" />
+117-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:103:17-54
+117-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:103:25-51
+118                <action android:name="RELOAD_PREFS" />
+118-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:104:17-55
+118-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:104:25-52
+119                <action android:name="DELETE_PROFILE" />
+119-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:105:17-57
+119-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:105:25-54
+120                <action android:name="MANUAL_ADJUST" />
+120-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:106:17-56
+120-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:106:25-53
+121                <action android:name="CYCLE_INPUT_TARGET" />
+121-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:107:17-61
+121-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:107:25-58
+122                <action android:name="RESET_CURSOR" />
+122-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:108:17-55
+122-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:108:25-52
+123                <action android:name="TOGGLE_DEBUG" />
+123-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:109:17-55
+123-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:109:25-52
+124                <action android:name="FORCE_KEYBOARD" />
+124-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:110:17-57
+124-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:110:25-54
+125                <action android:name="TOGGLE_CUSTOM_KEYBOARD" />
+125-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:111:17-65
+125-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:111:25-62
+126                <action android:name="SET_TRACKPAD_VISIBILITY" />
+126-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:112:17-66
+126-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:112:25-63
+127                <action android:name="SET_PREVIEW_MODE" />
+127-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:113:17-59
+127-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:113:25-56
+128            </intent-filter>
+129
+130            <meta-data
+130-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:115:13-117:72
+131                android:name="android.accessibilityservice"
+131-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:116:17-60
+132                android:resource="@xml/accessibility_service_config" />
+132-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:117:17-69
+133        </service>
+134        <service
+134-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:120:9-131:19
+135            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.DockInputMethodService"
+135-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:121:13-51
+136            android:exported="true"
+136-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:124:13-36
+137            android:label="DroidOS Keyboard Toolbar"
+137-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:122:13-53
+138            android:permission="android.permission.BIND_INPUT_METHOD" >
+138-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:123:13-70
+139            <intent-filter>
+139-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:125:13-127:29
+140                <action android:name="android.view.InputMethod" />
+140-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:27:13-63
+140-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:27:21-60
+141            </intent-filter>
+142
+143            <meta-data
+143-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:128:13-130:50
+144                android:name="android.view.im"
+144-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:129:17-47
+145                android:resource="@xml/method" />
+145-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:130:17-47
+146        </service>
+147
+148        <!--
+149             =================================================================================
+150             INTER-APP COMMAND RECEIVER
+151             SUMMARY: Static receiver to handle commands from DroidOS Launcher and ADB.
+152                      Allows soft restart, z-order fixes, and virtual display coordination
+153                      without requiring the Activity to be in foreground.
+154             USAGE (ADB): adb shell am broadcast -a com.example.coverscreentester.SOFT_RESTART
+155             =================================================================================
+156        -->
+157        <receiver
+157-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:140:17-155:28
+158            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.InterAppCommandReceiver"
+158-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:141:21-60
+159            android:enabled="true"
+159-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:142:21-43
+160            android:exported="true"
+160-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:143:21-44
+161            android:permission="com.katsuyamaki.DroidOSTrackpadKeyboard.permission.INTERNAL_COMMAND" >
+161-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:144:21-109
+162            <intent-filter>
+162-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:145:21-154:37
+163                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.SOFT_RESTART" />
+163-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:146:25-103
+163-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:146:33-100
+164                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_VIRTUAL" />
+164-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:147:25-106
+164-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:147:33-103
+165                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.RETURN_TO_PHYSICAL" />
+165-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:148:25-109
+165-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:148:33-106
+166                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.ENFORCE_ZORDER" />
+166-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:149:25-105
+166-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:149:33-102
+167                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.TOGGLE_VIRTUAL_MIRROR" />
+167-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:150:25-112
+167-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:150:33-109
+168                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.OPEN_DRAWER" />
+168-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:151:25-102
+168-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:151:33-99
+169                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.GET_STATUS" />
+169-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:152:25-101
+169-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:152:33-98
+170                <action android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.STOP_SERVICE" />
+170-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:153:25-103
+170-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:153:33-100
+171            </intent-filter>
+172        </receiver>
+173        <!-- END BLOCK: INTER-APP COMMAND RECEIVER -->
+174
+175        <receiver
+175-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:158:9-165:20
+176            android:name="com.katsuyamaki.DroidOSTrackpadKeyboard.UpdateRecoveryReceiver"
+176-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:159:13-51
+177            android:enabled="true"
+177-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:160:13-35
+178            android:exported="false" >
+178-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:161:13-37
+179            <intent-filter>
+179-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:162:13-164:29
+180                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+180-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:163:17-84
+180-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:163:25-81
+181            </intent-filter>
+182        </receiver>
+183
+184        <provider
+185            android:name="rikka.shizuku.ShizukuProvider"
+185-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:168:13-57
+186            android:authorities="com.katsuyamaki.DroidOSTrackpadKeyboard.shizuku"
+186-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:169:13-59
+187            android:enabled="true"
+187-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:170:13-35
+188            android:exported="true"
+188-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:171:13-36
+189            android:multiprocess="false" />
+189-->/data/data/com.termux/files/home/projects/DroidOS/DroidOSKeyboardTrackpad/app/src/main/AndroidManifest.xml:172:13-41
+190        <provider
+190-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:24:9-32:20
+191            android:name="androidx.startup.InitializationProvider"
+191-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:25:13-67
+192            android:authorities="com.katsuyamaki.DroidOSTrackpadKeyboard.androidx-startup"
+192-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:26:13-68
+193            android:exported="false" >
+193-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:27:13-37
+194            <meta-data
+194-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:29:13-31:52
+195                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+195-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:30:17-75
+196                android:value="androidx.startup" />
+196-->[androidx.emoji2:emoji2:1.2.0] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/188d6c9a75a7fae9e274ba5dc69740b0/transformed/emoji2-1.2.0/AndroidManifest.xml:31:17-49
+197            <meta-data
+197-->[androidx.lifecycle:lifecycle-process:2.6.2] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/859303238a392b98a98466a92d8ab139/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:29:13-31:52
+198                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+198-->[androidx.lifecycle:lifecycle-process:2.6.2] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/859303238a392b98a98466a92d8ab139/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:30:17-78
+199                android:value="androidx.startup" />
+199-->[androidx.lifecycle:lifecycle-process:2.6.2] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/859303238a392b98a98466a92d8ab139/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:31:17-49
+200            <meta-data
+200-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:29:13-31:52
+201                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+201-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:30:17-85
+202                android:value="androidx.startup" />
+202-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:31:17-49
+203        </provider>
+204
+205        <meta-data
+205-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/b0e07a8f883afc15416344e2fbdb27b4/transformed/provider-13.1.5/AndroidManifest.xml:11:9-13:36
+206            android:name="moe.shizuku.client.V3_SUPPORT"
+206-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/b0e07a8f883afc15416344e2fbdb27b4/transformed/provider-13.1.5/AndroidManifest.xml:12:13-57
+207            android:value="true" />
+207-->[dev.rikka.shizuku:provider:13.1.5] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/b0e07a8f883afc15416344e2fbdb27b4/transformed/provider-13.1.5/AndroidManifest.xml:13:13-33
+208
+209        <receiver
+209-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:34:9-52:20
+210            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+210-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:35:13-76
+211            android:directBootAware="false"
+211-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:36:13-44
+212            android:enabled="true"
+212-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:37:13-35
+213            android:exported="true"
+213-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:38:13-36
+214            android:permission="android.permission.DUMP" >
+214-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:39:13-57
+215            <intent-filter>
+215-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:40:13-42:29
+216                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+216-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:17-91
+216-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:41:25-88
+217            </intent-filter>
+218            <intent-filter>
+218-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:43:13-45:29
+219                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+219-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:17-85
+219-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:44:25-82
+220            </intent-filter>
+221            <intent-filter>
+221-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:46:13-48:29
+222                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+222-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:17-88
+222-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:47:25-85
+223            </intent-filter>
+224            <intent-filter>
+224-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:49:13-51:29
+225                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+225-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:17-95
+225-->[androidx.profileinstaller:profileinstaller:1.3.1] /data/data/com.termux/files/home/.gradle/caches/8.13/transforms/42431dc60c003460b07692978425eb2d/transformed/profileinstaller-1.3.1/AndroidManifest.xml:50:25-92
+226            </intent-filter>
+227        </receiver>
+228    </application>
+229
+230</manifest>

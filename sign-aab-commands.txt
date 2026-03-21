@@ -1,0 +1,12 @@
+cd /data/data/com.termux/files/home/projects/DroidOS/DroidOSLauncher/app/build/outputs/bundle/playRelease
+
+AAB="app-play-release.aab"
+KEY="/data/data/com.termux/files/home/keys/droidos-upload.jks"
+ALIAS="droidos_upload"
+
+ls -l "$AAB"
+
+jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+  -keystore "$KEY" "$AAB" "$ALIAS"
+
+jarsigner -verify -verbose -certs "$AAB"

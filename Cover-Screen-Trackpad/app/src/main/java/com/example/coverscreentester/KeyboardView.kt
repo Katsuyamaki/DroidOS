@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.content.Context
 import android.graphics.Color
@@ -2072,8 +2072,8 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                                 android.util.Log.d(TAG, "Custom Mod Key MATCH ($keyCode). Broadcasting & Latching...")
 
                                 // Broadcast the modifier to Launcher so IT latches too
-                                val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
-                                intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                                val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
+                                intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
                                 intent.putExtra("keyCode", keyCode)
                                 intent.putExtra("metaState", meta)
                                 context.sendBroadcast(intent)
@@ -2100,8 +2100,8 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
 
                 // Send if valid
                 if (finalCode != 0) {
-                    val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
-                    intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                    val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
+                    intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
                     intent.putExtra("keyCode", finalCode)
                     intent.putExtra("metaState", meta)
                     context.sendBroadcast(intent)
@@ -2133,8 +2133,8 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
 
                         // Only broadcast to Launcher if this shortcut is registered there
                         if (isShortcutRegistered && keyCode != 0) {
-                            val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
-                            intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+                            val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
+                            intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
                             intent.putExtra("keyCode", keyCode)
                             intent.putExtra("metaState", meta)
                             context.sendBroadcast(intent)
@@ -2228,8 +2228,8 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                 }
     
                 if (finalCode != 0) {
-                    val intent = android.content.Intent("com.katsuyamaki.DroidOSLauncher.REMOTE_KEY")
-                    intent.setPackage("com.katsuyamaki.DroidOSLauncher") // Target the Launcher explicitly
+                    val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
+                    intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher") // Target the Launcher explicitly
                     intent.putExtra("keyCode", finalCode)
                     intent.putExtra("metaState", getMetaState())
                     context.sendBroadcast(intent)

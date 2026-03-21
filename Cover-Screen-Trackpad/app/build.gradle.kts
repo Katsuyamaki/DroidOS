@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.coverscreentester"
+    namespace = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.katsuyamaki.DroidOSTrackpadKeyboard"
+        applicationId = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
         minSdk = 30
         targetSdk = 34
         versionCode = 3

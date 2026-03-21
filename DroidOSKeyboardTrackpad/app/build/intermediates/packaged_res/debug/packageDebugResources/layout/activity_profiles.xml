@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Layout Profiles"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="The app automatically detects screen changes (Cover Screen vs AR Glasses) and loads the matching layout."
+            android:textColor="#AAAAAA"
+            android:layout_marginBottom="24dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#222222"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CURRENT SCREEN"
+                android:textColor="#FF9800"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+
+            <TextView
+                android:id="@+id/tvCurrentStats"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ratio: 1.0"
+                android:textColor="#FFFFFF"
+                android:fontFamily="monospace"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/btnSaveCurrent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Save Current Position"
+                android:backgroundTint="#3DDC84"
+                android:textColor="#000000"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+                
+            <Button
+                android:id="@+id/btnResetCurrent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Delete Profile (Reset)"
+                android:backgroundTint="#990000"
+                android:textColor="#FFFFFF"/>
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ALL SAVED PROFILES"
+            android:textColor="#AAAAAA"
+            android:layout_marginBottom="8dp"/>
+            
+        <TextView
+            android:id="@+id/tvProfileList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="..."
+            android:textColor="#FFFFFF"
+            android:fontFamily="monospace"
+            android:layout_marginBottom="24dp"/>
+
+        <Button
+            android:id="@+id/btnClose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Back"
+            android:backgroundTint="#444444"
+            android:layout_marginBottom="40dp"/>
+
+    </LinearLayout>
+</ScrollView>

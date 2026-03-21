@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@null"
+    android:elevation="0dp">
+
+    <LinearLayout
+        android:id="@+id/menu_container"
+        android:layout_width="400dp"
+
+
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_trackpad_drawer"
+        android:orientation="vertical"
+        android:elevation="0dp"
+        android:minHeight="300dp">
+
+        <RelativeLayout
+            android:id="@+id/menu_drag_handle"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:background="#00000000"
+            android:paddingEnd="12dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerVertical="true"
+                android:layout_marginStart="16dp"
+                android:text="DroidOS Trackpad Keyboard"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <ImageView
+                android:id="@+id/btn_close_menu"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="#FF5555" />
+        </RelativeLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal">
+
+            <ScrollView
+                android:layout_width="56dp"
+                android:layout_height="match_parent"
+                android:background="#222222">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp">
+
+                    <ImageView
+                        android:id="@+id/tab_main"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_cursor"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_presets"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_presets"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_move"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_move"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_kb_move"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_kb_move"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_mirror"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_kb_move"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_config"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_config"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_tune"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_tune"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_hardkeys"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_hardkeys"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_bubble"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_bubble"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_profiles"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_profiles"
+                        app:tint="#888888" />
+
+                    <ImageView
+                        android:id="@+id/tab_help"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@drawable/ic_tab_help"
+                        app:tint="#888888" />
+
+                </LinearLayout>
+            </ScrollView>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/menu_recycler"
+                android:layout_width="match_parent"
+                android:layout_height="520dp"
+
+
+                android:padding="8dp"
+                android:scrollbars="vertical" />
+
+
+
+        </LinearLayout>
+
+    </LinearLayout>
+</FrameLayout>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_item_press">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="DPI:"
+        android:textColor="#888888"
+        android:textSize="14sp"
+        android:paddingEnd="8dp"/>
+
+    <EditText
+        android:id="@+id/input_dpi_value"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:inputType="number"
+        android:maxLength="3"
+        android:text="120"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:imeOptions="actionDone"
+        android:background="@null"/>
+
+    <ImageView
+        android:id="@+id/btn_dpi_minus"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="10dp"
+        android:src="@android:drawable/ic_input_delete"
+        app:tint="#FF5555"
+        android:background="?attr/selectableItemBackgroundBorderless"/>
+
+    <ImageView
+        android:id="@+id/btn_dpi_plus"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="10dp"
+        android:src="@android:drawable/ic_input_add"
+        app:tint="#3DDC84"
+        android:background="?attr/selectableItemBackgroundBorderless"/>
+
+</LinearLayout>

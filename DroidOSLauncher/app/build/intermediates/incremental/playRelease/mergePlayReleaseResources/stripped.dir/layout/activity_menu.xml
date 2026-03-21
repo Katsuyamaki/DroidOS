@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Select Launch Mode"
+        android:textSize="@dimen/text_size_20sp"
+        android:layout_marginBottom="24dp" />
+
+    <Button
+        android:id="@+id/button_quadrant"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="4-Quadrant Launcher" />
+
+    <Button
+        android:id="@+id/button_split"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="2-App Split-Screen" />
+
+    <Button
+        android:id="@+id/button_tri_split"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="3-App Split-Screen (Row)" />
+
+</LinearLayout>

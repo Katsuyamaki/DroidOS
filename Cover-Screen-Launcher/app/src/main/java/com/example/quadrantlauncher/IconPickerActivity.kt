@@ -1,4 +1,4 @@
-package com.example.quadrantlauncher
+package com.katsuyamaki.DroidOSFOSSLauncher
 
 import android.app.Activity
 import android.content.Intent
@@ -19,7 +19,7 @@ class IconPickerActivity : ComponentActivity() {
                 AppPreferences.saveIconUri(this, uri.toString())
                 
                 // Notify Service to update
-                sendBroadcast(Intent("com.example.quadrantlauncher.UPDATE_ICON"))
+                sendBroadcast(Intent("com.katsuyamaki.DroidOSFOSSLauncher.UPDATE_ICON"))
             } catch (e: Exception) {
                 e.printStackTrace()
             }

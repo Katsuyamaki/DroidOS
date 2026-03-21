@@ -1,4 +1,4 @@
-package com.example.coverscreentester
+package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.accessibilityservice.AccessibilityService
 import android.app.Notification
@@ -46,7 +46,7 @@ import kotlin.math.max
 import kotlin.math.min
 import android.os.PowerManager
 import java.util.ArrayList
-import com.example.coverscreentester.BuildConfig
+import com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.BuildConfig
 
 class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, InputManager.InputDeviceListener {
 
@@ -150,8 +150,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     //          of registered keybinds. The Launcher will respond with UPDATE_KEYBINDS.
     // =================================================================================
     private fun requestKeybindsFromLauncher() {
-        val intent = Intent("com.katsuyamaki.DroidOSLauncher.REQUEST_KEYBINDS")
-        intent.setPackage("com.katsuyamaki.DroidOSLauncher")
+        val intent = Intent("com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_KEYBINDS")
+        intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
         sendBroadcast(intent)
         Log.d("OverlayService", "Requested keybinds from Launcher")
     }
@@ -1344,8 +1344,8 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             }
 
 // Request Custom Modifier Key from Launcher
-            val syncIntent = Intent("com.katsuyamaki.DroidOSLauncher.REQUEST_CUSTOM_MOD_SYNC")
-            syncIntent.setPackage("com.katsuyamaki.DroidOSLauncher")
+            val syncIntent = Intent("com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_CUSTOM_MOD_SYNC")
+            syncIntent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
             sendBroadcast(syncIntent)
         }
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -1358,10 +1358,10 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     override fun onCreate() {
         super.onCreate()
 
-        // Register BOTH new and old prefixes to support all scripts/buttons
+        // Register FOSS package prefix for all command actions
         val commandFilter = IntentFilter().apply {
             val cmds = listOf("SOFT_RESTART", "ENFORCE_ZORDER", "MOVE_TO_DISPLAY", "TOGGLE_MIRROR", "TOGGLE_VIRTUAL_MIRROR", "OPEN_DRAWER", "STOP_SERVICE", "SET_INPUT_CAPTURE", "SET_CUSTOM_MOD", "UPDATE_KEYBINDS", "SET_NUM_LAYER")
-            val prefixes = listOf("com.katsuyamaki.DroidOSTrackpadKeyboard.", "com.example.coverscreentester.")
+            val prefixes = listOf("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.")
 
             for (p in prefixes) {
                 for (c in cmds) {
@@ -1512,7 +1512,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             
                             Thread {
                                 try {
-                                    val nullKbId = "$packageName/com.example.coverscreentester.NullInputMethodService"
+                                    val nullKbId = "$packageName/com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.NullInputMethodService"
                                     val samsungId = current
                                     
                                     android.util.Log.w(TAG, "┌─ NULLKB RESTORATION ─┐")
@@ -1631,8 +1631,7 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             "ENFORCE_ZORDER", "TOGGLE_VIRTUAL_MIRROR", "GET_STATUS"
                         )
                         val prefixes = listOf(
-                            "com.katsuyamaki.DroidOSTrackpadKeyboard.",
-                            "com.example.coverscreentester."
+                            "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad."
                         )
                         for (prefix in prefixes) {
                             for (act in actions) {
@@ -1718,9 +1717,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         // Register receivers
         val filter = IntentFilter().apply {
-            addAction("com.katsuyamaki.DroidOSLauncher.OPEN_DRAWER")
-            addAction("com.katsuyamaki.DroidOSLauncher.UPDATE_ICON")
-            addAction("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.OPEN_DRAWER")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.UPDATE_ICON")
+            addAction("com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY")
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
         }
@@ -5044,8 +5043,8 @@ if (isResize) {
                 // Create BT Mouse Capture overlay to intercept mouse on physical screen
                 createBtMouseCaptureOverlay()
 
-                val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-                intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+                val intentCycle = Intent("com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY")
+                intentCycle.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
                 sendBroadcast(intentCycle)
             } else {
                 prefs.prefVirtualMirrorMode = false
@@ -5078,8 +5077,8 @@ if (isResize) {
 
             showToast("Mirror Mode OFF")
             
-            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            val intentCycle = Intent("com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY")
+            intentCycle.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
             sendBroadcast(intentCycle)
         }
         
@@ -5313,7 +5312,7 @@ if (isResize) {
 
                 if (isNullKeyboardActive) {
                     // STRATEGY A: NATIVE via InputConnection (for text input keys only)
-                    val intent = Intent("com.example.coverscreentester.INJECT_KEY")
+                    val intent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_KEY")
                     intent.setPackage(packageName)
                     intent.putExtra("keyCode", keyCode)
                     intent.putExtra("metaState", metaState)
@@ -5351,7 +5350,7 @@ if (isResize) {
 
                 if (isNullKeyboardActive) {
                     // STRATEGY A: NATIVE (Clean & Fast)
-                    val intent = Intent("com.example.coverscreentester.INJECT_DELETE")
+                    val intent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_DELETE")
                     intent.setPackage(packageName)
                     intent.putExtra("length", length)
                     sendBroadcast(intent)
@@ -5383,7 +5382,7 @@ if (isResize) {
 
                 if (isNullKeyboardActive) {
                     // STRATEGY A: NATIVE (Cleanest)
-                    val intent = Intent("com.example.coverscreentester.INJECT_TEXT")
+                    val intent = Intent("com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.INJECT_TEXT")
                     intent.setPackage(packageName)
                     intent.putExtra("text", text)
                     sendBroadcast(intent)
@@ -5422,23 +5421,23 @@ if (isResize) {
         if (currentDisplayId == 0 || currentDisplayId == 1) {
             
             // 1. Broadcast: Create Virtual Display
-            val intentToggle = Intent("com.katsuyamaki.DroidOSLauncher.TOGGLE_VIRTUAL_DISPLAY")
-            intentToggle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            val intentToggle = Intent("com.katsuyamaki.DroidOSFOSSLauncher.TOGGLE_VIRTUAL_DISPLAY")
+            intentToggle.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
             sendBroadcast(intentToggle)
 
             showToast("Initializing Virtual Display...")
 
             // 2. Wait for display creation, then Cycle
             handler.postDelayed({
-                 val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-                 intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+                 val intentCycle = Intent("com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY")
+                 intentCycle.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
                  sendBroadcast(intentCycle)
             }, 1000) // Increased wait time to 1s to be safe
             
         } else {
             // If we are already on Virtual (or other), just cycle back to Main
-            val intentCycle = Intent("com.katsuyamaki.DroidOSLauncher.CYCLE_DISPLAY")
-            intentCycle.setPackage("com.katsuyamaki.DroidOSLauncher")
+            val intentCycle = Intent("com.katsuyamaki.DroidOSFOSSLauncher.CYCLE_DISPLAY")
+            intentCycle.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
             sendBroadcast(intentCycle)
         }
     }

@@ -1,4 +1,4 @@
-package com.example.quadrantlauncher
+package com.katsuyamaki.DroidOSFOSSLauncher
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
@@ -16,7 +16,7 @@ import rikka.shizuku.Shizuku
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        const val SELECTED_APP_PACKAGE = "com.example.quadrantlauncher.SELECTED_APP_PACKAGE"
+        const val SELECTED_APP_PACKAGE = "com.katsuyamaki.DroidOSFOSSLauncher.SELECTED_APP_PACKAGE"
     }
 
     // === APP INFO DATA CLASS - START ===
