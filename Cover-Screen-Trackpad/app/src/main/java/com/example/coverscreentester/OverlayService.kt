@@ -68,35 +68,27 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             }
 
             if (matches("SOFT_RESTART")) {
-                Log.d("OverlayService", "Received SOFT_RESTART")
                 performSoftRestart()
             } else if (matches("ENFORCE_ZORDER")) {
-                Log.d("OverlayService", "Received ENFORCE_ZORDER")
                 enforceZOrder()
             } else if (matches("MOVE_TO_DISPLAY")) {
                 val targetId = intent.getIntExtra("displayId", 0)
-                Log.d("OverlayService", "Moving to Display: $targetId")
                 handler.post {
                     removeOldViews()
                     setupUI(targetId)
                     enforceZOrder()
                 }
             } else if (matches("TOGGLE_MIRROR") || matches("TOGGLE_VIRTUAL_MIRROR")) {
-                Log.d("OverlayService", "Toggling Mirror Mode")
                 handler.post { toggleVirtualMirrorMode() }
             } else if (matches("OPEN_DRAWER")) {
-                Log.d("OverlayService", "Opening Drawer")
                 handler.post { toggleDrawer() }
             } else if (matches("STOP_SERVICE")) {
-                Log.d("OverlayService", "Stopping Service")
                 forceExit()
             } else if (matches("SET_INPUT_CAPTURE")) {
                 val capture = intent.getBooleanExtra("CAPTURE", false)
-                Log.d("OverlayService", "Input Capture Set: $capture")
                 keyboardOverlay?.setInputCaptureMode(capture)
 } else if (matches("SET_CUSTOM_MOD")) {
                 val keyCode = intent.getIntExtra("KEYCODE", 0)
-                Log.d("OverlayService", "Custom Mod Key Set: $keyCode")
                 prefs.customModKey = keyCode // Save to prefs
                 keyboardOverlay?.setCustomModKey(keyCode)
             } else if (matches("SET_NUM_LAYER")) {
@@ -110,13 +102,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // =================================================================================
             } else if (matches("UPDATE_KEYBINDS")) {
                 val keybinds = intent.getStringArrayListExtra("KEYBINDS")
-                Log.d("OverlayService", "Received UPDATE_KEYBINDS: ${keybinds?.size ?: 0} keybinds")
                 if (keybinds != null) {
                     launcherBlockedShortcuts.clear()
                     launcherBlockedShortcuts.addAll(keybinds)
                     // Sync to KeyboardOverlay/KeyboardView
                     keyboardOverlay?.setLauncherBlockedShortcuts(launcherBlockedShortcuts)
-                    Log.d("OverlayService", "Blocked shortcuts updated: $launcherBlockedShortcuts")
                 }
             // =================================================================================
             // END HANDLER: UPDATE_KEYBINDS
@@ -153,7 +143,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         val intent = Intent("com.katsuyamaki.DroidOSFOSSLauncher.REQUEST_KEYBINDS")
         intent.setPackage("com.katsuyamaki.DroidOSFOSSLauncher")
         sendBroadcast(intent)
-        Log.d("OverlayService", "Requested keybinds from Launcher")
     }
     // =================================================================================
     // END FUNCTION: requestKeybindsFromLauncher
@@ -212,13 +201,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     try {
                         windowManager?.removeView(btMouseCaptureLayout)
                         windowManager?.addView(btMouseCaptureLayout, btMouseCaptureParams)
-                        Log.d(BT_TAG, "Z-Order: BT Capture Overlay moved to TOP")
                     } catch (e: Exception) {
                         Log.e(BT_TAG, "Z-Order: Failed to move BT Capture", e)
                     }
                 }
                 
-                Log.d("OverlayService", "Z-Order Enforced: Trackpad -> Keyboard -> Cursor -> BT Capture")
             }
         } catch (e: Exception) {
             Log.e("OverlayService", "Z-Order failed", e)
@@ -718,11 +705,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     
                     if (savedPref != null && savedPref.contains("NullInputMethodService")) {
                         // User wants NullKeyboard - don't restore away from it
-                        android.util.Log.d(TAG, "ensureSystemKeyboardRestored: NullKB is user preference, keeping it")
                         return@Thread
                     }
                     
-                    android.util.Log.i(TAG, "Main Screen Detected: Restoring System Keyboard...")
                     handler.post { setSoftKeyboardBlocking(false) }
                 }
             } catch(e: Exception) {}
@@ -744,7 +729,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // Check if Null Keyboard is NOT active
                 val current = shellService?.runCommand("settings get secure default_input_method") ?: ""
                 if (!current.contains("NullInputMethodService")) {
-                    android.util.Log.i(TAG, "Cover Screen Detected: Enforcing Null Keyboard...")
                     handler.post { setSoftKeyboardBlocking(true) }
                 }
             } catch(e: Exception) {}
@@ -771,7 +755,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // 2. If NullKeyboard is active, DO NOT interfere
                 // User may have intentionally set it as their default keyboard
                 if (current.contains("NullInputMethodService")) {
-                    android.util.Log.d(TAG, "ensureCoverKeyboardEnforced: NullKB active, not interfering")
                     return@Thread
                 }
                 
@@ -792,7 +775,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // 6. Only fight if Samsung took over (not if user switched to something else)
                 val isSamsung = current.contains("honeyboard") || current.contains("com.sec.android.inputmethod")
                 if (isSamsung) {
-                    android.util.Log.i(TAG, "ensureCoverKeyboardEnforced: Samsung detected, forcing $targetIme...")
                     handler.post { setSoftKeyboardBlocking(false) }
                 }
             } catch(e: Exception) {}
@@ -1007,7 +989,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 // FIXED: Removed '&& isInOrientationMode' check.
                 // This allows repeat to work in Blue Mode (where isInOrientationMode is false).
                 if (isMirrorRepeating) {
-                    Log.d(TAG, "Mirror repeat: $key")
                     keyboardOverlay?.triggerKeyPress(key)
                     mirrorRepeatHandler.postDelayed(this, MIRROR_REPEAT_INTERVAL)
                 }
@@ -1210,7 +1191,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
                 // Universal ADB/External Commands (Suffix Match)
                 matches("SOFT_RESTART") -> {
-                    Log.d(TAG, "Received SOFT_RESTART command")
                     val targetDisplayId = intent.getIntExtra("DISPLAY_ID", currentDisplayId)
                     handler.post {
                         removeOldViews()
@@ -1222,25 +1202,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     }
                 }
                 matches("MOVE_TO_VIRTUAL") -> {
-                    Log.d(TAG, "Received MOVE_TO_VIRTUAL command")
                     val virtualDisplayId = intent.getIntExtra("DISPLAY_ID", 2)
                     handler.post { moveToVirtualDisplayAndEnableMirror(virtualDisplayId) }
                 }
                 matches("RETURN_TO_PHYSICAL") -> {
-                    Log.d(TAG, "Received RETURN_TO_PHYSICAL command")
                     val physicalDisplayId = intent.getIntExtra("DISPLAY_ID", 0)
                     handler.post { returnToPhysicalDisplay(physicalDisplayId) }
                 }
                 matches("ENFORCE_ZORDER") -> {
-                    Log.d(TAG, "Received ENFORCE_ZORDER command")
                     handler.post { enforceZOrder() }
                 }
                 matches("TOGGLE_VIRTUAL_MIRROR") -> {
-                    Log.d(TAG, "Received TOGGLE_VIRTUAL_MIRROR command")
                     handler.post { toggleVirtualMirrorMode() }
                 }
                 matches("GET_STATUS") -> {
-                    Log.d(TAG, "Received GET_STATUS command")
                     showToast("D:$currentDisplayId T:$inputTargetDisplayId M:${if(prefs.prefVirtualMirrorMode) "ON" else "OFF"}")
                 }
             }
@@ -1413,7 +1388,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 override fun onChange(selfChange: Boolean) {
                     val current = android.provider.Settings.Secure.getString(contentResolver, "default_input_method") ?: ""
                     
-                    android.util.Log.d(TAG, "IME Observer: '$lastObservedIme' -> '$current' (display=$currentDisplayId)")
                     
                     // =================================================================================
                     // SKIP EMPTY ONLY - Allow NullKeyboard through so it can be saved as preference
@@ -1558,21 +1532,17 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     // =================================================================================
                     val shouldSave = when {
                         isSamsung -> {
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING Samsung save")
                             false
                         }
                         isNullKeyboard && prefs.prefBlockSoftKeyboard -> {
                             // Blocking is ON - NullKB was set by our blocking, not user choice
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING NullKB save (blocking ON)")
                             false
                         }
                         isNullKeyboard && !prefs.prefBlockSoftKeyboard -> {
                             // Blocking is OFF - User intentionally selected NullKeyboard
-                            android.util.Log.i(TAG, "IME Observer: SAVING NullKB as user preference (blocking OFF)")
                             true
                         }
                         !isOnMainScreen -> {
-                            android.util.Log.d(TAG, "IME Observer: SKIPPING save (not on main screen)")
                             false
                         }
                         else -> true
@@ -1587,7 +1557,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                             .putString("user_preferred_ime", current)
                             .apply()
                             
-                        android.util.Log.i(TAG, "IME Observer: SAVED preference: $current")
                         
                         val name = when {
                             current.contains("google.android.inputmethod.latin") -> "Gboard"
@@ -1683,7 +1652,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                                y >= kbBounds.top && y <= kbBounds.bottom
         
         if (!isInsideKeyboard) {
-            android.util.Log.d("SpaceTrackpad", "Tap outside keyboard detected - exiting extended mode")
             kbView.exitSpacebarMouseMode()
         }
     }
@@ -1693,7 +1661,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "Accessibility Service Connected")
         isAccessibilityReady = true
 
         // =================================================================================
@@ -1740,7 +1707,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
 
         val finalTarget = if (globalTarget != -1) globalTarget else currentDisplayId
         
-        Log.i(TAG, "Startup: Launching UI on Display $finalTarget (Global: $globalTarget)")
         
         // =================================================================================
         // ONE-TIME FIX: Clear stale Samsung preference if Gboard is available
@@ -1788,7 +1754,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try { createNotification() } catch(e: Exception){ e.printStackTrace() }
         
-        // === DEBUG LOGGING START ===
         if (intent != null) {
             val dId = intent.getIntExtra("displayId", -999)
             val action = intent.action
@@ -1801,7 +1766,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         } else {
             Log.e(TAG, ">>> SERVICE STARTED | INTENT IS NULL <<<")
         }
-        // === DEBUG LOGGING END ===
 
         try {
             checkAndBindShizuku()
@@ -1813,11 +1777,9 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 if (dId != -1) {
                     if (isAccessibilityReady) {
                         // Safe to launch immediately
-                        Log.d(TAG, "onStartCommand: Ready -> Setup UI Display $dId")
                         setupUI(dId)
                     } else {
                         // Too early! Queue it for onServiceConnected
-                        Log.d(TAG, "onStartCommand: Not Ready -> Queueing Display $dId")
                         pendingDisplayId = dId
                     }
                     return START_STICKY
@@ -1865,7 +1827,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                     
                     // ADB / Launcher Commands (Suffix Matching)
                     matches("SOFT_RESTART") -> {
-                        Log.d(TAG, "onStartCommand: SOFT_RESTART -> Delegating")
                         performSoftRestart()
                     }
                     matches("MOVE_TO_VIRTUAL") -> {
@@ -1991,14 +1952,12 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     private fun removeOldViews() {
-        Log.i(BT_TAG, "removeOldViews() called - Attempting to clean up all overlays")
         
         val viewsToRemove = listOf(trackpadLayout, bubbleView, cursorLayout)
         for (view in viewsToRemove) {
             if (view != null && view.parent != null && windowManager != null) {
                 try {
                     windowManager?.removeViewImmediate(view)
-                    android.util.Log.d("OverlayService", "Successfully removed view: ${view.javaClass.simpleName}")
                 } catch (e: Exception) {
                     android.util.Log.e("OverlayService", "Failed to remove view immediate", e)
                 }
@@ -2023,7 +1982,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     private fun setupUI(displayId: Int) {
-        android.util.Log.d("OverlayService", "setupUI starting for Display $displayId")
 
         // 1. Force complete removal of all views using the current WindowManager
         removeOldViews()
@@ -2117,7 +2075,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             // END BLOCK: KEYBOARD BLOCKING/RESTORATION LOGIC FOR DISPLAY SWITCH
             // =================================================================================
 
-            android.util.Log.d("OverlayService", "setupUI completed successfully on Display $displayId")
 
 
         } catch (e: Exception) {
@@ -2450,7 +2407,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      */
     private fun moveToVirtualDisplayAndEnableMirror(virtualDisplayId: Int) {
         try {
-            Log.d(TAG, "Moving to virtual display $virtualDisplayId and enabling mirror mode")
             
             // Store current state for potential return
             preMirrorTrackpadVisible = isTrackpadVisible
@@ -2496,7 +2452,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
      */
     private fun returnToPhysicalDisplay(physicalDisplayId: Int) {
         try {
-            Log.d(TAG, "Returning to physical display $physicalDisplayId")
             
             // Disable Virtual Mirror Mode
             if (prefs.prefVirtualMirrorMode) {
@@ -2604,7 +2559,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 }
             } catch(e: Exception) {}
 
-            Log.i(TAG, ">>> SCHEDULING RESTART (SERVICE) | Display: $restartDisplayId <<<")
             
             // [FIX] Target the SERVICE directly, not the Activity.
             // This bypasses the "Background Activity Start" restriction that was blocking the restart.
@@ -2663,7 +2617,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
 
     fun forceExit() {
-        Log.i(TAG, "forceExit called. Persistent: ${prefs.prefPersistentService}")
         try {
             removeOldViews()
             
@@ -2709,7 +2662,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
         physicalKbWidth = keyboardOverlay?.getViewWidth()?.toFloat() ?: 600f
         physicalKbHeight = keyboardOverlay?.getViewHeight()?.toFloat() ?: 400f
         
-        Log.d(TAG, "Mirror sync: Physical KB now ${physicalKbWidth}x${physicalKbHeight}")
         
         // If mirror has custom size, keep it. Otherwise, could auto-scale here.
         // For now, just update the scaling ratios used for touch coordinate mapping.
@@ -3059,7 +3011,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             shellService = null
         }
 
-        Log.d(TAG, "Binding Shizuku: Attempt 1 (Immediate)")
         // Use existing safe bind method
         bindShizuku() 
         
@@ -3503,13 +3454,11 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     // Explicit Touch Down (Start Drag/Hold)
     fun handleExternalTouchDown() {
         injectAction(MotionEvent.ACTION_DOWN, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
-        android.util.Log.d("TouchInjection", "Touch DOWN at ($cursorX, $cursorY)")
     }
 
     // Explicit Touch Up (End Drag/Hold)
     fun handleExternalTouchUp() {
         injectAction(MotionEvent.ACTION_UP, InputDevice.SOURCE_TOUCHSCREEN, 0, SystemClock.uptimeMillis())
-        android.util.Log.d("TouchInjection", "Touch UP at ($cursorX, $cursorY)")
     }
 
     // Quick Tap (Down + Up)
@@ -3521,7 +3470,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
                 shellService?.injectMouse(MotionEvent.ACTION_DOWN, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, now)
                 Thread.sleep(50)
                 shellService?.injectMouse(MotionEvent.ACTION_UP, cursorX, cursorY, inputTargetDisplayId, InputDevice.SOURCE_TOUCHSCREEN, 0, now + 50)
-                android.util.Log.d("TouchInjection", "Touch TAP at ($cursorX, $cursorY)")
             } catch (e: Exception) {
                 android.util.Log.e("TouchInjection", "TAP failed", e)
             }
@@ -3623,7 +3571,6 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
             Log.e(TAG, "Failed to apply mirror keyboard settings", e)
         }
 
-        Log.d(TAG, "Mirror keyboard settings applied")
     }
     // =================================================================================
     // END BLOCK: applyMirrorKeyboardSettings
@@ -3865,7 +3812,6 @@ if (isResize) {
             val newWidth = (currentWidth + deltaX).coerceIn(250, 1500)
             val newHeight = (currentHeight + deltaY).coerceIn(150, 1200)
             
-            android.util.Log.d("MirrorResize", "Resize: ${currentWidth}x${currentHeight} -> ${newWidth}x${newHeight}")
             
             // Update container window params
             mirrorKeyboardParams?.width = newWidth
@@ -3881,7 +3827,6 @@ if (isResize) {
             val heightRatio = newHeight.toFloat() / physicalHeight
             val newScale = (physicalScale * heightRatio).coerceIn(0.5f, 2.0f)
             
-            android.util.Log.d("MirrorResize", "Scale: physH=$physicalHeight, physScale=$physicalScale, ratio=$heightRatio, newScale=$newScale")
             
             // Apply scale to mirror keyboard - this resizes the actual keys
             mirrorKeyboardView?.setScale(newScale)
@@ -4001,13 +3946,11 @@ if (isResize) {
             Log.e(TAG, "Failed to reset mirror keyboard layout", e)
         }
         
-        Log.d(TAG, "Mirror keyboard reset to defaults")
     }
     // =================================================================================
     // END BLOCK: resetMirrorKeyboardPosition
     // =================================================================================
     fun cycleInputTarget() {
-        Log.i(BT_TAG, "cycleInputTarget() initiated. Current: $inputTargetDisplayId, Host: $currentDisplayId")
         
         if (displayManager == null) return; val displays = displayManager!!.displays; var nextId = -1
         for (d in displays) { if (d.displayId != currentDisplayId) { if (inputTargetDisplayId == currentDisplayId) { nextId = d.displayId; break } else if (inputTargetDisplayId == d.displayId) { continue } else { nextId = d.displayId } } }
@@ -4035,7 +3978,6 @@ if (isResize) {
                 "DroidOS:VirtualDisplayKeepAlive"
             )
             displayWakeLock?.acquire(60 * 60 * 1000L) // 1 hour max, will release manually
-            Log.d(TAG, "Display wake lock ACQUIRED for remote display")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to acquire display wake lock", e)
         }
@@ -4045,7 +3987,6 @@ if (isResize) {
         try {
             if (displayWakeLock?.isHeld == true) {
                 displayWakeLock?.release()
-                Log.d(TAG, "Display wake lock RELEASED")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to release display wake lock", e)
@@ -4161,14 +4102,8 @@ if (isResize) {
         Log.w(BT_TAG, "│ CREATE REQUESTED: createBtMouseCaptureOverlay()         │")
         Log.w(BT_TAG, "└─────────────────────────────────────────────────────────┘")
         // Log stack trace to see WHO requested creation
-        Log.d(BT_TAG, "├─ Trigger Source:", Exception("Creation Stack Trace"))
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
-        Log.d(BT_TAG, "├─ windowManager null?: ${windowManager == null}")
-        Log.d(BT_TAG, "├─ inputTargetDisplayId: $inputTargetDisplayId")
-        Log.d(BT_TAG, "├─ currentDisplayId: $currentDisplayId")
 
         if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Already active")
             return
         }
         if (windowManager == null) {
@@ -4347,7 +4282,6 @@ if (isResize) {
             PixelFormat.TRANSLUCENT
         )
         
-        Log.d(BT_TAG, "├─ Flags: NOT_FOCUSABLE | NOT_TOUCH_MODAL | LAYOUT_IN_SCREEN | LAYOUT_NO_LIMITS")
         btMouseCaptureParams?.gravity = Gravity.TOP or Gravity.LEFT
 
         // Ensure overlay covers entire screen including system bars and cutouts
@@ -4358,21 +4292,15 @@ if (isResize) {
         
         // Log the actual screen dimensions for debugging
         val metrics = resources.displayMetrics
-        Log.d(BT_TAG, "├─ Screen metrics: ${metrics.widthPixels}x${metrics.heightPixels}")
-        Log.d(BT_TAG, "├─ uiScreenWidth=$uiScreenWidth, uiScreenHeight=$uiScreenHeight")
 
-        Log.d(BT_TAG, "├─ Created LayoutParams (MATCH_PARENT x MATCH_PARENT)")
-        Log.d(BT_TAG, "├─ Flags: NOT_FOCUSABLE | LAYOUT_IN_SCREEN | LAYOUT_NO_LIMITS")
 
         try {
             windowManager?.addView(btMouseCaptureLayout, btMouseCaptureParams)
             isBtMouseCaptureActive = true
-            Log.d(BT_TAG, "├─ ★ SUCCESS: BT Mouse Capture Overlay ADDED ★")
             
             // Hide the system cursor
             hideSystemCursor()
             
-            Log.d(BT_TAG, "└─ Overlay active, system cursor hidden")
             showToast("BT Mouse Capture: ON")
         } catch (e: Exception) {
             Log.e(BT_TAG, "├─ ✗ FAILED to add overlay: ${e.message}", e)
@@ -4394,20 +4322,16 @@ if (isResize) {
         // CRITICAL: Log the stack trace to identify the culprit
         Log.w(BT_TAG, ">>> REMOVAL TRIGGER TRACE <<<", Exception("Who called remove?"))
         
-        Log.d(BT_TAG, "├─ isBtMouseCaptureActive: $isBtMouseCaptureActive")
 
         if (!isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "├─ SKIP: Not active (Logical state was already false)")
             return
         }
 
         try {
             btMouseCaptureLayout?.let {
                 val attached = it.isAttachedToWindow
-                Log.d(BT_TAG, "├─ isAttachedToWindow: $attached")
                 if (attached) {
                     windowManager?.removeView(it)
-                    Log.d(BT_TAG, "├─ ★ SUCCESS: Overlay REMOVED ★")
                 }
             }
         } catch (e: Exception) {
@@ -4422,7 +4346,6 @@ if (isResize) {
         // Restore the system cursor
         showSystemCursor()
         
-        Log.d(BT_TAG, "└─ Cleanup complete, system cursor restored")
         showToast("BT Mouse Capture: OFF")
     }
     // =================================================================================
@@ -4463,14 +4386,12 @@ if (isResize) {
     private var systemCursorHidden = false
     
     private fun hideSystemCursor() {
-        Log.d(BT_TAG, "hideSystemCursor() called")
         
         // 1. Try Shizuku (System Level)
         if (shellService != null) {
             try {
                 shellService?.setSystemCursorVisibility(false)
                 systemCursorHidden = true
-                Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Shizuku")
                 return
             } catch (e: Exception) {
                 Log.e(BT_TAG, "├─ Shizuku cursor hide failed", e)
@@ -4485,14 +4406,12 @@ if (isResize) {
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, false)
             systemCursorHidden = true
-            Log.d(BT_TAG, "├─ ★ System cursor HIDDEN via Local Reflection")
         } catch (e: Exception) {
             Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
             // Fallback: Set pointer speed to minimum (doesn't actually hide but reduces visibility)
             try {
                 shellService?.runCommand("settings put system pointer_speed -7")
                 systemCursorHidden = true
-                Log.d(BT_TAG, "├─ Set pointer_speed to -7 (fallback)")
             } catch (e2: Exception) {
                 Log.e(BT_TAG, "├─ Failed to hide cursor: ${e2.message}")
             }
@@ -4500,9 +4419,7 @@ if (isResize) {
     }
     
     private fun showSystemCursor() {
-        Log.d(BT_TAG, "showSystemCursor() called")
         if (!systemCursorHidden) {
-            Log.d(BT_TAG, "├─ Cursor wasn't hidden, skipping")
             return
         }
         
@@ -4511,7 +4428,6 @@ if (isResize) {
             try {
                 shellService?.setSystemCursorVisibility(true)
                 systemCursorHidden = false
-                Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Shizuku")
                 return
             } catch (e: Exception) {}
         }
@@ -4524,13 +4440,11 @@ if (isResize) {
             val setCursorVisibility = imClass.getMethod("setCursorVisibility", Boolean::class.javaPrimitiveType)
             setCursorVisibility.invoke(inputManager, true)
             systemCursorHidden = false
-            Log.d(BT_TAG, "├─ ★ System cursor SHOWN via Local Reflection")
         } catch (e: Exception) {
             Log.w(BT_TAG, "├─ setCursorVisibility not available, trying pointer_speed method")
             try {
                 shellService?.runCommand("settings put system pointer_speed 0")
                 systemCursorHidden = false
-                Log.d(BT_TAG, "├─ Reset pointer_speed to 0 (fallback)")
             } catch (e2: Exception) {
                 Log.e(BT_TAG, "├─ Failed to show cursor: ${e2.message}")
             }
@@ -4621,7 +4535,6 @@ if (isResize) {
             physicalKbWidth = keyboardOverlay?.getKeyboardView()?.width?.toFloat() ?: 600f
             physicalKbHeight = keyboardOverlay?.getKeyboardView()?.height?.toFloat() ?: 400f
 
-            Log.d(TAG, "Mirror KB init: ${mirrorKbWidth}x${mirrorKbHeight}, Physical KB: ${physicalKbWidth}x${physicalKbHeight}")
 // Window params - use saved height or WRAP_CONTENT
             val savedHeight = prefs.prefMirrorHeight
             val mirrorHeight = if (savedHeight != -1 && savedHeight > 0) savedHeight else WindowManager.LayoutParams.WRAP_CONTENT
@@ -4662,7 +4575,6 @@ if (isResize) {
                 updateMirrorSyncDimensions()
             }
 
-            Log.d(TAG, "Mirror keyboard created on display $displayId")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create mirror keyboard", e)
@@ -4719,7 +4631,6 @@ if (isResize) {
             mirrorKbHeight = mirrorView.height.toFloat()
         }
         
-        Log.d(TAG, "Mirror sync updated: Physical=${physicalKbWidth}x${physicalKbHeight}, Mirror=${mirrorKbWidth}x${mirrorKbHeight}")
     }
     // =================================================================================
     // END BLOCK: updateMirrorSyncDimensions
@@ -5007,7 +4918,6 @@ if (isResize) {
 
         if (prefs.prefVirtualMirrorMode) {
             // === ENTERING MIRROR MODE ===
-            android.util.Log.d(TAG, "Entering Virtual Mirror Mode")
 
             // Store state for smart-toggle
             preMirrorTrackpadVisible = isTrackpadVisible
@@ -5053,7 +4963,6 @@ if (isResize) {
 
         } else {
             // === EXITING MIRROR MODE ===
-            android.util.Log.d(TAG, "Exiting Virtual Mirror Mode")
 
             // [FIX] REMOVED the redundant saveLayout() here.
             // It was overwriting the Standard Profile with the active VM layout
@@ -5131,7 +5040,6 @@ if (isResize) {
         //          when display states flicker during virtual display use.
         // =================================================================================
         if (inputTargetDisplayId >= 2) {
-            Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $inputTargetDisplayId")
             return
         }
         // =================================================================================
@@ -5299,7 +5207,6 @@ if (isResize) {
             try {
                 // SYSTEM KEYS: Always use shell injection (bypasses InputConnection)
                 if (keyCode in systemKeys) {
-                    Log.d(TAG, "System key detected ($keyCode), using shell injection")
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_DOWN, metaState, inputTargetDisplayId, 1)
                     Thread.sleep(10)
                     shellService?.injectKey(keyCode, KeyEvent.ACTION_UP, metaState, inputTargetDisplayId, 1)
@@ -5409,7 +5316,6 @@ if (isResize) {
 
     private fun handleInputDeviceChange() {
         if (isBtMouseCaptureActive) {
-            Log.d(BT_TAG, "Input device change detected - Refreshing Cursor Visibility")
             // Re-hide cursor as connection events often reset it to visible
             hideSystemCursor()
         }

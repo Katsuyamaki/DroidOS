@@ -207,7 +207,6 @@ class ShellUserService : IShellService.Stub() {
     override fun setBrightness(value: Int) {
         val token = Binder.clearCallingIdentity()
         try {
-            Log.i(TAG, "setBrightness: $value")
             execShell("settings put system screen_brightness_mode 0")
 
             if (value == -1) {

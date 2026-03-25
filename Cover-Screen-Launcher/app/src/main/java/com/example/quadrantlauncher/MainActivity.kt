@@ -90,7 +90,6 @@ class MainActivity : AppCompatActivity() {
             val checkDisplay = {
                 val currentDisplay = display // Capture 'this.display' into a local variable
                 if (currentDisplay != null && currentDisplay.displayId < 2) {
-                    android.util.Log.i("DroidOS", "Wallpaper landed on Display ${currentDisplay.displayId} - Self Destructing")
                     finish()
                 }
             }
@@ -126,7 +125,6 @@ class MainActivity : AppCompatActivity() {
             windowManager.defaultDisplay.displayId
         }
 
-        Log.d("DroidOS_Main", "Launched on Display $displayId")
 
         // Start service and pass the current display ID to recall the bubble
         val serviceIntent = Intent(this, FloatingLauncherService::class.java)

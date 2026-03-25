@@ -594,14 +594,11 @@ fun setCustomModKey(keyCode: Int) {
     // =================================================================================
     fun setLauncherBlockedShortcuts(shortcuts: Set<String>) {
         launcherBlockedShortcuts = shortcuts
-        Log.d(TAG, "Updated launcher blocked shortcuts: ${shortcuts.size} entries")
 
         // Try to apply to existing KeyboardView (may be null if not shown yet)
         if (keyboardView != null) {
             keyboardView?.setLauncherBlockedShortcuts(shortcuts)
-            Log.d(TAG, "Applied blocked shortcuts to existing KeyboardView")
         } else {
-            Log.d(TAG, "KeyboardView is null - shortcuts will be applied when show() is called")
         }
     }
     // =================================================================================
@@ -1193,7 +1190,6 @@ fun setCustomModKey(keyCode: Int) {
         // =================================================================================
         if (launcherBlockedShortcuts.isNotEmpty()) {
             keyboardView?.setLauncherBlockedShortcuts(launcherBlockedShortcuts)
-            Log.d(TAG, "Applied ${launcherBlockedShortcuts.size} blocked shortcuts to new KeyboardView")
         }
         // =================================================================================
         // END BLOCK: APPLY LAUNCHER BLOCKED SHORTCUTS TO NEW KEYBOARDVIEW
@@ -1286,7 +1282,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
         val extendedModePref = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
             .getBoolean("spacebar_mouse_extended", false)
         keyboardView?.setSpacebarExtendedMode(extendedModePref)
-        android.util.Log.d("KeyboardOverlay", "Applied spacebar extended mode: $extendedModePref")
         
         // Connect callback for drag handle color updates
         keyboardView?.onExtendedModeChanged = { isActive ->
@@ -1354,7 +1349,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
                     if (!isDragGesture) {
                         val kbView = keyboardView
                         if (kbView != null && kbView.isInSpacebarMouseMode()) {
-                            android.util.Log.d("KeyboardOverlay", "Drag handle tapped - exiting extended mode")
                             kbView.exitSpacebarMouseMode()
                             updateDragHandleColor(false)
                             // Haptic feedback
@@ -1391,7 +1385,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
         }
         indicator.invalidate()
         
-        android.util.Log.d("KeyboardOverlay", "Drag handle color updated: extended=$extendedModeActive")
     }
     // =================================================================================
     // END BLOCK: updateDragHandleColor
@@ -1536,7 +1529,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
 
         if (isEndingPunctuation && lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.endsWith(" ")) {
             injectKey(KeyEvent.KEYCODE_DEL, 0)
-            android.util.Log.d("DroidOS_Swipe", "PUNCTUATION: Removed trailing space before '$char'")
             lastCommittedSwipeWord = lastCommittedSwipeWord!!.trimEnd()
         }
 
@@ -1548,7 +1540,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
             if (currentComposingWord.isNotEmpty()) {
                 currentComposingWord.deleteCharAt(currentComposingWord.length - 1)
                 originalCaseWord.deleteCharAt(originalCaseWord.length - 1)
-                android.util.Log.d("DroidOS_Compose", "BACKSPACE: Now composing '$originalCaseWord'")
                 updateSuggestions()
             } else {
                 // Composing word is empty, clear prediction bar
@@ -1653,7 +1644,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
             if (lastCommittedSwipeWord != null && lastCommittedSwipeWord!!.isNotEmpty()) {
                 // Delete the entire swiped word (including trailing space)
                 val deleteCount = lastCommittedSwipeWord!!.length
-                android.util.Log.d("DroidOS_Swipe", "BACKSPACE: Deleting swiped word '${lastCommittedSwipeWord}' ($deleteCount chars)")
 
                 // [FIX] Use Bulk Delete for reliability (especially with KB Blocker)
                 (context as? OverlayService)?.injectBulkDelete(deleteCount)
@@ -1678,7 +1668,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
             if (currentComposingWord.isNotEmpty()) {
                 currentComposingWord.deleteCharAt(currentComposingWord.length - 1)
                 originalCaseWord.deleteCharAt(originalCaseWord.length - 1)
-                android.util.Log.d("DroidOS_Compose", "BACKSPACE (special): Now composing '$originalCaseWord'")
                 updateSuggestions()
             } else {
                 // Nothing to delete from composition, clear prediction bar
@@ -1735,8 +1724,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
     // =================================================================================
 
     override fun onSuggestionClick(text: String, isNew: Boolean) {
-        android.util.Log.d("DroidOS_Prediction", "=== SUGGESTION CLICK START ===")
-        android.util.Log.d("DroidOS_Prediction", "Clicked word: '$text' (isNew=$isNew)")
         
         // FIX: Tell the engine we selected this word so it can learn!
         predictionEngine.recordSelection(context, text)
@@ -1744,14 +1731,11 @@ windowManager.addView(keyboardContainer, keyboardParams)
         // SUCCESS: Manual selection clears penalties
         predictionEngine.clearTemporaryPenalties()
         
-        android.util.Log.d("DroidOS_Prediction", "currentComposingWord: '${currentComposingWord}'")
 
-        android.util.Log.d("DroidOS_Prediction", "lastCommittedSwipeWord: '$lastCommittedSwipeWord'")
 
         // 1. Learn word if it was flagged as New
         if (isNew) {
             predictionEngine.learnWord(context, text, isSentenceStart)
-            android.util.Log.d("DroidOS_Learn", "Learning new word: '$text' (sentenceStart=$isSentenceStart)")
         }
 
         // 2. Handle based on scenario
@@ -1762,7 +1746,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
             // We MUST delete the full swipe word because swipe doesn't leave
             // composing text - it commits directly. Use bulk delete for efficiency.
             val deleteCount = lastCommittedSwipeWord!!.length
-            android.util.Log.d("DroidOS_Prediction", "SCENARIO 1: Swipe correction, deleting $deleteCount chars")
             
             (context as? OverlayService)?.injectBulkDelete(deleteCount)
             
@@ -1777,7 +1760,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
                 currentComposingWord.clear()
                 originalCaseWord.clear()
                 updateSuggestionsWithSync(emptyList())
-                android.util.Log.d("DroidOS_Prediction", "Swipe correction complete: '$newText'")
             }, 50) // 50ms delay for delete to process
             
         } else if (currentComposingWord.isNotEmpty()) {
@@ -1789,7 +1771,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
             val typed = currentComposingWord.toString().lowercase()
             val target = text.lowercase()
             
-            android.util.Log.d("DroidOS_Prediction", "Typed: '$typed', Target: '$target'")
             
             // Find how many characters at the start match
             var matchLength = 0
@@ -1801,7 +1782,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
                 }
             }
             
-            android.util.Log.d("DroidOS_Prediction", "Match length: $matchLength out of ${typed.length} typed")
             
             // Calculate what to delete (typos) and what to append (completion)
             val charsToDelete = typed.length - matchLength
@@ -1811,7 +1791,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
                 ""
             }
             
-            android.util.Log.d("DroidOS_Prediction", "Will delete $charsToDelete chars, append: '$suffixToAppend'")
             
             if (charsToDelete > 0) {
                 // SCENARIO 3: There's a typo - delete mismatched portion first
@@ -1832,7 +1811,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
                     currentComposingWord.clear()
                     originalCaseWord.clear()
                     updateSuggestionsWithSync(emptyList())
-                    android.util.Log.d("DroidOS_Prediction", "Typo correction complete, appended: '$appendText'")
                 }, 50) // 50ms delay
                 
             } else {
@@ -1846,21 +1824,18 @@ windowManager.addView(keyboardContainer, keyboardParams)
                 currentComposingWord.clear()
                 originalCaseWord.clear()
                 updateSuggestionsWithSync(emptyList())
-                android.util.Log.d("DroidOS_Prediction", "Pure completion: appended '$appendText'")
             }
             
         } else {
             // =====================================================================
             // SCENARIO 4: No composing word (edge case - just insert the word)
             // =====================================================================
-            android.util.Log.d("DroidOS_Prediction", "SCENARIO 4: No composing word, inserting full word")
             val newText = "$text "
             injectText(newText)
             lastCommittedSwipeWord = newText
             updateSuggestionsWithSync(emptyList())
         }
         
-        android.util.Log.d("DroidOS_Prediction", "=== SUGGESTION CLICK END ===")
     }
     // =================================================================================
     // END BLOCK: onSuggestionClick - Gboard-style completion approach
@@ -1875,7 +1850,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
     //          DEBUG: Logging to confirm this is being called.
     // =================================================================================
     override fun onSuggestionDropped(text: String) {
-        android.util.Log.d("DroidOS_Drag", ">>> onSuggestionDropped CALLED: '$text'")
 
         // Block the word
         predictionEngine.blockWord(context, text)
@@ -1885,7 +1859,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
         // Refresh suggestions to remove the blocked word
         updateSuggestions()
 
-        android.util.Log.d("DroidOS_Drag", "<<< onSuggestionDropped COMPLETE: '$text' blocked")
     }
     // =================================================================================
     // END BLOCK: onSuggestionDropped with debug logging
@@ -1922,12 +1895,10 @@ windowManager.addView(keyboardContainer, keyboardParams)
                 val results = predictionEngine.decodeSwipeTimed(path, keyMap)
                 
                 if (results.isEmpty()) {
-                    android.util.Log.d("DroidOS_Swipe", "DUAL DECODE: No suggestions returned")
                     return@Thread
                 }
                 
                 val winner = results.first()
-                android.util.Log.d("DroidOS_Swipe", "DUAL DECODE: Winner='${winner.word}' via ${winner.source}")
 
                 handler.post {
                     var bestMatch = winner.word
@@ -2175,7 +2146,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
         }
 
         updateSuggestionsWithSync(candidates.take(3))
-        android.util.Log.d("DroidOS_Suggest", "Updated: ${candidates.map { "${it.text}(new=${it.isNew},custom=${it.isCustom})" }}")
     }
     // =================================================================================
     // END BLOCK: updateSuggestions with styling flags
@@ -2188,7 +2158,6 @@ windowManager.addView(keyboardContainer, keyboardParams)
     // =================================================================================
     fun resetSwipeHistory() {
         if (lastCommittedSwipeWord != null) {
-            android.util.Log.d("DroidOS_Swipe", "External cursor move detected -> Reset swipe history")
         }
         lastCommittedSwipeWord = null
         resetComposition()
@@ -2301,14 +2270,12 @@ windowManager.addView(keyboardContainer, keyboardParams)
             // Save current state if not already saved (prevents overwriting if called twice)
             if (savedLayerState == null) {
                 savedLayerState = kb.getKeyboardState()
-                android.util.Log.d(TAG, "Auto-Switch: Saved layer $savedLayerState, switching to SYMBOLS")
             }
             // SYMBOLS_1 contains the Number Row on main grid
             kb.setKeyboardState(KeyboardView.KeyboardState.SYMBOLS_1)
         } else {
             // Restore
             if (savedLayerState != null) {
-                android.util.Log.d(TAG, "Auto-Switch: Restoring layer $savedLayerState")
                 kb.setKeyboardState(savedLayerState!!)
                 savedLayerState = null
             }

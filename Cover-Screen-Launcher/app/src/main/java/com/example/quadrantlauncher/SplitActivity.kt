@@ -37,7 +37,6 @@ class SplitActivity : AppCompatActivity() {
     // Connection to the Shell Service (Running inside Shizuku)
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.i(TAG, "Shizuku Service Connected")
             shellService = IShellService.Stub.asInterface(binder)
             isBound = true
             launchButton.text = "LAUNCH SPLIT (Ready)"

@@ -71,7 +71,6 @@ class FloatingLauncherService : AccessibilityService() {
             when (intent?.action) {
                 "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad.MOVE_TO_DISPLAY" -> {
                     val targetId = intent.getIntExtra("displayId", 0)
-                    Log.d(TAG, "Launcher moving to Display: $targetId")
                     uiHandler.post {
                         // CLEANUP OLD VIEWS (Bubble & Drawer)
                         try {
@@ -267,7 +266,6 @@ private var isSoftKeyboardSupport = false
             //          when display states flicker during virtual display use (e.g., launching apps).
             // =================================================================================
             if (currentDisplayId >= 2) {
-                Log.d(TAG, "onDisplayChanged: Ignoring - targeting virtual display $currentDisplayId")
                 return
             }
             // =================================================================================
@@ -446,7 +444,6 @@ private var isSoftKeyboardSupport = false
                 // Trackpad is asking for the key, send it
                 if (customModKey != 0) {
                     sendCustomModToTrackpad()
-                    Log.d(TAG, "Synced Custom Mod ($customModKey) to Trackpad")
                 }
             } else if (action == "com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY") {
                 val keyCode = intent?.getIntExtra("keyCode", 0) ?: 0
@@ -615,7 +612,6 @@ private var isSoftKeyboardSupport = false
             try {
                 // 1. Save Target Display
                 val targetId = currentDisplayId
-                Log.d(TAG, "Saving Target Display ID: $targetId")
                 shellService?.runCommand("settings put global droidos_target_display $targetId")
                 
                 val pkgName = "com.katsuyamaki.DroidOSFOSSKeyboardTrackpad"
@@ -633,7 +629,6 @@ private var isSoftKeyboardSupport = false
                                            .replace("$serviceComponent:", "")
                                            .replace(serviceComponent, "")
                     shellService?.runCommand("settings put secure enabled_accessibility_services $newList")
-                    Log.d(TAG, "Service Disabled")
                 }
 
                 // 3. FORCE STOP
@@ -656,7 +651,6 @@ private var isSoftKeyboardSupport = false
                     "$cleanList:$serviceComponent"
                 }
                 
-                Log.d(TAG, "Enabling Service...")
                 shellService?.runCommand("settings put secure enabled_accessibility_services $enableList")
                 shellService?.runCommand("settings put secure accessibility_enabled 1")
 
@@ -714,7 +708,6 @@ private var isSoftKeyboardSupport = false
                 }
                 wakeLock?.acquire(60 * 60 * 1000L) // 1 hour max, will re-acquire as needed
                 keepScreenOnEnabled = true
-                Log.i(TAG, "Wake lock ACQUIRED - screen will stay on")
             } else {
                 wakeLock?.let {
                     if (it.isHeld) {
@@ -722,7 +715,6 @@ private var isSoftKeyboardSupport = false
                     }
                 }
                 keepScreenOnEnabled = false
-                Log.i(TAG, "Wake lock RELEASED - normal screen timeout")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Wake lock error: ${e.message}")
@@ -754,7 +746,6 @@ private var isSoftKeyboardSupport = false
         val typedChar = sequence.last()
         val typedCode = getKeyCodeFromChar(typedChar)
 
-Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customModKey. Latched: $isCustomModLatched")
         
         if (typedCode == 0) return
 
@@ -838,7 +829,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
         // Using toString() directly on the integer for debug output.
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
-        Log.d("DroidOS_Keys", "INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
         // 1. INPUT MODE (Entering Numbers)
         if (pendingCommandId != null) {
@@ -870,16 +860,12 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             // Check if key code matches
             if (bind.second != 0 && bind.second == keyCode) {
-                Log.d("DroidOS_Keys", " -> Key Match for '${cmd.label}'. Checking modifiers...")
-                Log.d("DroidOS_Keys", "    Required: ${bind.first} | Current: $metaState")
 
                 if (checkModifiers(metaState, bind.first)) {
-                    Log.d("DroidOS_Keys", "    MATCH! Triggering...")
                     triggerCommand(cmd)
                     commandTriggered = true
                     break
                 } else {
-                    Log.d("DroidOS_Keys", "    Modifier Mismatch.")
                 }
             }
         }
@@ -899,23 +885,19 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Shared logic for both Hardware Keys (onKeyEvent) and Virtual Remote Keys (Broadcast)
     private fun handleRemoteKeyEvent(keyCode: Int, metaState: Int) {
         val keyName = KeyEvent.keyCodeToString(keyCode)
-        Log.d("DroidOS_Keys", "RECEIVER: handleRemoteKeyEvent called with $keyCode (Meta: $metaState)")
 
         // CHECK CUSTOM MODIFIER (Remote/Broadcast)
         if (customModKey != 0) {
-            Log.d("DroidOS_Keys", "Checking Custom Mod: Recv($keyCode) vs Saved($customModKey)")
 
             if (keyCode == customModKey) {
                 isCustomModLatched = true
                 // No timer - stays latched until next key press
                 safeToast("Custom Mod Active (Remote)")
-                Log.d("DroidOS_Keys", "Custom Mod LATCHED via Broadcast")
                 return
             }
         }
 
         val metaStr = if (metaState != 0) "Meta($metaState)" else "None"
-        Log.d("DroidOS_Keys", "REMOTE INPUT: Key=$keyName($keyCode) Meta=$metaStr($metaState)")
 
         // 1. INPUT MODE (Entering Numbers for Visual Queue)
         if (pendingCommandId != null) {
@@ -943,7 +925,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             if (bind.second != 0 && bind.second == keyCode) {
                 // Check modifiers
                 if (checkModifiers(metaState, bind.first)) {
-                    Log.d("DroidOS_Keys", "    MATCH! Triggering via Remote...")
                     triggerCommand(cmd)
                     commandTriggered = true
                     break
@@ -985,7 +966,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun triggerCommand(cmd: CommandDef) {
         if (cmd.argCount == 0) {
             // Immediate
-            Log.d("DroidOS_Keys", "Executing Immediate Command: ${cmd.id}")
             val intent = Intent().putExtra("COMMAND", cmd.id)
             handleWindowManagerCommand(intent)
             safeToast("Executed: ${cmd.label}")
@@ -1157,7 +1137,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // AccessibilityService entry point - called when user enables service in Settings
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "Accessibility Service Connected")
 
         // Initialize WindowManager
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -1240,7 +1219,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Priority: 1. Explicit ID from Intent (Triggered by Icon Click) 2. Last saved Physical ID
         val targetDisplayId = intent?.getIntExtra("DISPLAY_ID", currentDisplayId) ?: currentDisplayId
 
-        Log.d(TAG, "onStartCommand: Target Display $targetDisplayId (Current: $currentDisplayId)")
 
         if (bubbleView != null) {
             // If we are already running but the target display changed, move the bubble
@@ -1326,7 +1304,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Save it immediately so it becomes the baseline preference
                 AppPreferences.saveDisplayDpi(this, displayId, currentDpiSetting)
 
-                Log.d(TAG, "Initialized DPI from System: $currentDpiSetting")
             } else {
                 currentDpiSetting = -1
             }
@@ -1373,7 +1350,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             // Only auto-force if we found a high refresh rate (>60)
             if (maxRate > 60f) {
-                Log.i(TAG, "Auto-Force $maxRate Hz (Mode $bestModeId)")
 
                 uiHandler.post {
                     try {
@@ -1460,7 +1436,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         uiHandler.post {
             debugStatusView?.text = debugText
             // Also log full details
-            Log.d(DEBUG_TAG, "[$action] FULL: pkg=$pkg cls=$className")
         }
     }
     // === DEBUG APP IDENTIFICATION - END ===
@@ -1851,7 +1826,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 val targetWM = displayContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: windowManager
                 targetWM.addView(visualQueueView, visualQueueParams)
                 isVisualQueueVisible = true
-                Log.d(TAG, "Visual Queue Added to Display $currentDisplayId")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to add Visual Queue", e)
                 e.printStackTrace()
@@ -1913,7 +1887,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     private fun forceAppToDisplay(pkg: String, targetDisplayId: Int) {
         // [LOCK] Prevent duplicate threads
         if (activeEnforcements.contains(pkg)) {
-            Log.d("DROIDOS_WATCHDOG", "SKIP: Enforcement already active for $pkg")
             return
         }
         activeEnforcements.add(pkg)
@@ -1973,10 +1946,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         // Apply Bounds
                         if (bounds != null) {
                             shellService?.runCommand("am task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId @ $bounds")
                         } else {
                             shellService?.runCommand("am task resize $tid 0 0 1000 1000")
-                            Log.d("DROIDOS_WATCHDOG", "Attempt $i: D$targetDisplayId (Default)")
                         }
 
                         // Check success
@@ -2185,9 +2156,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Opens/closes the launcher drawer overlay
     // Updates debug display with queue state when opening
     private fun toggleDrawer() {
-        Log.d(TAG, "toggleDrawer called. isExpanded=$isExpanded")
         if (isExpanded) {
-            Log.d(TAG, "Closing drawer")
             try { windowManager.removeView(drawerView) } catch(e: Exception) {}
             bubbleView?.visibility = View.VISIBLE
             isExpanded = false
@@ -2210,20 +2179,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 }.start()
             }
         } else {
-            Log.d(TAG, "Opening drawer")
             updateDrawerHeight(false)
             
             // Z-ORDER UPDATE: Try adding with High Priority, Fallback if fails
             try {
-                Log.d(TAG, "Attempting to add drawer view")
                 windowManager.addView(drawerView, drawerParams)
-                Log.d(TAG, "Drawer view added successfully")
             } catch(e: Exception) {
                 Log.e(TAG, "Failed to add drawer with high priority: ${e.message}")
                 try {
                     drawerParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                     windowManager.addView(drawerView, drawerParams)
-                    Log.d(TAG, "Drawer added with fallback type")
                 } catch(e2: Exception) {
                     Log.e(TAG, "Failed to add drawer with fallback: ${e2.message}")
                 }
@@ -2265,7 +2230,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             
             // Also log full details
             selectedAppsQueue.forEachIndexed { i, app ->
-                Log.d(DEBUG_TAG, "Queue[$i]: ${app.label} pkg=${app.packageName} cls=${app.className}")
             }
         }
     }
@@ -2326,10 +2290,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 allAppsList.add(app)
             }
             
-            Log.d(DEBUG_TAG, "Loaded: $label pkg=$pkg cls=$validClassName")
         }
         allAppsList.sortBy { it.label.lowercase() }
-        Log.d(TAG, "Loaded ${allAppsList.size} apps total")
     }
     // === LOAD INSTALLED APPS - END ===
 
@@ -2571,10 +2533,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 intent.setClassName(basePkg, className)
                 intent.action = Intent.ACTION_MAIN
                 intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                Log.d(TAG, "launchViaApi: explicit component $basePkg/$className")
             } else {
                 intent = packageManager.getLaunchIntentForPackage(basePkg)
-                Log.d(TAG, "launchViaApi: default intent for $basePkg")
             }
 
             if (intent == null) {
@@ -2590,11 +2550,9 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
             if (bounds != null) {
                 options.setLaunchBounds(bounds)
-                Log.d(TAG, "launchViaApi: bounds=$bounds")
             }
 
             startActivity(intent, options.toBundle())
-            Log.d(TAG, "launchViaApi: SUCCESS $basePkg")
 
         } catch (e: Exception) {
             Log.e(TAG, "launchViaApi FAILED, trying shell", e)
@@ -2625,12 +2583,10 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 "am start -p $basePkg -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --display $currentDisplayId --windowingMode 5 --user 0"
             }
 
-            Log.d(TAG, "launchViaShell: $cmd")
 
             Thread {
                 try {
                     shellService?.runCommand(cmd)
-                    Log.d(TAG, "launchViaShell: SUCCESS")
                 } catch (e: Exception) {
                     Log.e(TAG, "launchViaShell: FAILED", e)
                 }
@@ -2867,7 +2823,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         // Preserve sorting (Active -> Minimized)
         sortAppQueue()
         updateAllUIs()
-        Log.d(TAG, "Restored ${selectedAppsQueue.size} apps from prefs")
     }
     // === RESTORE QUEUE IMMEDIATE - END ===
 
@@ -2922,7 +2877,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
                                     appInfo.isMinimized = !isVisible
                                     selectedAppsQueue.add(appInfo)
-                                    Log.d(DEBUG_TAG, "fetchRunningApps: Restored ${appInfo.label} minimized=${appInfo.isMinimized}")
                                 }
                             } else {
                                 Log.w(DEBUG_TAG, "fetchRunningApps: Could not find app for identifier=$identifier")
@@ -2955,7 +2909,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                             if (appInfo != null) {
                                 appInfo.isMinimized = false
                                 selectedAppsQueue.add(appInfo)
-                                Log.d(DEBUG_TAG, "fetchRunningApps: Added new visible ${appInfo.label}")
                             }
                         }
                     }
@@ -3056,11 +3009,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 val currentMode = display?.mode
                 
                 // Log available modes for debugging
-                Log.d(TAG, "=== REFRESH RATE DEBUG ===")
-                Log.d(TAG, "Target rate: $targetRate Hz")
-                Log.d(TAG, "Display $currentDisplayId has ${modes.size} mode(s):")
                 modes.forEach { mode ->
-                    Log.d(TAG, "  Mode ${mode.modeId}: ${mode.physicalWidth}x${mode.physicalHeight} @ ${mode.refreshRate}Hz")
                 }
                 
                 // Check if hardware supports target rate
@@ -3081,7 +3030,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 
                 if (hasHardwareSupport) {
                     // === METHOD A: Hardware mode exists - use standard approach ===
-                    Log.d(TAG, "Hardware supports ${targetRate}Hz (Mode $bestModeId)")
                     
                     // 1. App-Level Window Override
                     uiHandler.post {
@@ -3103,7 +3051,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // 3. Force display mode
                     val forceCmd = "cmd display set-user-preferred-display-mode $currentDisplayId $width $height $targetRate"
                     shellService?.runCommand(forceCmd)
-                    Log.d(TAG, "Applied HW mode: $forceCmd")
                     
                     activeRefreshRateLabel = "${rateInt}Hz"
                     
@@ -3115,7 +3062,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // This tells SF to throttle frame composition for this display
                     val sfThrottleCmd = "service call SurfaceFlinger 1035 i32 $currentDisplayId f $targetRate"
                     val sfResult = shellService?.runCommand(sfThrottleCmd)
-                    Log.d(TAG, "SF throttle result: $sfResult")
                     
                     // Method B2: Set frame rate policy via display service
                     // This affects the render frame rate policy
@@ -3130,7 +3076,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     // This requests SF to limit the render rate even if HW is higher
                     val specCmd = "cmd display set-desired-display-mode-specs $currentDisplayId -p $targetRate $targetRate -r $targetRate $targetRate"
                     val specResult = shellService?.runCommand(specCmd)
-                    Log.d(TAG, "Mode specs result: $specResult")
                     
                     // Method B5: Try forcing the base/peak refresh for this display specifically
                     shellService?.runCommand("settings put system min_refresh_rate_$currentDisplayId $rateStr")
@@ -3146,7 +3091,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     
                     activeRefreshRateLabel = "Limit: ${rateInt}Hz (SW)"
                     
-                    Log.i(TAG, "Software throttle applied - display still at HW rate but rendering limited")
                 }
                 
                 Thread.sleep(800)
@@ -3154,7 +3098,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // Re-query to see what actually happened
                 val newDisplay = dm.getDisplay(currentDisplayId)
                 val actualRate = newDisplay?.refreshRate ?: 0f
-                Log.d(TAG, "Post-apply rate: $actualRate Hz")
                 
                 uiHandler.post { 
                     switchMode(MODE_REFRESH)
@@ -3241,7 +3184,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
         // If already executing, queue this request
         if (isExecuting) {
-            Log.d(TAG, "executeLaunch: Already running. Queueing next run.")
             pendingExecutionNeeded = true
             if (focusPackage != null) pendingFocusPackage = focusPackage
             return
@@ -3297,7 +3239,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // We use the member variable 'selectedLayoutType' (which matches the passed 'layoutType' 99% of the time).
                 val rects = getLayoutRects()
                 
-                Log.d(TAG, "executeLaunch: Generated ${rects.size} tiles with Margin $bottomMarginPercent%")
                 
                 if (selectedAppsQueue.isEmpty()) {
                     uiHandler.post { safeToast("No apps in queue") }
@@ -3437,7 +3378,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                         val app = activeApps[focusIndex]
                         val bounds = rects[focusIndex]
                         Thread.sleep(200)
-                        Log.d(TAG, "Refocusing Active Window: ${app.label}")
                         launchViaShell(app.getBasePackage(), app.className, bounds)
                     }
                 }
@@ -3462,7 +3402,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
 
                 // If a request came in while we were running, trigger it now
                 if (pendingExecutionNeeded) {
-                    Log.d(TAG, "executeLaunch: Triggering pending execution")
                     val nextFocus = pendingFocusPackage
                     pendingFocusPackage = null
                     uiHandler.post {
@@ -3561,7 +3500,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                     supportedRates.add(Math.round(mode.refreshRate).toInt())
                 }
                 
-                Log.d(TAG, "Display $currentDisplayId supported rates: $supportedRates")
                 
                 // 3. Build header text based on available modes
                 val headerText = when {
@@ -3783,7 +3721,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 try { 
                     // Use packageName directly - it should be the real package, not a modified identifier
                     val iconPkg = app.packageName
-                    Log.d(DEBUG_TAG, "Loading icon for position $position: ${app.label} pkg=$iconPkg")
                     holder.icon.setImageDrawable(packageManager.getApplicationIcon(iconPkg)) 
                 } catch (e: Exception) { 
                     Log.e(DEBUG_TAG, "Failed to load icon for ${app.packageName}", e)
@@ -3844,7 +3781,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
         val rawIndex = intent.getIntExtra("INDEX", -1)
         val index = if (rawIndex > 0) rawIndex - 1 else -1
 
-        Log.d(TAG, "WM Command: $cmd RawIdx: $rawIndex (Internal: $index)")
 
         when (cmd) {
             "SWAP" -> {
@@ -4069,7 +4005,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                                     activePackageName == targetApp.packageName ||
                                     (isGemini && activeIsGoogle)) {
                                     activePackageName = null
-                                    Log.d(TAG, "WM Command: Cleared focus for hidden app: $basePkg")
                                 }
 
                                 Thread { 
@@ -4121,7 +4056,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 refreshQueueAndLayout("Cleared All")
             }
             "OPEN_DRAWER" -> {
-                Log.d(TAG, "OPEN_DRAWER command received, calling toggleDrawer()")
                 toggleDrawer()
                 refreshQueueAndLayout("Toggled Drawer")
             }
@@ -4300,7 +4234,6 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // =================================================================================
 
     private fun logSavedKeybinds() {
-        Log.d("DroidOS_Keys", "=== SAVED KEYBINDS ===")
         for (cmd in AVAILABLE_COMMANDS) {
             val bind = AppPreferences.getKeybind(this, cmd.id)
             if (bind.second != 0) {
@@ -4308,10 +4241,8 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
                 // WORKAROUND: KeyEvent.metaStateToString may be unresolved in some environments.
                 // Using toString() directly on the integer for debug output.
                 val modName = if (bind.first != 0) "Meta(${bind.first})" else "None"
-                Log.d("DroidOS_Keys", "CMD: ${cmd.label} -> [$modName] + [$keyName] (Mod:${bind.first}, Key:${bind.second})")
             }
         }
-        Log.d("DroidOS_Keys", "======================")
     }
 
     private fun buildAdbCommand(cmdId: String): String? {

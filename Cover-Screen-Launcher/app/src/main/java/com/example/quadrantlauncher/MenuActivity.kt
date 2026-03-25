@@ -82,7 +82,7 @@ class MenuActivity : Activity(), Shizuku.OnRequestPermissionResultListener {
             setPadding(20, 0, 0, 0)
             setOnClickListener {
                 Toast.makeText(this@MenuActivity, "Profile Saved (Placeholder)", Toast.LENGTH_SHORT).show()
-                // TODO: Connect to AppPreferences.saveProfile logic
+                // Placeholder: profile save action is intentionally not wired in this legacy screen.
             }
         }
 

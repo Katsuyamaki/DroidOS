@@ -148,7 +148,6 @@ class NullInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        android.util.Log.d(TAG, "NullInputMethodService created")
         
         // Register receiver for OverlayService communication
         val filter = IntentFilter().apply {
@@ -166,7 +165,6 @@ class NullInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        android.util.Log.d(TAG, "NullInputMethodService destroyed")
         try {
             unregisterReceiver(inputReceiver)
         } catch (e: Exception) {

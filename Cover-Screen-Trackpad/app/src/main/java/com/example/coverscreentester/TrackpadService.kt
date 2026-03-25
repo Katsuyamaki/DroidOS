@@ -33,12 +33,10 @@ class TrackpadService : Service() {
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val targetDisplayId = intent?.getIntExtra("TARGET_DISPLAY_ID", currentDisplayId) ?: currentDisplayId
-        android.util.Log.d("TrackpadService", "onStartCommand: Target=$targetDisplayId, Current=$currentDisplayId")
 
         if (trackpadView != null) {
             // If display has changed, migrate the view
             if (targetDisplayId != currentDisplayId) {
-                android.util.Log.d("TrackpadService", "Migrating Trackpad to Display $targetDisplayId")
                 try {
                     windowManager.removeView(trackpadView)
                 } catch (e: Exception) {
@@ -49,7 +47,6 @@ class TrackpadService : Service() {
             }
         } else {
             // First time initialization
-            android.util.Log.d("TrackpadService", "Initial setup on Display $targetDisplayId")
             setupUI(targetDisplayId)
         }
         
@@ -58,7 +55,6 @@ class TrackpadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        android.util.Log.d("TrackpadService", "Service Created")
         setupShizuku() // This will be defined later
     }
 
@@ -126,6 +122,5 @@ class TrackpadService : Service() {
     private fun setupShizuku() {
         // Placeholder for Shizuku setup logic
         // This will be implemented when Shizuku functionality is added.
-        Log.d(TAG, "setupShizuku: Placeholder called.")
     }
 }

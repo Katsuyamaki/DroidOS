@@ -21,8 +21,6 @@ class ShellUserService : IShellService.Stub() {
         const val POWER_MODE_OFF = 0
         const val POWER_MODE_NORMAL = 2
 
-        @Volatile private var displayControlClass: Class<*>? = null
-        @Volatile private var displayControlClassLoaded = false
     }
 
     // === GEMINI TASK CACHE - START ===
@@ -40,42 +38,8 @@ class ShellUserService : IShellService.Stub() {
     }
 
     private fun getDisplayControlClass(): Class<*>? {
-        if (displayControlClassLoaded && displayControlClass != null) return displayControlClass
-        
-        return try {
-            val classLoaderFactoryClass = Class.forName("com.android.internal.os.ClassLoaderFactory")
-            val createClassLoaderMethod = classLoaderFactoryClass.getDeclaredMethod(
-                "createClassLoader",
-                String::class.java,
-                String::class.java,
-                String::class.java,
-                ClassLoader::class.java,
-                Int::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType,
-                String::class.java
-            )
-            val classLoader = createClassLoaderMethod.invoke(
-                null, "/system/framework/services.jar", null, null,
-                ClassLoader.getSystemClassLoader(), 0, true, null
-            ) as ClassLoader
-
-            val loadedClass = classLoader.loadClass("com.android.server.display.DisplayControl").also {
-                val loadMethod = Runtime::class.java.getDeclaredMethod(
-                    "loadLibrary0",
-                    Class::class.java,
-                    String::class.java
-                )
-                loadMethod.isAccessible = true
-                loadMethod.invoke(Runtime.getRuntime(), it, "android_servers")
-            }
-            
-            displayControlClass = loadedClass
-            displayControlClassLoaded = true
-            loadedClass
-        } catch (e: Exception) {
-            Log.w(TAG, "DisplayControl not available", e)
-            null
-        }
+        // Avoid blocked private APIs on targetSdk 34+.
+        return null
     }
 
     private fun getAllPhysicalDisplayTokens(): List<IBinder> {
@@ -209,7 +173,6 @@ class ShellUserService : IShellService.Stub() {
 
     
 override fun setBrightness(displayId: Int, brightness: Int) {
-        Log.d(TAG, "setBrightness(Global Broadcast, Value: $brightness)")
         val token = Binder.clearCallingIdentity()
         try {
             if (brightness < 0) {
@@ -248,7 +211,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     }
 
     override fun setScreenOff(displayIndex: Int, turnOff: Boolean) {
-        Log.d(TAG, "setScreenOff(Global Broadcast, TurnOff: $turnOff)")
         val token = Binder.clearCallingIdentity()
         try {
             val mode = if (turnOff) POWER_MODE_OFF else POWER_MODE_NORMAL
@@ -312,7 +274,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         try {
             // Set freeform windowing mode (mode 5)
             val modeCmd = "am task set-windowing-mode $tid 5"
-            Log.d(TAG, "repositionTask: $modeCmd")
             val modeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", modeCmd))
             modeProc.waitFor()
             
@@ -321,11 +282,9 @@ override fun setBrightness(displayId: Int, brightness: Int) {
 
             // Apply resize
             val resizeCmd = "am task resize $tid $left $top $right $bottom"
-            Log.d(TAG, "repositionTask: $resizeCmd")
             val resizeProc = Runtime.getRuntime().exec(arrayOf("sh", "-c", resizeCmd))
             val exitCode = resizeProc.waitFor()
 
-            Log.d(TAG, "repositionTask: resize exitCode=$exitCode for task $tid")
 
         } catch (e: Exception) {
             Log.e(TAG, "repositionTask: FAILED", e)
@@ -345,7 +304,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         val list = ArrayList<String>()
         val token = Binder.clearCallingIdentity()
         try {
-            Log.d(TAG, "getVisiblePackages: Checking display $displayId")
             val p = Runtime.getRuntime().exec("dumpsys window windows")
             val r = BufferedReader(InputStreamReader(p.inputStream))
             var line: String?
@@ -387,7 +345,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
                         val left = frameMatcher.group(1)?.toIntOrNull() ?: 0
                         if (left >= 10000) {
                             isOffScreen = true
-                            Log.d(TAG, "getVisiblePackages: $currentPkg is off-screen (left=$left)")
                         }
                     } catch (e: Exception) {}
                 }
@@ -396,7 +353,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
                 if (currentPkg != null && isVisible && onCorrectDisplay && !isOffScreen) {
                     if (isUserApp(currentPkg!!) && !list.contains(currentPkg!!)) {
                         list.add(currentPkg!!)
-                        Log.d(TAG, "getVisiblePackages: Found visible (window): $currentPkg")
                     }
                     currentPkg = null
                 }
@@ -408,7 +364,6 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         } finally {
             Binder.restoreCallingIdentity(token)
         }
-        Log.d(TAG, "getVisiblePackages: display=$displayId result=${list.joinToString()}")
         return list
     }
     // === GET VISIBLE PACKAGES - END ===
@@ -542,17 +497,14 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 // After trampoline completes, the cached ID is useless
                 val shortValidity = 500L
                 if (cacheAge < shortValidity) {
-                    Log.d(TAG, "getTaskId: Gemini using CACHED taskId=$cachedGeminiTaskId (age=${cacheAge}ms)")
                     return cachedGeminiTaskId
                 } else {
-                    Log.d(TAG, "getTaskId: Gemini cache too old (age=${cacheAge}ms > ${shortValidity}ms), searching fresh")
                     cachedGeminiTaskId = -1
                 }
             }
             // === GEMINI CACHE CHECK - END ===
             
             if (isGemini) {
-                Log.d(TAG, "getTaskId: Gemini detected, will check trampoline targets")
             }
             
             val cmd = arrayOf("sh", "-c", "am stack list")
@@ -570,7 +522,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             // Short activity name (fallback only)
             val shortActivity = className?.substringAfterLast(".")
             
-            Log.d(TAG, "getTaskId: fullComponent=$fullComponent shortActivity=$shortActivity")
             
             while (r.readLine().also { line = it } != null) {
                 val l = line!!.trim()
@@ -586,13 +537,11 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 
                 // PRIORITY 1: Exact full component match (highest priority)
                 if (fullComponent != null && l.contains(fullComponent)) {
-                    Log.d(TAG, "getTaskId: EXACT MATCH taskId=$foundId component=$fullComponent")
                     exactTaskId = foundId
                     // Keep searching - want most recent exact match
                 }
                 // PRIORITY 2: Package name match
                 else if (l.contains("$packageName/")) {
-                    Log.d(TAG, "getTaskId: PACKAGE MATCH taskId=$foundId pkg=$packageName")
                     packageTaskId = foundId
                 }
                 // PRIORITY 3: Gemini trampoline - check for Google Quick Search Box with Assistant activity
@@ -605,11 +554,9 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     
                     if (isAssistantActivity && !isAutoGhost) {
                         if (foundId > packageTaskId) {
-                            Log.d(TAG, "getTaskId: GEMINI TRAMPOLINE MATCH taskId=$foundId (assistant activity)")
                             packageTaskId = foundId
                         }
                     } else {
-                        Log.d(TAG, "getTaskId: GEMINI TRAMPOLINE SKIP taskId=$foundId (not assistant activity)")
                     }
                 }
 
@@ -619,7 +566,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                          shortActivity != "MainActivity" &&  // Too generic
                          shortActivity != "default" &&       // Too generic
                          l.contains(shortActivity)) {
-                    Log.d(TAG, "getTaskId: FALLBACK MATCH taskId=$foundId activity=$shortActivity")
                     fallbackTaskId = foundId
                 }
             }
@@ -652,17 +598,14 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     // For now, we'll cache it but with a very short validity
                     cachedGeminiTaskId = exactTaskId
                     cachedGeminiTaskTime = System.currentTimeMillis()
-                    Log.d(TAG, "getTaskId: Gemini exact match found, CACHED taskId=$exactTaskId (may be short-lived)")
                 } else if (packageTaskId > 0) {
                     // No exact match means trampoline completed
                     // The packageTaskId is the Google QSB task that Gemini is running in
                     // This is actually what we should reposition!
-                    Log.d(TAG, "getTaskId: Gemini trampolined, using trampoline target taskId=$packageTaskId")
                     
                     // DON'T use cached ID - it's destroyed. Use the live trampoline target.
                     // Clear any stale cache
                     if (cachedGeminiTaskId > 0) {
-                        Log.d(TAG, "getTaskId: Clearing stale Gemini cache (old=$cachedGeminiTaskId)")
                         cachedGeminiTaskId = -1
                     }
                     
@@ -671,7 +614,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
             }
             // === GEMINI TASK HANDLING - END ===
             
-            Log.d(TAG, "getTaskId: Final result=$result (exact=$exactTaskId pkg=$packageTaskId fallback=$fallbackTaskId)")
             return result
             
         } catch (e: Exception) {
@@ -717,7 +659,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     override fun moveTaskToBack(taskId: Int) {
         val token = Binder.clearCallingIdentity()
         try {
-            Log.d(TAG, "moveTaskToBack: Minimizing taskId=$taskId via ATM.getMultiTaskingBinder()")
 
             var success = false
 
@@ -727,14 +668,12 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                 val getServiceMethod = atmClass.getMethod("getService")
                 val atm = getServiceMethod.invoke(null)
 
-                Log.d(TAG, "moveTaskToBack: Got ATM service")
 
                 // Call getMultiTaskingBinder()
                 val getMultiTaskingBinder = atm.javaClass.getMethod("getMultiTaskingBinder")
                 val multiTaskingBinder = getMultiTaskingBinder.invoke(atm)
 
                 if (multiTaskingBinder != null) {
-                    Log.d(TAG, "moveTaskToBack: Got MultiTaskingBinder: ${multiTaskingBinder.javaClass.name}")
 
                     // Call minimizeTaskById(taskId)
                     val minimizeMethod = multiTaskingBinder.javaClass.getMethod(
@@ -743,7 +682,6 @@ override fun getWindowLayouts(displayId: Int): List<String> {
                     )
                     minimizeMethod.invoke(multiTaskingBinder, taskId)
 
-                    Log.d(TAG, "moveTaskToBack: minimizeTaskById($taskId) SUCCEEDED!")
                     success = true
                 } else {
                     Log.w(TAG, "moveTaskToBack: getMultiTaskingBinder() returned null")

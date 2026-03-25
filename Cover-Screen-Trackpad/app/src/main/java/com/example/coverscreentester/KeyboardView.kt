@@ -364,7 +364,6 @@ private var customModKeyCode = 0
             touchDownAction?.invoke() // Inject Down
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             startTrackpadTimer()
-            android.util.Log.d("SpaceTrackpad", "Hold detected -> Touch DOWN injected, drag mode activated")
         }
     }
 
@@ -377,7 +376,6 @@ private var customModKeyCode = 0
     // =================================================================================
     fun setSpacebarExtendedMode(enabled: Boolean) {
         isSpacebarMouseExtendedMode = enabled
-        android.util.Log.d("SpaceTrackpad", "Extended Mode set to: $enabled")
         
         // If we just disabled extended mode and trackpad mode is active, start the normal timer
         if (!enabled && isTrackpadTouchMode) {
@@ -398,7 +396,6 @@ private var customModKeyCode = 0
     fun exitSpacebarMouseMode() {
         if (!isTrackpadTouchMode) return
         
-        android.util.Log.d("SpaceTrackpad", "Exiting spacebar mouse mode (external request)")
         
         // Cancel any pending timers
         handler.removeCallbacks(trackpadResetRunnable)
@@ -465,7 +462,6 @@ private var customModKeyCode = 0
         if (!isSpacebarMouseExtendedMode) {
             handler.postDelayed(trackpadResetRunnable, 1000)
         } else {
-            android.util.Log.d("SpaceTrackpad", "Extended mode active - timer skipped")
             // Notify overlay to turn drag handle red
             onExtendedModeChanged?.invoke(true)
             // Rebuild keyboard to update arrow key colors to blue
@@ -487,7 +483,6 @@ private var customModKeyCode = 0
         val candidate = currentCandidates[index]
         val wordToBlock = candidate.text
         
-        Log.d("KeyboardView", "Blocking prediction: $wordToBlock")
 
         // 1. Block in Engine (Prevent it from appearing again)
         // FIX: Use 'PredictionEngine.instance' instead of 'predictionEngine'
@@ -633,7 +628,6 @@ private var customModKeyCode = 0
     // =================================================================================
     fun setLauncherBlockedShortcuts(shortcuts: Set<String>) {
         launcherBlockedShortcuts = shortcuts
-        android.util.Log.d(TAG, "KeyboardView: Updated blocked shortcuts: ${shortcuts.size} entries")
     }
     // =================================================================================
     // END FUNCTION: setLauncherBlockedShortcuts
@@ -669,7 +663,6 @@ private var customModKeyCode = 0
     //          Sets up all the swipe state so subsequent MOVE events are tracked.
     // =================================================================================
     fun startSwipeFromPosition(x: Float, y: Float) {
-        Log.d("KeyboardView", "Starting swipe from position ($x, $y)")
 
         // Initialize swipe tracking as if this was the ACTION_DOWN point
         startTouchX = x
@@ -701,7 +694,6 @@ private var customModKeyCode = 0
         // First, check if tap is on a prediction candidate
         val tappedCandidate = findCandidateAt(x, y)
         if (tappedCandidate != null) {
-            Log.d("KeyboardView", "Deferred tap on prediction: '${tappedCandidate.first}'")
             listener?.onSuggestionClick(tappedCandidate.first, tappedCandidate.second)
             return
         }
@@ -711,7 +703,6 @@ private var customModKeyCode = 0
         val keyTag = touchedView?.tag as? String
 
         if (touchedView != null && keyTag != null) {
-            Log.d("KeyboardView", "Deferred tap on key: $keyTag")
 
             if (keyTag == "SPACE") {
                 // =================================================================================
@@ -753,7 +744,6 @@ private var customModKeyCode = 0
     //          Directly calls handleKeyPress to inject the key event.
     // =================================================================================
     fun triggerKeyPress(keyTag: String) {
-        Log.d("KeyboardView", "triggerKeyPress: $keyTag")
         handleKeyPress(keyTag, fromRepeat = true)
     }
     // =================================================================================
@@ -894,9 +884,7 @@ private var customModKeyCode = 0
         }
         traverse(this)
 
-        android.util.Log.d("DroidOS_Swipe", "Keys mapped: ${keyCenters.size / 2} (Unique Letters)")
         if (keyCenters.isNotEmpty()) {
-             android.util.Log.d("DroidOS_Swipe", "Example 'H': ${keyCenters["h"]}")
         }
     }
 
@@ -1308,7 +1296,6 @@ private fun buildKeyboard() {
 
                     if (isValidSwipe) {
                         // LOG: Swipe passed validation, sending to decoder
-                        android.util.Log.d("DroidOS_Swipe", "DISPATCH: Sending ${currentPath.size} points to onSwipeDetectedTimed")
 
                         // Check if listener exists
                         if (listener == null) {
@@ -1318,7 +1305,6 @@ private fun buildKeyboard() {
                             listener?.onSwipeDetectedTimed(ArrayList(currentPath))
                         }
                     } else {
-                        android.util.Log.d("DroidOS_Swipe", "DISPATCH SKIP: validateSwipe returned false")
                     }
 
                     isSwiping = false
@@ -1368,7 +1354,6 @@ private fun buildKeyboard() {
     private fun validateSwipe(): Boolean {
         // CHECK 1: Minimum path points
         if (currentPath.size < SWIPE_MIN_PATH_POINTS) {
-            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path too short (${currentPath.size} < $SWIPE_MIN_PATH_POINTS points)")
             return false
         }
 
@@ -1384,11 +1369,9 @@ private fun buildKeyboard() {
         }
 
         if (totalPathLength < SWIPE_MIN_DISTANCE) {
-            android.util.Log.d("DroidOS_Swipe", "VALIDATE FAIL: Path length too short (${totalPathLength.toInt()}px < ${SWIPE_MIN_DISTANCE.toInt()}px)")
             return false
         }
 
-        android.util.Log.d("DroidOS_Swipe", "VALIDATE OK: ${currentPath.size} points, ${totalPathLength.toInt()}px total path length")
         return true
     }
     // =================================================================================
@@ -1487,7 +1470,6 @@ private fun buildKeyboard() {
                         // This allows hold-to-drag behavior from ANY key when active
                         if (isTrackpadTouchMode) {
                             handler.postDelayed(holdToDragRunnable, 300) // Wait 300ms to detect Hold
-                            android.util.Log.d("SpaceTrackpad", "Touch Mode: Started hold-to-drag timer")
                         }
 
                         // Visual feedback: Always keep SPACE green, even if touching other keys
@@ -2033,7 +2015,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
 
 
     fun setCustomModKey(keyCode: Int) {
-        android.util.Log.d("DroidOS_Debug", "setCustomModKey: Old=$customModKeyCode New=$keyCode")
         customModKeyCode = keyCode
     }
 
@@ -2042,14 +2023,12 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
             var meta = getMetaState()
 
         // DEBUG: Log Raw Input
-        android.util.Log.d("DroidOS_Debug", "handleKeyPress: key='$key' customModKeyCode=$customModKeyCode")
     
             // 1. RESOLVE KEYCODE
             // We need the keycode early to check against customModKeyCode
             val charPair = if (key.length == 1) getSymbolKeyCode(key[0]) else Pair(0, false)
             var keyCode = charPair.first
 
-            android.util.Log.d("DroidOS_Debug", "Resolved KeyCode: $keyCode")
             
             // Handle special keys mapping
             if (keyCode == 0 || keyCode == KeyEvent.KEYCODE_UNKNOWN) {
@@ -2069,7 +2048,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
     
                             // 2. CHECK CUSTOM MODIFIER (Toggle Latch)
                             if (!fromRepeat && customModKeyCode != 0 && keyCode == customModKeyCode) {
-                                android.util.Log.d(TAG, "Custom Mod Key MATCH ($keyCode). Broadcasting & Latching...")
 
                                 // Broadcast the modifier to Launcher so IT latches too
                                 val intent = android.content.Intent("com.katsuyamaki.DroidOSFOSSLauncher.REMOTE_KEY")
@@ -2105,7 +2083,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                     intent.putExtra("keyCode", finalCode)
                     intent.putExtra("metaState", meta)
                     context.sendBroadcast(intent)
-                    android.util.Log.d("KeyboardView", "Capture Mode: Sent $finalCode for key $key")
                 }
 
                 // BLOCK EVERYTHING - don't let keys leak to app
@@ -2129,7 +2106,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                         val shortcutKey = "$meta|$keyCode"
                         val isShortcutRegistered = launcherBlockedShortcuts.contains(shortcutKey)
 
-                        android.util.Log.d(TAG, "Shortcut check: $shortcutKey, registered=$isShortcutRegistered, override=$overrideSystemShortcuts")
 
                         // Only broadcast to Launcher if this shortcut is registered there
                         if (isShortcutRegistered && keyCode != 0) {
@@ -2138,7 +2114,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                             intent.putExtra("keyCode", keyCode)
                             intent.putExtra("metaState", meta)
                             context.sendBroadcast(intent)
-                            android.util.Log.d(TAG, "Broadcasting Remote Key: $key ($keyCode) (Latched: $isCustomModLatchedLocal)")
                         }
 
                         // Reset ALL modifiers (One-shot)
@@ -2152,7 +2127,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                         // 1. Override is enabled
                         // 2. This specific shortcut is registered in the Launcher
                         if (overrideSystemShortcuts && isShortcutRegistered) {
-                            android.util.Log.d(TAG, "Blocking system shortcut: $shortcutKey")
                             return
                         }
                         // If shortcut is NOT registered, let it pass through to the system
@@ -2233,7 +2207,6 @@ if (isMetaActive) meta = meta or 0x10000 // META_META_ON
                     intent.putExtra("keyCode", finalCode)
                     intent.putExtra("metaState", getMetaState())
                     context.sendBroadcast(intent)
-                    android.util.Log.d("KeyboardView", "Broadcasting Remote Key: $key ($finalCode) Meta: ${getMetaState()}")
                 }
             }
             // === END DIRECT LINE ===
@@ -2427,7 +2400,6 @@ for (i in 0 until 3) {
     private fun handleCandidateTouch(view: View, event: MotionEvent, item: Candidate): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE DOWN: '${item.text}' at (${event.rawX.toInt()}, ${event.rawY.toInt()})")
                 dragStartX = event.rawX
                 dragStartY = event.rawY
                 isCandidateDragging = false
@@ -2442,7 +2414,6 @@ for (i in 0 until 3) {
                 // Threshold to start dragging (20px)
 if (!isCandidateDragging && dist > 20) {
                     isCandidateDragging = true
-                    android.util.Log.d("DroidOS_Drag", "CANDIDATE DRAG START: '${item.text}' (moved ${dist.toInt()}px)")
                     // Visual feedback: Keep White (No Dimming)
                     view.alpha = 1.0f
                 }
@@ -2474,7 +2445,6 @@ if (!isCandidateDragging && dist > 20) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE UP: '${item.text}' isCandidateDragging=$isCandidateDragging")
                 view.alpha = 1.0f
                 val bkspKey = findViewWithTag<View>("BKSP")
                 if (bkspKey != null) setKeyVisual(bkspKey, false, "BKSP") // Reset color
@@ -2487,11 +2457,9 @@ if (!isCandidateDragging && dist > 20) {
                         val isOverBksp = event.rawX >= loc[0] && event.rawX <= loc[0] + bkspKey.width &&
                                          event.rawY >= loc[1] && event.rawY <= loc[1] + bkspKey.height
 
-                        android.util.Log.d("DroidOS_Drag", "DROP CHECK: rawX=${event.rawX.toInt()}, rawY=${event.rawY.toInt()}, bksp=(${loc[0]},${loc[1]},${bkspKey.width},${bkspKey.height}), isOver=$isOverBksp")
 
                         if (isOverBksp) {
                             // DROPPED ON BACKSPACE -> DELETE
-                            android.util.Log.d("DroidOS_Drag", "DROP ON BKSP: Calling onSuggestionDropped('${item.text}')")
                             listener?.onSuggestionDropped(item.text)
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
@@ -2500,7 +2468,6 @@ if (!isCandidateDragging && dist > 20) {
                     }
                 } else {
                     // CLICK -> SELECT
-                    android.util.Log.d("DroidOS_Drag", "CANDIDATE CLICK: '${item.text}'")
                     listener?.onSuggestionClick(item.text, item.isNew)
                     view.performClick()
                 }
@@ -2509,7 +2476,6 @@ if (!isCandidateDragging && dist > 20) {
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                android.util.Log.d("DroidOS_Drag", "CANDIDATE CANCEL: '${item.text}'")
                 view.alpha = 1.0f
                 isCandidateDragging = false
                 activeDragCandidate = null
