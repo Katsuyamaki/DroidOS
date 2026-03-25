@@ -3484,7 +3484,7 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
     // Handles UI updates for search bar, icons, and list content
     private fun switchMode(mode: Int) {
         currentMode = mode
-        selectedListIndex = 0 // Reset selection on tab switch
+        selectedListIndex = if (mode == MODE_SETTINGS) -1 else 0 // Reset selection on tab switch
         
         val searchBar = drawerView!!.findViewById<EditText>(R.id.rofi_search_bar); val searchIcon = drawerView!!.findViewById<ImageView>(R.id.icon_search_mode); val iconWin = drawerView!!.findViewById<ImageView>(R.id.icon_mode_window);        val iconRes = drawerView!!.findViewById<ImageView>(R.id.icon_mode_resolution);
         val iconRefresh = drawerView!!.findViewById<ImageView>(R.id.icon_mode_refresh); val iconDpi = drawerView!!.findViewById<ImageView>(R.id.icon_mode_dpi); val iconBlacklist = drawerView!!.findViewById<ImageView>(R.id.icon_mode_blacklist); val iconProf = drawerView!!.findViewById<ImageView>(R.id.icon_mode_profiles); val iconKeybinds = drawerView!!.findViewById<ImageView>(R.id.icon_mode_keybinds); val iconSet = drawerView!!.findViewById<ImageView>(R.id.icon_mode_settings); val executeBtn = drawerView!!.findViewById<ImageView>(R.id.icon_execute)
@@ -3641,6 +3641,16 @@ Log.d(TAG, "SoftKey: Typed '$typedChar' -> Code $typedCode. CustomMod: $customMo
             }
             MODE_SETTINGS -> {
                 searchBar.hint = "Settings"
+                displayList.add(ActionOption("Upgrade to DroidOS Pro for more features") {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://katsuyamaki.github.io/"))
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        applicationContext.startActivity(intent)
+                    } catch (e: Exception) {
+                        safeToast("Unable to open browser")
+                    }
+                })
+
                 // [FIX] Use restartTrackpad() (Hard Kill) to ensure Z-Order is reset properly.
                 // launchTrackpad() alone is too gentle and doesn't reset the window stack.
                 displayList.add(ActionOption("Launch/Reset Trackpad") { 
@@ -4425,6 +4435,18 @@ else -> AppHolder(View(parent.context)) } }
                 holder.itemView.setOnLongClickListener(null)
                 holder.itemView.setOnClickListener(null)
                 holder.nameInput.setOnClickListener(null)
+                holder.btnEdit.setOnClickListener(null)
+                holder.btnSave.setOnClickListener(null)
+                holder.btnExtinguish.setOnClickListener(null)
+
+                // Hard reset input state every bind to avoid recycled EditText swallowing taps
+                holder.nameInput.clearFocus()
+                holder.nameInput.isEnabled = false
+                holder.nameInput.isFocusable = false
+                holder.nameInput.isFocusableInTouchMode = false
+                holder.nameInput.isClickable = false
+                holder.nameInput.isLongClickable = false
+                holder.nameInput.inputType = 0
                 // --------------------------------
                 
                                 if (item is LayoutOption) { 
@@ -4514,7 +4536,7 @@ else -> AppHolder(View(parent.context)) } }
                 }
                 else if (item is IconOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if(isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { pickIcon() } }
                 else if (item is ToggleOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if (item.isEnabled || isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.isEnabled = !item.isEnabled; item.onToggle(item.isEnabled); notifyItemChanged(position) } } 
-                else if (item is ActionOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if(isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { dismissKeyboardAndRestore(); item.action() } }
+                else if (item is ActionOption) { holder.nameInput.setText(item.name); holder.nameInput.isEnabled = false; holder.nameInput.setTextColor(Color.WHITE); if(isKeyboardSelected) holder.itemView.setBackgroundResource(R.drawable.bg_item_active) else holder.itemView.setBackgroundResource(R.drawable.bg_item_press); holder.itemView.setOnClickListener { if (item.name == "Upgrade to DroidOS Pro for more features") { item.action() } else { dismissKeyboardAndRestore(); item.action() } } }
             }
             else if (holder is HeaderHolder && item is RefreshHeaderOption) {
                 holder.nameInput.setText(item.text)

@@ -1,6 +1,8 @@
 package com.katsuyamaki.DroidOSFOSSKeyboardTrackpad
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.graphics.PixelFormat
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -919,7 +921,17 @@ class TrackpadMenuManager(
 
     private fun getHelpItems(): List<TrackpadMenuAdapter.MenuItem> {
         val list = ArrayList<TrackpadMenuAdapter.MenuItem>()
-        
+
+        list.add(TrackpadMenuAdapter.MenuItem("Upgrade to DroidOS Pro for more features", android.R.drawable.ic_menu_view, TrackpadMenuAdapter.Type.ACTION) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://katsuyamaki.github.io/"))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Unable to open browser", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        })
+
         list.add(TrackpadMenuAdapter.MenuItem("INSTRUCTIONS", 0, TrackpadMenuAdapter.Type.HEADER))
         
         val text = 
