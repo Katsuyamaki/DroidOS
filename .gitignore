@@ -5,8 +5,15 @@ DroidOS/lib64/
 DroidOS/include/
 DroidOS/share/
 DroidOS/pyvenv.cfg
+
+# Ignore accidentally generated sibling build projects/artifacts
+DroidOSLauncher/
+DroidOSKeyboardTrackpad/
+
+# Python caches
 __pycache__/
 *.pyc
+
 gemini.md
 restore_source.md
 fix_git_commit.md
