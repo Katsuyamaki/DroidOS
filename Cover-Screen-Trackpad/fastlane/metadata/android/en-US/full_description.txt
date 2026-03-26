@@ -1,0 +1,3 @@
+DroidOS Keyboard Trackpad turns the phone into a pointer and keyboard input surface for external or virtual displays.
+
+It is designed to work with Shizuku for advanced input routing and control.

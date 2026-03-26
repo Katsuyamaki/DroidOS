@@ -1,0 +1,1 @@
+Cover-screen launcher and window manager for DroidOS.

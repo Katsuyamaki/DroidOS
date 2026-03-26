@@ -1,0 +1,3 @@
+DroidOS Launcher is an app launcher and multi-window controller for Android devices, including cover screens and external displays.
+
+It is designed to work with Shizuku to provide advanced launch and window management actions without requiring root.
