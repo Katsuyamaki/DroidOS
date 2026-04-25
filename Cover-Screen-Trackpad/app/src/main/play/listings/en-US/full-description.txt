@@ -1,0 +1,14 @@
+<p>DroidOS Trackpad is a FOSS input companion for DroidOS Launcher.</p>
+
+<p>It provides a floating keyboard and precision touchpad overlay intended for multitasking workflows like external displays, AR displays, and cover screens.</p>
+
+<p>Features include:</p>
+<ul>
+<li>Trackpad-style pointer control</li>
+<li>Keyboard overlay input (with modifier keys)</li>
+<li>Profiles/presets for different setups</li>
+</ul>
+
+<p>Note: on many devices, full functionality requires Shizuku.</p>
+
+<p>Documentation and source: https://github.com/Katsuyamaki/DroidOS</p>

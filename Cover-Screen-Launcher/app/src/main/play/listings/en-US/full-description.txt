@@ -1,0 +1,12 @@
+<p>DroidOS Launcher is a FOSS launcher module focused on windowed multitasking workflows on Android (external displays, AR displays, and cover screens).</p>
+
+<p>Features include:</p>
+<ul>
+<li>Queue-based launch workflows</li>
+<li>Multi-window tiling layouts (where supported by the device/configuration)</li>
+<li>Companion integration with DroidOS Trackpad for input workflows</li>
+</ul>
+
+<p>Note: on many devices, full functionality requires Shizuku.</p>
+
+<p>Documentation and source: https://github.com/Katsuyamaki/DroidOS</p>
