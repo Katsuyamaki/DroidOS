@@ -63,3 +63,17 @@
 * OverlayService.kt: Deduplicate prefix list in commandFilter registration (both became identical after rename)
 * OverlayService.kt: Deduplicate prefix list in accessibility event filter registration (both became identical after rename)
 * OverlayService.kt: Update dual-prefix comment to reflect single FOSS prefix
+
+* KeyboardOverlay.kt: Persist and restore keyboard overlay bounds + key scale per-display *and* per-orientation, matching DroidOSPro behavior, to eliminate intermittent wrong dimensions after hide/restore.
+* KeyboardOverlay.kt: Key bounds + scale prefs per display and orientation; keep legacy fallback and dual-write for migration.
+* KeyboardOverlay.kt: Ensure hidden-save bounds also use per-display+orientation keys with legacy dual-write.
+* KeyboardOverlay.kt: Ensure updatePosition hidden-save uses per-display+orientation keys with legacy dual-write.
+* KeyboardOverlay.kt: Ensure getters read per-display+orientation bounds with legacy fallback when hidden.
+* KeyboardOverlay.kt: Seed initial show() restore with orientation-keyed scale (not global legacy key).
+* KeyboardOverlay.kt: Seed createKeyboardWindow scale from per-display+orientation key (not global legacy key).
+* KeyboardOverlay.kt: Seed initial keyboard bounds per orientation with legacy fallback.
+
+* KeyboardOverlay.kt: Avoid conflicting declarations by using a distinct variable for bounds-orientation keys in createKeyboardWindow().
+
+* OverlayService.kt: Expose a small helper so KeyboardOverlay can request opening the Trackpad menu without accessing private `menuManager` directly.
+* KeyboardOverlay.kt: Change the ▼ hide key to open the menu when available, falling back to close/hide behavior (matches DroidOSPro UX).

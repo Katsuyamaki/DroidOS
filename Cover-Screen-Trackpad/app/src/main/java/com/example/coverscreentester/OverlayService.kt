@@ -2256,6 +2256,20 @@ class OverlayService : AccessibilityService(), DisplayManager.DisplayListener, I
     }
     
     // NEW FUNCTION: Toggles the visibility of the trackpad menu drawer
+    fun openMenuFromKeyboard(): Boolean {
+        return try {
+            if (menuManager != null) {
+                menuManager?.show()
+                enforceZOrder()
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun toggleDrawer() {
         menuManager?.toggle()
         enforceZOrder() // Ensure drawer is on top
