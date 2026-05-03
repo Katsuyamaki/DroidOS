@@ -1,0 +1,1 @@
+git config --global credential.helper store && printf "https://oauth2:glpat-1TQv8r0uJ1AsivpV7p_ETWM6MQpvOjEKdTpsYmtjaA8.01.171isd9hb@gitlab.com\n" > ~/.git-credentials && chmod 600 ~/.git-credentials && git ls-remote https://gitlab.com/KatsuyaMaki/fdroiddata.git

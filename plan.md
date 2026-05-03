@@ -1,3 +1,31 @@
+## Feasibility Plan: Hands‑Free “Read Screen + Tap/Type/Scroll” (TerminalAssistant ⇄ DroidOS / DroidOSPro)
+
+This is a feasibility/architecture plan for sub‑agents to implement an “AI UI snapshot + action” bridge.
+
+### Goal
+- Termux/TerminalAssistant can ask “what’s on screen?” and request actions (tap/scroll/type).
+- DroidOS (FOSS) and/or DroidOSPro executes actions via its privileged bridge and returns structured results back into the TerminalAssistant tmux session.
+
+### Recommended implementation path (reuse what you already built)
+- **Control channel:** Termux uses `am broadcast` (same pattern as `ta-droidospro-broadcast.sh`) into the launcher.
+- **Return channel:** Launcher uses the existing Termux `RUN_COMMAND` bridge (present in Pro today; if missing in FOSS, add an equivalent small bridge) to inject snapshot/action results back into the tmux assistant pane.
+- **Sensor priority:** Accessibility window snapshot first; UIAutomator dump XML second; screenshot+OCR last.
+- **Actuators:** use privileged shell bridge to call `input -d <displayId> tap/swipe/text` (or equivalent injection service).
+
+### New code requirement (keep modular; new separate `.kt`)
+- Add a dedicated file (example name):
+  - `DroidOSLauncher/.../ai/AiUiBridge.kt` (or the FOSS launcher’s equivalent module path)
+- Responsibilities:
+  - Parse incoming broadcast intents.
+  - Build a compact “UI snapshot” (elements with label/text + clickable + bounds).
+  - Execute requested actions (tap/scroll/type) through the shell bridge.
+  - Return results to Termux through the bridge.
+
+### Security
+- Gate these actions behind an “enabled” toggle and/or sender allowlist (Termux + your own packages).
+
+---
+
 FILE_UPDATE: Cover-Screen-Launcher/app/build.gradle.kts
 REASON: Update namespace and applicationId to DroidOSFOSSLauncher
 SEARCH_BLOCK:
@@ -17,6 +45,341 @@ REPLACE_BLOCK:
         applicationId = "com.katsuyamaki.DroidOSFOSSLauncher"
 ```
 END_OF_UPDATE_BLOCK
+
+---
+
+## Fix Plan: Keyboard overlay wrong dimensions after hide/restore (DroidOS F-Droid build)
+
+### Symptom (reported)
+- After the keyboard overlay is hidden and later restored, it will sometimes reappear with the wrong dimensions/aspect ratio and show excess internal gaps within the keyboard overlay.
+
+### What DroidOSPro changed (source of truth)
+- In `DroidOSPro/DroidOSKeyboardTrackpad/.../KeyboardOverlay.kt` the persisted **window bounds** and **key scale** are saved/loaded **per display AND per orientation** using an `orientSuffix()` ( `_L` / `_P` ) suffix.
+- `setScreenDimensions(width, height, displayId)` **reloads the saved scale for that display+orientation** before computing the “300dp * scale * density” height, preventing stale scale causing a wrong height on restore/rotation.
+- Related persistence keys in Pro look like:
+  - `keyboard_x_d${displayId}${orientSuffix()}`
+  - `keyboard_y_d${displayId}${orientSuffix()}`
+  - `keyboard_width_d${displayId}${orientSuffix()}`
+  - `keyboard_height_d${displayId}${orientSuffix()}`
+  - `keyboard_key_scale_d${displayId}${orientSuffix()}`
+
+### Root cause hypothesis for FOSS (current DroidOS)
+- FOSS currently persists:
+  - bounds as `keyboard_*_d${displayId}` (no orientation suffix)
+  - key scale as a single global `keyboard_key_scale`
+- If the device rotates (or window metrics change) while the overlay is hidden, restore can load **portrait-sized bounds** into **landscape**, or apply a stale global scale, leading to incorrect overlay sizing and visible gaps.
+
+### Proposed minimal port into DroidOS (do not touch DroidOSPro)
+
+FILE_UPDATE: Cover-Screen-Trackpad/app/src/main/java/com/example/coverscreentester/KeyboardOverlay.kt
+REASON: Persist and restore keyboard overlay bounds + key scale per-display *and* per-orientation, matching DroidOSPro behavior, to eliminate intermittent wrong dimensions after hide/restore.
+NOTE (reviewer): `saveKeyboardScale()` already exists in FOSS; update it (don’t add a duplicate).
+
+SEARCH_BLOCK:
+```
+    fun setScreenDimensions(width: Int, height: Int, displayId: Int) {
+        // 1. Update Class-Level Screen Dimensions
+        this.screenWidth = width
+        this.screenHeight = height
+        this.currentDisplayId = displayId
+
+        // 2. Apply Dynamic Resize Logic (Same as Reset)
+        // This ensures that when entering split-screen or rotating, the keyboard
+        // recalculates its perfect size (90% width, 300dp height) instead of stretching.
+        val newWidth = (width * 0.90f).toInt().coerceIn(300, 1200)
+        
+        // Calculate Height: 300dp * Scale * Density
+        val density = context.resources.displayMetrics.density
+        val scale = if (internalScale > 0f) internalScale else 0.69f
+        val baseHeightDp = 300f
+        val newHeight = (baseHeightDp * scale * density).toInt()
+
+        // 3. Update Window Params
+        keyboardWidth = newWidth
+        keyboardHeight = newHeight
+        
+        keyboardParams?.let {
+            it.width = newWidth
+            it.height = newHeight
+            
+            // Optional: Re-center keyboard on screen change
+            it.x = (width - newWidth) / 2
+            it.y = height / 2
+
+            try {
+                windowManager.updateViewLayout(keyboardContainer, it)
+                syncMirrorRatio(newWidth, newHeight)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+```
+REPLACE_BLOCK:
+```
+    fun setScreenDimensions(width: Int, height: Int, displayId: Int) {
+        // 1. Update Class-Level Screen Dimensions
+        this.screenWidth = width
+        this.screenHeight = height
+        this.currentDisplayId = displayId
+
+        // 2. [FIX] Reload saved scale for THIS display + orientation so restore/rotate
+        // doesn’t reuse stale scale and produce wrong container height / internal gaps.
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        val savedScale = getSavedScalePercent(prefs, os) / 100f
+        internalScale = savedScale
+        keyboardView?.setScale(savedScale)
+
+        // 3. Apply Dynamic Resize Logic (Same as Reset)
+        // This ensures that when entering split-screen or rotating, the keyboard
+        // recalculates its perfect size (90% width, 300dp height) instead of stretching.
+        val newWidth = (width * 0.90f).toInt().coerceIn(300, 1200)
+
+        // Calculate Height: 300dp * Scale * Density
+        val density = context.resources.displayMetrics.density
+        val baseHeightDp = 300f
+        val newHeight = (baseHeightDp * savedScale * density).toInt()
+
+        // 4. Update Window Params
+        keyboardWidth = newWidth
+        keyboardHeight = newHeight
+
+        keyboardParams?.let {
+            it.width = newWidth
+            it.height = newHeight
+
+            // Optional: Re-center keyboard on screen change
+            it.x = (width - newWidth) / 2
+            it.y = height / 2
+
+            try {
+                windowManager.updateViewLayout(keyboardContainer, it)
+                syncMirrorRatio(newWidth, newHeight)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+    private fun saveKeyboardSize() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_width_d$currentDisplayId", keyboardWidth).putInt("keyboard_height_d$currentDisplayId", keyboardHeight).apply() }
+    private fun saveKeyboardScale() { 
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .edit().putInt("keyboard_key_scale", (internalScale * 100).toInt()).apply() 
+    }
+    private fun saveKeyboardPosition() { context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit().putInt("keyboard_x_d$currentDisplayId", keyboardParams?.x ?: 0).putInt("keyboard_y_d$currentDisplayId", keyboardParams?.y ?: 0).apply() }
+    private fun loadKeyboardSizeForDisplay(displayId: Int) { val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE); keyboardWidth = prefs.getInt("keyboard_width_d$displayId", keyboardWidth); keyboardHeight = prefs.getInt("keyboard_height_d$displayId", keyboardHeight) }
+```
+REPLACE_BLOCK:
+```
+    private fun orientSuffix(): String = if (screenWidth > screenHeight) "_L" else "_P"
+
+    // Prefer per-display+orientation scale, fallback to legacy global key for migration.
+    private fun getSavedScalePercent(prefs: android.content.SharedPreferences, os: String = orientSuffix()): Int {
+        val displayKey = "keyboard_key_scale_d${currentDisplayId}$os"
+        val legacyKey = "keyboard_key_scale"
+        return prefs.getInt(displayKey, prefs.getInt(legacyKey, 69))
+    }
+
+    private fun saveKeyboardSize() {
+        val os = orientSuffix()
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putInt("keyboard_width_d${currentDisplayId}$os", keyboardWidth)
+            .putInt("keyboard_height_d${currentDisplayId}$os", keyboardHeight)
+            .apply()
+    }
+
+    private fun saveKeyboardScale() {
+        val os = orientSuffix()
+        val scaleVal = (internalScale * 100).toInt()
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .edit()
+            // New (Pro-matching)
+            .putInt("keyboard_key_scale_d${currentDisplayId}$os", scaleVal)
+            // Legacy (migration/back-compat)
+            .putInt("keyboard_key_scale", scaleVal)
+            .apply()
+    }
+
+    private fun saveKeyboardPosition() {
+        val os = orientSuffix()
+        context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putInt("keyboard_x_d${currentDisplayId}$os", keyboardParams?.x ?: 0)
+            .putInt("keyboard_y_d${currentDisplayId}$os", keyboardParams?.y ?: 0)
+            .apply()
+    }
+
+    private fun loadKeyboardSizeForDisplay(displayId: Int) {
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        // New keys first, fallback to legacy unsuffixed keys.
+        keyboardWidth = prefs.getInt("keyboard_width_d${displayId}$os", prefs.getInt("keyboard_width_d$displayId", keyboardWidth))
+        keyboardHeight = prefs.getInt("keyboard_height_d${displayId}$os", prefs.getInt("keyboard_height_d$displayId", keyboardHeight))
+    }
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+            // [NEW] Initialize internal scale from prefs once on show
+            // Default to 69 (0.69f) if missing, to match resetPosition
+            val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f
+            internalScale = savedScale
+            dragStartScale = savedScale // Init for safety
+```
+REPLACE_BLOCK:
+```
+            // [NEW] Initialize internal scale from prefs once on show
+            // Default to 69 (0.69f) if missing, to match resetPosition
+            val os = orientSuffix()
+            val savedScale = getSavedScalePercent(prefs, os) / 100f
+            internalScale = savedScale
+            dragStartScale = savedScale // Init for safety
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+        // [FIX] Load saved scale and update Internal State immediately
+        // Use 69 as default to match resetPosition logic (prevent 1.0 mismatch)
+        val scale = prefs.getInt("keyboard_key_scale", 69) / 100f
+        internalScale = scale 
+        keyboardView?.setScale(scale)
+```
+REPLACE_BLOCK:
+```
+        // [FIX] Load saved scale and update Internal State immediately
+        // Use 69 as default to match resetPosition logic (prevent 1.0 mismatch)
+        val os = orientSuffix()
+        val scale = getSavedScalePercent(prefs, os) / 100f
+        internalScale = scale 
+        keyboardView?.setScale(scale)
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+        } else {
+            // Even if hidden, save the new bounds so they apply on next show
+            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .putInt("keyboard_width_d$currentDisplayId", width)
+                .putInt("keyboard_height_d$currentDisplayId", height)
+                .apply()
+        }
+```
+REPLACE_BLOCK:
+```
+        } else {
+            // Even if hidden, save the new bounds so they apply on next show
+            val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            val os = orientSuffix()
+            prefs.edit()
+                .putInt("keyboard_x_d${currentDisplayId}$os", x)
+                .putInt("keyboard_y_d${currentDisplayId}$os", y)
+                .putInt("keyboard_width_d${currentDisplayId}$os", width)
+                .putInt("keyboard_height_d${currentDisplayId}$os", height)
+                // Legacy (migration/back-compat)
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .putInt("keyboard_width_d$currentDisplayId", width)
+                .putInt("keyboard_height_d$currentDisplayId", height)
+                .apply()
+        }
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+        if (keyboardContainer == null || keyboardParams == null) {
+            // Save to prefs if hidden
+            context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .apply()
+            return
+        }
+```
+REPLACE_BLOCK:
+```
+        if (keyboardContainer == null || keyboardParams == null) {
+            // Save to prefs if hidden
+            val os = orientSuffix()
+            context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE).edit()
+                .putInt("keyboard_x_d${currentDisplayId}$os", x)
+                .putInt("keyboard_y_d${currentDisplayId}$os", y)
+                // Legacy (migration/back-compat)
+                .putInt("keyboard_x_d$currentDisplayId", x)
+                .putInt("keyboard_y_d$currentDisplayId", y)
+                .apply()
+            return
+        }
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+    fun getViewX(): Int {
+        if (keyboardParams != null) return keyboardParams!!.x
+        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .getInt("keyboard_x_d$currentDisplayId", 0)
+    }
+    
+
+    fun getViewY(): Int {
+        if (keyboardParams != null) return keyboardParams!!.y
+        return context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+            .getInt("keyboard_y_d$currentDisplayId", 0)
+    }
+```
+REPLACE_BLOCK:
+```
+    fun getViewX(): Int {
+        if (keyboardParams != null) return keyboardParams!!.x
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        return prefs.getInt("keyboard_x_d${currentDisplayId}$os", prefs.getInt("keyboard_x_d$currentDisplayId", 0))
+    }
+    
+
+    fun getViewY(): Int {
+        if (keyboardParams != null) return keyboardParams!!.y
+        val prefs = context.getSharedPreferences("TrackpadPrefs", Context.MODE_PRIVATE)
+        val os = orientSuffix()
+        return prefs.getInt("keyboard_y_d${currentDisplayId}$os", prefs.getInt("keyboard_y_d$currentDisplayId", 0))
+    }
+```
+END_OF_UPDATE_BLOCK
+
+SEARCH_BLOCK:
+```
+        val savedW = prefs.getInt("keyboard_width_d$currentDisplayId", defaultWidth)
+        val savedH = prefs.getInt("keyboard_height_d$currentDisplayId", defaultHeight)
+        val savedX = prefs.getInt("keyboard_x_d$currentDisplayId", defaultX)
+        val savedY = prefs.getInt("keyboard_y_d$currentDisplayId", defaultY)
+```
+REPLACE_BLOCK:
+```
+        val os = orientSuffix()
+        val savedW = prefs.getInt("keyboard_width_d${currentDisplayId}$os", prefs.getInt("keyboard_width_d$currentDisplayId", defaultWidth))
+        val savedH = prefs.getInt("keyboard_height_d${currentDisplayId}$os", prefs.getInt("keyboard_height_d$currentDisplayId", defaultHeight))
+        val savedX = prefs.getInt("keyboard_x_d${currentDisplayId}$os", prefs.getInt("keyboard_x_d$currentDisplayId", defaultX))
+        val savedY = prefs.getInt("keyboard_y_d${currentDisplayId}$os", prefs.getInt("keyboard_y_d$currentDisplayId", defaultY))
+```
+END_OF_UPDATE_BLOCK
+
+VALIDATION:
+- Manual: toggle keyboard hide/show repeatedly; rotate device while hidden; confirm restored overlay matches expected size without internal gaps.
+- Sanity: ensure existing users’ stored keyboard size/position still loads via legacy fallback.
+
 
 FILE_UPDATE: Cover-Screen-Trackpad/app/build.gradle.kts
 REASON: Update namespace and applicationId to DroidOSFOSSKeyboardTrackpad
@@ -991,3 +1354,47 @@ REPLACE_BLOCK:
 ```
 END_OF_UPDATE_BLOCK
 
+
+---
+
+## Reviewer Mode: Final Review of Keyboard Overlay Fix Plan
+
+Current Patch plan has not yet been processed by builder.py. Here are my comments and feedback on plan.md we need to address before implementation:
+
+* **Anchor verification**: All SEARCH_BLOCKs for the keyboard-overlay fix anchor to FOSS source byte-for-byte:
+  - `setScreenDimensions` block ↔ `KeyboardOverlay.kt:177-213` ✓
+  - Helpers block (`saveKeyboardSize`/`saveKeyboardScale`/`saveKeyboardPosition`/`loadKeyboardSizeForDisplay`) ↔ `KeyboardOverlay.kt:1488-1494` ✓
+  - `setWindowBounds` hidden-save ↔ `KeyboardOverlay.kt:272-281` ✓
+  - `updatePosition` hidden-save ↔ `KeyboardOverlay.kt:293-300` ✓
+  - `getViewX`/`getViewY` ↔ `KeyboardOverlay.kt:327-338` ✓
+  - `createKeyboardWindow` initial savedW/H/X/Y ↔ `KeyboardOverlay.kt:1248-1251` ✓
+  - `show()` scale init ↔ `KeyboardOverlay.kt:514-518` ✓
+  - `createKeyboardWindow` scale load ↔ `KeyboardOverlay.kt:1198-1202` ✓
+
+* **Per-display + per-orientation coverage**: Every write/read of bounds (x/y/width/height) and scale on the live code paths now uses `keyboard_*_d${currentDisplayId}${orientSuffix()}` with chained legacy fallback for reads and dual-write (suffixed + legacy) for writes. ✓
+
+* **`orientSuffix()` ordering**: Computed lazily inside each method, after `screenWidth/Height` updates have flowed through `setScreenDimensions`. No stale-orientation write hazards on the patched paths. ✓
+
+* **`setScreenDimensions` scale propagation**: Now reloads orient-keyed scale, assigns to `internalScale`, and calls `keyboardView?.setScale(savedScale)` so the inner view doesn’t hold stale scale on rotation/restore. ✓
+
+* **`saveKeyboardScale()` is updated, not duplicated** — patch correctly modifies the existing function at `:1489-1492`. ✓
+
+* **Migration / fallback safety**: Read-side chained fallback (`getInt(suffixed, getInt(legacy, default))`) preserves existing users’ bounds on first launch after upgrade. Dual-write keeps legacy as last-known-state for any downgrade. Acceptable trade-off; legacy key tracks most-recent-orientation rather than being orientation-agnostic, but since suffixed key is always preferred when present, no observable regression.
+
+* **Refactor logic integrity**: All REPLACE_BLOCKs preserve original control flow, exception handling, default values (69 for scale, computed defaults for bounds), and side effects (`syncMirrorRatio`, `windowManager.updateViewLayout`, `keyboardView?.setScale`). No behavior change beyond the prefs-key migration.
+
+* **Whitespace sensitivity**: SEARCH_BLOCKs reproduce the source’s exact indentation (4-space class-body; trailing space on `internalScale = scale ` at `:1201` is preserved verbatim in the search anchor at plan `:252`). ✓
+
+* **Kotlin `$` variable safety inside `cat << 'EOF'`**: Plan was authored with a quoted heredoc-style block (`cat << 'EOF' > plan.md`), so `${currentDisplayId}` and `$os` interpolations are preserved as literal Kotlin source rather than being shell-expanded. ✓
+
+* **Optional / minor (non-blocking)**: `KeyboardOverlay.kt:1240` (`val savedScale = prefs.getInt("keyboard_key_scale", 69) / 100f` inside the `defaultHeight` fallback) still reads the legacy key directly. After the bounds chained-fallback patch this code path is reached only on truly fresh installs (no suffixed and no legacy bounds keys), so impact is negligible. Recommend migrating to `getSavedScalePercent(prefs)` in a follow-up for consistency, but this is not required for correctness of the reported symptom.
+
+* **VALIDATION expansion (recommended additions)**:
+  - Set distinct scales in portrait and landscape, hide overlay, rotate, show — confirm correct per-orientation scale on first show without an extra rotation event.
+  - Set distinct bounds per orientation, hide, rotate, show — confirm correct per-orientation bounds on `createKeyboardWindow` first-show path.
+  - Upgrade-from-legacy install: verify pre-upgrade bounds load via legacy fallback on first show; first save creates suffixed keys; subsequent rotation does not lose either orientation’s values.
+  - Multi-display (cover screen + virtual mirror): verify per-display key isolation across orientation changes.
+
+* **Verdict: PASS**. The patch plan is implementable as-is; bounds + scale persistence is now per-display × per-orientation across every live read/write site, with safe legacy migration. Builder.py can apply.
+
+END_OF_REVIEW_BLOCK

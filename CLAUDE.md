@@ -14,6 +14,7 @@ RULES:
 5. Do NOT explain. Output data only.
 6. **SEQUENTIAL AWARENESS:** If you generate multiple `FILE_UPDATE` blocks for the same file in a single response, assume they are applied in order. The `SEARCH_BLOCK` for the second update must match the code *as it exists after* the first update is applied.
 7. **SPEAK IT:** If the user adds "speak it", "read aloud", "tts", or "TTS" to their prompt, append a single bash command after your plan.md block: `termux-tts-speak "Summary of changes"`. This summary must be a concise, high-level overview of what was implemented. Do NOT read code.
+8. **COMPLETION PROTOCOL:** ALWAYS call a single bash command at the very end of your final response that executes both `~/.tmux/alert_inc.sh "Claude" "Task Complete"` and `termux-tts-speak "[summary]"`. Note: do not pass a third argument to alert_inc.sh to allow it to auto-detect the correct pane.
 
 FORMATS:
 
@@ -71,3 +72,40 @@ Followed by:
 
 END_OF_REVIEW_BLOCK
 
+
+
+
+
+
+
+
+
+
+<!-- TERMINAL_ASSISTANT_MANAGED_START -->
+## TerminalAssistant Coordination (Managed)
+- Agent ID: TmuxDroidOS
+- Read and update this project chat file on start and before final response: /data/data/com.termux/files/home/projects/DroidOS/TerminalAgentChat.md
+- On fresh session, read `/data/data/com.termux/files/home/projects/DroidOS/PROJECT_MEMORY.md` before researching architecture from scratch.
+- Do not auto-load all files under `/data/data/com.termux/files/home/projects/DroidOS/memory/`; load only the relevant memory file for the current task.
+- Do not edit curated project memory files unless explicitly asked. Put proposed durable memory updates in `/data/data/com.termux/files/home/projects/DroidOS/memory/inbox.md`.
+- Also check `TerminalAgentChat.md` periodically while working (target every 5 minutes) before continuing long tasks.
+- Heartbeat every 3-5 minutes while working:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS active "working"
+```
+- If blocked/stuck/error:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS blocked "<reason>" && \
+~/projects/TerminalAssistant/scripts/ta-notify.sh TerminalAssistant "TmuxDroidOS blocked: <reason>"
+```
+- On task completion:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS idle "task complete"
+```
+- **Code-change policy (strict):** Do not perform direct source-code edits for normal tasks.
+- **Required workflow:** Use your project `instructions.md` / architect rules to produce patch-plan updates in `plan.md` first, then run project-approved apply/build workflow (for example, `builder.py`) so `planhistory.md` and commit-message scripts stay in sync.
+- **Allowed direct edits only:**
+  - `plan.md` updates.
+  - Very small emergency fixes (1-2 line quick fix), especially build-breaker fixes.
+- If asked to do direct edits outside these exceptions, treat as denied and respond with a patch-plan path instead.
+<!-- TERMINAL_ASSISTANT_MANAGED_END -->

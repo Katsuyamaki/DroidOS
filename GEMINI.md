@@ -49,3 +49,38 @@ build and install with:
 cd ~/projects/DroidOS/Cover-Screen-Launcher && ./gradlew clean assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 CleanBuildLauncher='cd ~/projects/DroidOS/Cover-Screen-Trackpad && ./gradlew clean assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 
+
+
+
+
+
+
+
+
+
+<!-- TERMINAL_ASSISTANT_MANAGED_START -->
+## TerminalAssistant Coordination (Managed)
+- Agent ID: TmuxDroidOS
+- Read and update this project chat file on start and before final response: /data/data/com.termux/files/home/projects/DroidOS/TerminalAgentChat.md
+- Also check `TerminalAgentChat.md` periodically while working (target every 5 minutes) before continuing long tasks.
+- Heartbeat every 3-5 minutes while working:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS active "working"
+```
+- If blocked/stuck/error:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS blocked "<reason>" && \
+~/projects/TerminalAssistant/scripts/ta-notify.sh TerminalAssistant "TmuxDroidOS blocked: <reason>"
+```
+- On task completion:
+```sh
+~/projects/TerminalAssistant/scripts/ta-heartbeat.sh TmuxDroidOS idle "task complete"
+```
+- **Code-change policy (strict):** Do not perform direct source-code edits for normal tasks.
+- **Required workflow:** Use your project `instructions.md` / architect rules to produce patch-plan updates in `plan.md` first, then run project-approved apply/build workflow (for example, `builder.py`) so `planhistory.md` and commit-message scripts stay in sync.
+- **Allowed direct edits only:**
+  - `plan.md` updates.
+  - Very small emergency fixes (1-2 line quick fix), especially build-breaker fixes.
+- If asked to do direct edits outside these exceptions, treat as denied and respond with a patch-plan path instead.
+<!-- TERMINAL_ASSISTANT_MANAGED_END -->
+
