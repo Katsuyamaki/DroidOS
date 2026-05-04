@@ -172,7 +172,7 @@ This repository is a Monorepo containing two distinct but complementary Android 
 
 
 📄 License
-This project is licensed under the GNU General Public License v3.0 (GPLv3).
+This project is licensed under the GNU General Public License v3.0 only (GPL-3.0-only).
 You are free to use, modify, and distribute this software, but all modifications must remain open source. See the LICENSE file for details.
 
 <br>
@@ -200,4 +200,3 @@ You are free to use, modify, and distribute this software, but all modifications
 <br>
 
 ---
-
