@@ -11,8 +11,8 @@ android {
         applicationId = "com.katsuyamaki.DroidOSFOSSLauncher"
         minSdk = 30
         targetSdk = 34
-        versionCode = 3
-        versionName = "2.1"
+        versionCode = 4
+        versionName = "2.2"
 
         multiDexEnabled = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
