@@ -2386,15 +2386,15 @@ private var isSoftKeyboardSupport = false
         }
         
         return when(type) { 
-            LAYOUT_FULL -> "1 App - Full"
-            LAYOUT_SIDE_BY_SIDE -> "2 Apps - Split"
-            LAYOUT_TOP_BOTTOM -> "2 Apps - Top/Bot"
-            LAYOUT_TRI_EVEN -> "3 Apps - Even"
-            LAYOUT_CORNERS -> "4 Apps - Quadrant"
-            LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - Side/Main/Side"
-            LAYOUT_QUAD_ROW_EVEN -> "4 Apps - Row"
-            LAYOUT_QUAD_TALL_SHORT -> "4 Apps - 2 Tall / 2 Short"
-            LAYOUT_HEX_TALL_SHORT -> "6 Apps - 3 Tall / 3 Short"
+            LAYOUT_FULL -> "1 App - 1x1"
+            LAYOUT_SIDE_BY_SIDE -> "2 Apps - 1x2"
+            LAYOUT_TOP_BOTTOM -> "2 Apps - 2x1"
+            LAYOUT_TRI_EVEN -> "3 Apps - 1x3"
+            LAYOUT_CORNERS -> "4 Apps - 2x2"
+            LAYOUT_TRI_SIDE_MAIN_SIDE -> "3 Apps - 1x3 [1:2:1]"
+            LAYOUT_QUAD_ROW_EVEN -> "4 Apps - 1x4"
+            LAYOUT_QUAD_TALL_SHORT -> "4 Apps - 2x2 [R 3:1]"
+            LAYOUT_HEX_TALL_SHORT -> "6 Apps - 2x3 [R 3:1, C 1:2:1]"
             LAYOUT_CUSTOM_DYNAMIC -> "Custom"
             else -> "Unknown" 
         } 
