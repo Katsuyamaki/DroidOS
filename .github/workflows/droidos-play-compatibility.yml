@@ -31,9 +31,8 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # GitHub's Ubuntu Android image already provides the SDK command-line tools.
+      # setup-android@v3 runs the removed 'sdkmanager tools' package and fails in 2026.
       - name: Install Android 16 platform and build tools
         run: |
           sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
