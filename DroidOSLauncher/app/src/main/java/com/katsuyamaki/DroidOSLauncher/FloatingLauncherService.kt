@@ -68,9 +68,13 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     // === RECEIVER - START ===
     private val launcherReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (BuildConfig.STORE_CHANNEL == "play" &&
+                !allowExternalBroadcastCommands && !isTrustedPlaySender(this)
+            ) return
             when (intent?.action) {
                 "com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY" -> {
                     val targetId = intent.getIntExtra("displayId", 0)
+                    if ((getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)?.getDisplay(targetId) == null) return
                     uiHandler.post {
                         // CLEANUP OLD VIEWS (Bubble & Drawer)
                         try {
@@ -1438,8 +1442,27 @@ private var isSoftKeyboardSupport = false
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult -> if (grantResult == PackageManager.PERMISSION_GRANTED) bindShizuku() }
 
+    private fun isTrustedPlaySender(receiver: BroadcastReceiver): Boolean {
+        if (Build.VERSION.SDK_INT < 34) return false
+        val callerUid = receiver.getSentFromUid()
+        if (callerUid == android.os.Process.myUid()) return true
+        if (callerUid < 0) return false
+        // The input companion is trusted only when it is signed with the same certificate.
+        return packageManager.getPackagesForUid(callerUid)?.any { callerPackage ->
+            callerPackage == PACKAGE_TRACKPAD &&
+                packageManager.checkSignatures(packageName, callerPackage) == PackageManager.SIGNATURE_MATCH
+        } == true
+    }
+
     private val commandReceiver = object : BroadcastReceiver() {        override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action
+
+            // Play: external automation is opt-in. No unknown/empty sender is implicitly trusted.
+            // Android system screen state broadcasts are not automation commands.
+            if (BuildConfig.STORE_CHANNEL == "play" &&
+                action != Intent.ACTION_SCREEN_ON && action != Intent.ACTION_SCREEN_OFF &&
+                !allowExternalBroadcastCommands && !isTrustedPlaySender(this)
+            ) return
 
             // External command access gate (automation/ADB command protection).
             // Only blocks explicit launcher COMMAND actions that could be abused.
