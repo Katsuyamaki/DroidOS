@@ -35,7 +35,9 @@ jobs:
       # setup-android@v3 runs the removed 'sdkmanager tools' package and fails in 2026.
       - name: Install Android 16 platform and build tools
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
 
       - name: Compile and exercise Play variant (no publishing)
         run: |
