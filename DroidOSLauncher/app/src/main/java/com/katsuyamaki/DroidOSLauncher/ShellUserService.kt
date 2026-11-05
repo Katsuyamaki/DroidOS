@@ -240,14 +240,7 @@ override fun setBrightness(displayId: Int, brightness: Int) {
         if (BuildConfig.STORE_CHANNEL == "play") {
             // Containment for the previously suspended activity-start bypass and Accessibility toggles.
             // Do not remove unrelated user-authorized display/window commands until device validation.
-            val normalized = command.trim().lowercase(java.util.Locale.ROOT)
-            val disallowed = normalized.startsWith("am start ") ||
-                normalized.startsWith("am start-") ||
-                normalized.startsWith("cmd activity start") ||
-                normalized.startsWith("am task move-task-to-display") ||
-                normalized.startsWith("am task move-task-to-front") ||
-                normalized.startsWith("settings put secure enabled_accessibility_services") ||
-                normalized.startsWith("settings put secure accessibility_enabled")
+            val disallowed = PlayPrivilegedCommandPolicy.isProhibited(command)
             if (disallowed) {
                 android.util.Log.w(TAG, "Play privileged command blocked: " + normalized.substringBefore(' '))
                 return

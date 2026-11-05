@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.util.Log
-import android.view.Display
 
 /**
  * API-only selected-display app launch gateway for the Play distribution.
@@ -20,10 +19,11 @@ internal object PlayDisplayLauncher {
         if (displayId < 0) return false
         val displays = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
             ?: return false
-        if (displays.getDisplay(displayId) == null) return false
-        if (displayId != Display.DEFAULT_DISPLAY &&
-            !context.packageManager.hasSystemFeature(PackageManager.FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS)
-        ) return false
+        val present = displays.getDisplay(displayId) != null
+        val secondarySupported = context.packageManager.hasSystemFeature(
+            PackageManager.FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
+        )
+        if (!PlayLaunchPolicy.isAvailableDisplay(displayId, present, secondarySupported)) return false
 
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             ?: return false

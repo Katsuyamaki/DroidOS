@@ -107,6 +107,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
+    testImplementation(libs.junit)
     implementation("com.android.billingclient:billing-ktx:8.3.0")
 
     implementation("dev.rikka.shizuku:api:13.1.5")

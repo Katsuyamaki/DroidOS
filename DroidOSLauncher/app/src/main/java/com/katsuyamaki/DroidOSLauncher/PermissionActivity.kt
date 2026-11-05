@@ -179,7 +179,7 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
         updateItem(btnGrantShizuku, iconShizuku, hasShizuku)
 
         // ENABLE BUTTON LOGIC
-        if (hasOverlay && hasShizuku && hasAccessibility) {
+        if (hasOverlay && hasAccessibility && (hasShizuku || BuildConfig.STORE_CHANNEL == "play")) {
             btnContinue.isEnabled = true
             btnContinue.alpha = 1.0f
             btnContinue.text = "LAUNCH DROIDOS"
@@ -192,7 +192,7 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
             btnContinue.text = when {
                 !hasOverlay -> "Step 2: Enable Overlay"
                 !hasAccessibility -> "Step 3: Enable Accessibility"
-                !hasShizuku -> "Step 4: Grant Shizuku"
+                !hasShizuku && BuildConfig.STORE_CHANNEL != "play" -> "Step 4: Grant Shizuku"
                 else -> "Grant Permissions to Continue"
             }
         }
@@ -216,7 +216,7 @@ class PermissionActivity : Activity(), Shizuku.OnRequestPermissionResultListener
         val hasOverlay = Settings.canDrawOverlays(this)
         val hasShizuku = try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch(e: Exception) { false }
         val hasAccessibility = isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)
-        return hasOverlay && hasShizuku && hasAccessibility
+        return hasOverlay && hasAccessibility && (hasShizuku || BuildConfig.STORE_CHANNEL == "play")
     }
 
     private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
