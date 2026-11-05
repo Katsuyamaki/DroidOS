@@ -9,6 +9,7 @@ import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
+import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
@@ -36,7 +37,7 @@ class PlayBillingManager(
 
         billingClient = BillingClient.newBuilder(activity)
             .setListener(this)
-            .enablePendingPurchases()
+            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
             .build()
 
         billingClient?.startConnection(object : BillingClientStateListener {
@@ -147,14 +148,14 @@ class PlayBillingManager(
             .setProductList(products)
             .build()
 
-        billingClient?.queryProductDetailsAsync(params) { result, detailsList ->
+        billingClient?.queryProductDetailsAsync(params) { result, detailsResult ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                 listener.onBillingError("Product query failed: ${result.debugMessage}")
                 return@queryProductDetailsAsync
             }
 
             productDetailsById.clear()
-            detailsList.forEach { details ->
+            detailsResult.productDetailsList.forEach { details ->
                 productDetailsById[details.productId] = details
             }
             listener.onBillingReady(productDetailsById.keys)

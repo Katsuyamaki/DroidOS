@@ -237,6 +237,22 @@ override fun setBrightness(displayId: Int, brightness: Int) {
     }
 
     override fun runCommand(command: String) {
+        if (BuildConfig.STORE_CHANNEL == "play") {
+            // Containment for the previously suspended activity-start bypass and Accessibility toggles.
+            // Do not remove unrelated user-authorized display/window commands until device validation.
+            val normalized = command.trim().lowercase(java.util.Locale.ROOT)
+            val disallowed = normalized.startsWith("am start ") ||
+                normalized.startsWith("am start-") ||
+                normalized.startsWith("cmd activity start") ||
+                normalized.startsWith("am task move-task-to-display") ||
+                normalized.startsWith("am task move-task-to-front") ||
+                normalized.startsWith("settings put secure enabled_accessibility_services") ||
+                normalized.startsWith("settings put secure accessibility_enabled")
+            if (disallowed) {
+                android.util.Log.w(TAG, "Play privileged command blocked: " + normalized.substringBefore(' '))
+                return
+            }
+        }
         val token = Binder.clearCallingIdentity()
         try { Runtime.getRuntime().exec(command).waitFor() } catch (e: Exception) {} finally { Binder.restoreCallingIdentity(token) }
     }
@@ -916,6 +932,7 @@ override fun getWindowLayouts(displayId: Int): List<String> {
     // Unlike `am start --display`, this MOVES the existing task without creating a new activity
     // instance — critical for apps like WhatsApp where a ghost duplicate triggers Samsung lockout.
     override fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
+        if (BuildConfig.STORE_CHANNEL == "play") return false
         val token = Binder.clearCallingIdentity()
         try {
             val atmClass = Class.forName("android.app.ActivityTaskManager")
