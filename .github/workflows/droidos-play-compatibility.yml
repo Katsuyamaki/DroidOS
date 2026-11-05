@@ -43,7 +43,7 @@ jobs:
         run: |
           # The checked-in aapt2 override is an Android/Termux-only executable path.
           # Keep that developer setting intact in Git, but remove it for Linux CI.
-          sed -i '/^android\\.aapt2FromMavenOverride=/d' gradle.properties
+          sed -i '/aapt2FromMavenOverride/d' gradle.properties
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:testPlayDebugUnitTest :app:bundlePlayRelease
 
