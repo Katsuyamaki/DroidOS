@@ -242,7 +242,7 @@ override fun setBrightness(displayId: Int, brightness: Int) {
             // Do not remove unrelated user-authorized display/window commands until device validation.
             val disallowed = PlayPrivilegedCommandPolicy.isProhibited(command)
             if (disallowed) {
-                android.util.Log.w(TAG, "Play privileged command blocked: " + normalized.substringBefore(' '))
+                android.util.Log.w(TAG, "Play privileged command blocked by launch policy")
                 return
             }
         }
