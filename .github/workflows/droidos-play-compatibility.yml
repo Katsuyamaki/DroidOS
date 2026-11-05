@@ -58,12 +58,15 @@ jobs:
           curl --fail --location --silent --show-error \
             https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
             --output "$RUNNER_TEMP/bundletool.jar"
-          java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB"
+          java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB" \
+            > "$RUNNER_TEMP/play-compatibility/bundletool-validation.txt"
           java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" \
-            --module=base --output="$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+            --module=base > "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
           grep -q 'targetSdkVersion="36"' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
           grep -q 'com.android.vending.BILLING' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
           ! grep -q 'REQUEST_INSTALL_PACKAGES' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          ! grep -q 'FOREGROUND_SERVICE_SPECIAL_USE' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          ! grep -q 'PROPERTY_SPECIAL_USE_FGS_SUBTYPE' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
           MERGED="$(find app/build/intermediates -name AndroidManifest.xml -path '*playRelease*' -print -quit)"
           test -n "$MERGED"
           cp "$MERGED" "$RUNNER_TEMP/play-compatibility/merged-play-manifest.xml"
