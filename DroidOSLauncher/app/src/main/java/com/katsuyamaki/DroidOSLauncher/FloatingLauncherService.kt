@@ -68,9 +68,13 @@ class FloatingLauncherService : AccessibilityService(), LauncherActionHandler {
     // === RECEIVER - START ===
     private val launcherReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (BuildConfig.STORE_CHANNEL == "play" &&
+                !allowExternalBroadcastCommands && !isTrustedPlaySender(this)
+            ) return
             when (intent?.action) {
                 "com.katsuyamaki.DroidOSTrackpadKeyboard.MOVE_TO_DISPLAY" -> {
                     val targetId = intent.getIntExtra("displayId", 0)
+                    if ((getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)?.getDisplay(targetId) == null) return
                     uiHandler.post {
                         // CLEANUP OLD VIEWS (Bubble & Drawer)
                         try {
@@ -1438,8 +1442,27 @@ private var isSoftKeyboardSupport = false
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener { if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindShizuku() }
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult -> if (grantResult == PackageManager.PERMISSION_GRANTED) bindShizuku() }
 
+    private fun isTrustedPlaySender(receiver: BroadcastReceiver): Boolean {
+        if (Build.VERSION.SDK_INT < 34) return false
+        val callerUid = receiver.getSentFromUid()
+        if (callerUid == android.os.Process.myUid()) return true
+        if (callerUid < 0) return false
+        // The input companion is trusted only when it is signed with the same certificate.
+        return packageManager.getPackagesForUid(callerUid)?.any { callerPackage ->
+            callerPackage == PACKAGE_TRACKPAD &&
+                packageManager.checkSignatures(packageName, callerPackage) == PackageManager.SIGNATURE_MATCH
+        } == true
+    }
+
     private val commandReceiver = object : BroadcastReceiver() {        override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action
+
+            // Play: external automation is opt-in. No unknown/empty sender is implicitly trusted.
+            // Android system screen state broadcasts are not automation commands.
+            if (BuildConfig.STORE_CHANNEL == "play" &&
+                action != Intent.ACTION_SCREEN_ON && action != Intent.ACTION_SCREEN_OFF &&
+                !allowExternalBroadcastCommands && !isTrustedPlaySender(this)
+            ) return
 
             // External command access gate (automation/ADB command protection).
             // Only blocks explicit launcher COMMAND actions that could be abused.
@@ -1772,6 +1795,18 @@ private var isSoftKeyboardSupport = false
 
 
     private fun restartTrackpad() {
+        if (BuildConfig.STORE_CHANNEL == "play") {
+            // Play: enabling or toggling Accessibility is exclusively the user's Android Settings action.
+            safeToast("Open Accessibility settings to restart DroidOS Trackpad")
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "Could not open Accessibility settings", e)
+            }
+            return
+        }
         safeToast("Restarting Trackpad...")
         Thread {
             try {
@@ -5122,6 +5157,22 @@ private var isSoftKeyboardSupport = false
 
 // [NEW] Robust Move Logic: Finds original slot and forces move with retries
     private fun forceAppToDisplay(pkg: String, targetDisplayId: Int) {
+        if (BuildConfig.STORE_CHANNEL == "play") {
+            // A new session is requested on the selected display; an existing task is never migrated.
+            // Avoid duplicate launches when the queue already has an observed task on this display.
+            val basePkg = AppCompatibilityRegistry.normalizePackage(pkg.substringBefore(":"))
+            if (getObservedVisibleComponents(targetDisplayId).any { observed ->
+                    AppCompatibilityRegistry.packagesEquivalentForTaskIdentity(observed.packageName, basePkg)
+                }) return
+            val queuedApp = selectedAppsQueue.find { queueAppMatchesObservedPackage(it, basePkg) }
+            val bounds = queuedApp?.let { packageRectCache[getQueueEntryId(it)] } ?: packageRectCache[basePkg]
+            uiHandler.post {
+                if (!PlayDisplayLauncher.launchPackage(this, basePkg, queuedApp?.className, targetDisplayId, bounds)) {
+                    safeToast("Android did not allow this app to launch on the selected display")
+                }
+            }
+            return
+        }
         // [LOCK] Prevent duplicate threads
         if (activeEnforcements.contains(pkg)) {
             return
@@ -6179,6 +6230,13 @@ private var isSoftKeyboardSupport = false
 
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
+            if (BuildConfig.STORE_CHANNEL == "play") {
+                if (!PlayDisplayLauncher.launch(this, intent, currentDisplayId, bounds)) {
+                    safeToast("Android did not allow this app to launch on the selected display")
+                }
+                return
+            }
+
             val options = android.app.ActivityOptions.makeBasic()
             options.setLaunchDisplayId(currentDisplayId)
 
@@ -6189,7 +6247,12 @@ private var isSoftKeyboardSupport = false
             startActivity(intent, options.toBundle())
 
         } catch (e: Exception) {
-            launchViaShell(pkg, className, bounds)
+            if (BuildConfig.STORE_CHANNEL == "play") {
+                android.util.Log.w(TAG, "Play public app launch failed without shell fallback", e)
+                safeToast("Android did not allow this app launch")
+            } else {
+                launchViaShell(pkg, className, bounds)
+            }
         }
     }
     // === LAUNCH VIA API - END ===
@@ -6198,6 +6261,7 @@ private var isSoftKeyboardSupport = false
     // === LAUNCH VIA SHELL - START ===
     // Launches app via shell with freeform windowing mode
     private fun launchViaShell(pkg: String, className: String?, bounds: Rect?) {
+        if (BuildConfig.STORE_CHANNEL == "play") return
         try {
             val basePkg = if (pkg.contains(":")) pkg.substringBefore(":") else pkg
 
@@ -6223,6 +6287,11 @@ private var isSoftKeyboardSupport = false
     // Use brought-to-front start (no windowing-mode override) since this path has historically
     // transferred input focus more reliably than task-front reflection on some Samsung builds.
     private fun focusViaTask(app: MainActivity.AppInfo, bounds: Rect?) {
+        if (BuildConfig.STORE_CHANNEL == "play") {
+            // Public launch path, not a privileged background bring-to-front bypass.
+            launchViaApi(app.getBasePackage(), app.className, bounds)
+            return
+        }
         try {
             if (app.packageName == PACKAGE_BLANK || app.isMinimized) return
 
@@ -6553,6 +6622,14 @@ private var isSoftKeyboardSupport = false
     }
 
     private fun restoreAppTaskToCurrentDisplay(app: MainActivity.AppInfo, targetBounds: Rect? = null) {
+        if (BuildConfig.STORE_CHANNEL == "play") {
+            // Reconstruct the selected workspace by launching a new session, not moving a task.
+            val packageName = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
+            if (!PlayDisplayLauncher.launchPackage(this, packageName, app.className, currentDisplayId, targetBounds)) {
+                safeToast("Android did not allow workspace restoration on this display")
+            }
+            return
+        }
         val basePkg = AppCompatibilityRegistry.normalizePackage(app.getBasePackage())
         if (basePkg.isEmpty()) return
         val entryId = getQueueEntryId(app)

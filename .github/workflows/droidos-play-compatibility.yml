@@ -1,0 +1,83 @@
+name: DroidOS Play compatibility (non-publishing)
+
+on:
+  push:
+    branches:
+      - feature/play-resubmission-compat-api36
+    paths:
+      - DroidOSLauncher/**
+      - .github/workflows/droidos-play-compatibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  play-release-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: DroidOSLauncher
+
+    steps:
+      - name: Checkout exact candidate commit
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # GitHub's Ubuntu Android image already provides the SDK command-line tools.
+      # setup-android@v3 runs the removed 'sdkmanager tools' package and fails in 2026.
+      - name: Install Android 16 platform and build tools
+        run: |
+          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Compile and exercise Play variant (no publishing)
+        run: |
+          # The checked-in aapt2 override is an Android/Termux-only executable path.
+          # Keep that developer setting intact in Git, but remove it for Linux CI.
+          sed -i '/aapt2FromMavenOverride/d' gradle.properties
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:testPlayDebugUnitTest :app:bundlePlayRelease
+
+      - name: Inspect final AAB and merged Play manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/play-compatibility"
+          AAB="$(find app/build/outputs/bundle/playRelease -maxdepth 1 -name '*.aab' -print -quit)"
+          test -n "$AAB"
+          unzip -t "$AAB" > "$RUNNER_TEMP/play-compatibility/aab-integrity.txt"
+          sha256sum "$AAB" > "$RUNNER_TEMP/play-compatibility/aab-sha256.txt"
+          curl --fail --location --silent --show-error \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB" \
+            > "$RUNNER_TEMP/play-compatibility/bundletool-validation.txt"
+          java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" \
+            --module=base > "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          grep -q 'targetSdkVersion="36"' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          grep -q 'com.android.vending.BILLING' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          ! grep -q 'REQUEST_INSTALL_PACKAGES' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          ! grep -q 'FOREGROUND_SERVICE_SPECIAL_USE' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          ! grep -q 'PROPERTY_SPECIAL_USE_FGS_SUBTYPE' "$RUNNER_TEMP/play-compatibility/final-play-manifest.xml"
+          MERGED="$(find app/build/intermediates -name AndroidManifest.xml -path '*playRelease*' -print -quit)"
+          test -n "$MERGED"
+          cp "$MERGED" "$RUNNER_TEMP/play-compatibility/merged-play-manifest.xml"
+          printf 'Commit: %s\nAAB: %s\nMerged manifest: %s\n' \
+            "$GITHUB_SHA" "$AAB" "$MERGED" > "$RUNNER_TEMP/play-compatibility/build-info.txt"
+          echo "Validated the Play release AAB and two manifests (no Play upload)."
+
+      - name: Upload validation evidence only, not the AAB
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-compatibility-evidence
+          path: ${{ runner.temp }}/play-compatibility/
+          if-no-files-found: warn

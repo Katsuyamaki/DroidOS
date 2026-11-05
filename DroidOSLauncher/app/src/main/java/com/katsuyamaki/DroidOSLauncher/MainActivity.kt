@@ -194,7 +194,8 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             false
         }
-        if (!shizukuGranted) return false
+        // The Play launcher can offer public-API launches without an active privileged backend.
+        if (!shizukuGranted && BuildConfig.STORE_CHANNEL != "play") return false
 
         // 3. Accessibility
         if (!isAccessibilityServiceEnabled(this, FloatingLauncherService::class.java)) return false

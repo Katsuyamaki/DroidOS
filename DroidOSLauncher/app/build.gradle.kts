@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.katsuyamaki.DroidOSLauncher"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.katsuyamaki.DroidOSLauncher"
@@ -40,6 +40,8 @@ android {
         }
         create("play") {
             dimension = "store"
+            // Only the Play channel moves to API 36 in this compatibility round.
+            targetSdk = 36
             buildConfigField("String", "STORE_CHANNEL", "\"play\"")
             buildConfigField("boolean", "USE_PLAY_BILLING", "true")
             buildConfigField("boolean", "USE_GITHUB_AUTH", "false")
@@ -105,7 +107,8 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    testImplementation(libs.junit)
+    implementation("com.android.billingclient:billing:8.3.0")
 
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
